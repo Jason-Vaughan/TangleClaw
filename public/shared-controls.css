@@ -188,6 +188,115 @@
 @media (prefers-reduced-motion: reduce) {
   .medusa-control.has-live-loop:not(.is-off):not(.is-error) .medusa-mark { animation: none; }
 }
+/* ── Loop row/panel/form rules (#1083 I-Gate Round 1 C2) ──
+   Moved from session.css: the Master control bar renders the same loop
+   markup on the dashboard (public/index.html), which never loaded that
+   sheet, so these controls rendered unstyled there. */
+/* The two guard fields sit side by side; stacking happens naturally on very
+   narrow screens via the min column width. */
+.medusa-loop-guards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0 12px;
+}
+
+.medusa-loops-panel { min-width: 260px; max-width: 360px; }
+.medusa-loop-row {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.medusa-loop-row:last-child { border-bottom: none; }
+.medusa-loop-who { font-weight: 600; color: var(--root-accent); font-size: 12px; }
+.medusa-loop-meta { color: var(--text); font-size: 11px; margin: 2px 0 4px; }
+.medusa-loop-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.medusa-force-done {
+  border: 1px solid var(--danger);
+  border-radius: 4px;
+  background: none;
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 10px;
+  min-height: 36px; /* touch-first: the kill-switch must be easy to hit, hard to miss */
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-force-done:hover { background: var(--danger); color: #fff; }
+.medusa-force-done:focus-visible { outline: 2px solid var(--danger); outline-offset: 1px; }
+.medusa-loop-transcript-toggle {
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 0 8px;
+  min-height: 36px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-loop-transcript-toggle:hover { color: var(--text); background: var(--elevated-bg); }
+.medusa-loop-transcript-toggle:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+.medusa-loop-note { color: var(--text-muted); font-size: 11px; font-style: italic; }
+.medusa-loop-transcript { margin-top: 4px; padding-left: 8px; border-left: 2px solid var(--elevated-bg); }
+.medusa-loop-transcript-note { color: var(--text-muted); font-size: 10px; margin-bottom: 2px; }
+/* Continue (FEEDBACK) + Mark done (satisfied CLOSEOUT) — the initiator's judge
+   controls (TC#561). Continue/Send use the accent; Mark done is a quiet
+   confirm (distinct from the danger-styled force-done kill-switch). */
+.medusa-loop-continue,
+.medusa-loop-feedback-send {
+  border: 1px solid var(--root-accent);
+  border-radius: 4px;
+  background: none;
+  color: var(--root-accent);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 10px;
+  min-height: 36px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-loop-continue:hover,
+.medusa-loop-feedback-send:hover { background: var(--root-accent); color: #fff; }
+.medusa-loop-continue:focus-visible,
+.medusa-loop-feedback-send:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+.medusa-loop-closeout {
+  border: 1px solid var(--text-muted);
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 10px;
+  min-height: 36px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-loop-closeout:hover { background: var(--elevated-bg); }
+.medusa-loop-closeout:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+.medusa-loop-feedback { margin: 6px 0 2px; display: flex; flex-direction: column; gap: 4px; }
+.medusa-loop-feedback-label { color: var(--text-muted); font-size: 10px; }
+.medusa-loop-feedback-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--elevated-bg);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+.medusa-loop-feedback-input:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+.medusa-loop-feedback-send { align-self: flex-start; }
+/* #1514: live message size against the served body limit — amber near it, red over it. */
+.medusa-size-count { color: var(--text-muted); font-size: 10px; min-height: 1em; }
+.medusa-size-count.is-warn { color: var(--warning); font-weight: 600; }
+.medusa-size-count.is-over { color: var(--danger); font-weight: 600; }
 /* NAMED EXCEPTION to the 44px button floor `.btn` holds (#823). The banner is
    a fixed bar above the terminal, which on a phone is the surface the operator
    is actually working in; its rows already stack below 600px, and 44px
@@ -547,6 +656,45 @@
 .medusa-msg-from { font-weight: 600; color: var(--root-accent); font-size: 11px; }
 .medusa-msg-body { color: var(--text); font-size: 12px; word-break: break-word; white-space: pre-wrap; }
 .medusa-msg-empty { color: var(--text-muted); font-size: 12px; }
+/* #1576 — the inbox panel's compact @nickname compose row, hidden by
+   `renderMessages` itself (not CSS) whenever `sendBlocked(m)`. */
+.medusa-nickname-compose {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.medusa-nickname-input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--elevated-bg);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+.medusa-nickname-input:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+.medusa-nickname-send {
+  border: 1px solid var(--root-accent);
+  border-radius: 4px;
+  background: none;
+  color: var(--root-accent);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 10px;
+  min-height: 36px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-nickname-send:hover { background: var(--root-accent); color: #fff; }
+.medusa-nickname-send:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+.medusa-nickname-error { flex-basis: 100%; }
 /* Explicit dismiss control — the badge that opens the inbox hides whenever the
    agent's unread count reaches zero, which can happen while the panel is open, so
    the panel needs its own close affordance. Touch-first: relying on an outside tap

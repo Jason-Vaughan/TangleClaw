@@ -59,10 +59,15 @@ function load(options = {}) {
     // Sibling popovers from the shared Medusa control cluster — not this
     // file's concern (they have their own tests), but togglePermissionRequestsPanel
     // closes them on open per R-3, so the lifted function needs them to exist.
+    // The loop modal/panel closers moved behind the `medusaLoops` component
+    // (#1083 — public/medusa-loops-ui.js#tcCreateMedusaLoops); the lifted
+    // function now reads that free variable instead of two bare globals.
     closeMedusaInbox: () => { calls.closedSiblings = (calls.closedSiblings || []).concat('inbox'); },
     hideMedusaPeers: () => { calls.closedSiblings = (calls.closedSiblings || []).concat('peers'); },
-    closeMedusaLoopModal: () => { calls.closedSiblings = (calls.closedSiblings || []).concat('loopModal'); },
-    closeMedusaLoopsPanel: () => { calls.closedSiblings = (calls.closedSiblings || []).concat('loopsPanel'); }
+    medusaLoops: {
+      closeModal: () => { calls.closedSiblings = (calls.closedSiblings || []).concat('loopModal'); },
+      closePanel: () => { calls.closedSiblings = (calls.closedSiblings || []).concat('loopsPanel'); }
+    }
   };
   sandbox.api.lastError = null;
   vm.createContext(sandbox);

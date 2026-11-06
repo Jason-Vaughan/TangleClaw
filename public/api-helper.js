@@ -3471,13 +3471,14 @@
    * the root keep working untouched. Any prefixed host — the Master bar on the
    * dashboard AND in the session drawer, which share a page with the banner —
    * gets `${prefix}Medusa*`, so two controls can never claim one id. Loop ids
-   * are null for a prefixed host: the control renders no loop affordances
-   * there, and a null id makes `el()` answer null rather than find the
-   * banner's.
+   * are real for a prefixed host too (#1083): `public/medusa-loops-ui.js`'s
+   * `tcCreateMedusaLoops` mounts the same loop affordances on the Master bar,
+   * driven by the same `${prefix}Medusa*` scheme so it can never collide with
+   * the banner's.
    * @param {string} [prefix] - Host prefix; empty/omitted = the session banner.
-   * @returns {{control: string, heads: string, badge: string, loop: (string|null),
-   *   loopsChip: (string|null), peers: string, panel: string,
-   *   loopsPanel: (string|null), live: string}}
+   * @returns {{control: string, heads: string, badge: string, loop: string,
+   *   loopsChip: string, peers: string, panel: string,
+   *   loopsPanel: string, live: string}}
    */
   function tcMedusaIds(prefix) {
     if (!prefix) {
@@ -3489,8 +3490,8 @@
     }
     return {
       control: `${prefix}Medusa`, heads: `${prefix}MedusaHeads`, badge: `${prefix}MedusaBadge`,
-      loop: null, loopsChip: null, peers: `${prefix}MedusaPeers`,
-      panel: `${prefix}MedusaPanel`, loopsPanel: null, live: `${prefix}MedusaLive`
+      loop: `${prefix}MedusaLoop`, loopsChip: `${prefix}MedusaLoopsChip`, peers: `${prefix}MedusaPeers`,
+      panel: `${prefix}MedusaPanel`, loopsPanel: `${prefix}MedusaLoopsPanel`, live: `${prefix}MedusaLive`
     };
   }
 
@@ -3558,6 +3559,98 @@
     return api(`${apiBase}/exchanges${qs}`);
   }
 
+  /** @type {RegExp} An `@token` tag, skipping an email-like `foo@bar` (the `@`
+   * preceded by a local-part character). The captured group before the `@`
+   * (start-of-string or the real preceding character) is consumed but never
+   * read — only `match[2]` (the token) matters to the caller. */
+  const MEDUSA_NICKNAME_TAG_RE = /(^|[^A-Za-z0-9._+-])@([A-Za-z0-9_-]+)/g;
+
+  /** @type {RegExp} This fleet's own workspace-id convention
+   * (`tc-lane-<role>-<8 hex>`, `lib/medusa-registry.js#_mintId`): strips the
+   * prefix and the random suffix, leaving the short role alias a roster
+   * entry's `id` carries implicitly (`arc`, `pm`, `b`, `d`, `int`, `obsr`,
+   * `prr-a`, `prr-b`, …) — not a hardcoded table, so it tracks whatever the
+   * live roster actually names without this file knowing the fleet's roster. */
+  const MEDUSA_WORKSPACE_ALIAS_RE = /^tc-lane-(.+)-[0-9a-f]{8}$/i;
+
+  /**
+   * Resolve one `@token` against the roster: by `workspaceId`, `name`, or
+   * short alias (case-insensitive). An exact, full `workspaceId` match is
+   * authoritative and always unique (ids are unique by construction) even
+   * when some OTHER roster entry also happens to share this token as a name
+   * or alias — only name/alias matches can collide (#1576 I-Gate Round 2
+   * C2: an offline stale workspace and its live replacement can easily
+   * share both).
+   * @param {string} token - The tag text, without its `@`.
+   * @param {object[]} roster - `/roster`'s `workspaces` array.
+   * @returns {{workspaceId: string, name: string}[]} Every matching entry —
+   *   empty (unresolved), one (resolved), or more than one (ambiguous).
+   */
+  function _resolveMedusaNicknameTag(token, roster) {
+    const lower = token.toLowerCase();
+    for (const w of roster) {
+      if (w && w.id && String(w.id).toLowerCase() === lower) {
+        return [{ workspaceId: w.id, name: w.name || w.id }];
+      }
+    }
+    const matches = [];
+    const seen = new Set();
+    for (const w of roster) {
+      if (!w || !w.id || seen.has(w.id)) continue;
+      let hit = w.name && String(w.name).toLowerCase() === lower;
+      if (!hit) {
+        const alias = MEDUSA_WORKSPACE_ALIAS_RE.exec(String(w.id));
+        hit = !!(alias && alias[1].toLowerCase() === lower);
+      }
+      if (hit) { seen.add(w.id); matches.push({ workspaceId: w.id, name: w.name || w.id }); }
+    }
+    return matches;
+  }
+
+  /**
+   * Parse `@<nickname>` tags out of a message and resolve each against the
+   * live roster — the pure half of #1576's Team Chat `@nickname` routing.
+   * Never calls the network; `sendTaggedMessage` (on `tcCreateMedusaControl`)
+   * is the impure half that fetches the roster and dispatches the sends this
+   * result implies.
+   *
+   * A duplicate tag, or two distinct tags resolving to the same workspace, is
+   * folded into one recipient — never sent to twice. A tag matching more than
+   * one roster entry by name/alias (#1576 I-Gate Round 2 C2) is never
+   * guessed at — it is reported in `ambiguous` instead of `recipients`.
+   *
+   * @param {string} input - The operator's typed text.
+   * @param {object[]} roster - `/roster`'s `workspaces` array.
+   * @returns {{recipients: {tag: string, workspaceId: string, name: string}[],
+   *   unresolved: string[], ambiguous: {tag: string, candidates: string[]}[],
+   *   body: string}}
+   */
+  function tcParseMedusaNicknameTags(input, roster) {
+    const text = typeof input === 'string' ? input : '';
+    const list = Array.isArray(roster) ? roster : [];
+    const seenTags = new Set();
+    const seenWorkspaces = new Set();
+    const recipients = [];
+    const unresolved = [];
+    const ambiguous = [];
+    let match;
+    MEDUSA_NICKNAME_TAG_RE.lastIndex = 0;
+    while ((match = MEDUSA_NICKNAME_TAG_RE.exec(text)) !== null) {
+      const token = match[2];
+      const key = token.toLowerCase();
+      if (seenTags.has(key)) continue;
+      seenTags.add(key);
+      const matches = _resolveMedusaNicknameTag(token, list);
+      if (matches.length === 0) { unresolved.push(token); continue; }
+      if (matches.length > 1) { ambiguous.push({ tag: token, candidates: matches.map((m) => m.workspaceId) }); continue; }
+      const found = matches[0];
+      if (seenWorkspaces.has(found.workspaceId)) continue;
+      seenWorkspaces.add(found.workspaceId);
+      recipients.push({ tag: token, workspaceId: found.workspaceId, name: found.name });
+    }
+    return { recipients, unresolved, ambiguous, body: text.trim() };
+  }
+
   /**
    * Create a Medusa switchboard control bound to one participant.
    *
@@ -3570,6 +3663,9 @@
    *   `/api/sessions/<project>/medusa` or `/api/master/medusa`.
    * @param {(url: string, opts?: object) => Promise<object|null>} deps.api - The
    *   page's `api()` (null on failure).
+   * @param {(url: string, method: string, body?: object) => Promise<object|null>}
+   *   [deps.apiMutate] - The page's `apiMutate()` (#1576's `sendTaggedMessage`
+   *   only; every other mutation here still goes through `deps.api` directly).
    * @param {object} [deps.doc] - Document (tests).
    * @param {ReturnType<typeof tcMedusaIds>} [deps.ids] - Id set; defaults to the
    *   session banner's.
@@ -3620,6 +3716,26 @@
     if (m.loopsError === undefined) m.loopsError = null;
     if (m.outbound === undefined) m.outbound = { allowed: true, reason: null };
     let bound = false;
+    // #1576 I-Gate Round 2 C2b: which recipients the CURRENT compose attempt
+    // has already delivered to, keyed by the exact text that attempt sent —
+    // so retrying after a partial multi-recipient failure (keeping the text,
+    // clicking Send again) re-sends only to the ones that failed, never
+    // duplicating a delivery that already succeeded. Reset whenever the text
+    // changes (a new attempt) or once every recipient has succeeded.
+    let _taggedAttemptText = null;
+    let _taggedAttemptDelivered = new Set();
+    // #1576 I-Gate Round 3 C2: `_taggedAttemptDelivered` is populated only
+    // AFTER `apiMutate` resolves, so a second `sendTaggedMessage` call (a
+    // quick double-click, or Enter followed by a click) arriving while the
+    // first is still awaiting the roster or a POST sees an empty/stale
+    // `_taggedAttemptDelivered` and starts its OWN POST to the same
+    // recipient — a real double delivery, reproduced in the finding by
+    // holding one `apiMutate` response open and calling twice. Single-flight
+    // this per control instance: a call arriving while one is already in
+    // progress is refused outright rather than queued or coalesced, since
+    // nothing here can show the operator two different pending outcomes at
+    // once.
+    let _taggedSendInFlight = false;
 
     const el = (key) => (ids[key] ? doc.getElementById(ids[key]) : null);
 
@@ -3631,6 +3747,23 @@
      */
     function sendBlocked(st) {
       return !!(st.outbound && st.outbound.allowed === false);
+    }
+
+    /**
+     * Why #1576's `@nickname` compose row must not be offered right now, or
+     * `null` when it may be. Narrower reasoning than `canLaunch` would need
+     * (no loop-protocol concerns here), but still real: `lib/medusa.js#
+     * sendMessage` throws `NOT_LISTENING` (409) for an off listener — the
+     * same truthful-sender requirement the loop launch button already
+     * enforces — so an off participant gets the SAME honest refusal `/send`
+     * itself would give, before ever reaching the network.
+     * @param {object} st - State.
+     * @returns {string|null}
+     */
+    function _nicknameSendRefusalReason(st) {
+      if (st.state === 'off') return 'Enable Medusa for this participant before sending.';
+      if (sendBlocked(st)) return (st.outbound && st.outbound.reason) || 'Sending is disabled at this access level.';
+      return null;
     }
 
     /**
@@ -3790,6 +3923,17 @@
           badge.textContent = String(m.unread);
           badge.hidden = false;
           badge.setAttribute('aria-label', `Open Medusa inbox (${m.unread} unread)`);
+        } else if (!_nicknameSendRefusalReason(m)) {
+          // #1576 I-Gate Round 2 C1: the badge is the ONLY control bound to
+          // `openInbox`, and the @nickname composer lives inside that panel
+          // — hiding the badge at zero unread made the composer unreachable
+          // for a participant with no mail waiting. Stays visible, relabeled,
+          // whenever this participant could truthfully use it; still hidden
+          // when it could not (off listener, blocked access level — the same
+          // gate the compose row itself is hidden under).
+          badge.textContent = '@';
+          badge.hidden = false;
+          badge.setAttribute('aria-label', 'Open Medusa inbox to send a tagged message');
         } else {
           badge.hidden = true;
         }
@@ -3942,15 +4086,25 @@
       // reaches zero, which can happen while the panel is open (mobile trap).
       const head = '<div class="group-popover-title medusa-panel-head"><span>Medusa inbox</span>'
         + '<button type="button" class="medusa-panel-close" aria-label="Close inbox">✕</button></div>';
+      // #1576 — a compact @nickname compose row, hidden the same way the loop
+      // launch button is: an off listener or a read-only access level cannot
+      // truthfully send either.
+      const compose = _nicknameSendRefusalReason(m) ? '' : (
+        '<div class="medusa-nickname-compose">'
+        + '<input type="text" class="medusa-nickname-input" placeholder="@nickname your message…" aria-label="Send a tagged message">'
+        + '<button type="button" class="medusa-nickname-send">Send</button>'
+        + '<div class="medusa-nickname-error form-error hidden" role="alert"></div>'
+        + '</div>'
+      );
       if (!messages.length) {
-        return `${head}<div class="medusa-msg-empty">No messages yet.</div>`;
+        return `${head}${compose}<div class="medusa-msg-empty">No messages yet.</div>`;
       }
       const rows = messages.slice().reverse().map((msg) => {
         const from = esc(msg.from || 'unknown');
         const body = esc(msg.message || '');
         return `<div class="medusa-msg"><div class="medusa-msg-from">${from}</div><div class="medusa-msg-body">${body}</div></div>`;
       }).join('');
-      return `${head}${rows}`;
+      return `${head}${compose}${rows}`;
     }
 
     /**
@@ -4037,6 +4191,150 @@
     }
 
     /**
+     * Send a message by `@nickname` tag (#1576) — the impure half of the
+     * Team Chat routing `tcParseMedusaNicknameTags` parses: fetches the live
+     * roster, resolves every tag, and dispatches one `POST <apiBase>/send`
+     * per resolved recipient (deduplicated — never twice to the same
+     * workspace in one call). Refuses honestly rather than guessing: an
+     * unresolved or ambiguous tag, no tag at all, or this participant's own
+     * access level all stop before any send is attempted.
+     *
+     * Retrying the SAME text after a partial multi-recipient failure
+     * (#1576 I-Gate Round 2 C2) sends only to the recipients that have not
+     * already succeeded for this exact attempt — `_taggedAttemptDelivered`
+     * tracks them, keyed by `_taggedAttemptText`, and resets the moment the
+     * text changes (a new attempt) or every recipient has succeeded.
+     *
+     * Single-flight (#1576 I-Gate Round 3 C2): a call arriving while one is
+     * already in progress on this control instance is refused with
+     * `MEDUSA_SEND_IN_FLIGHT` before touching the roster or posting
+     * anything — never queued, coalesced, or allowed to race the first.
+     *
+     * @param {string} text - The operator's typed text, `@tag`s and all.
+     * @returns {Promise<{ok: boolean, code?: string, unresolved?: string[],
+     *   ambiguous?: {tag: string, candidates: string[]}[],
+     *   reason?: (string|null), results?: {recipient: object, ok: boolean,
+     *   status?: string, error?: (string|null)}[]}>}
+     */
+    async function sendTaggedMessage(text) {
+      if (_taggedSendInFlight) {
+        return { ok: false, code: 'MEDUSA_SEND_IN_FLIGHT' };
+      }
+      _taggedSendInFlight = true;
+      try {
+        const blockedReason = _nicknameSendRefusalReason(m);
+        if (blockedReason) {
+          return { ok: false, code: 'MEDUSA_SEND_BLOCKED', reason: blockedReason };
+        }
+        const data = await deps.api(`${deps.apiBase}/roster`);
+        if (data === null) {
+          return { ok: false, code: 'MEDUSA_ROSTER_FAILED' };
+        }
+        const parsed = tcParseMedusaNicknameTags(text, (data && data.workspaces) || []);
+        if (parsed.ambiguous.length > 0) {
+          return { ok: false, code: 'MEDUSA_NICKNAME_AMBIGUOUS', ambiguous: parsed.ambiguous };
+        }
+        if (parsed.unresolved.length > 0) {
+          return { ok: false, code: 'MEDUSA_NICKNAME_UNRESOLVED', unresolved: parsed.unresolved };
+        }
+        if (parsed.recipients.length === 0) {
+          return { ok: false, code: 'MEDUSA_NICKNAME_REQUIRED' };
+        }
+
+        if (parsed.body !== _taggedAttemptText) {
+          _taggedAttemptText = parsed.body;
+          _taggedAttemptDelivered = new Set();
+        }
+        const apiMutate = deps.apiMutate;
+        const results = [];
+        for (const recipient of parsed.recipients) {
+          if (_taggedAttemptDelivered.has(recipient.workspaceId)) {
+            results.push({ recipient, ok: true, status: 'already-delivered' });
+            continue;
+          }
+          // eslint-disable-next-line no-await-in-loop -- each send's outcome
+          // drives the NEXT one's outbound-head flow label; nothing here is
+          // parallelizable without losing that per-recipient feedback.
+          const result = await apiMutate(`${deps.apiBase}/send`, 'POST', { to: recipient.workspaceId, message: parsed.body });
+          if (result && result.status) {
+            flowOutbound(recipient.name || recipient.workspaceId, result.status);
+            _taggedAttemptDelivered.add(recipient.workspaceId);
+            results.push({ recipient, ok: true, status: result.status });
+          } else {
+            results.push({ recipient, ok: false, error: (deps.api && deps.api.lastError) || null });
+          }
+        }
+        const allOk = results.every((r) => r.ok);
+        // The attempt is over once nothing is left to retry — clear the
+        // tracking so the NEXT distinct message starts with a clean slate
+        // rather than accumulating forever.
+        if (allOk) { _taggedAttemptText = null; _taggedAttemptDelivered = new Set(); }
+        return { ok: allOk, results };
+      } finally {
+        _taggedSendInFlight = false;
+      }
+    }
+
+    /**
+     * One honest sentence for a `sendTaggedMessage` refusal (#1576) — the
+     * nickname-compose row's own inline error, distinct from the server
+     * prose `api.lastError` already carries for every OTHER send path here.
+     * @param {Awaited<ReturnType<typeof sendTaggedMessage>>} result - A refused result.
+     * @returns {string}
+     */
+    function _nicknameRefusalText(result) {
+      if (result.code === 'MEDUSA_SEND_IN_FLIGHT') return 'Already sending — wait for that to finish first.';
+      if (result.code === 'MEDUSA_NICKNAME_REQUIRED') return 'Tag at least one @nickname to send to.';
+      if (result.code === 'MEDUSA_NICKNAME_AMBIGUOUS') {
+        return `More than one match for: ${result.ambiguous.map((a) => `@${a.tag}`).join(', ')} — use the full workspace id.`;
+      }
+      if (result.code === 'MEDUSA_NICKNAME_UNRESOLVED') {
+        return `Couldn't match: ${result.unresolved.map((t) => `@${t}`).join(', ')}`;
+      }
+      if (result.code === 'MEDUSA_SEND_BLOCKED') return result.reason || 'Sending is disabled at this access level.';
+      if (result.code === 'MEDUSA_ROSTER_FAILED') return `Couldn't load the roster: ${deps.api.lastError || 'the message bridge is unreachable'}`;
+      const failed = (result.results || []).filter((r) => !r.ok);
+      if (failed.length) return `Couldn't reach ${failed.map((r) => r.recipient.name || r.recipient.workspaceId).join(', ')}.`;
+      return 'Could not send.';
+    }
+
+    /**
+     * Drive the nickname-compose row's Send (click or Enter): read the input,
+     * call `sendTaggedMessage`, and surface the honest outcome inline —
+     * clearing the field only on full success, exactly as the loop modal's
+     * own error handling never silently discards a failed attempt's text.
+     * @param {object} panelEl - The currently-open inbox panel.
+     * @returns {Promise<void>}
+     */
+    async function _submitTaggedMessage(panelEl) {
+      const input = panelEl.querySelector('.medusa-nickname-input');
+      const errorEl = panelEl.querySelector('.medusa-nickname-error');
+      if (!input) return;
+      // #1576 I-Gate Round 4 C2: captured BEFORE the await, not read again
+      // after — the composer stays editable while this call is pending, so
+      // the operator can type a genuinely NEW draft (and even get refused
+      // with MEDUSA_SEND_IN_FLIGHT from a second submit) before this one
+      // finishes. `input.value` by then may no longer be what THIS call sent.
+      const submittedText = input.value;
+      if (errorEl) { errorEl.hidden = true; errorEl.textContent = ''; }
+      const result = await sendTaggedMessage(submittedText);
+      if (result.ok) {
+        // This attempt succeeded — any error on screen is stale, whether it
+        // was this call's own (there was none) or a concurrent second
+        // submit's MEDUSA_SEND_IN_FLIGHT (there is nothing in flight once
+        // this resolves). Clear it either way.
+        if (errorEl) { errorEl.hidden = true; errorEl.textContent = ''; }
+        // Only clear the field if the operator has not since typed a new
+        // draft over the text THIS call actually sent — never erase work
+        // in progress that this result says nothing about.
+        if (input.value === submittedText) input.value = '';
+      } else if (errorEl) {
+        errorEl.textContent = _nicknameRefusalText(result);
+        errorEl.hidden = false;
+      }
+    }
+
+    /**
      * Bind the control's handlers once: heads = toggle, hover = peers, badge =
      * inbox, the panel's delegated ✕ (its innerHTML re-renders on each open),
      * Escape, and outside-click dismissal. Idempotent on BINDING, like the
@@ -4061,7 +4359,19 @@
       if (panel) {
         panel.addEventListener('click', (e) => {
           const t = e.target;
-          if (t && typeof t.closest === 'function' && t.closest('.medusa-panel-close')) closeInbox();
+          if (t && typeof t.closest === 'function' && t.closest('.medusa-panel-close')) { closeInbox(); return; }
+          if (t && typeof t.closest === 'function' && t.closest('.medusa-nickname-send')) _submitTaggedMessage(panel);
+        });
+        // Enter sends, the same affordance a chat compose box always offers —
+        // without it the row would be mouse-only despite looking like a
+        // normal text input.
+        panel.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter') return;
+          const t = e.target;
+          if (t && typeof t.closest === 'function' && t.closest('.medusa-nickname-input')) {
+            e.preventDefault();
+            _submitTaggedMessage(panel);
+          }
         });
       }
       if (doc && typeof doc.addEventListener === 'function') {
@@ -4081,7 +4391,12 @@
 
     return {
       state: m, mount, render, poll, applyStatus, toggle, openInbox, closeInbox,
-      showPeers, hidePeers, flowInbound, flowOutbound, stateLabel, helpText, renderMessages
+      showPeers, hidePeers, flowInbound, flowOutbound, stateLabel, helpText, renderMessages, sendTaggedMessage,
+      // Exposed for the same reason `sendTaggedMessage` is (#1576 I-Gate
+      // Round 4): a test drives the UI-glue function directly — the
+      // held-request/edit/second-submit sequence this fixes needs to
+      // exercise the DOM-reading/writing half, not just the send itself.
+      _submitTaggedMessage
     };
   }
 
@@ -4104,6 +4419,22 @@
    * @param {string} p - Id prefix, unique per surface.
    * @returns {string} The bar's inner HTML.
    */
+
+  /**
+   * The Master bar's loop affordances (#1083) — `public/medusa-loops-ui.js`'s
+   * markup, guarded: that file loads right after this one on every real page,
+   * but a test that lifts `api-helper.js` alone (`test/_api-helper-globals.js`)
+   * never loads it, and this function must not throw there.
+   * @param {ReturnType<typeof tcMedusaIds>} ids - The host's id set.
+   * @returns {string} HTML, or '' when the loops component is not loaded.
+   */
+  function _masterMedusaLoopsMarkup(ids) {
+    if (typeof global.tcMedusaLoopsControlMarkup !== 'function' || typeof global.tcMedusaLoopModalMarkup !== 'function') {
+      return '';
+    }
+    return global.tcMedusaLoopsControlMarkup(ids, 'the Master') + global.tcMedusaLoopModalMarkup(ids, 'a Master loop');
+  }
+
   function tcMasterControlBarMarkup(p) {
     // The access toggle is REAL BUTTONS, not spans with a click handler.
     // Buttons are keyboard-operable, focusable and announced as pressable for
@@ -4136,7 +4467,7 @@
       <span class="master-dot" id="${p}Dot" aria-hidden="true"></span>
       <span class="master-status-text" id="${p}StatusText"></span>
       <span class="master-bar-model" id="${p}Model" hidden></span>
-      ${tcMedusaControlMarkup(tcMedusaIds(p))}
+      ${tcMedusaControlMarkup(tcMedusaIds(p))}${_masterMedusaLoopsMarkup(tcMedusaIds(p))}
       <button class="btn btn-small hidden" id="${p}RetryBtn">Retry</button>
       <span class="master-bar-spacer"></span>
       <span class="master-bar-enforcement" id="${p}Enforce" hidden></span>
@@ -4214,14 +4545,62 @@
     // so the bar's one status fetch feeds it; its own poll is never started
     // here — this bar has no tick of its own, and the drawer's host poll calls
     // `loadAccess()` while the drawer is open.
+    // Forward-declared: `medusa`'s own hooks (below) call into `medusaLoops`,
+    // and `medusaLoops` (below `medusa`) calls back into `medusa.render()` —
+    // safe because neither reference is read until a later render/mutation,
+    // by which point both are assigned.
+    let medusaLoops = null;
     const medusa = tcCreateMedusaControl({
       doc,
       api: deps.api,
+      apiMutate: deps.apiMutate,
       esc: deps.esc,
       apiBase: '/api/master/medusa',
       ids: tcMedusaIds(p),
-      subject: 'the Master'
+      subject: 'the Master',
+      hooks: {
+        onRender: (st) => { if (medusaLoops) medusaLoops.onControlRender(st); },
+        onOpenInbox: () => { if (medusaLoops) medusaLoops.closeModal(); }
+      }
     });
+
+    // The Master's loop UI (#1083) — the sibling `tcCreateMedusaLoops`
+    // component (public/medusa-loops-ui.js), sharing `medusa.state` so both
+    // read the SAME `loops`/`loopsError`/`outbound`/`messageLimitBytes` fields
+    // `setMedusa`'s `applyStatus()` call already keeps current on every status
+    // payload — no new fetch, no new field. Guarded the same way
+    // `_masterMedusaLoopsMarkup` is: a test that lifts this file alone never
+    // loads the sibling.
+    //
+    // Toast: the Master bar has no toast surface of its own, only the standing
+    // error/warning lines `setError`/`setWarning` already paint — a success
+    // outcome (e.g. "Loop opened with X") has nowhere equivalent to go and is
+    // not invented here; only a failure routes to `setError`.
+    if (typeof global.tcCreateMedusaLoops === 'function') {
+      medusaLoops = global.tcCreateMedusaLoops({
+        doc,
+        api: deps.api,
+        apiMutate: deps.apiMutate,
+        esc: deps.esc,
+        confirm: deps.confirm,
+        apiBase: '/api/master/medusa',
+        ids: tcMedusaIds(p),
+        state: medusa.state,
+        renderControl: () => medusa.render(),
+        toast: (msg, isError) => { if (isError) setError(msg); },
+        // Ruling A505-R2.6 (#1083): the Master's autonomous mode gets a
+        // tighter round cap than a session's (fleet-wide loops stay tightly
+        // bounded in turn count) with a longer wall clock (room for a
+        // multi-hop coordinator exchange). `tcCreateMedusaLoops` merges this
+        // onto the session defaults per-field, so supervised and the
+        // autonomous hint are untouched.
+        guardPresets: { autonomous: { maxRounds: 6, maxMinutes: 15 } },
+        hooks: {
+          onOpenModal: () => { medusa.closeInbox(); medusa.hidePeers(); },
+          onOpenPanel: () => { medusa.closeInbox(); medusa.hidePeers(); }
+        }
+      });
+    }
 
     /**
      * Render into the root, and bind once.
@@ -4280,6 +4659,7 @@
         else popoutBtn.addEventListener('click', openPopout);
       }
       medusa.mount();
+      if (medusaLoops) medusaLoops.mount();
       // Establish the resting state in CODE rather than leaning on the markup's
       // attributes. The component then owns its own initial appearance, which
       // means one source for "what does this say before anything answers"
@@ -6170,6 +6550,7 @@
   global.tcFetchMedusaExchanges = tcFetchMedusaExchanges;
   global.tcMedusaControlMarkup = tcMedusaControlMarkup;
   global.tcEscapeHtml = tcEscapeHtml;
+  global.tcParseMedusaNicknameTags = tcParseMedusaNicknameTags;
   global.tcCreateMedusaControl = tcCreateMedusaControl;
   global.tcCreateChimeControl = tcCreateChimeControl;
   global.tcSettingsWarningsMarkup = tcSettingsWarningsMarkup;
