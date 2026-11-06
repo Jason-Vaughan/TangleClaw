@@ -152,7 +152,7 @@ describe('Medusa control (MED-2K9P Chunk 02; shared component since #996)', () =
     it('wires the close button (delegated) and Escape to close the panel', () => {
       const body = componentFn('mount');
       // Delegated because the panel innerHTML is re-rendered on each open.
-      assert.match(body, /\.medusa-panel-close'\)\)\s*closeInbox\(\)/);
+      assert.match(body, /\.medusa-panel-close'\)\)\s*\{?\s*closeInbox\(\)/);
       // Escape closes the open panel.
       assert.match(body, /e\.key !== 'Escape'/);
       assert.match(body, /!p\.hidden\)\s*closeInbox\(\)/);
@@ -305,6 +305,18 @@ describe('Medusa control (MED-2K9P Chunk 02; shared component since #996)', () =
         assert.doesNotMatch(loopsFn(name), /setInterval\(|setTimeout\(/, `${name} must not start a timer`);
       }
       assert.doesNotMatch(fnBody('flowMedusaOutbound'), /setInterval\(|setTimeout\(/, 'flowMedusaOutbound must not start a timer');
+    });
+  });
+
+  // Ruling A505-R2.6 — the Master's ratified autonomous guard preset (#1083
+  // I-Gate Round 1 C2: "the required decision" must actually be wired, not
+  // just an override seam left empty).
+  describe('Master autonomous guard preset is wired (Ruling A505-R2.6)', () => {
+    it('tcCreateMasterControlBar passes the ratified 6 rounds / 15 minutes into tcCreateMedusaLoops', () => {
+      const start = helper.indexOf('medusaLoops = global.tcCreateMedusaLoops({');
+      assert.ok(start >= 0, 'the Master bar must construct the loops component');
+      const body = helper.slice(start, helper.indexOf('\n      });', start));
+      assert.match(body, /guardPresets:\s*\{\s*autonomous:\s*\{\s*maxRounds:\s*6,\s*maxMinutes:\s*15\s*\}\s*\}/);
     });
   });
 });

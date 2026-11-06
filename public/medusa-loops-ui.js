@@ -38,25 +38,44 @@
 
   /**
    * Per-mode wall-clock guard presets (MED-6V3R). Shared by every host this
-   * component mounts on. #1083's own issue names "decide Master-specific
-   * guard presets... before shipping autonomous mode from the Master" as an
-   * open product decision — deliberately NOT resolved here (that would be
-   * inventing a requirement no Ruling asked for); `deps.guardPresets` is the
-   * override seam a future car can use once that decision is made. Keep in
-   * sync with `DEFAULT_WALL_SECONDS` in `lib/medusa.js`, which serves API
-   * callers that omit the guard; this modal always sends an explicit value.
-   * @type {{supervised: {minutes: number, hint: string}, autonomous: {minutes: number, hint: string}}}
+   * component mounts on. Ratified for the Master by Ruling A505-R2.6 (#1083):
+   * `deps.guardPresets` is a PARTIAL per-mode override, merged onto these
+   * session defaults field-by-field (`_mergeGuardPresets`) — a host overriding
+   * only `autonomous` never loses `supervised`, or `autonomous`'s own `hint`
+   * if it only overrides the numbers. Keep `maxMinutes` in sync with
+   * `DEFAULT_WALL_SECONDS` in `lib/medusa.js`, which serves API callers that
+   * omit the guard; this modal always sends an explicit value.
+   * @type {{supervised: {maxRounds: number, maxMinutes: number, hint: string},
+   *   autonomous: {maxRounds: number, maxMinutes: number, hint: string}}}
    */
   const MEDUSA_LOOP_GUARD_PRESETS = {
     supervised: {
-      minutes: 480,
+      maxRounds: 10,
+      maxMinutes: 480,
       hint: 'Supervised: rounds only advance when you send, so this drops the loop if you never respond — it is not runaway protection. Max rounds is.'
     },
     autonomous: {
-      minutes: 10,
+      maxRounds: 10,
+      maxMinutes: 10,
       hint: 'Autonomous: agents drive every round unattended, so this bounds their work. The clock starts on first delivery and never pauses.'
     }
   };
+
+  /**
+   * Merge a host's partial `guardPresets` override onto the session defaults,
+   * per mode, per field — so overriding only `autonomous.maxRounds` (Ruling
+   * A505-R2.6's Master preset) never silently drops `autonomous.maxMinutes`
+   * or `autonomous.hint`, nor touches `supervised` at all.
+   * @param {object} [override] - `deps.guardPresets`, or undefined.
+   * @returns {typeof MEDUSA_LOOP_GUARD_PRESETS}
+   */
+  function _mergeGuardPresets(override) {
+    if (!override) return MEDUSA_LOOP_GUARD_PRESETS;
+    return {
+      supervised: Object.assign({}, MEDUSA_LOOP_GUARD_PRESETS.supervised, override.supervised),
+      autonomous: Object.assign({}, MEDUSA_LOOP_GUARD_PRESETS.autonomous, override.autonomous)
+    };
+  }
 
   /**
    * The loop UI's element ids for one host, built on `tcMedusaIds` (the base
@@ -216,7 +235,7 @@
     const toast = deps.toast || (() => {});
     const flowOutbound = deps.flowOutbound || (() => {});
     const confirmFn = deps.confirm || ((msg) => global.confirm(msg));
-    const guardPresets = deps.guardPresets || MEDUSA_LOOP_GUARD_PRESETS;
+    const guardPresets = _mergeGuardPresets(deps.guardPresets);
     const hooks = deps.hooks || {};
     const m = deps.state || {};
     if (m.loops === undefined) m.loops = [];
@@ -225,6 +244,7 @@
 
     let bound = false;
     let minutesDirty = false;
+    let roundsDirty = false;
     const expandedTranscripts = new Set();
     const expandedFeedback = new Set();
     const feedbackDrafts = new Map();
@@ -249,10 +269,12 @@
     function syncGuardMode() {
       const mode = el('mode');
       const minutes = el('maxMinutes');
+      const rounds = el('maxRounds');
       const hint = el('guardHint');
       const preset = guardPresets[mode && mode.value] || guardPresets.supervised;
       if (hint) hint.textContent = preset.hint;
-      if (minutes && !minutesDirty) minutes.value = String(preset.minutes);
+      if (minutes && !minutesDirty) minutes.value = String(preset.maxMinutes);
+      if (rounds && !roundsDirty) rounds.value = String(preset.maxRounds);
     }
 
     /**
@@ -547,15 +569,25 @@
         const label = stateLabel(loop);
         const expanded = expandedTranscripts.has(loop.id);
 
-        const canJudge = loop.role === 'initiator' && loop.state === 'responded';
+        // #1083 I-Gate Round 1 C2: a read-only Master's own outbound.allowed
+        // gates these row MUTATIONS the same way it already gates the launch
+        // button (`canLaunch`) — the three Master routes behind them all call
+        // `outboundRefused` and would deterministically 403. Transcript stays
+        // available either way: it is read-only, never a send.
+        const outboundBlocked = !!(m.outbound && m.outbound.allowed === false);
+        const canJudge = !outboundBlocked && loop.role === 'initiator' && loop.state === 'responded';
         const feedbackOpen = expandedFeedback.has(loop.id);
         let actions = '';
         if (live && loop.role === 'initiator') {
-          if (canJudge) {
-            actions += `<button type="button" class="medusa-loop-continue" data-loop-id="${escFn(loop.id)}" aria-expanded="${feedbackOpen ? 'true' : 'false'}">Send feedback</button>`;
-            actions += `<button type="button" class="medusa-loop-closeout" data-loop-id="${escFn(loop.id)}">Mark done</button>`;
+          if (outboundBlocked) {
+            actions += `<span class="medusa-loop-note">${escFn(m.outbound.reason || 'sending is disabled at this access level')}</span>`;
+          } else {
+            if (canJudge) {
+              actions += `<button type="button" class="medusa-loop-continue" data-loop-id="${escFn(loop.id)}" aria-expanded="${feedbackOpen ? 'true' : 'false'}">Send feedback</button>`;
+              actions += `<button type="button" class="medusa-loop-closeout" data-loop-id="${escFn(loop.id)}">Mark done</button>`;
+            }
+            actions += `<button type="button" class="medusa-force-done" data-loop-id="${escFn(loop.id)}">Force-done</button>`;
           }
-          actions += `<button type="button" class="medusa-force-done" data-loop-id="${escFn(loop.id)}">Force-done</button>`;
         } else if (loop.state === 'halted') {
           actions += '<span class="medusa-loop-note">guard-halted — cannot be closed</span>';
         }
@@ -760,6 +792,8 @@
       }
       const maxMinutes = el('maxMinutes');
       if (maxMinutes) maxMinutes.addEventListener('input', () => { minutesDirty = true; });
+      const maxRounds = el('maxRounds');
+      if (maxRounds) maxRounds.addEventListener('input', () => { roundsDirty = true; });
       const chip = el('loopsChip');
       if (chip) chip.addEventListener('click', openPanel);
       const panel = el('loopsPanel');

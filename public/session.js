@@ -1694,6 +1694,7 @@ let medusaLoops = null;
 const medusaControl = window.tcCreateMedusaControl({
   doc: document,
   api,
+  apiMutate,
   esc,
   apiBase: `/api/sessions/${encodeURIComponent(projectName)}/medusa`,
   ids: window.tcMedusaIds(''),
