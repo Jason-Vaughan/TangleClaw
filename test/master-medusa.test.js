@@ -25,6 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const loadApiHelperGlobals = require('./_api-helper-globals');
 const http = require('node:http');
 const { setLevel } = require('../lib/logger');
 
@@ -1183,6 +1184,72 @@ describe('Orchestrator role terminology — vocabulary contract and inventory (#
       assert.deepEqual(
         masterContinuity.evaluateContinuityHealth({ remainingPercent: 90 }, { enabled: true }).roleTerminology, EXPECTED
       );
+    });
+  });
+
+  describe('Team Chat @orchestrator / @master routing (public/api-helper.js, Ruling A505-R3.6/R3.7)', () => {
+    const MASTER_ENTRY = { id: 'project-master-abc12345', name: 'Project Master' };
+    const PROJECT_ENTRY = { id: 'tc-lane-pm-9d85f3aa', name: 'TC-Lane-PM' };
+
+    function helper() {
+      return loadApiHelperGlobals();
+    }
+
+    /**
+     * `tcParseMedusaNicknameTags` runs inside a `vm` sandbox (a separate
+     * realm from this test file), so the plain objects it RETURNS have a
+     * different `Object.prototype` than a literal written here — `assert
+     * .deepEqual` (strict mode) treats that as a structural mismatch even
+     * when every own-enumerable field matches. Round-tripping through JSON
+     * normalizes the result into THIS realm's plain objects before
+     * comparing, which the pure string-only recipients/unresolved shape
+     * tolerates losslessly.
+     * @param {object} result - `tcParseMedusaNicknameTags`'s return value.
+     * @returns {object}
+     */
+    function norm(result) {
+      return JSON.parse(JSON.stringify(result));
+    }
+
+    it('resolves @orchestrator (canonical) to the Master/Orchestrator roster entry', () => {
+      const result = norm(helper().tcParseMedusaNicknameTags('@orchestrator please look', [MASTER_ENTRY, PROJECT_ENTRY]));
+      assert.deepEqual(result.recipients, [{ tag: 'orchestrator', workspaceId: MASTER_ENTRY.id, name: MASTER_ENTRY.name }]);
+      assert.deepEqual(result.unresolved, []);
+    });
+
+    it('resolves @master (deprecated alias) to the same Master/Orchestrator roster entry', () => {
+      const result = norm(helper().tcParseMedusaNicknameTags('@master please look', [MASTER_ENTRY, PROJECT_ENTRY]));
+      assert.deepEqual(result.recipients, [{ tag: 'master', workspaceId: MASTER_ENTRY.id, name: MASTER_ENTRY.name }]);
+    });
+
+    it('resolves @project-master (deprecated alias) to the same Master/Orchestrator roster entry', () => {
+      const result = norm(helper().tcParseMedusaNicknameTags('@project-master please look', [MASTER_ENTRY, PROJECT_ENTRY]));
+      assert.deepEqual(result.recipients, [{ tag: 'project-master', workspaceId: MASTER_ENTRY.id, name: MASTER_ENTRY.name }]);
+    });
+
+    it('also matches a future canonical "Orchestrator" display name / "orchestrator-" workspace id', () => {
+      const orchestratorEntry = { id: 'orchestrator-deadbeef', name: 'Orchestrator' };
+      const r1 = norm(helper().tcParseMedusaNicknameTags('@orchestrator', [orchestratorEntry]));
+      assert.deepEqual(r1.recipients, [{ tag: 'orchestrator', workspaceId: orchestratorEntry.id, name: 'Orchestrator' }]);
+      const r2 = norm(helper().tcParseMedusaNicknameTags('@master', [{ id: 'some-id', name: 'anything', isMaster: true }]));
+      assert.equal(r2.recipients[0].workspaceId, 'some-id');
+    });
+
+    it('leaves @orchestrator/@master unresolved when no roster entry is the Master', () => {
+      const result = norm(helper().tcParseMedusaNicknameTags('@orchestrator @master', [PROJECT_ENTRY]));
+      assert.deepEqual(result.recipients, []);
+      assert.deepEqual(result.unresolved.sort(), ['master', 'orchestrator']);
+    });
+
+    it('a REAL project or workspace already matching the token wins over the Master/Orchestrator fallback', () => {
+      const realProjectNamedMaster = { id: 'proj-master-real', name: 'master' };
+      const result = norm(helper().tcParseMedusaNicknameTags('@master', [realProjectNamedMaster, MASTER_ENTRY]));
+      assert.deepEqual(result.recipients, [{ tag: 'master', workspaceId: realProjectNamedMaster.id, name: 'master' }]);
+    });
+
+    it('does not disturb resolution of an ordinary, unrelated nickname', () => {
+      const result = norm(helper().tcParseMedusaNicknameTags('@pm hi', [MASTER_ENTRY, PROJECT_ENTRY]));
+      assert.deepEqual(result.recipients, [{ tag: 'pm', workspaceId: PROJECT_ENTRY.id, name: PROJECT_ENTRY.name }]);
     });
   });
 });

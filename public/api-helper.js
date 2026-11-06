@@ -3573,6 +3573,36 @@
    * live roster actually names without this file knowing the fleet's roster. */
   const MEDUSA_WORKSPACE_ALIAS_RE = /^tc-lane-(.+)-[0-9a-f]{8}$/i;
 
+  /** @type {Set<string>} #2127 — the canonical `@orchestrator` tag and its
+   * deprecated compatibility spellings, lowercased. A browser-side mirror
+   * of `lib/master.js`'s `ORCHESTRATOR_CANONICAL_KEY`/`ORCHESTRATOR_LEGACY_KEY`
+   * (this file has no `require()` of server modules), kept narrow — only
+   * these three tokens ever reach the Master/Orchestrator fallback below;
+   * every other token keeps its existing name/alias-only resolution. */
+  const ORCHESTRATOR_NICKNAME_TOKENS = new Set(['orchestrator', 'master', 'project-master']);
+
+  /**
+   * Whether a roster entry IS the Master/Orchestrator session (#2127).
+   * `isMaster === true` is forward-looking — no roster entry sets it today,
+   * since `/workspaces` proxies the Bridge's own shape unchanged — so the
+   * two conditions that actually fire are the display name
+   * (`MASTER_MEDUSA_NAME`, `'Project Master'`, still minted today; or its
+   * eventual canonical rename, `'Orchestrator'`) and the workspace id
+   * prefix TangleClaw mints it under (`lib/master.js#MASTER_MEDUSA_KEY`
+   * mints `project-master-<8 hex>`; `orchestrator-` is the eventual
+   * canonical prefix, not yet minted).
+   * @param {object} w - One roster entry.
+   * @returns {boolean}
+   */
+  function _isMasterOrOrchestratorEntry(w) {
+    if (!w || !w.id) return false;
+    if (w.isMaster === true) return true;
+    const name = typeof w.name === 'string' ? w.name.toLowerCase() : '';
+    if (name === 'project master' || name === 'orchestrator') return true;
+    const id = String(w.id);
+    return id.startsWith('project-master-') || id.startsWith('orchestrator-');
+  }
+
   /**
    * Resolve one `@token` against the roster: by `workspaceId`, `name`, or
    * short alias (case-insensitive). An exact, full `workspaceId` match is
@@ -3581,6 +3611,13 @@
    * or alias — only name/alias matches can collide (#1576 I-Gate Round 2
    * C2: an offline stale workspace and its live replacement can easily
    * share both).
+   *
+   * `@orchestrator` (canonical) and `@master`/`@project-master` (deprecated
+   * compatibility aliases, #2127 Ruling A505-R3.6/R3.7) fall through to the
+   * Master/Orchestrator roster entry ONLY when nothing else already
+   * matched — a real project happening to be named "master" still wins,
+   * the same precedence an exact workspace-id match already has over a
+   * name/alias one.
    * @param {string} token - The tag text, without its `@`.
    * @param {object[]} roster - `/roster`'s `workspaces` array.
    * @returns {{workspaceId: string, name: string}[]} Every matching entry —
@@ -3603,6 +3640,13 @@
         hit = !!(alias && alias[1].toLowerCase() === lower);
       }
       if (hit) { seen.add(w.id); matches.push({ workspaceId: w.id, name: w.name || w.id }); }
+    }
+    if (matches.length === 0 && ORCHESTRATOR_NICKNAME_TOKENS.has(lower)) {
+      for (const w of roster) {
+        if (w && w.id && !seen.has(w.id) && _isMasterOrOrchestratorEntry(w)) {
+          return [{ workspaceId: w.id, name: w.name || w.id }];
+        }
+      }
     }
     return matches;
   }
