@@ -3471,13 +3471,14 @@
    * the root keep working untouched. Any prefixed host — the Master bar on the
    * dashboard AND in the session drawer, which share a page with the banner —
    * gets `${prefix}Medusa*`, so two controls can never claim one id. Loop ids
-   * are null for a prefixed host: the control renders no loop affordances
-   * there, and a null id makes `el()` answer null rather than find the
-   * banner's.
+   * are real for a prefixed host too (#1083): `public/medusa-loops-ui.js`'s
+   * `tcCreateMedusaLoops` mounts the same loop affordances on the Master bar,
+   * driven by the same `${prefix}Medusa*` scheme so it can never collide with
+   * the banner's.
    * @param {string} [prefix] - Host prefix; empty/omitted = the session banner.
-   * @returns {{control: string, heads: string, badge: string, loop: (string|null),
-   *   loopsChip: (string|null), peers: string, panel: string,
-   *   loopsPanel: (string|null), live: string}}
+   * @returns {{control: string, heads: string, badge: string, loop: string,
+   *   loopsChip: string, peers: string, panel: string,
+   *   loopsPanel: string, live: string}}
    */
   function tcMedusaIds(prefix) {
     if (!prefix) {
@@ -3489,8 +3490,8 @@
     }
     return {
       control: `${prefix}Medusa`, heads: `${prefix}MedusaHeads`, badge: `${prefix}MedusaBadge`,
-      loop: null, loopsChip: null, peers: `${prefix}MedusaPeers`,
-      panel: `${prefix}MedusaPanel`, loopsPanel: null, live: `${prefix}MedusaLive`
+      loop: `${prefix}MedusaLoop`, loopsChip: `${prefix}MedusaLoopsChip`, peers: `${prefix}MedusaPeers`,
+      panel: `${prefix}MedusaPanel`, loopsPanel: `${prefix}MedusaLoopsPanel`, live: `${prefix}MedusaLive`
     };
   }
 
@@ -4104,6 +4105,22 @@
    * @param {string} p - Id prefix, unique per surface.
    * @returns {string} The bar's inner HTML.
    */
+
+  /**
+   * The Master bar's loop affordances (#1083) — `public/medusa-loops-ui.js`'s
+   * markup, guarded: that file loads right after this one on every real page,
+   * but a test that lifts `api-helper.js` alone (`test/_api-helper-globals.js`)
+   * never loads it, and this function must not throw there.
+   * @param {ReturnType<typeof tcMedusaIds>} ids - The host's id set.
+   * @returns {string} HTML, or '' when the loops component is not loaded.
+   */
+  function _masterMedusaLoopsMarkup(ids) {
+    if (typeof global.tcMedusaLoopsControlMarkup !== 'function' || typeof global.tcMedusaLoopModalMarkup !== 'function') {
+      return '';
+    }
+    return global.tcMedusaLoopsControlMarkup(ids, 'the Master') + global.tcMedusaLoopModalMarkup(ids, 'a Master loop');
+  }
+
   function tcMasterControlBarMarkup(p) {
     // The access toggle is REAL BUTTONS, not spans with a click handler.
     // Buttons are keyboard-operable, focusable and announced as pressable for
@@ -4136,7 +4153,7 @@
       <span class="master-dot" id="${p}Dot" aria-hidden="true"></span>
       <span class="master-status-text" id="${p}StatusText"></span>
       <span class="master-bar-model" id="${p}Model" hidden></span>
-      ${tcMedusaControlMarkup(tcMedusaIds(p))}
+      ${tcMedusaControlMarkup(tcMedusaIds(p))}${_masterMedusaLoopsMarkup(tcMedusaIds(p))}
       <button class="btn btn-small hidden" id="${p}RetryBtn">Retry</button>
       <span class="master-bar-spacer"></span>
       <span class="master-bar-enforcement" id="${p}Enforce" hidden></span>
@@ -4214,14 +4231,54 @@
     // so the bar's one status fetch feeds it; its own poll is never started
     // here — this bar has no tick of its own, and the drawer's host poll calls
     // `loadAccess()` while the drawer is open.
+    // Forward-declared: `medusa`'s own hooks (below) call into `medusaLoops`,
+    // and `medusaLoops` (below `medusa`) calls back into `medusa.render()` —
+    // safe because neither reference is read until a later render/mutation,
+    // by which point both are assigned.
+    let medusaLoops = null;
     const medusa = tcCreateMedusaControl({
       doc,
       api: deps.api,
       esc: deps.esc,
       apiBase: '/api/master/medusa',
       ids: tcMedusaIds(p),
-      subject: 'the Master'
+      subject: 'the Master',
+      hooks: {
+        onRender: (st) => { if (medusaLoops) medusaLoops.onControlRender(st); },
+        onOpenInbox: () => { if (medusaLoops) medusaLoops.closeModal(); }
+      }
     });
+
+    // The Master's loop UI (#1083) — the sibling `tcCreateMedusaLoops`
+    // component (public/medusa-loops-ui.js), sharing `medusa.state` so both
+    // read the SAME `loops`/`loopsError`/`outbound`/`messageLimitBytes` fields
+    // `setMedusa`'s `applyStatus()` call already keeps current on every status
+    // payload — no new fetch, no new field. Guarded the same way
+    // `_masterMedusaLoopsMarkup` is: a test that lifts this file alone never
+    // loads the sibling.
+    //
+    // Toast: the Master bar has no toast surface of its own, only the standing
+    // error/warning lines `setError`/`setWarning` already paint — a success
+    // outcome (e.g. "Loop opened with X") has nowhere equivalent to go and is
+    // not invented here; only a failure routes to `setError`.
+    if (typeof global.tcCreateMedusaLoops === 'function') {
+      medusaLoops = global.tcCreateMedusaLoops({
+        doc,
+        api: deps.api,
+        apiMutate: deps.apiMutate,
+        esc: deps.esc,
+        confirm: deps.confirm,
+        apiBase: '/api/master/medusa',
+        ids: tcMedusaIds(p),
+        state: medusa.state,
+        renderControl: () => medusa.render(),
+        toast: (msg, isError) => { if (isError) setError(msg); },
+        hooks: {
+          onOpenModal: () => { medusa.closeInbox(); medusa.hidePeers(); },
+          onOpenPanel: () => { medusa.closeInbox(); medusa.hidePeers(); }
+        }
+      });
+    }
 
     /**
      * Render into the root, and bind once.
@@ -4280,6 +4337,7 @@
         else popoutBtn.addEventListener('click', openPopout);
       }
       medusa.mount();
+      if (medusaLoops) medusaLoops.mount();
       // Establish the resting state in CODE rather than leaning on the markup's
       // attributes. The component then owns its own initial appearance, which
       // means one source for "what does this say before anything answers"

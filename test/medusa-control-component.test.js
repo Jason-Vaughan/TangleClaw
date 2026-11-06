@@ -55,13 +55,16 @@ describe('tcMedusaIds — one id scheme per host, no collisions', () => {
     assert.equal(ids.panel, 'medusaPanel');
     assert.equal(ids.loop, 'medusaLoop');
   });
-  it('a prefixed host gets prefixed ids and NO loop ids', () => {
+  it('a prefixed host gets prefixed ids, including real loop ids (#1083)', () => {
     const ids = G.tcMedusaIds('masterDrawer');
     for (const v of Object.values(ids).filter(Boolean)) assert.ok(v.startsWith('masterDrawer'), v);
     assert.equal(ids.control, 'masterDrawerMedusa', 'the id the bar has always emitted');
-    assert.equal(ids.loop, null);
-    assert.equal(ids.loopsChip, null);
-    assert.equal(ids.loopsPanel, null);
+    // #1083: the Master bar now mounts the loop UI too (`tcCreateMedusaLoops`),
+    // so these three — null before this car, per #996's own deferral comment —
+    // are real, collision-safe ids like every other field here.
+    assert.equal(ids.loop, 'masterDrawerMedusaLoop');
+    assert.equal(ids.loopsChip, 'masterDrawerMedusaLoopsChip');
+    assert.equal(ids.loopsPanel, 'masterDrawerMedusaLoopsPanel');
   });
   it('two hosts on one page share no id', () => {
     const a = new Set(Object.values(G.tcMedusaIds('')).filter(Boolean));
@@ -624,5 +627,250 @@ describe('the live-loop glow must not erase the mark\'s state channel (#556)', (
       classCount(reduced[1]) >= classCount(animated.split('{')[0]),
       `reduced-motion selector (${reduced[1].trim()}) must not be less specific than the rule it suppresses`
     );
+  });
+});
+
+/*
+ * #1083 — the loop setup modal/chip/panel, extracted from `session.js` into
+ * the sibling shared component `public/medusa-loops-ui.js#tcCreateMedusaLoops`
+ * so the Master bar can mount it too. Before this car it was reachable only
+ * from `session.js` — a page script that cannot be require()d (see this
+ * file's own header) — so NONE of what follows existed as automated coverage
+ * previously; it was "tested" only by grepping source, the exact gap #928 R-1
+ * flags as proving nothing about runtime.
+ *
+ * What is pinned:
+ *   1. The id scheme: real, collision-safe ids for a prefixed host (not null
+ *      — the gap #996 deliberately left open, closed here).
+ *   2. Markup: every id the component drives is present, for both subjects.
+ *   3. `canLaunch` gating via `onControlRender`: `outbound.allowed === false`
+ *      (a read-only Master, #1083's own stated requirement) hides the launch
+ *      affordance even while the listener is on — not just the `state === 'off'`
+ *      case the session always had.
+ *   4. The chip's live/ended/error labelling, and escaping of loop/peer text
+ *      the panel renders (cross-session data, same discipline as the base
+ *      control's own inbox panel).
+ *   5. `mount()` binds once; the ➤ button fetches the roster and opens the modal.
+ *   6. `guardPresets` is a real override seam, not a hardcoded value — the
+ *      Master-specific-preset decision #1083's own issue names as open stays
+ *      open; this only pins that a future car has somewhere to put the answer.
+ */
+
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+/**
+ * Lift `api-helper.js` then `medusa-loops-ui.js` into ONE sandbox — the
+ * second file reads `global.tcMedusaIds`/`tcMessageSize`/`tcTooLongText`/
+ * `tcApiFailureText`/`tcEscapeHtml`, all published by the first, exactly the
+ * way they run on a real page (api-helper.js's script tag loads first).
+ * @returns {object} The sandbox, carrying every `tc*` global both files publish.
+ */
+function loadMedusaLoopsGlobals() {
+  const apiHelperSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+  const loopsSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'medusa-loops-ui.js'), 'utf8');
+  const sandbox = { console, setTimeout, clearTimeout };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(apiHelperSrc, sandbox);
+  vm.runInContext(loopsSrc, sandbox);
+  return sandbox;
+}
+
+const L = loadMedusaLoopsGlobals();
+
+/**
+ * A document holding one loops-UI instance's elements, plus a recording
+ * `api`/`apiMutate` a test programs by path. Mirrors this file's own `world()`
+ * above, extended with the modal's form fields and the loop-UI's own default
+ * resting state (`modal` carries no `.open` class until opened; `loopsChip`/
+ * `loopsPanel` start hidden, same as the base control's).
+ * @param {object} ids - From `tcMedusaLoopIds`.
+ * @param {object} [answers] - path (relative to apiBase) → payload, or a function.
+ * @param {object} [mutateAnswers] - `${method} ${path}` → payload, or a function.
+ * @returns {{doc: object, el: object, calls: object[], mutateCalls: object[],
+ *   api: Function, apiMutate: Function}}
+ */
+function loopsWorld(ids, answers = {}, mutateAnswers = {}) {
+  const { doc, ids: el } = makeDocument(Object.values(ids).filter(Boolean));
+  for (const key of ['loop', 'loopsChip', 'loopsPanel']) if (el[ids[key]]) el[ids[key]].hidden = true;
+  // Unlike `hidden`/`innerHTML`, the mini DOM's `makeElement` declares no
+  // default for `.value` — a real browser's form fields are never `undefined`
+  // (`.value` defaults to `''`), so an untouched field here would crash
+  // `payload()`'s `.trim()` the way no real page ever does.
+  for (const key of ['target', 'task', 'done', 'mode', 'maxRounds', 'maxMinutes']) {
+    if (el[ids[key]]) el[ids[key]].value = '';
+  }
+  doc.addEventListener = (type, fn) => { (doc._listeners || (doc._listeners = {}))[type] = fn; };
+  doc.activeElement = null;
+  const calls = [];
+  const api = async (url, opts) => {
+    calls.push({ url, opts: opts || null });
+    const key = url.replace(/^.*\/medusa\//, '');
+    const a = answers[key];
+    return typeof a === 'function' ? a() : (a === undefined ? null : a);
+  };
+  api.lastError = null;
+  const mutateCalls = [];
+  const apiMutate = async (url, method, body) => {
+    mutateCalls.push({ url, method, body });
+    const key = `${method} ${url.replace(/^.*\/medusa\//, '')}`;
+    const a = mutateAnswers[key];
+    return typeof a === 'function' ? a() : (a === undefined ? null : a);
+  };
+  return { doc, el, calls, mutateCalls, api, apiMutate };
+}
+
+describe('tcMedusaLoopIds — combines the base control ids with the modal\'s own', () => {
+  it('the session keeps its historical unprefixed ids', () => {
+    const ids = L.tcMedusaLoopIds('');
+    assert.equal(ids.loop, 'medusaLoop');
+    assert.equal(ids.loopsChip, 'medusaLoopsChip');
+    assert.equal(ids.loopsPanel, 'medusaLoopsPanel');
+    assert.equal(ids.modal, 'medusaLoopModal');
+    assert.equal(ids.target, 'medusaLoopTarget');
+    assert.equal(ids.launchBtn, 'medusaLoopLaunchBtn');
+  });
+  it('a prefixed host gets every field prefixed, colliding with nothing the session uses', () => {
+    const unprefixed = new Set(Object.values(L.tcMedusaLoopIds('')).filter(Boolean));
+    const ids = L.tcMedusaLoopIds('masterDrawer');
+    for (const v of Object.values(ids).filter(Boolean)) {
+      assert.ok(v.startsWith('masterDrawer'), v);
+      assert.ok(!unprefixed.has(v), `${v} collides with the session's own id`);
+    }
+    assert.equal(ids.modal, 'masterDrawerMedusaLoopModal');
+    assert.equal(ids.maxMinutes, 'masterDrawerMedusaLoopMaxMinutes');
+  });
+});
+
+describe('tcMedusaLoopsControlMarkup / tcMedusaLoopModalMarkup', () => {
+  it('the inline markup carries every id the component mounts on', () => {
+    const ids = L.tcMedusaLoopIds('masterPanel');
+    const html = L.tcMedusaLoopsControlMarkup(ids, 'the Master');
+    for (const key of ['loop', 'loopsChip', 'loopsPanel']) {
+      assert.match(html, new RegExp(`id="${ids[key]}"`), `${key} missing`);
+    }
+    assert.match(html, /aria-label="Set up a loop for the Master"/);
+    assert.doesNotMatch(html, /master-bar-pending|aria-disabled/, 'no pending treatment by default');
+  });
+  it('the modal markup carries every form field id, and escapes a subject with markup-looking text', () => {
+    const ids = L.tcMedusaLoopIds('masterDrawer');
+    const html = L.tcMedusaLoopModalMarkup(ids, 'a Master loop');
+    for (const key of ['modal', 'target', 'rosterStatus', 'task', 'done', 'size', 'mode', 'maxRounds', 'maxMinutes', 'guardHint', 'error', 'cancelBtn', 'launchBtn']) {
+      assert.match(html, new RegExp(`id="${ids[key]}"`), `${key} missing`);
+    }
+    assert.match(html, /class="modal-backdrop"/);
+  });
+});
+
+describe('tcCreateMedusaLoops — onControlRender (#1083 outbound.allowed gating)', () => {
+  it('hides the launch affordance when the listener is off, same as before #1083', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.onControlRender({ state: 'off', loops: [] });
+    assert.equal(w.el[ids.loop].hidden, true);
+  });
+  it('shows the launch affordance when listening and outbound is allowed (the default)', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.onControlRender({ state: 'listening', loops: [], outbound: { allowed: true, reason: null } });
+    assert.equal(w.el[ids.loop].hidden, false);
+  });
+  it('hides the launch affordance for a listening-but-outbound-blocked participant (a read-only Master, #1083)', () => {
+    const ids = L.tcMedusaLoopIds('masterDrawer');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/master/medusa', state: {} });
+    loops.onControlRender({ state: 'listening', loops: [], outbound: { allowed: false, reason: 'read-only' } });
+    assert.equal(w.el[ids.loop].hidden, true, 'read-only must not offer a launch that would 403');
+  });
+  it('closing-the-modal side effect: going outbound-blocked while the modal is open closes it', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    w.el[ids.modal].classList.add('open');
+    loops.onControlRender({ state: 'listening', loops: [], outbound: { allowed: false, reason: 'read-only' } });
+    assert.ok(!w.el[ids.modal].classList.contains('open'));
+  });
+});
+
+describe('tcCreateMedusaLoops — renderChip', () => {
+  it('stays hidden with no loops and no error', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.renderChip({ loops: [], loopsError: null });
+    assert.equal(w.el[ids.loopsChip].hidden, true);
+    assert.equal(w.el[ids.control].classList.contains('has-live-loop'), false);
+  });
+  it('shows a round count for one live loop, and flags has-live-loop on the control', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.renderChip({ loops: [{ id: 'l1', state: 'initiated', round: 1, guards: { maxRounds: 10 } }], loopsError: null });
+    assert.equal(w.el[ids.loopsChip].hidden, false);
+    assert.equal(w.el[ids.loopsChip].textContent, '⟳ R1/10');
+    assert.equal(w.el[ids.control].classList.contains('has-live-loop'), true);
+  });
+  it('surfaces a loopsError on the chip without throwing', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.renderChip({ loops: [], loopsError: 'bridge down' });
+    assert.equal(w.el[ids.loopsChip].hidden, false);
+    assert.match(w.el[ids.loopsChip].getAttribute('aria-label'), /bridge down/);
+  });
+});
+
+describe('tcCreateMedusaLoops — mount() binds once; the ➤ button fetches the roster', () => {
+  it('opening the modal fetches the roster and populates the target picker', async () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids, { roster: { workspaces: [{ id: 'live-ws', name: 'Live', connected: true }] } });
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.mount();
+    const fired = w.el[ids.loop].dispatch('click');
+    assert.ok(fired);
+    // The fetch is awaited inside the click handler's own async function, not
+    // by this dispatch — give it a tick to resolve before asserting.
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(w.el[ids.modal].classList.contains('open'), true);
+    assert.match(w.el[ids.target].innerHTML, /Live/);
+    assert.equal(w.calls[0].url, '/api/sessions/p/medusa/roster');
+  });
+  it('a second mount() does not double-bind (two clicks, not a double roster fetch per click)', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids, { roster: { workspaces: [] } });
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.mount();
+    loops.mount();
+    w.el[ids.loop].dispatch('click');
+    assert.equal(w.calls.length, 1, 'one bind, one fetch per click');
+  });
+});
+
+describe('tcCreateMedusaLoops — guardPresets is a real override seam (#1083)', () => {
+  it('defaults to the session\'s historical presets', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.mount();
+    w.el[ids.mode].value = 'autonomous';
+    w.el[ids.mode].dispatch('change');
+    assert.equal(w.el[ids.maxMinutes].value, String(L.tcMedusaLoopGuardPresets.autonomous.minutes));
+  });
+  it('an injected guardPresets overrides the default, for a host that has decided its own', () => {
+    const ids = L.tcMedusaLoopIds('masterDrawer');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({
+      doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/master/medusa', state: {},
+      guardPresets: { supervised: { minutes: 5, hint: 'master-specific' }, autonomous: { minutes: 1, hint: 'master-specific' } }
+    });
+    loops.mount();
+    w.el[ids.mode].dispatch('change');
+    assert.equal(w.el[ids.maxMinutes].value, '5');
+    assert.equal(w.el[ids.guardHint].textContent, 'master-specific');
   });
 });
