@@ -1031,6 +1031,36 @@
   }
 
   /**
+   * Render, or clear, the docs-parity dismissal control (#533, I-Gate R1
+   * Round 2, #2886). The banner's own `detail` text ({@link _appendDocsParityNote})
+   * says a signal fired; this is the actual action — a reason input and a
+   * "Dismiss, with reason" button, visible only while the signal is fired.
+   * Pure render: `session.js` owns the button's click handler (the fetch to
+   * `POST .../docs-parity/dismiss` and the re-probe), the same split
+   * {@link composeReleaseBanner} and `paintWrapStatus` already draw.
+   * @param {object} container - The `#wrapDrawerDocsParity` host.
+   * @param {{signal?: boolean, reason?: string}|null} docsParity - From `GET /wrap/pr-status`.
+   * @param {Function} esc - HTML-escaping function.
+   * @returns {boolean} Whether the control is now shown (so the caller knows whether to bind it).
+   */
+  function renderDocsParityControl(container, docsParity, esc) {
+    if (!container) return false;
+    if (!docsParity || docsParity.signal !== true) {
+      container.classList.add('hidden');
+      container.innerHTML = '';
+      return false;
+    }
+    container.classList.remove('hidden');
+    container.innerHTML = `
+      <span class="wrap-drawer-docs-parity-text">${esc(docsParity.reason || 'This wrap touches a user-facing file with no docs update.')}</span>
+      <input type="text" class="wrap-drawer-docs-parity-reason" id="wrapDrawerDocsParityReason"
+             placeholder="Reason this doesn't need a docs update">
+      <button type="button" class="btn btn-small" id="wrapDrawerDocsParityDismissBtn">Dismiss, with reason</button>
+      <span class="wrap-drawer-docs-parity-error hidden" id="wrapDrawerDocsParityError" role="alert"></span>`;
+    return true;
+  }
+
+  /**
    * {@link composeReleaseBanner}'s own release/pipeline-status composition,
    * unchanged from before #2886 -- split out so the docs-parity note above
    * can wrap every exit path in one place instead of four.
@@ -2462,6 +2492,7 @@
     wrapPrInfo,
     prOutcomeBanner,
     composeReleaseBanner,
+    renderDocsParityControl,
     handoffPublicationNote,
     summarizeSkips,
     decisionWidgetForBlockedStep,

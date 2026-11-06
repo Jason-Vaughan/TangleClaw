@@ -250,5 +250,34 @@ describe('api GET /wrap/pr-status (#638)', () => {
       assert.match(editedBody, /Original PR description\./);
       assert.match(editedBody, /Docs: none operator-verified, no user-facing change/);
     });
+
+    it('normalizes a reason with a leading newline to one line, so the escape line is never blank (I-Gate R1 Round 2)', async () => {
+      let editedBody = null;
+      wrapRoutes._internal.execGh = async (args) => {
+        if (args[1] === 'view') {
+          return { exitCode: 0, stdout: JSON.stringify({ files: [{ path: 'server.js' }], body: 'Original PR description.' }), stderr: '' };
+        }
+        const bodyFlagIndex = args.indexOf('--body');
+        editedBody = args[bodyFlagIndex + 1];
+        return { exitCode: 0, stdout: '', stderr: '' };
+      };
+      const res = await sendAs(server, 'POST', '/api/sessions/prstatus-test/wrap/docs-parity/dismiss',
+        { url: '7', reason: '\nWhy docs do not apply' }, operatorHeaders(server));
+      assert.equal(res.status, 200);
+      assert.equal(res.data.dismissed, true);
+      assert.equal(res.data.dismissedReason, 'Why docs do not apply');
+      // The whole trailer must be on ONE line: ESCAPE_LINE_RE is single-line
+      // (`[^\n]*`), so a reason that split across two lines would leave the
+      // first line reading "Docs: none " -- blank once trimmed, and
+      // evaluate() would signal again on the very next probe.
+      assert.match(editedBody, /^Docs: none Why docs do not apply$/m);
+      assert.doesNotMatch(editedBody, /^Docs: none \s*$/m);
+
+      // Prove it on the real function, not just this route: re-evaluating
+      // the exact body this dismissal wrote must read signal: false.
+      const docsParityGate = require('../lib/docs-parity-gate');
+      const verdict = docsParityGate.evaluate(['server.js'], editedBody);
+      assert.equal(verdict.signal, false);
+    });
   });
 });

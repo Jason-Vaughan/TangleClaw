@@ -5319,6 +5319,50 @@ async function resolveWrapPrStatus(pr, btn, baseStatus) {
     data
   );
   paintWrapStatus(banner, data.outcome === 'merged' ? null : pr, baseStatus || currentWrapBaseStatus);
+  _renderDocsParityDismissControl(pr, data.docsParity, btn, baseStatus);
+}
+
+/**
+ * Render the docs-parity dismissal control (#533, #2886 I-Gate R1 Round 2)
+ * and bind its button, when `GET /wrap/pr-status`'s probe fired the signal.
+ * Hidden (and unbound) otherwise — `tcWrapDrawerHelpers.renderDocsParityControl`
+ * is the pure render half; this is the live half, the same split
+ * `composeReleaseBanner`/`paintWrapStatus` already draw for the release banner.
+ * @param {{prUrl: string}} pr - Wrap PR handle, for the dismiss POST's own `url`.
+ * @param {{signal?: boolean, reason?: string}|null} docsParity - From `GET /wrap/pr-status`.
+ * @param {HTMLButtonElement|null} recheckBtn - Passed through to the re-probe after a successful dismiss.
+ * @param {object} [baseStatus] - Passed through to the re-probe after a successful dismiss.
+ */
+function _renderDocsParityDismissControl(pr, docsParity, recheckBtn, baseStatus) {
+  const container = document.getElementById('wrapDrawerDocsParity');
+  if (!container || !window.tcWrapDrawerHelpers) return;
+  const shown = window.tcWrapDrawerHelpers.renderDocsParityControl(container, docsParity, esc);
+  if (!shown) return;
+  const dismissBtn = document.getElementById('wrapDrawerDocsParityDismissBtn');
+  if (!dismissBtn) return;
+  const reasonInput = document.getElementById('wrapDrawerDocsParityReason');
+  const errEl = document.getElementById('wrapDrawerDocsParityError');
+  dismissBtn.addEventListener('click', async () => {
+    const reason = reasonInput ? reasonInput.value.trim() : '';
+    if (errEl) { errEl.classList.add('hidden'); errEl.textContent = ''; }
+    if (!reason) {
+      if (errEl) { errEl.textContent = 'A reason is required.'; errEl.classList.remove('hidden'); }
+      return;
+    }
+    dismissBtn.disabled = true;
+    const result = await apiMutate(
+      `/api/sessions/${encodeURIComponent(projectName)}/wrap/docs-parity/dismiss`, 'POST', { url: pr.prUrl, reason }
+    );
+    dismissBtn.disabled = false;
+    if (!result || result.dismissed !== true) {
+      if (errEl) { errEl.textContent = api.lastError || 'Could not dismiss.'; errEl.classList.remove('hidden'); }
+      return;
+    }
+    // Re-probe rather than hide locally: the signal clears for real only once
+    // the next GET /wrap/pr-status reads the PR body this dismissal just
+    // edited, the same honesty resolveWrapPrStatus's own banner compose keeps.
+    await resolveWrapPrStatus(pr, recheckBtn, baseStatus);
+  });
 }
 
 /**
