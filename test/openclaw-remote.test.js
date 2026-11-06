@@ -372,7 +372,7 @@ describe('resolveReachableHost integration — lib/sessions.js#launchWebuiSessio
  * @returns {string[]}
  */
 function _hostsInOrder(cmd) {
-  return [...cmd.matchAll(/\bu@([^\s"]+)/g)].map((m) => m[1]);
+  return [...cmd.matchAll(/\bu@([^\s";]+)/g)].map((m) => m[1]);
 }
 
 describe('resolveReachableHost integration — _buildLaunchCommand\'s synchronous activeHost read (#1531)', () => {
@@ -546,55 +546,97 @@ describe('resolveReachableHost integration — _buildLaunchCommand\'s synchronou
     }
   });
 
-  it('a connected host whose remote command exits nonzero is invoked ONLY ONCE — never retried '
-    + 'against the fallback (I-Gate Round 7 C1: OpenSSH exits 255 ONLY on a transport/connection '
-    + 'failure; any other nonzero is the REMOTE COMMAND\'s own status, and a plain || chain cannot '
-    + 'tell the two apart)', () => {
-    const execSync = require('node:child_process').execSync;
-    const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-stub-ssh-'));
-    const stubPath = path.join(stubDir, 'ssh');
-    const logPath = path.join(stubDir, 'invocations.log');
-    fs.writeFileSync(stubPath, [
+  /**
+   * A stub `ssh` that tells apart the reachability PROBE (remote command
+   * `true`) from the real remote command: the primary always answers the
+   * probe (`true` → exit 0, proving it's reachable), but its REAL command
+   * exits whatever `primaryRemoteExit` says — which can itself be 255,
+   * the same code SSH itself uses for a transport failure (I-Gate Round 7
+   * C1's exact point: that number means two different things depending on
+   * which command produced it). The fallback always succeeds, whether
+   * probed or invoked, so if it's ever dialed at all the test can tell.
+   * @param {string} stubDir
+   * @param {string} primaryHost
+   * @param {string} fallbackHost
+   * @param {number} primaryRemoteExit
+   * @param {string} logPath - Every invocation's full argv, one per line.
+   * @returns {void}
+   */
+  function _writeConnectedPrimaryStub(stubDir, primaryHost, fallbackHost, primaryRemoteExit, logPath) {
+    fs.writeFileSync(path.join(stubDir, 'ssh'), [
       '#!/bin/sh',
       `echo "$@" >> "${logPath}"`,
+      'host=""; last=""',
       'for a in "$@"; do',
-      '  case "$a" in',
-      // The primary CONNECTS fine, but the remote `openclaw-cli` itself
-      // reports an application error (exit 1, NOT a connection failure).
-      '    *@192.0.2.1) exit 1 ;;',
-      // The fallback would happily succeed IF it were ever invoked.
-      '    *@100.64.0.2) exit 0 ;;',
-      '  esac',
+      '  case "$a" in *@*) host="$a" ;; esac',
+      '  last="$a"',
       'done',
+      'case "$host" in',
+      `  *@${primaryHost})`,
+      '    case "$last" in',
+      '      true) exit 0 ;;', // the probe: this host IS reachable
+      `      *) exit ${primaryRemoteExit} ;;`, // the real command's own result
+      '    esac',
+      '    ;;',
+      `  *@${fallbackHost}) exit 0 ;;`,
+      'esac',
       'exit 1',
       ''
     ].join('\n'), { mode: 0o755 });
+  }
 
-    try {
-      const conn = store.openclawConnections.create({
-        name: 'CmdAppErrorNoRetry', host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw',
-        fallbackHosts: ['100.64.0.2']
-      });
-      const project = { engineId: `openclaw:${conn.id}` };
-      const cmd = sessions._buildLaunchCommand({}, project);
+  /**
+   * Parse the stub's invocation log into `{host, cmd}` per call — `cmd` is
+   * the remote command argument (`true` for a probe, `openclaw-cli` for
+   * the real launch).
+   * @param {string} logPath
+   * @returns {{host: string, cmd: string}[]}
+   */
+  function _parseInvocationLog(logPath) {
+    return fs.readFileSync(logPath, 'utf8').trim().split('\n').filter(Boolean).map((line) => {
+      const parts = line.trim().split(/\s+/);
+      return { host: parts.find((p) => p.includes('@')), cmd: parts[parts.length - 1] };
+    });
+  }
 
-      let caught = null;
+  for (const primaryRemoteExit of [1, 255]) {
+    it(`a connected primary whose remote command exits ${primaryRemoteExit} is invoked ONLY ONCE — `
+      + 'never retried against the fallback, EVEN when that exit code is 255 (I-Gate Round 7/8: a '
+      + 'command run directly inside the failover loop cannot tell SSH\'s own transport-failure 255 '
+      + 'apart from the remote command exiting 255 on its own; a separate reachability probe can)',
+    () => {
+      const execSync = require('node:child_process').execSync;
+      const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-stub-ssh-'));
+      const logPath = path.join(stubDir, 'invocations.log');
+      _writeConnectedPrimaryStub(stubDir, '192.0.2.1', '100.64.0.2', primaryRemoteExit, logPath);
+
       try {
-        execSync(cmd, { env: { ...process.env, PATH: `${stubDir}:${process.env.PATH}` }, stdio: 'pipe' });
-      } catch (err) {
-        caught = err;
-      }
-      assert.ok(caught, 'the overall launch must exit nonzero, preserving the application error');
-      assert.equal(caught.status, 1, 'the EXACT application exit code must survive, not be swallowed by a retry');
+        const conn = store.openclawConnections.create({
+          name: `CmdAppError${primaryRemoteExit}`, host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw',
+          fallbackHosts: ['100.64.0.2']
+        });
+        const project = { engineId: `openclaw:${conn.id}` };
+        const cmd = sessions._buildLaunchCommand({}, project);
 
-      const log = fs.readFileSync(logPath, 'utf8');
-      const invokedHosts = [...log.matchAll(/u@([^\s]+)/g)].map((m) => m[1]);
-      assert.deepEqual(invokedHosts, ['192.0.2.1'],
-        'the fallback must NEVER be invoked once the primary actually connected and ran the remote command');
-    } finally {
-      fs.rmSync(stubDir, { recursive: true, force: true });
-    }
-  });
+        let caught = null;
+        try {
+          execSync(cmd, { env: { ...process.env, PATH: `${stubDir}:${process.env.PATH}` }, stdio: 'pipe' });
+        } catch (err) {
+          caught = err;
+        }
+        assert.ok(caught, 'the overall launch must exit nonzero, preserving the application error');
+        assert.equal(caught.status, primaryRemoteExit, 'the EXACT application exit code must survive, not be swallowed by a retry');
+
+        const invocations = _parseInvocationLog(logPath);
+        assert.ok(invocations.every((inv) => inv.host === 'u@192.0.2.1'),
+          `the fallback host must NEVER be dialed at all (not even probed): ${JSON.stringify(invocations)}`);
+        assert.equal(invocations.filter((inv) => inv.cmd === 'openclaw-cli').length, 1,
+          'openclaw-cli runs exactly once');
+      } finally {
+        fs.rmSync(stubDir, { recursive: true, force: true });
+      }
+    });
+  }
 });
 
 describe('resolveReachableHost integration — POST /api/openclaw/test (#1531)', () => {
