@@ -501,7 +501,13 @@ describe('#1578 session hierarchy', () => {
         const superiorBound = bindProject(superior);
         try {
           const res = await sendAs(server, 'POST', `/api/sessions/${encodeURIComponent(subordinate.name)}/wrap`, {}, superiorBound.headers);
-          assert.notEqual(res.status, 403, JSON.stringify(res.data));
+          // Not just "didn't get the 403 a refused caller would" -- the
+          // specific 404 the test's own name promises (no active session on
+          // `subordinate`), proving authorization genuinely passed through
+          // to the real wrap-start logic rather than some other non-403
+          // outcome a looser assertion would have missed.
+          assert.equal(res.status, 404, JSON.stringify(res.data));
+          assert.match(res.data && res.data.error, /No active|not found/i);
         } finally {
           store.sessions.kill(superiorBound.sessionId, 'test cleanup');
         }
