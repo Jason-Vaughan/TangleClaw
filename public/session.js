@@ -1753,7 +1753,11 @@ const engineFailoverModal = window.tcCreateEngineFailoverModal({
   projectName,
   getEngines: () => sessionState.engines,
   buildEngineOptions,
-  toast: (msg, isError) => showBannerActionToast(msg, isError)
+  toast: (msg, isError) => showBannerActionToast(msg, isError),
+  // Same field the existing #killModal's openKillModal() reads — kill/
+  // restart/swap all reuse the same server-side password gate (#109 PRR-B
+  // finding).
+  isDeleteProtected: () => !!(sessionState.config && sessionState.config.deleteProtected)
 });
 
 /**
@@ -2000,6 +2004,19 @@ async function pollStatus() {
     if (sessionState.launchGraceRemaining > 0) {
       sessionState.launchGraceRemaining--;
       return; // Skip this poll, try again next cycle
+    }
+    // #109 "stopped polling" finding: `handleSessionEnded` below calls
+    // `stopPolling()`, which ends this entire poll loop — and therefore
+    // `engineFailoverModal`, which rides this same cadence and had not run
+    // yet this tick. For a CRASH specifically (not a deliberate kill or a
+    // completed wrap, both of which belong to the generic ended flow as
+    // before), give the failover modal first look: if it is now showing, or
+    // the operator already chose "Continue manually" (suppressed), this
+    // poll loop must keep running rather than end the page out from under
+    // either one.
+    if (data.lastSession && data.lastSession.status === 'crashed') {
+      const failoverState = await engineFailoverModal.poll();
+      if (failoverState.crashed || failoverState.suppressed) return;
     }
     handleSessionEnded(data);
   } else if (data.active && sessionState.launchGraceRemaining > 0) {

@@ -29,12 +29,25 @@
    *   `<option>` builder session.js already uses for its own engine dropdown (installed-vs-not
    *   labelling stays single-sourced rather than forked here).
    * @param {(msg: string, isError?: boolean) => void} [deps.toast] - Optional toast on failure.
-   * @returns {{mount: () => void, poll: () => Promise<void>, isOpen: () => boolean}}
+   * @param {() => boolean} [deps.isDeleteProtected] - Whether this install has a delete password
+   *   configured (`sessionState.config.deleteProtected`) — kill/restart/swap all reuse the same
+   *   `projects.checkDeletePassword` gate the plain Kill modal does, so this modal must offer the
+   *   same field or every button on a password-protected install fails silently (PRR-B finding).
+   * @returns {{mount: () => void, poll: () => Promise<{crashed: boolean, suppressed: boolean}>, isOpen: () => boolean}}
    */
   function create(deps) {
-    const { doc, api, apiMutate, projectName, getEngines, buildEngineOptions, toast } = deps;
+    const { doc, api, apiMutate, projectName, getEngines, buildEngineOptions, toast, isDeleteProtected } = deps;
     let open = false;
     let busy = false;
+    // Set once a confirmed `kill` succeeds. The store's `crashed` status on
+    // that row never changes afterward (`store.sessions` transitions are
+    // one-way), so without this the very next poll would see that same
+    // row, report CRASHED again, and reopen the modal right after the
+    // operator just confirmed ending it. This is a one-way latch for THIS
+    // session's lifetime on the page — a `restart`/`swap` never sets it
+    // (a new session is expected to keep being monitored), and nothing
+    // clears it, because nothing on this page outlives the kill it answers.
+    let justKilled = false;
 
     function els() {
       return {
@@ -42,6 +55,8 @@
         detail: doc.getElementById('engineFailoverDetail'),
         status: doc.getElementById('engineFailoverStatus'),
         targetSelect: doc.getElementById('engineFailoverTargetEngine'),
+        passwordGroup: doc.getElementById('engineFailoverPasswordGroup'),
+        passwordInput: doc.getElementById('engineFailoverPassword'),
         restartBtn: doc.getElementById('engineFailoverRestartBtn'),
         swapBtn: doc.getElementById('engineFailoverSwapBtn'),
         continueBtn: doc.getElementById('engineFailoverContinueBtn'),
@@ -54,13 +69,27 @@
      * modal to match. A read that errors (server unreachable) leaves the
      * modal exactly as it was — the next poll tries again, same as every
      * other reading this page's `pollStatus` already tolerates.
-     * @returns {Promise<void>}
+     *
+     * Returns whether this family is already handling the session's end —
+     * CRASHED (modal open, or about to be) or `suppressed` (the operator
+     * already chose "Continue manually") — so `pollStatus` can skip the
+     * generic ended-session flow instead of racing it (#109 "stopped
+     * polling" finding: that flow calls `stopPolling()`, which would end
+     * this poll loop, and therefore this modal, before it ever ran once for
+     * the primary crash case).
+     * @returns {Promise<{crashed: boolean, suppressed: boolean}>}
      */
     async function poll() {
+      // A confirmed kill always wins: no further GET, no reopening, and
+      // `pollStatus`'s caller is told nothing is handled here anymore so
+      // its own generic ended-flow runs exactly as it would have without
+      // this module's interception ever existing.
+      if (justKilled) return { crashed: false, suppressed: false };
       const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/engine-health`);
-      if (!data) return;
+      if (!data) return { crashed: open, suppressed: false };
       if (data.state === 'CRASHED' && !open) show(data);
       else if (data.state !== 'CRASHED' && open) hide();
+      return { crashed: data.state === 'CRASHED', suppressed: !!data.suppressed };
     }
 
     /**
@@ -69,7 +98,7 @@
      * @returns {void}
      */
     function show(data) {
-      const { backdrop, detail, targetSelect, status } = els();
+      const { backdrop, detail, targetSelect, status, passwordGroup, passwordInput } = els();
       if (!backdrop) return;
       open = true;
       const crash = Array.isArray(data.recentCrashes) ? data.recentCrashes[0] : null;
@@ -84,6 +113,9 @@
         const engines = typeof getEngines === 'function' ? getEngines() : [];
         targetSelect.innerHTML = buildEngineOptions(engines, data.engine || '');
       }
+      const protected_ = typeof isDeleteProtected === 'function' && isDeleteProtected();
+      if (passwordGroup) passwordGroup.classList.toggle('hidden', !protected_);
+      if (passwordInput) passwordInput.value = '';
       backdrop.classList.add('open');
     }
 
@@ -103,20 +135,32 @@
     async function sendAction(action, extra = {}) {
       if (busy) return;
       busy = true;
-      const { status } = els();
+      const { status, passwordInput } = els();
       if (status) status.textContent = 'Working…';
+      const body = { action, userConfirmed: true, ...extra };
+      // Only kill/restart/swap reach `projects.checkDeletePassword` server
+      // side — continue-manually mutates nothing, so it needs no password.
+      if (action !== 'continue-manually' && passwordInput && passwordInput.value) {
+        body.password = passwordInput.value;
+      }
       const result = await apiMutate(
         `/api/sessions/${encodeURIComponent(projectName)}/engine-failover`,
         'POST',
-        { action, userConfirmed: true, ...extra }
+        body
       );
       busy = false;
       if (result) {
+        if (action === 'kill') justKilled = true;
         hide();
         return;
       }
+      // A wrong/missing password (403 FORBIDDEN) must not look like "closed,
+      // try the button again from scratch" — leave the field focused so the
+      // operator can just retype it, matching the existing #killModal's
+      // own `killError` pattern.
       const message = (api.lastError) || `Could not ${action}. Try again.`;
       if (status) status.textContent = message;
+      if (passwordInput && !passwordInput.classList.contains('hidden')) passwordInput.focus();
       if (typeof toast === 'function') toast(message, true);
     }
 

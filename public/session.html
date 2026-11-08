@@ -240,6 +240,14 @@
         <label class="form-label" for="engineFailoverTargetEngine">Swap engine to</label>
         <select class="form-select" id="engineFailoverTargetEngine"></select>
       </div>
+      <!-- Shown only when the install has a delete password configured
+           (sessionState.config.deleteProtected) — same gate and field as the
+           existing #killModal's own killPasswordGroup. Kill/restart/swap all
+           reuse projects.checkDeletePassword server-side, so this must too. -->
+      <div class="form-group hidden" id="engineFailoverPasswordGroup">
+        <label class="form-label" for="engineFailoverPassword">Password</label>
+        <input type="password" class="password-input" id="engineFailoverPassword" autocomplete="off">
+      </div>
       <div class="modal-actions">
         <button class="btn" id="engineFailoverContinueBtn">Continue manually</button>
         <button class="btn" id="engineFailoverRestartBtn">Restart engine</button>

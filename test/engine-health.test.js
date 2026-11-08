@@ -345,6 +345,69 @@ describe('engine-health-routes — HTTP surface (#109)', () => {
         store.sessions.kill(session.id, 'test cleanup');
       }
     });
+
+    it('reports CRASHED after the tmux session disappears, not HEALTHY (PRR-B/Architect F1)', async () => {
+      // Before the fix: `recordProbeResult` resolved CRASHED with `strikes: 0`
+      // (the immediate-crash path needs no strike count), but never persisted
+      // `state` on the tracker entry, so `_statusPayload` re-derived from
+      // `strikes` alone and reported HEALTHY — the modal never opened for
+      // exactly the primary crash case.
+      const project = makeProject('eh-crashed');
+      const sessionName = uniqueSessionName('tc-engine-health-crashed');
+      execFileSync('tmux', ['new-session', '-d', '-s', sessionName, '-x', '80', '-y', '24']);
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: sessionName });
+      try {
+        execFileSync('tmux', ['kill-session', '-t', sessionName]); // disappears without going through this module
+        routes._probeOnce();
+        const { status, data } = await request('GET', '/api/sessions/eh-crashed/engine-health', undefined, writeHeaders());
+        assert.equal(status, 200);
+        assert.equal(data.state, STATES.CRASHED);
+        assert.equal(data.strikes, 0, 'the immediate-crash path carries no strike count — state alone must say CRASHED');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('reports CRASHED (not "no session") when the faster status-poll detector already marked the row crashed (PRR-B/Architect recovery-404 finding)', async () => {
+      // Simulates `lib/sessions.js`'s own, faster tmux-crash detection
+      // (every `pollStatus` tick) winning the race against this family's
+      // own, slower probe interval — `getActive` already returns null by
+      // the time this GET runs. Before the fix, that read the project as
+      // having no session at all (`active: false, state: null`), the same
+      // as a project that was never launched.
+      const project = makeProject('eh-already-crashed-get');
+      const bound = bindProject(project);
+      store.sessions.markCrashed(bound.sessionId, 'tmux session died');
+
+      const { status, data } = await request('GET', '/api/sessions/eh-already-crashed-get/engine-health', undefined, writeHeaders());
+      assert.equal(status, 200);
+      assert.equal(data.active, false, 'there really is no active row — this is not claiming otherwise');
+      assert.equal(data.state, STATES.CRASHED, 'a crashed-but-not-yet-recovered row must still read CRASHED, not null');
+    });
+
+    it('does not re-record telemetry with a reset duration on every tick while still CRASHED (PRR-B/Architect F2)', async () => {
+      // Before the fix: the store row stays `active` after a crash (nothing
+      // here ends it), so `_startedAtMs` was deleted and immediately
+      // re-seeded to `Date.now()` on every subsequent `_probeOnce()` tick,
+      // and telemetry was re-appended every tick — clobbering
+      // `recentCrashes[0]` with a `durationMs` near zero forever.
+      const project = makeProject('eh-crashed-repeat');
+      const sessionName = uniqueSessionName('tc-engine-health-crashed-repeat');
+      execFileSync('tmux', ['new-session', '-d', '-s', sessionName, '-x', '80', '-y', '24']);
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: sessionName });
+      try {
+        execFileSync('tmux', ['kill-session', '-t', sessionName]);
+        routes._probeOnce();
+        const afterFirst = routes._telemetry.length;
+        const firstEntry = routes._telemetry[0];
+        routes._probeOnce();
+        routes._probeOnce();
+        assert.equal(routes._telemetry.length, afterFirst, 'a still-CRASHED session must not append a new telemetry entry on every tick');
+        assert.strictEqual(routes._telemetry[0], firstEntry, 'the original crash entry must not be replaced');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
   });
 
   describe('POST /api/sessions/:project/engine-health/suppress', () => {
@@ -426,6 +489,37 @@ describe('engine-health-routes — HTTP surface (#109)', () => {
       store.sessions.kill(bound.sessionId, 'test cleanup');
     });
 
+    it('"continue-manually" stops the next poll from re-opening the modal over a real crash (PRR-B/Architect F3)', async () => {
+      // Before the fix: continue-manually returned 200 without touching
+      // `_suppressed` or the tracker, so the next GET (the session page's
+      // poll runs every few seconds) still read CRASHED and the
+      // non-dismissible modal reopened right back over the operator's own
+      // choice.
+      const project = makeProject('eh-continue-crashed');
+      const sessionName = uniqueSessionName('tc-engine-health-continue');
+      execFileSync('tmux', ['new-session', '-d', '-s', sessionName, '-x', '80', '-y', '24']);
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: sessionName });
+      try {
+        execFileSync('tmux', ['kill-session', '-t', sessionName]);
+        routes._probeOnce();
+        const before = await request('GET', '/api/sessions/eh-continue-crashed/engine-health', undefined, writeHeaders());
+        assert.equal(before.data.state, STATES.CRASHED);
+
+        const ack = await request(
+          'POST', '/api/sessions/eh-continue-crashed/engine-failover',
+          { action: 'continue-manually', userConfirmed: true }, writeHeaders()
+        );
+        assert.equal(ack.status, 200);
+
+        routes._probeOnce(); // the next poll tick, same as the real cadence
+        const after = await request('GET', '/api/sessions/eh-continue-crashed/engine-health', undefined, writeHeaders());
+        assert.equal(after.data.state, STATES.HEALTHY, 'acknowledging the crash must stop it from reopening the modal');
+        assert.equal(after.data.suppressed, true);
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
     it('"kill" ends the active session (no real tmux pane needed — killSession tolerates one that never existed)', async () => {
       const project = makeProject('eh-kill');
       const bound = bindProject(project);
@@ -446,6 +540,41 @@ describe('engine-health-routes — HTTP surface (#109)', () => {
       );
       assert.equal(status, 404);
       assert.equal(data.code, 'NOT_FOUND');
+    });
+
+    it('"kill" succeeds idempotently when the row is already marked crashed by the faster status-poll detector (PRR-B/Architect recovery-404 finding)', async () => {
+      // Simulates `lib/sessions.js`'s own status read (every `pollStatus`
+      // tick) already having called `store.sessions.markCrashed` before
+      // this request's own `getActive` lookup — the row is terminal, not
+      // "active". Before the fix, `killSession` returned `No active
+      // session`, and this route turned that into a 404.
+      const project = makeProject('eh-already-crashed-kill');
+      const bound = bindProject(project);
+      store.sessions.markCrashed(bound.sessionId, 'tmux session died');
+      assert.equal(store.sessions.get(bound.sessionId).status, 'crashed');
+
+      const { status, data } = await request(
+        'POST', '/api/sessions/eh-already-crashed-kill/engine-failover',
+        { action: 'kill', userConfirmed: true }, writeHeaders()
+      );
+      assert.equal(status, 200);
+      assert.equal(data.killed, true);
+    });
+
+    it('"restart" on an already-crashed row skips the kill and goes straight to relaunch (same finding)', async () => {
+      const project = makeProject('eh-already-crashed-restart');
+      const bound = bindProject(project);
+      store.sessions.markCrashed(bound.sessionId, 'tmux session died');
+
+      const { status, data } = await request(
+        'POST', '/api/sessions/eh-already-crashed-restart/engine-failover',
+        { action: 'restart', userConfirmed: true }, writeHeaders()
+      );
+      // Same deterministic relaunch-failure limitation as the plain
+      // "restart" test above (no real engine CLI in this unit suite) — the
+      // fix under test is that this reaches the relaunch attempt at all,
+      // never a 404 on the already-crashed row.
+      assert.notEqual(status, 404);
     });
 
     it('"restart" kills the session, then reports the relaunch failure rather than silently losing the kill', async () => {
