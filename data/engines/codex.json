@@ -112,6 +112,7 @@
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
     "supportsCoAuthor": true,
+    "supportsSubagentDispatch": true,
     "supportsSilentPrime": false,
     "wake": {
       "busyMarker": "esc to interrupt",

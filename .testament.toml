@@ -244,6 +244,7 @@ files = [
   "test/startup-prompt-editor.test.js",
   "test/startup-prompt-service.test.js",
   "test/stranded-wraps-ui.test.js",
+  "test/subagent-parallelization.test.js",
   "test/suite-evidence.test.js",
   "test/sw-register.test.js",
   "test/switchboard-swarm-stats.test.js",

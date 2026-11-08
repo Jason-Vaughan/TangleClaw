@@ -42,6 +42,7 @@
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
     "supportsCoAuthor": false,
+    "supportsSubagentDispatch": true,
     "wake": {
       "busyMarker": "esc to cancel",
       "promptPattern": "^\\s*>\\s*$",
