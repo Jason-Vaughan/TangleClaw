@@ -13,11 +13,12 @@
   <a href="https://github.com/Jason-Vaughan/TangleClaw/actions/workflows/test.yml"><img src="https://github.com/Jason-Vaughan/TangleClaw/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/Jason-Vaughan/TangleClaw/releases/latest"><img src="https://img.shields.io/github/v/release/Jason-Vaughan/TangleClaw?color=blue" alt="Release"></a>
   <a href="https://jason-vaughan.github.io/TangleClaw/"><img src="https://img.shields.io/badge/roadmap-live-0969da" alt="Live Roadmap"></a>
+  <a href="https://jason-vaughan.github.io/TangleClaw/reports/"><img src="https://img.shields.io/badge/sprint%20reports-live-1a7f37" alt="Autonomous Sprint Reports"></a>
   <a href="#prerequisites"><img src="https://img.shields.io/badge/npm%20dependencies-zero-purple" alt="Zero npm dependencies"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
 
-**Release candidate:** v5.45.0, “Project settings that cannot corrupt” ([status and release scope](docs/releases/v5.45-status.md)). The Release badge above continues to show the latest published release until this candidate is approved and published.
+**Latest release:** `v5.71.0` — “OpenClaw ordered fallback hosts, MagicDNS migration, update checks & header pills” ([release status](docs/releases/v5.71.0-status.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v5.71.0` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v5.71.0/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
 
 One AI coding agent is easy. Five are not. They forget what the last session decided, edit the same files, fight over the same ports, and wait silently for an answer you did not know they needed. You end up watching terminals.
 
@@ -45,7 +46,7 @@ It works with **Claude Code, Codex, Antigravity and Aider** locally, and with Op
 
 ### Built with itself
 
-TangleClaw is developed with TangleClaw. Its own Builder, Project Manager and review sessions plan, write, review and merge its changes, with a human directing the work and approving every release. The [live roadmap](https://jason-vaughan.github.io/TangleClaw/) and the issue tracker are that fleet's working backlog, which is why the issue count is high: it is the plan, in public.
+TangleClaw is developed with TangleClaw. Its own Builder, Project Manager and review sessions plan, write, review and merge its changes, with a human directing the work and approving every release. The [live roadmap](https://jason-vaughan.github.io/TangleClaw/), the [Autonomous Sprint Reports Hub](https://jason-vaughan.github.io/TangleClaw/reports/), and the issue tracker are that fleet's working backlog and execution record, in public.
 
 ### Try it
 
@@ -444,11 +445,20 @@ tail -f ~/.tangleclaw/logs/tangleclaw.log
 curl -s http://localhost:3102/api/health | python3 -m json.tool
 ```
 
-## Roadmap
+## Roadmap & Autonomous Sprint Reports
 
-**[View the live release-first roadmap →](https://jason-vaughan.github.io/TangleClaw/)**
+- 🗺️ **[View the live release-first roadmap →](https://jason-vaughan.github.io/TangleClaw/)**
+- 📊 **[View the Autonomous Sprint Reports Hub (`v5.34.0` – `v5.71.0` + Kaizen Retrospectives) →](https://jason-vaughan.github.io/TangleClaw/reports/)**
+  - **Latest 4-Sprint Autonomous Train (`A505`):** [`v5.68.0–v5.71.0` Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/) · [`v5.71.0`](https://jason-vaughan.github.io/TangleClaw/reports/v5.71.0/) · [`v5.70.0`](https://jason-vaughan.github.io/TangleClaw/reports/v5.70.0/) · [`v5.69.0`](https://jason-vaughan.github.io/TangleClaw/reports/v5.69.0/) · [`v5.68.0`](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0/)
 
-It is generated from the canonical release plan and current public GitHub issue status. Release targets are forecasts and update automatically.
+The roadmap and sprint reports are generated from the canonical release plan, live GitHub issue/PR telemetry, and primary-source git/session audit logs.
+
+# Contributors
+
+Thank you to the open-source contributors whose bug reports, diagnostics, and designs have shipped in TangleClaw:
+
+- **[@GURULifeline](https://github.com/GURULifeline)** — Codex `--no-daemon` session isolation diagnostics (`#2222`, `#2233`), Global Rules preservation across updates (`#1730`), and wrap pipeline retry capture resumption.
+- **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** (Madhavan Subramaniyan K) — Linux `systemd` user-unit support for the Restart TangleClaw button (`#239` / `#1506`), settings modal hint text wrapping (`#1271`), rule-weakening confirmation symmetry (`#1048`), strict test assertion conversion (`#1067`), and project tags / quick-commands validation (`#1334` / `#1376`).
 
 ## Community and Conduct
 
