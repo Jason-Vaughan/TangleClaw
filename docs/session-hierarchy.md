@@ -67,20 +67,26 @@ call. Neither side infers consent from anything less literal than those exact ph
 `lib/session-hierarchy.js`'s `generateSubordinateInstructions`/`generateSuperiorInstructions`
 produce this handshake's text deterministically, for either side's own startup primer.
 
+## Wired into the real startup text
+
+The actual text a live session reads at `tc start next` (and the pasted push-mode prime) is
+assembled by `lib/sessions.js`'s `_collectPrimeSections` -- the function that already builds the
+`## Session Ownership`/`## Scope Guard` identity block. It calls
+`launch-sequence.js#sessionHierarchyAddendum(project)` (itself built on
+`operating-primer.js#appendSessionHierarchySection` and `lib/session-hierarchy.js`'s own
+generators) right after the scope guard, in the same `add('identity', ...)` shape
+`sessionOwnership` already uses, and appends the result whenever it is non-null. Both
+`renderLaunchSteps` (pull/`tc start next`) and `generatePrimePrompt` (push) share this one call
+site, so a configured subordinate or superior sees its block through either delivery path.
+(Ruling A506-W2B-SCOPE-R1 widened this car's file envelope to include `lib/sessions.js` for
+exactly this wiring, after the Allowed File Envelope originally excluded it.)
+
 ## What's NOT wired yet (named here on purpose)
 
-Two integration points this car's file envelope could not reach, left as explicit follow-ups
-rather than silently incomplete:
+One integration point remains outside this car's file envelope:
 
-1. **The actual text a live session reads at `tc start next`** is assembled in `lib/sessions.js`,
-   not `lib/launch-sequence.js` or `lib/operating-primer.js` (this car's envelope). Both of those
-   two now carry a fully tested, ready-to-call composition
-   (`operating-primer.js#appendSessionHierarchySection`, `launch-sequence.js#sessionHierarchyAddendum`)
-   -- the same "dead code until the next car wires it in" shape `buildOperatingPrimer` itself had
-   until #2844. A follow-up car should call `sessionHierarchyAddendum(project)` from wherever
-   `lib/sessions.js` assembles its own startup text, and append the result when non-null.
-2. **`isAuthorizedSuperiorSender`'s Medusa wiring.** The function itself is built and tested
-   (verifies a Medusa envelope's `from` against the configured superior's CURRENT active session's
-   registered workspace id -- never a stale one). Nothing in `lib/medusa.js` (out of this car's
-   envelope) calls it yet. A follow-up car should check it before treating an incoming "prepare to
-   wrap"/"prepare to clear" instruction as authoritative.
+**`isAuthorizedSuperiorSender`'s Medusa wiring.** The function itself is built and tested
+(verifies a Medusa envelope's `from` against the configured superior's CURRENT active session's
+registered workspace id -- never a stale one). Nothing in `lib/medusa.js` (out of this car's
+envelope) calls it yet. A follow-up car should check it before treating an incoming "prepare to
+wrap"/"prepare to clear" instruction as authoritative.

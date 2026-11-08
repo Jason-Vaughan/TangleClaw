@@ -22,6 +22,7 @@ const sharedDocsAccess = require('../lib/shared-docs-access');
 const sessionHierarchy = require('../lib/session-hierarchy');
 const operatingPrimer = require('../lib/operating-primer');
 const launchSequence = require('../lib/launch-sequence');
+const sessions = require('../lib/sessions');
 const serverModule = require('../server');
 const { bindProject, sendAs, operatorOf } = require('./_shared-docs-callers');
 
@@ -312,6 +313,38 @@ describe('#1578 session hierarchy', () => {
       const text = launchSequence.sessionHierarchyAddendum(subordinate);
       assert.ok(text && text.startsWith('## Session Hierarchy'));
       assert.notEqual(text[text.length - 1], '\n', 'trimmed, not a caller-surprising trailing newline');
+    });
+  });
+
+  describe('lib/sessions.js: wired into the real startup text (#1578, Ruling A506-W2B-SCOPE-R1)', () => {
+    const engineProfile = { id: 'claude', name: 'claude' };
+
+    beforeEach(() => {
+      sessionHierarchy.clearConfig(subordinate);
+    });
+
+    it('renderLaunchSteps\' "identity" step carries the subordinate block when configured', () => {
+      sessionHierarchy.setConfig(subordinate, { reportsTo: 'Superior', delegatedScope: ['wrap', 'clear'] });
+      const steps = sessions.renderLaunchSteps(subordinate, engineProfile, {});
+      assert.match(steps.identity, /## Session Hierarchy/);
+      assert.match(steps.identity, /reports to \*\*Superior\*\*/);
+    });
+
+    it('renderLaunchSteps\' "identity" step carries the superior block for each live subordinate', () => {
+      sessionHierarchy.setConfig(subordinate, { reportsTo: 'Superior', delegatedScope: ['clear'] });
+      const steps = sessions.renderLaunchSteps(superior, engineProfile, {});
+      assert.match(steps.identity, /\*\*Subordinate\*\* reports to this project/);
+    });
+
+    it('carries neither block for a project configured as neither role', () => {
+      const steps = sessions.renderLaunchSteps(unrelated, engineProfile, {});
+      assert.doesNotMatch(steps.identity, /## Session Hierarchy/);
+    });
+
+    it('generatePrimePrompt (the push-mode pasted prime) also carries the subordinate block', () => {
+      sessionHierarchy.setConfig(subordinate, { reportsTo: 'Superior', delegatedScope: ['wrap'] });
+      const prime = sessions.generatePrimePrompt(subordinate, engineProfile, {});
+      assert.match(prime, /## Session Hierarchy/);
     });
   });
 
