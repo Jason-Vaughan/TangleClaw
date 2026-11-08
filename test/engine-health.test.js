@@ -531,6 +531,17 @@ describe('engine-health-routes — HTTP surface (#109)', () => {
         execFileSync('tmux', ['new-session', '-d', '-s', newSessionName, '-x', '80', '-y', '24']);
         const newSession = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: newSessionName });
         try {
+          // PRR-B Round 3 finding, caught because this GET runs BEFORE
+          // `_probeOnce` ever sees the new session: `_tracker`'s entry for
+          // this project name is still the OLD session's CRASHED verdict
+          // (keyed by project name alone), and — now that suppression
+          // correctly does NOT match the new session id — nothing was left
+          // to mask it. Without the fix, this reads CRASHED for a brand
+          // new, never-probed, perfectly healthy session.
+          const beforeProbe = await request('GET', '/api/sessions/eh-continue-crashed/engine-health', undefined, writeHeaders());
+          assert.equal(beforeProbe.data.suppressed, false);
+          assert.equal(beforeProbe.data.state, STATES.HEALTHY, 'a new session must read HEALTHY (not-yet-probed), never the prior session\'s stale CRASHED verdict');
+
           routes._probeOnce();
           const forNewSession = await request('GET', '/api/sessions/eh-continue-crashed/engine-health', undefined, writeHeaders());
           assert.equal(forNewSession.data.suppressed, false, 'a new session must not inherit an earlier session\'s suppression');
