@@ -6637,7 +6637,24 @@
   // and works even when focus is inside the ttyd terminal iframe!
   const TC_WATERMARK_STORAGE_KEY = 'tc_watermark_opacity';
   const TC_WATERMARK_DEFAULT = 0.10;
+  const TC_WATERMARK_DEFAULT_LIGHT = 0.08;
   let _tcWatermarkHudTimer = null;
+
+  /**
+   * The CSS default this theme actually renders (0.10 dark / 0.08 light),
+   * so the first keyboard adjustment from an unset state steps off the
+   * watermark's own visible opacity instead of always the dark value.
+   * @returns {number}
+   */
+  function _tcWatermarkThemeDefault() {
+    try {
+      if (global.document && global.document.documentElement &&
+        global.document.documentElement.getAttribute('data-theme') === 'light') {
+        return TC_WATERMARK_DEFAULT_LIGHT;
+      }
+    } catch (_) {}
+    return TC_WATERMARK_DEFAULT;
+  }
 
   function _tcReadWatermarkOpacity() {
     try {
@@ -6668,7 +6685,7 @@
         hud.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;padding:7px 13px;border-radius:999px;background:rgba(15,20,16,0.88);border:1px solid rgba(139,195,74,0.45);color:#8BC34A;font:600 12px/1.2 -apple-system,BlinkMacSystemFont,"SF Mono",monospace;box-shadow:0 4px 20px rgba(0,0,0,0.45);pointer-events:none;transition:opacity 0.2s ease;opacity:0;';
         global.document.body.appendChild(hud);
       }
-      const effective = val === null ? TC_WATERMARK_DEFAULT : Math.max(0, Math.min(0.65, Math.round(val * 100) / 100));
+      const effective = val === null ? _tcWatermarkThemeDefault() : Math.max(0, Math.min(0.65, Math.round(val * 100) / 100));
       const pct = Math.round(effective * 100);
       hud.textContent = pct === 0 ? 'Claw Watermark: OFF (0%)' : `Claw Watermark: ${pct}%${val === null ? ' (default)' : ''}`;
       hud.style.opacity = '1';
@@ -6705,7 +6722,7 @@
       return;
     }
     const current = _tcReadWatermarkOpacity();
-    const base = current === null ? TC_WATERMARK_DEFAULT : current;
+    const base = current === null ? _tcWatermarkThemeDefault() : current;
     const next = Math.max(0, Math.min(0.65, Math.round((base + delta) * 100) / 100));
     try { global.localStorage.setItem(TC_WATERMARK_STORAGE_KEY, String(next)); } catch (_) {}
     _tcApplyWatermarkOpacity(next, true);
