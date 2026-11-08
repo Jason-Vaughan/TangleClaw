@@ -1049,13 +1049,15 @@ html[data-tc-keyboard] body {
   width: min(82vw, 860px);
   height: min(82vw, 860px);
   object-fit: contain;
-  opacity: 0.055;
-  filter: drop-shadow(0 0 28px rgba(139, 195, 74, 0.22));
+  opacity: var(--tc-watermark-opacity, 0.10);
+  filter: drop-shadow(0 0 48px rgba(86, 211, 100, 0.18));
   user-select: none;
   -webkit-user-drag: none;
+  transition: opacity 0.14s ease-out;
 }
 html[data-theme="light"] .tc-session-watermark img {
-  opacity: 0.07;
+  opacity: var(--tc-watermark-opacity, 0.08);
+  filter: saturate(1.1) contrast(1.05);
 }
 
 /* #1638: a normal flex-column sibling after .terminal-viewport (flex: 1), not
