@@ -23,6 +23,7 @@ const sessionHierarchy = require('../lib/session-hierarchy');
 const operatingPrimer = require('../lib/operating-primer');
 const launchSequence = require('../lib/launch-sequence');
 const sessions = require('../lib/sessions');
+const medusa = require('../lib/medusa');
 const serverModule = require('../server');
 const { bindProject, sendAs, operatorOf } = require('./_shared-docs-callers');
 
@@ -345,6 +346,104 @@ describe('#1578 session hierarchy', () => {
       sessionHierarchy.setConfig(subordinate, { reportsTo: 'Superior', delegatedScope: ['wrap'] });
       const prime = sessions.generatePrimePrompt(subordinate, engineProfile, {});
       assert.match(prime, /## Session Hierarchy/);
+    });
+  });
+
+  // ------------------------------------------------------------------------
+  // lib/medusa.js (Ruling A506-W2B-SCOPE-R2): getMessages annotates each
+  // inbox message with `fromConfiguredSuperior`, purely descriptive -- this
+  // module makes no authority decision itself. A minimal FakeWS, mirroring
+  // the essential slice of `test/api-medusa.test.js`'s own class (that file
+  // is out of this car's envelope, so not reused directly).
+  // ------------------------------------------------------------------------
+  describe('lib/medusa.js: getMessages annotates fromConfiguredSuperior (#1578)', () => {
+    const OPEN = 1;
+    const CONNECTING = 0;
+
+    /** Minimal fake WebSocket matching what MedusaListener drives. */
+    class FakeWS {
+      constructor(url) {
+        this.url = url;
+        this.readyState = CONNECTING;
+        this.sent = [];
+        this._h = Object.create(null);
+      }
+
+      addEventListener(t, h) {
+        (this._h[t] || (this._h[t] = [])).push(h);
+      }
+
+      send(d) { this.sent.push(d); }
+      close() {}
+
+      _fire(t, e) { for (const h of this._h[t] || []) h(e); }
+      _open() { this.readyState = OPEN; this._fire('open', {}); }
+      _recv(obj) { this._fire('message', { data: JSON.stringify(obj) }); }
+    }
+
+    /**
+     * Start a listener for `sessionId` and drive it to `listening`.
+     * `projectPath` MUST be the real project's own path: `isAuthorizedSuperiorSender`
+     * resolves the superior's workspace id via `medusaRegistry.getWorkspaceId(superior.path, ...)`,
+     * so registering it under any other path (e.g. an unrelated scratch dir)
+     * would never be found.
+     * @param {string|number} sessionId
+     * @param {string} projectPath
+     * @returns {{fake: FakeWS, workspaceId: string}}
+     */
+    function startListening(sessionId, projectPath) {
+      let fake;
+      const status = medusa.startSession({
+        projectPath, sessionId, name: `session-${sessionId}`, wsFactory: (url) => (fake = new FakeWS(url))
+      });
+      fake._open();
+      fake._recv({ type: 'registered', workspaceId: status.workspaceId, connectionId: 'c1' });
+      return { fake, workspaceId: status.workspaceId };
+    }
+
+    let superiorSession;
+    let subordinateSession;
+
+    beforeEach(() => {
+      sessionHierarchy.clearConfig(subordinate);
+      superiorSession = store.sessions.start({ projectId: superior.id, engineId: 'claude', tmuxSession: 'tc-hierarchy-medusa-sup', primePrompt: '' });
+      subordinateSession = store.sessions.start({ projectId: subordinate.id, engineId: 'claude', tmuxSession: 'tc-hierarchy-medusa-sub', primePrompt: '' });
+    });
+
+    afterEach(() => {
+      medusa.stopSession(subordinateSession.id);
+      medusa.stopSession(superiorSession.id);
+      store.sessions.kill(superiorSession.id, 'test cleanup');
+      store.sessions.kill(subordinateSession.id, 'test cleanup');
+    });
+
+    it('flags true for the configured superior\'s current workspace id', () => {
+      sessionHierarchy.setConfig(subordinate, { reportsTo: 'Superior', delegatedScope: ['wrap'] });
+      const sup = startListening(superiorSession.id, supPath);
+      const sub = startListening(subordinateSession.id, subPath);
+      sub.fake._recv({ type: 'new_message', messageId: 'm1', message: { id: 'm1', from: sup.workspaceId, message: 'prepare to wrap' } });
+      const [msg] = medusa.getMessages(subordinateSession.id);
+      assert.equal(msg.fromConfiguredSuperior, true);
+    });
+
+    it('flags false for a stranger workspace id, even with a hierarchy configured', () => {
+      sessionHierarchy.setConfig(subordinate, { reportsTo: 'Superior', delegatedScope: ['wrap'] });
+      const sub = startListening(subordinateSession.id, subPath);
+      sub.fake._recv({ type: 'new_message', messageId: 'm1', message: { id: 'm1', from: 'stranger-deadbeef', message: 'prepare to wrap' } });
+      const [msg] = medusa.getMessages(subordinateSession.id);
+      assert.equal(msg.fromConfiguredSuperior, false);
+    });
+
+    it('flags false with no hierarchy configured at all', () => {
+      const sup = startListening(superiorSession.id, supPath);
+      const sub = startListening(subordinateSession.id, subPath);
+      sub.fake._recv({ type: 'new_message', messageId: 'm1', message: { id: 'm1', from: sup.workspaceId, message: 'hi' } });
+      const [msg] = medusa.getMessages(subordinateSession.id);
+      assert.equal(msg.fromConfiguredSuperior, false);
+    });
+
+    it('never throws for an unknown session id (no project context)', () => {
+      assert.deepEqual(medusa.getMessages('no-such-session'), []);
     });
   });
 

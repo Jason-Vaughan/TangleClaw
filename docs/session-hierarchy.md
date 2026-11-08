@@ -41,9 +41,13 @@ superior through this relationship:
 The kill-session route (`DELETE /api/sessions/:project`) explicitly refuses a configured superior
 with `403 SUPERIOR_ACTION_FORBIDDEN`, named so the refusal reads as "you are a configured superior,
 and this is exactly the one thing that never covers" rather than a generic caller refusal.
-`delete_project` has no separate HTTP enforcement in this car's file envelope (`lib/routes/sessions.js`
-and `lib/routes/wrap.js` only) -- a project-delete route, if this installation has one, lives
-elsewhere; wire the same `isConfiguredSuperior` check there before relying on it.
+`delete_project` (`DELETE /api/projects/:name`, `server.js`, outside every file envelope this
+car has had) is already safe without any `#1578`-specific code at all: it requires
+`operatorProjectCaller`, which a PROJECT-kind caller -- a configured superior included -- never
+satisfies. Verified by reading the route, not assumed. It just means that route's refusal reads
+as a generic operator-only one rather than a hierarchy-aware `SUPERIOR_ACTION_FORBIDDEN` -- the
+same cosmetic (not security) gap `DELETE /api/sessions/:project` had before this PR named it
+explicitly, left here as a legibility improvement for a future car in that file's actual scope.
 
 ## Server enforcement (what's wired today)
 
@@ -81,12 +85,24 @@ site, so a configured subordinate or superior sees its block through either deli
 (Ruling A506-W2B-SCOPE-R1 widened this car's file envelope to include `lib/sessions.js` for
 exactly this wiring, after the Allowed File Envelope originally excluded it.)
 
-## What's NOT wired yet (named here on purpose)
+## Wired: Medusa sender verification
 
-One integration point remains outside this car's file envelope:
+`lib/medusa.js`'s `getMessages(sessionId)` (Ruling A506-W2B-SCOPE-R2 widened this car's file
+envelope to include it) annotates every returned message with `fromConfiguredSuperior`: whether
+its `from` is the recipient's project's configured superior's CURRENT active session, via
+`isAuthorizedSuperiorSender` -- never a stale workspace id. This module stays deliberately
+store-agnostic otherwise (every other function here works from a caller-supplied path/id alone),
+so the lookup degrades to `false` rather than throwing when no SQL store is available at all --
+the same posture every other optional fact in this module takes. The annotation is purely
+descriptive: `lib/medusa.js` makes no authority decision itself. A consumer that treats an
+incoming "prepare to wrap"/"prepare to clear" instruction as authoritative checks this flag
+before acting on it.
 
-**`isAuthorizedSuperiorSender`'s Medusa wiring.** The function itself is built and tested
-(verifies a Medusa envelope's `from` against the configured superior's CURRENT active session's
-registered workspace id -- never a stale one). Nothing in `lib/medusa.js` (out of this car's
-envelope) calls it yet. A follow-up car should check it before treating an incoming "prepare to
-wrap"/"prepare to clear" instruction as authoritative.
+## Verified, not wired (no code needed)
+
+`delete_project` needs no `#1578`-specific code: see "Never delegable" above -- `DELETE
+/api/projects/:name` already requires operator identity, which a configured superior never
+satisfies. That route (in `server.js`) could still get an explicit, hierarchy-aware
+`SUPERIOR_ACTION_FORBIDDEN` refusal for legibility, the same improvement `DELETE
+/api/sessions/:project` got in this PR -- cosmetic, not a security gap, and left for whichever
+future car's envelope actually includes `server.js`.
