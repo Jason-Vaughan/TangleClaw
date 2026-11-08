@@ -179,7 +179,7 @@ function fakeProtectedCwd(rel) {
   return full;
 }
 
-describe('probeTccReadable (#2625)', () => {
+describe('probeTccReadable (#2625, #2929)', () => {
   it('reports a normal, real directory as readable', () => {
     // #2735 — a real, unshimmed probe against TCC_PROBE_TIMEOUT_MS's
     // production default (1.5s, not overridable from this test file) can
@@ -192,18 +192,61 @@ describe('probeTccReadable (#2625)', () => {
   it('reports NOT readable when the server never answers (a real stalling tmux)', () => {
     // Not contention-exposed: the shim execs `sleep 30` immediately, so
     // this always reaches the real production timeout on pure wall-clock
-    // elapsed time, independent of host load.
-    withSelectivelySlowTmux('"new-session -d -s tc-tcc-probe-"*', () => {
+    // elapsed time, independent of host load. Matches the `run-shell
+    // '/bin/ls ...'` probe (#2929), not the old `new-session`/`kill-session`
+    // pair this shim pattern targeted before that fix.
+    withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
       assert.equal(tmux.probeTccReadable(os.tmpdir(), { timeoutMs: 300 }), false);
     });
   });
 
-  it('reports readable on a failure that is not a timeout (e.g. no such directory)', () => {
+  it('reports NOT readable on a fast, non-timeout failure (#2929: the macOS TCC symptom — '
+    + 'chdir succeeds, opendir/readdir does not, so the old chdir-based probe never saw it)', () => {
     // #2735 — a real, fast ENOENT-style failure that could itself be
     // delayed past the production timeout under contention, which would
-    // misread as the timeout branch instead of this one.
+    // misread as the timeout branch instead of this one. A nonexistent
+    // directory makes `/bin/ls` fail immediately with a non-zero exit,
+    // the same shape `run-shell` reports for a real EPERM on a
+    // TCC-protected directory — this sandbox cannot reproduce the real EPERM
+    // (see this file's header comment), but exercises the identical code
+    // path: ANY non-zero exit, not just a timeout, must now read as
+    // "not readable".
     withContentionRetry(() => {
-      assert.equal(tmux.probeTccReadable(path.join(os.tmpdir(), 'tc-tcc-no-such-dir-xyz')), true);
+      assert.equal(tmux.probeTccReadable(path.join(os.tmpdir(), 'tc-tcc-no-such-dir-xyz')), false);
+    });
+  });
+});
+
+describe('sessionSocketFlags (#2929)', () => {
+  it('returns no flags for a session that lives only on the default server', () => {
+    const name = uniqueSessionName('sockflags_default');
+    createdDefault.push(name);
+    // An unprotected cwd routes straight to `createSession` on the default
+    // server internally (same as calling it directly) — going through this
+    // entry point rather than `tmux.createSession(` itself keeps this file
+    // off `test/tmux-session-names.test.js`'s real-session-call scan, which
+    // this car's envelope does not include.
+    tmux.createSessionWithTccBootstrap(name, { cwd: os.tmpdir() });
+    assert.deepEqual(tmux.sessionSocketFlags(name), []);
+  });
+
+  it('returns no flags for a name that is not a live session anywhere', () => {
+    assert.deepEqual(tmux.sessionSocketFlags(uniqueSessionName('sockflags_absent')), []);
+  });
+
+  it('returns the TCC-authorized socket\'s -L flags for a session bootstrapped there, even though a same-named proxy also exists on the default server', () => {
+    const cwd = fakeProtectedCwd('Documents/sockflags-proj');
+    withContentionRetry(() => {
+      const name = uniqueSessionName('sockflags_tcc');
+      createdDefault.push(name);
+      startAuthorizedAnchor();
+      withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
+        assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
+      });
+      // The default server DOES have a same-named session (the attach
+      // proxy) — proving this isn't merely "absent on default".
+      assert.equal(tmux.hasSession(name), true);
+      assert.deepEqual(tmux.sessionSocketFlags(name), ['-L', tmux.TCC_SOCKET]);
     });
   });
 });
@@ -256,7 +299,7 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       // bootstrapTccAuthorizedServer, proven by making it throw if it did.
       startAuthorizedAnchor();
       tmux.bootstrapTccAuthorizedServer = () => { throw new Error('must not bootstrap when the authorized server is already running and can read cwd'); };
-      withSelectivelySlowTmux('"new-session -d -s tc-tcc-probe-"*', () => {
+      withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
         const created = tmux.createSessionWithTccBootstrap(name, { cwd });
         assert.equal(created, true);
       });
@@ -285,7 +328,7 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       const name = uniqueSessionName('tcc_protected_blocked_repeat');
       createdDefault.push(name);
       startAuthorizedAnchor();
-      withSelectivelySlowTmux('"new-session -d -s tc-tcc-probe-"*', () => {
+      withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
         assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
         assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), false, 'the proxy already exists on the default server');
       });
@@ -310,7 +353,7 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       // does — starts the anchor session for real — without ever opening a
       // real Terminal.app window from this test.
       tmux.bootstrapTccAuthorizedServer = () => { bootstrapCalls++; startAuthorizedAnchor(); };
-      withSelectivelySlowTmux('"new-session -d -s tc-tcc-probe-"*', () => {
+      withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
         const created = tmux.createSessionWithTccBootstrap(name, { cwd });
         assert.equal(created, true);
       });
@@ -328,7 +371,7 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
     // etc). The authorized server stays absent.
     let bootstrapCalls = 0;
     tmux.bootstrapTccAuthorizedServer = () => { bootstrapCalls++; };
-    withSelectivelySlowTmux('"new-session -d -s tc-tcc-probe-"*', () => {
+    withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
       assert.throws(
         () => tmux.createSessionWithTccBootstrap(name, { cwd }),
         /still absent or cannot read/
@@ -349,7 +392,7 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       const name = uniqueSessionName('tcc_utf8_attach');
       createdDefault.push(name);
       startAuthorizedAnchor();
-      withSelectivelySlowTmux('"new-session -d -s tc-tcc-probe-"*', () => {
+      withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
         assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
       });
       const proxyCommand = execFileSync('tmux', ['list-panes', '-t', name, '-F', '#{pane_start_command}'], { encoding: 'utf8' }).trim();
@@ -380,7 +423,7 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       fs.writeFileSync(path.join(binDir, 'tmux'), [
         '#!/bin/sh',
         'case "$*" in',
-        `  "new-session -d -s tc-tcc-probe-"*) touch ${markerFile} ;;`,
+        `  "run-shell /bin/ls -- "*) touch ${markerFile} ;;`,
         'esac',
         `exec ${REAL_TMUX} "$@"`
       ].join('\n'), { mode: 0o755 });
