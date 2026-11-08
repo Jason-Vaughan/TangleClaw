@@ -423,6 +423,7 @@
     "test/resource-leases.test.js",
     "test/route-reachability.test.js",
     "test/self-improvement-loop.test.js",
+    "test/session-hierarchy.test.js",
     "test/session-rule-lifecycle.test.js",
     "test/session-rules-selfimprove.test.js",
     "test/session-rules.test.js",
