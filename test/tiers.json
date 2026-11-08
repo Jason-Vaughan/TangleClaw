@@ -597,6 +597,7 @@
     "test/engine-change-launch-mode-ui.test.js",
     "test/engine-config-managed-block.test.js",
     "test/engine-error-surface.test.js",
+    "test/engine-health.test.js",
     "test/engine-hooks-location.test.js",
     "test/engine-hooks-merge.test.js",
     "test/engine-launch-flags.test.js",

@@ -1744,6 +1744,22 @@ function renderMedusaControl() { medusaControl.render(); }
  */
 function pollMedusa() { return medusaControl.poll(); }
 
+// Engine failover modal (#109) — same no-new-timer convention: `pollStatus`
+// calls `engineFailoverModal.poll()` on its own cadence below.
+const engineFailoverModal = window.tcCreateEngineFailoverModal({
+  doc: document,
+  api,
+  apiMutate,
+  projectName,
+  getEngines: () => sessionState.engines,
+  buildEngineOptions,
+  toast: (msg, isError) => showBannerActionToast(msg, isError),
+  // Same field the existing #killModal's openKillModal() reads — kill/
+  // restart/swap all reuse the same server-side password gate (#109 PRR-B
+  // finding).
+  isDeleteProtected: () => !!(sessionState.config && sessionState.config.deleteProtected)
+});
+
 /**
  * Poll this project's pending permission requests (#2352) on the same
  * cadence as `pollStatus` — no new timer, same convention as `pollMedusa`.
@@ -1989,6 +2005,19 @@ async function pollStatus() {
       sessionState.launchGraceRemaining--;
       return; // Skip this poll, try again next cycle
     }
+    // #109 "stopped polling" finding: `handleSessionEnded` below calls
+    // `stopPolling()`, which ends this entire poll loop — and therefore
+    // `engineFailoverModal`, which rides this same cadence and had not run
+    // yet this tick. For a CRASH specifically (not a deliberate kill or a
+    // completed wrap, both of which belong to the generic ended flow as
+    // before), give the failover modal first look: if it is now showing, or
+    // the operator already chose "Continue manually" (suppressed), this
+    // poll loop must keep running rather than end the page out from under
+    // either one.
+    if (data.lastSession && data.lastSession.status === 'crashed') {
+      const failoverState = await engineFailoverModal.poll();
+      if (failoverState.crashed || failoverState.suppressed) return;
+    }
     handleSessionEnded(data);
   } else if (data.active && sessionState.launchGraceRemaining > 0) {
     // Session came up — clear remaining grace
@@ -2039,6 +2068,10 @@ async function pollStatus() {
 
   // #2352 — same cadence, same reason: no new timer for one more small panel.
   if (!sessionState.ended) await pollPermissionRequests();
+
+  // #109 — same cadence: the engine-health probe loop runs server-side on
+  // its own timer, this just reads the latest classification.
+  if (!sessionState.ended) await engineFailoverModal.poll();
 
   // The Master's access level rides the same tick (#755). This is what makes a
   // flip from one session's bar reach another's — there is exactly one Master,
@@ -7742,6 +7775,10 @@ function bindEvents() {
   // the judge-mode/size-count inputs, the ⟳ chip and the panel's delegated
   // row controls (force-done, closeout, feedback, transcript) in one call.
   medusaLoops.mount();
+  // Engine failover modal (#109) — binds its own buttons only; deliberately
+  // not part of the Escape/outside-click cluster above, since it must never
+  // auto-dismiss.
+  engineFailoverModal.mount();
   // #2352 — the badge chip opens/closes the pending-permissions panel; its
   // row controls are delegated since the panel's content re-renders every poll.
   const permissionRequestsChip = $('permissionRequestsChip');
