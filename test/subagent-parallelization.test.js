@@ -285,6 +285,55 @@ describe('carrier wiring: the toggle reaches the generated config (#1257, A506-W
       const after = fs.readFileSync(carrierPath, 'utf8');
       assert.match(after, /Sub-agent parallelization is authorized/);
     });
+
+    it('evaluateProjectSubagentDispatch and ingestProjectSubagentFinding are the live runtime caller, on a real project (Round 3, PRR-B R-Gate)', async () => {
+      const name = 'subagent-dispatch-test';
+      const created = projects.createProject({ name, engine: 'claude' });
+      assert.deepEqual(created.errors, []);
+
+      // Off by default: refused, by project name, by id, and by an
+      // already-resolved record — every shape _resolveProjectRecord accepts.
+      const byName = projects.evaluateProjectSubagentDispatch(name, { writes: false });
+      assert.equal(byName.authorized, false);
+      assert.match(byName.reason, /has not authorized/);
+      assert.equal(projects.evaluateProjectSubagentDispatch(created.project.id, { writes: false }).authorized, false);
+      assert.equal(projects.evaluateProjectSubagentDispatch(created.project, { writes: false }).authorized, false);
+
+      // A finding is refused outright while the project has not authorized it.
+      const refused = projects.ingestProjectSubagentFinding(name, 'a finding');
+      assert.equal(refused.status, 'refused');
+
+      const updated = await projects.updateProject(name, { subagentParallelizationEnabled: true });
+      assert.deepEqual(updated.errors, []);
+
+      // Authorized once the toggle is on, for a reading task; still refuses
+      // a writing task — the full three-gate heuristic still applies, not
+      // just "is this project/engine combo turned on".
+      const reading = projects.evaluateProjectSubagentDispatch(name, { writes: false });
+      assert.equal(reading.authorized, true);
+      const writing = projects.evaluateProjectSubagentDispatch(name, { writes: true });
+      assert.equal(writing.authorized, false);
+      assert.match(writing.reason, /writes into shared files/);
+
+      // A finding is accepted as a hypothesis now that the project authorizes
+      // sub-agent work — ingestion itself is always a read, never a write.
+      const hypothesis = projects.ingestProjectSubagentFinding(name, 'the file is dead code', 'sub-1');
+      assert.deepEqual(hypothesis, { status: 'hypothesis', finding: 'the file is dead code', source: 'sub-1', verifiedAt: null });
+
+      // An engineOverride evaluates against a DIFFERENT engine than the one
+      // the project record names — aider never declares the capability, so
+      // this must refuse even though the project itself is authorized.
+      const overridden = projects.evaluateProjectSubagentDispatch(name, { writes: false }, 'aider');
+      assert.equal(overridden.authorized, false);
+      assert.match(overridden.reason, /Aider does not support sub-agent dispatch/);
+
+      // Never guesses on an unknown project.
+      const unknown = projects.evaluateProjectSubagentDispatch('no-such-project-at-all', { writes: false });
+      assert.equal(unknown.authorized, false);
+      assert.equal(unknown.reason, 'no such project');
+      assert.deepEqual(projects.ingestProjectSubagentFinding('no-such-project-at-all', 'x'),
+        { status: 'refused', reason: 'no such project' });
+    });
   });
 });
 
