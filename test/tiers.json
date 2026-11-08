@@ -789,6 +789,7 @@
     "test/ttyd-watcher.test.js",
     "test/tunnel.test.js",
     "test/ui-openclaw.test.js",
+    "test/ui-watermark.test.js",
     "test/update-applier-authored-content.test.js",
     "test/update-applier-global-rules-carry.test.js",
     "test/update-applier-managed-carrier.test.js",

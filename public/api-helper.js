@@ -6628,4 +6628,144 @@
   global.tcCreateMasterControlBar = tcCreateMasterControlBar;
   global.tcAdvisorControlBarMarkup = tcAdvisorControlBarMarkup;
   global.tcCreateAdvisorControlBar = tcCreateAdvisorControlBar;
+
+  // ── System-Wide Watermark Opacity Easter Egg (#2930) ──
+  // Ctrl+Shift+Up / Ctrl+Alt+Up (or Ctrl+Shift+] ) -> increase opacity (+2%, max 60%)
+  // Ctrl+Shift+Down / Ctrl+Alt+Down (or Ctrl+Shift+[ ) -> decrease opacity (-2%, min 0% off)
+  // Ctrl+Shift+0 / Ctrl+Alt+0 -> reset to default (10%)
+  // Syncs live across all open TangleClaw tabs via localStorage ('tc_watermark_opacity')
+  // and works even when focus is inside the ttyd terminal iframe!
+  const TC_WATERMARK_STORAGE_KEY = 'tc_watermark_opacity';
+  const TC_WATERMARK_DEFAULT = 0.10;
+  const TC_WATERMARK_DEFAULT_LIGHT = 0.08;
+  let _tcWatermarkHudTimer = null;
+
+  /**
+   * The CSS default this theme actually renders (0.10 dark / 0.08 light),
+   * so the first keyboard adjustment from an unset state steps off the
+   * watermark's own visible opacity instead of always the dark value.
+   * @returns {number}
+   */
+  function _tcWatermarkThemeDefault() {
+    try {
+      if (global.document && global.document.documentElement &&
+        global.document.documentElement.getAttribute('data-theme') === 'light') {
+        return TC_WATERMARK_DEFAULT_LIGHT;
+      }
+    } catch (_) {}
+    return TC_WATERMARK_DEFAULT;
+  }
+
+  function _tcReadWatermarkOpacity() {
+    try {
+      const raw = global.localStorage && global.localStorage.getItem(TC_WATERMARK_STORAGE_KEY);
+      if (raw !== null && raw !== '') {
+        const n = Number(raw);
+        if (Number.isFinite(n) && n >= 0 && n <= 0.85) return Math.round(n * 100) / 100;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function _tcApplyWatermarkOpacity(val, showHud) {
+    if (!global.document || !global.document.documentElement) return;
+    const rootEl = global.document.documentElement;
+    if (val === null || val === undefined) {
+      rootEl.style.removeProperty('--tc-watermark-opacity');
+    } else {
+      const clamped = Math.max(0, Math.min(0.65, Math.round(val * 100) / 100));
+      rootEl.style.setProperty('--tc-watermark-opacity', String(clamped));
+    }
+    if (showHud && global.document.body) {
+      let hud = global.document.getElementById('tcWatermarkHud');
+      if (!hud) {
+        hud = global.document.createElement('div');
+        hud.id = 'tcWatermarkHud';
+        hud.setAttribute('aria-live', 'polite');
+        hud.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;padding:7px 13px;border-radius:999px;background:rgba(15,20,16,0.88);border:1px solid rgba(139,195,74,0.45);color:#8BC34A;font:600 12px/1.2 -apple-system,BlinkMacSystemFont,"SF Mono",monospace;box-shadow:0 4px 20px rgba(0,0,0,0.45);pointer-events:none;transition:opacity 0.2s ease;opacity:0;';
+        global.document.body.appendChild(hud);
+      }
+      const effective = val === null ? _tcWatermarkThemeDefault() : Math.max(0, Math.min(0.65, Math.round(val * 100) / 100));
+      const pct = Math.round(effective * 100);
+      hud.textContent = pct === 0 ? 'Claw Watermark: OFF (0%)' : `Claw Watermark: ${pct}%${val === null ? ' (default)' : ''}`;
+      hud.style.opacity = '1';
+      if (_tcWatermarkHudTimer) clearTimeout(_tcWatermarkHudTimer);
+      _tcWatermarkHudTimer = setTimeout(() => {
+        if (hud) hud.style.opacity = '0';
+      }, 1400);
+    }
+  }
+
+  function _tcHandleWatermarkKeydown(event) {
+    if (!event) return;
+    // Trigger on Ctrl+Shift+<Key> or Ctrl+Alt/Option+<Key>
+    const mod = event.ctrlKey && (event.shiftKey || event.altKey) && !event.metaKey;
+    if (!mod) return;
+    const k = event.key;
+    const code = event.code;
+    let delta = null;
+    let reset = false;
+    if (k === 'ArrowUp' || code === 'ArrowUp' || code === 'BracketRight' || k === '}' || k === ']') {
+      delta = 0.02;
+    } else if (k === 'ArrowDown' || code === 'ArrowDown' || code === 'BracketLeft' || k === '{' || k === '[') {
+      delta = -0.02;
+    } else if (k === '0' || code === 'Digit0' || k === ')') {
+      reset = true;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (reset) {
+      try { global.localStorage.removeItem(TC_WATERMARK_STORAGE_KEY); } catch (_) {}
+      _tcApplyWatermarkOpacity(null, true);
+      return;
+    }
+    const current = _tcReadWatermarkOpacity();
+    const base = current === null ? _tcWatermarkThemeDefault() : current;
+    const next = Math.max(0, Math.min(0.65, Math.round((base + delta) * 100) / 100));
+    try { global.localStorage.setItem(TC_WATERMARK_STORAGE_KEY, String(next)); } catch (_) {}
+    _tcApplyWatermarkOpacity(next, true);
+  }
+
+  function _tcInitWatermarkEasterEgg() {
+    if (!global.document || !global.addEventListener) return;
+    if (global._tcWatermarkEasterEggWired) return;
+    global._tcWatermarkEasterEggWired = true;
+
+    const initial = _tcReadWatermarkOpacity();
+    if (initial !== null) _tcApplyWatermarkOpacity(initial, false);
+
+    global.addEventListener('keydown', _tcHandleWatermarkKeydown, true);
+    global.addEventListener('storage', (e) => {
+      if (e && e.key === TC_WATERMARK_STORAGE_KEY) {
+        _tcApplyWatermarkOpacity(_tcReadWatermarkOpacity(), false);
+      }
+    });
+
+    // Also attach capture-phase listener inside #terminalFrame whenever ttyd loads/reloads
+    const wireIframe = () => {
+      try {
+        const frame = global.document.getElementById('terminalFrame');
+        const doc = frame && frame.contentDocument;
+        if (doc && !doc._tcWatermarkKeyWired) {
+          doc._tcWatermarkKeyWired = true;
+          doc.addEventListener('keydown', _tcHandleWatermarkKeydown, true);
+        }
+      } catch (_) {}
+    };
+    global.addEventListener('DOMContentLoaded', () => {
+      const initVal = _tcReadWatermarkOpacity();
+      if (initVal !== null) _tcApplyWatermarkOpacity(initVal, false);
+      const frame = global.document.getElementById('terminalFrame');
+      if (frame) {
+        frame.addEventListener('load', wireIframe);
+        wireIframe();
+      }
+    });
+    setInterval(wireIframe, 2000).unref?.();
+  }
+
+  _tcInitWatermarkEasterEgg();
+
 })(typeof window !== 'undefined' ? window : globalThis);
