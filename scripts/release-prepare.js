@@ -8,9 +8,16 @@
  *
  *   "releasePrepareCommand": "node scripts/release-prepare.js"
  *
- * Two files, each guarded by a test that fails the release PR without them:
+ * Three files, each guarded by a test that fails the release PR without them:
  *   - `README.md` clone pins (`--branch vX.Y.Z`) → the release version
  *     (`test/readme-version-pins.test.js`).
+ *   - `README.md`'s top `**Latest release:**` banner (#2935): the version tag
+ *     and the `docs/releases/vX.Y.Z.md` / sprint-report link both move to the
+ *     release version (`test/readme-version-pins.test.js`). The banner's own
+ *     prose — what shipped, in words — is not generated: nothing in this
+ *     repo's tree says that in a form a script can read, so the release PR
+ *     author writes it, the same way they write the CHANGELOG entry it
+ *     summarizes.
  *   - `test/fixtures/changelog-released-sections.lock.json` gains the new
  *     release's section hash (`test/changelog-released-immutable.test.js`).
  *
@@ -41,6 +48,16 @@ const { readFragments, FRAGMENT_DIR } = require('../lib/changelog-fragments');
 const LOCK_REL = path.join('test', 'fixtures', 'changelog-released-sections.lock.json');
 const RELEASE_HEADING_RE = /^## \[(\d+\.\d+\.\d+)\] - /;
 const PIN_RE = /(--branch\s+v)(\d+\.\d+\.\d+)/g;
+
+// The banner is the one line starting with this marker (#2935). Rewriting
+// only within that line — never a whole-file version-string replace — is
+// deliberate: the Sprint Reports section further down (and the Kaizen
+// retrospective range in the banner itself) link past releases on purpose,
+// and a blind substitution would overwrite that history.
+const BANNER_LINE_RE = /^\*\*Latest release:\*\*/;
+const BANNER_VERSION_RE = /(\*\*Latest release:\*\*\s+`v)(\d+\.\d+\.\d+)(`)/;
+const BANNER_STATUS_LINK_RE = /(docs\/releases\/v)(\d+\.\d+\.\d+)(\.md)/;
+const BANNER_REPORT_LINK_RE = /(\[`v)(\d+\.\d+\.\d+)(`\s+Sprint Report\]\(https:\/\/jason-vaughan\.github\.io\/TangleClaw\/reports\/v)(\d+\.\d+\.\d+)(\/\))/;
 
 /**
  * Hash the body of every dated release section, in the order they appear.
@@ -79,6 +96,33 @@ function updatePins(readme, version) {
   }
   PIN_RE.lastIndex = 0;
   return readme.replace(PIN_RE, `$1${version}`);
+}
+
+/**
+ * Point the README's top `**Latest release:**` banner at `version`: the
+ * version tag, the release-status link (`docs/releases/vX.Y.Z.md`), and the
+ * `vX.Y.Z` Sprint Report link both move. Every other line is left untouched,
+ * including the Kaizen retrospective range inside the banner itself and the
+ * Sprint Reports Hub's own list of past releases further down the file —
+ * both intentionally keep old version numbers.
+ *
+ * @param {string} readme - README.md contents
+ * @param {string} version - Release version
+ * @returns {string} Updated contents
+ * @throws {Error} When the README has no banner line to update
+ */
+function updateReleaseBanner(readme, version) {
+  const lines = readme.split('\n');
+  const bannerIndex = lines.findIndex((line) => BANNER_LINE_RE.test(line));
+  if (bannerIndex === -1) {
+    throw new Error('README.md has no `**Latest release:**` banner line to update');
+  }
+  let banner = lines[bannerIndex];
+  banner = banner.replace(BANNER_VERSION_RE, `$1${version}$3`);
+  banner = banner.replace(BANNER_STATUS_LINK_RE, `$1${version}$3`);
+  banner = banner.replace(BANNER_REPORT_LINK_RE, `$1${version}$3${version}$5`);
+  lines[bannerIndex] = banner;
+  return lines.join('\n');
 }
 
 /**
@@ -134,9 +178,9 @@ function prepareRelease(root, env = process.env) {
   const changed = [];
   const readmePath = path.join(root, 'README.md');
   const readme = fs.readFileSync(readmePath, 'utf8');
-  const pinned = updatePins(readme, version);
-  if (pinned !== readme) {
-    fs.writeFileSync(readmePath, pinned);
+  const rebannered = updateReleaseBanner(updatePins(readme, version), version);
+  if (rebannered !== readme) {
+    fs.writeFileSync(readmePath, rebannered);
     changed.push('README.md');
   }
   const lockPath = path.join(root, LOCK_REL);
@@ -168,6 +212,6 @@ function main() {
   }
 }
 
-module.exports = { hashReleasedSections, updatePins, extendLock, prepareRelease, main };
+module.exports = { hashReleasedSections, updatePins, updateReleaseBanner, extendLock, prepareRelease, main };
 
 if (require.main === module) process.exitCode = main();

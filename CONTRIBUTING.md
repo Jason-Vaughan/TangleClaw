@@ -163,7 +163,12 @@ TangleClaw currently has no user authentication — anyone who can reach the ser
 
 ### Linux Support
 
-TangleClaw currently requires macOS (launchd for service management). Adding systemd support would open TangleClaw to Linux servers — which is a natural fit for orchestrating SDLC fleets across distributed environments.
+The guided installer (`deploy/install.sh`) still requires macOS (launchd for service management,
+plus the Homebrew-driven dependency bootstrap). A `systemd --user` unit generator/installer/verifier
+already exists for service supervision on a hand-run Linux install (`lib/linux-systemd.js`,
+`scripts/linux-systemd-install.js`, #1424) — what's still missing is wiring a Linux path through the
+installer itself (dependency bootstrap, plist-equivalent setup, first-run wizard) so a Linux user gets
+the same one-command install macOS has.
 
 ### Sidecar Controls
 
@@ -285,9 +290,19 @@ or a patch in a comment, is not fetched or run.
 2. **Zero Trust — and you still get the credit.** Maintainers audit pull requests as raw text
    diffs. We do not check out contributor branches or run contributor code on our own machines.
    (CI does run your tests, in an isolated runner with a read-only token and no access to secrets.)
-   If your logic is sound, we reconstruct the fix in a clean commit and credit you by name.
-   A fix described in an issue is treated the same way: a report that leads to a fix is credited
-   by name in the changelog.
+   If your logic is sound, we reconstruct the fix in a clean commit and credit you by name — a
+   `Reported-by:` trailer, a named line in the `CHANGELOG.md` entry, and a link to your PR, because
+   the reconstruction is derived from the issue and never transcribed from your diff, so the bytes
+   landing are ours even though the fix is yours. A fix described in an issue is treated the same
+   way: a report that leads to a fix is credited by name in the changelog.
+
+   For contributors we've named for it, that credit also includes native GitHub attribution: an
+   `@<username>` mention in the PR body when the reconstruction PR is opened, another at merge/close
+   and in the release notes, and an official `Co-authored-by: Name <id+login@users.noreply.github.com>`
+   trailer on the commit and merge commit — so you get the avatar, the contribution-graph credit, and
+   a listing in this repository's **Contributors** sidebar. [ADR 0014's 2026-11-08
+   amendment](docs/adr/0014-dual-key-review-for-untrusted-prs.md#amendment-2026-11-08-native-github-contributor-attribution)
+   has the full rule and who is currently named.
 
 3. **Because we reconstruct it, your explanation is worth more than your code.** The most valuable
    contribution, whether a collaborator's pull request or an issue, describes the bug precisely,

@@ -1,6 +1,6 @@
 # ADR 0014: Dual-Key Review for Untrusted PRs
 
-**Status:** Accepted (2026-09-07, operator-ratified, then corrected by its own first application the same day). Amended 2026-09-17 (operator rulings of 2026-09-16 and an architect security audit): see **Amendment 2026-09-17** below, which moves the micro filter and reconstruction to a dedicated PR Reviewer session, gives contributor replies to the Coordinator (renamed ProjectManager on 2026-09-17, when the reply contract was tightened), and adds the trust-boundary, intake, injection-hold, promotion and record rules. Amended 2026-10-07 (Architect ruling A162.6; in force since PR #2227 merged, as its Ratification line records): see **Amendment 2026-10-07** below, which leaves the micro filter with the PR Reviewer and moves reconstruction to a reconstruction lane the Operator authorizes.
+**Status:** Accepted (2026-09-07, operator-ratified, then corrected by its own first application the same day). Amended 2026-09-17 (operator rulings of 2026-09-16 and an architect security audit): see **Amendment 2026-09-17** below, which moves the micro filter and reconstruction to a dedicated PR Reviewer session, gives contributor replies to the Coordinator (renamed ProjectManager on 2026-09-17, when the reply contract was tightened), and adds the trust-boundary, intake, injection-hold, promotion and record rules. Amended 2026-10-07 (Architect ruling A162.6; in force since PR #2227 merged, as its Ratification line records): see **Amendment 2026-10-07** below, which leaves the micro filter with the PR Reviewer and moves reconstruction to a reconstruction lane the Operator authorizes. Amended 2026-11-08 (Sprint Charter A506 v1.0, issue #2935): see **Amendment 2026-11-08** below, which adds native GitHub `Co-authored-by:` attribution, on top of the existing `Reported-by:` default, for contributors the Operator names for it.
 **Source:** PR #1334 — the first external contribution to reach this repository, against #1287.
 **Decides:** How an untrusted external pull request is audited, reconstructed, credited and answered.
 **Governs:** Every pull request from outside the repository, in this repo and in any that adopts this ADR.
@@ -359,6 +359,41 @@ without it.
   cutting a reconstruction branch is a lane, that the Operator's instruction was given, or that the
   head commit was re-read. The protection is each session's adherence to these rules and the
   Operator's choice of lane.
+
+## Amendment 2026-11-08: native GitHub contributor attribution
+
+**Source:** Sprint Charter A506 v1.0, Car 5720-W1-D, issue #2935 — an operator-directed change, not a
+drift correction.
+
+**What changes.** Decision item 3's credit paragraph says "Do not reach for Co-Authored-By" because
+a reconstruction is never the contributor's bytes, and the trailer would misstate that. That reasoning
+still holds **by default** — it is why `Reported-by:` stays the credit mechanism for an ordinary
+reconstructed PR or issue report. What this amendment adds is narrower: when the Operator names a
+specific contributor for **native GitHub attribution** — because their aggregate record of reports,
+diagnostics, or reconstructed fixes earns it, as judged by the Operator, not by a filter — that
+contributor's PRs and the commits landing them also carry:
+
+1. An `@<username>` mention in the PR body when the reconstruction PR (or any PR crediting them) is
+   opened.
+2. An `@<username>` mention again when that PR is merged or closed, and in the release notes.
+3. An official GitHub `Co-authored-by: Name <id+login@users.noreply.github.com>` trailer on both the
+   commit and the merge commit, using the contributor's real numeric GitHub user id (`gh api
+   users/<login>` — never copied from a prior message without checking it against that).
+
+**This is a credit the Operator extends, not a claim of authorship of the exact bytes.** It does not
+change Decision item 3: a reconstruction is still derived from the issue, never transcribed from the
+contributor's diff, and no contributor's code is merged. `Co-authored-by:` here records that the
+Operator has chosen to recognize this named person's contribution natively, the same way the existing
+`CHANGELOG.md` and README `## Contributors` credit already does in prose — this amendment just adds
+the GitHub-native form on top, for Operator-named contributors only.
+
+**Currently named under this amendment:** `@GURULifeline` and `@madhavanms2803-ui`. The Operator may
+name others the same way; this file is the place that record lives, so a session doesn't have to
+infer who qualifies from chat history.
+
+**Honest limit:** nothing mechanical checks that a `Co-authored-by:` trailer only appears for an
+Operator-named contributor, or that the numeric id in it is correct — `gh api users/<login>` is a
+command any session can run before trusting an id relayed in a dispatch, and should.
 
 ## Consequences
 - **Positive:** Dramatically reduces the surface area for supply-chain attacks, obfuscation, or logic bombs making it into the codebase. Enforces the Swarm Protocol's division of concerns.
