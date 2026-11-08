@@ -10,7 +10,7 @@
  * `test/coordinator-rotation.test.js` uses for its own authority tests.
  */
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -192,6 +192,10 @@ describe('#1578 session hierarchy', () => {
     beforeEach(() => {
       sessionHierarchy.setConfig(subordinate, { reportsTo: 'Superior', delegatedScope: ['clear'] });
       session = store.sessions.start({ projectId: superior.id, engineId: 'claude', tmuxSession: 'tc-hierarchy-sup', primePrompt: '' });
+    });
+
+    afterEach(() => {
+      store.sessions.kill(session.id, 'test cleanup');
     });
 
     it('authorizes the superior\'s current registered workspace id', () => {
