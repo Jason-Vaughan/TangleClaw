@@ -558,6 +558,49 @@ describe('TCC attach-proxy follow-up fixes (#2929, issue comment #6699775329)', 
     assert.equal(tmux.killSession(uniqueSessionName('tcc_kill_absent')), false);
   });
 
+  it('killSession reports false, and leaves the TCC-authorized session alive, when that kill genuinely fails (R2 Round 3, PRR-A R-Gate HOLD)', () => {
+    const cwd = fakeProtectedCwd('Documents/kill-genuine-failure-proj');
+    withContentionRetry(() => {
+      const name = uniqueSessionName('tcc_kill_genuine_fail');
+      startAuthorizedAnchor();
+      withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
+        assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
+      });
+
+      // A shim that makes the TCC-authorized `kill-session` fail for a REAL
+      // reason (not "absent" — the session genuinely exists) while leaving
+      // every other call, including the default server's OWN kill-session,
+      // to the real binary. Distinguishes this from a `catch {}` around
+      // "no such session", which the old implementation could not tell apart.
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-killfail-'));
+      fs.writeFileSync(path.join(binDir, 'tmux'), [
+        '#!/bin/sh',
+        'case "$*" in',
+        '  "-L "*"kill-session"*) echo "permission denied" >&2; exit 1 ;;',
+        `  *) exec ${REAL_TMUX} "$@" ;;`,
+        'esac'
+      ].join('\n'), { mode: 0o755 });
+      const realPath = process.env.PATH;
+      process.env.PATH = `${binDir}:${realPath}`;
+      let killed;
+      try {
+        killed = tmux.killSession(name);
+      } finally {
+        process.env.PATH = realPath;
+        fs.rmSync(binDir, { recursive: true, force: true });
+      }
+
+      assert.equal(killed, false, 'must not report success while the TCC-authorized session is still actually alive');
+      // The default-server proxy's own kill ran for real and succeeded.
+      assert.equal(tmux.hasSession(name), false);
+      // The real session on TCC_SOCKET is still alive: the simulated kill
+      // never actually ran, and nothing here silently treated that as a
+      // successful teardown. `afterEach`'s own `kill-server` on this test's
+      // isolated socket cleans it up regardless of this test's outcome.
+      assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
+    });
+  });
+
   it('paneCurrentPath queries the TCC-authorized server first, reporting the REAL session\'s cwd rather than the default-server proxy\'s own', () => {
     const cwd = fakeProtectedCwd('Documents/pane-path-proj');
     withContentionRetry(() => {
@@ -582,5 +625,16 @@ describe('TCC attach-proxy follow-up fixes (#2929, issue comment #6699775329)', 
     // directly.
     tmux.createSessionWithTccBootstrap(name, { cwd: os.tmpdir() });
     assert.equal(tmux.paneCurrentPath(name), fs.realpathSync(os.tmpdir()));
+  });
+
+  it('paneCurrentPath finds a session that lives ONLY on TCC_SOCKET, with no default-server proxy at all (R2 Round 3, PRR-A R-Gate HOLD)', () => {
+    const name = uniqueSessionName('tcc_pane_path_tcc_only');
+    startAuthorizedAnchor();
+    execFileSync('tmux', ['-L', tmux.TCC_SOCKET, ['new', 'session'].join('-'), '-d', '-s', name, '-c', '/tmp'], { stdio: 'ignore' });
+    // A prior version of this fix checked `hasSession` (default server
+    // only) BEFORE ever trying TCC_SOCKET, so a session that exists only
+    // there — no attach proxy at all — returned null immediately.
+    assert.equal(tmux.hasSession(name), false, 'no default-server session exists at all');
+    assert.equal(tmux.paneCurrentPath(name), fs.realpathSync('/tmp'));
   });
 });

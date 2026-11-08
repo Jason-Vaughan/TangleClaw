@@ -1743,7 +1743,20 @@ describe('tmux', () => {
       // default-server attach proxy; and `paneCurrentPath` querying it
       // FIRST, since the proxy's own pane is the attach command, not the
       // engine's actual working directory.
-      assert.equal(targets.length, 35, `expected 35 -t sites in lib/tmux.js, found ${targets.length}`);
+      // 34 since the SAME follow-up's Round 3 fix (PRR-A R-Gate HOLD [C2]):
+      // `paneCurrentPath` merged its two separate `display-message` calls
+      // (one per server) into ONE, parameterized by a conditional `-L`
+      // socket flag, after the original two-call version was found to check
+      // the default server's existence BEFORE ever trying `TCC_SOCKET`,
+      // returning null for a session that lived only there. The merge
+      // removed one `-t ${_target(session)}` site; `killSession`'s own two
+      // sites (TCC kill, default kill) are unchanged in count, just
+      // re-ordered — the default kill now re-checks existence AFTER the TCC
+      // kill rather than trusting a pre-kill snapshot, since killing the
+      // real session can make the default server's attach PROXY exit on
+      // its own, and the stale snapshot read that as the default kill
+      // itself failing.
+      assert.equal(targets.length, 34, `expected 34 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,
