@@ -165,6 +165,7 @@ files = [
   "test/plan-docs.test.js",
   "test/plan-progress-card.test.js",
   "test/plan-train-card.test.js",
+  "test/plan-viewer-branding.test.js",
   "test/product-manual-router.test.js",
   "test/project-authority-settings.test.js",
   "test/project-config.test.js",
