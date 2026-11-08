@@ -43,10 +43,12 @@
     // that row never changes afterward (`store.sessions` transitions are
     // one-way), so without this the very next poll would see that same
     // row, report CRASHED again, and reopen the modal right after the
-    // operator just confirmed ending it. This is a one-way latch for THIS
-    // session's lifetime on the page — a `restart`/`swap` never sets it
-    // (a new session is expected to keep being monitored), and nothing
-    // clears it, because nothing on this page outlives the kill it answers.
+    // operator just confirmed ending it. `restart`/`swap` never set it (a
+    // new session is expected to keep being monitored). Cleared the moment
+    // `poll()` next observes a genuinely live session — not a one-way latch
+    // for the page's whole lifetime: `public/session.js`'s own
+    // `startEndedWatch` can revive this same page for a brand new session
+    // on the same project without a reload (PRR-B Round 2 finding).
     let justKilled = false;
 
     function els() {
@@ -80,13 +82,25 @@
      * @returns {Promise<{crashed: boolean, suppressed: boolean}>}
      */
     async function poll() {
-      // A confirmed kill always wins: no further GET, no reopening, and
-      // `pollStatus`'s caller is told nothing is handled here anymore so
-      // its own generic ended-flow runs exactly as it would have without
-      // this module's interception ever existing.
-      if (justKilled) return { crashed: false, suppressed: false };
       const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/engine-health`);
       if (!data) return { crashed: open, suppressed: false };
+      if (data.active) {
+        // A live session exists again — whatever `justKilled` was holding
+        // open for is over. PRR-B Round 2 finding: `public/session.js`'s
+        // own `startEndedWatch` can revive this exact page for a brand new
+        // session on the same project without a reload, and the latch
+        // must not keep refusing to poll for that new session forever.
+        justKilled = false;
+      }
+      if (justKilled) {
+        // The killed session's own `crashed`/`killed` row never changes,
+        // so GET would otherwise keep answering about it forever. That
+        // crash is already handled: never reopen for it, and tell
+        // `pollStatus` nothing is handled here so its generic ended-flow
+        // runs exactly as it would without this module's interception.
+        if (open) hide();
+        return { crashed: false, suppressed: false };
+      }
       if (data.state === 'CRASHED' && !open) show(data);
       else if (data.state !== 'CRASHED' && open) hide();
       return { crashed: data.state === 'CRASHED', suppressed: !!data.suppressed };

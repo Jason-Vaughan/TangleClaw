@@ -417,16 +417,21 @@ describe('engine-health-routes — HTTP surface (#109)', () => {
       assert.equal(status, 400);
     });
 
-    it('toggles suppression on and off', async () => {
-      makeProject('eh-suppress');
+    it('toggles suppression on and off, scoped to the active session', async () => {
+      // Suppression is session-id-scoped (PRR-B Round 2 finding), so there
+      // must be an active session for the toggle to have anything to scope
+      // it to.
+      const project = makeProject('eh-suppress');
+      const bound = bindProject(project);
       const on = await request('POST', '/api/sessions/eh-suppress/engine-health/suppress', { suppressProbe: true }, writeHeaders());
       assert.equal(on.status, 200);
       assert.equal(on.data.suppressed, true);
-      assert.ok(routes._suppressed.has('eh-suppress'));
+      assert.equal(routes._suppressed.get('eh-suppress'), bound.sessionId);
 
       const off = await request('POST', '/api/sessions/eh-suppress/engine-health/suppress', { suppressProbe: false }, writeHeaders());
       assert.equal(off.data.suppressed, false);
       assert.ok(!routes._suppressed.has('eh-suppress'));
+      store.sessions.kill(bound.sessionId, 'test cleanup');
     });
   });
 
@@ -515,8 +520,27 @@ describe('engine-health-routes — HTTP surface (#109)', () => {
         const after = await request('GET', '/api/sessions/eh-continue-crashed/engine-health', undefined, writeHeaders());
         assert.equal(after.data.state, STATES.HEALTHY, 'acknowledging the crash must stop it from reopening the modal');
         assert.equal(after.data.suppressed, true);
-      } finally {
+
+        // PRR-B Round 2 finding: suppression must not outlive the session
+        // it was acknowledged for. End this one (any way — not through
+        // this family's own restart/swap cleanup) and start a brand new
+        // one for the same project; the new session must NOT inherit the
+        // old suppression.
         store.sessions.kill(session.id, 'test cleanup');
+        const newSessionName = uniqueSessionName('tc-engine-health-continue-new');
+        execFileSync('tmux', ['new-session', '-d', '-s', newSessionName, '-x', '80', '-y', '24']);
+        const newSession = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: newSessionName });
+        try {
+          routes._probeOnce();
+          const forNewSession = await request('GET', '/api/sessions/eh-continue-crashed/engine-health', undefined, writeHeaders());
+          assert.equal(forNewSession.data.suppressed, false, 'a new session must not inherit an earlier session\'s suppression');
+          assert.equal(forNewSession.data.state, STATES.HEALTHY);
+        } finally {
+          try { execFileSync('tmux', ['kill-session', '-t', newSessionName]); } catch { /* already gone */ }
+          store.sessions.kill(newSession.id, 'test cleanup');
+        }
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup'); // no-op if already killed above
       }
     });
 
