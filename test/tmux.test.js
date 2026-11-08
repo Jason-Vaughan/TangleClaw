@@ -1729,7 +1729,21 @@ describe('tmux', () => {
       // real session on the OTHER server, where a prefix match would be just
       // as unsafe as on the default one; and the proxy's own `status off`.
       // All three go through `_target()`, like every other site here.
-      assert.equal(targets.length, 32, `expected 32 -t sites in lib/tmux.js, found ${targets.length}`);
+      // Still 32 after #2929's EPERM fix to `probeTccReadable` (its probe
+      // stopped `chdir`-ing a throwaway session and started running `ls`
+      // inside the server via `run-shell`, which removed that `kill-session`
+      // target) — `sessionSocketFlags`'s own `has-session -t ${_target(name)}`
+      // (which server actually hosts a named session) replaced it, net zero.
+      // 35 since #2929's same-session follow-up (issue comment #6699775329)
+      // added three more, each a `-t ${_target(name)}`/`${_target(session)}`
+      // against the TCC-authorized socket: `createSessionWithTccBootstrap`
+      // killing a same-named orphan there before creating (a kill+relaunch
+      // used to crash with tmux's own "duplicate session" otherwise);
+      // `killSession` killing the real session there, not just the
+      // default-server attach proxy; and `paneCurrentPath` querying it
+      // FIRST, since the proxy's own pane is the attach command, not the
+      // engine's actual working directory.
+      assert.equal(targets.length, 35, `expected 35 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,

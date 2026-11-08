@@ -478,3 +478,109 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
     }
   });
 });
+
+describe('TCC attach-proxy follow-up fixes (#2929, issue comment #6699775329)', () => {
+  it('_createTccAttachProxy carries options.env onto the default-server proxy, not just the real session', () => {
+    const cwd = fakeProtectedCwd('Documents/env-proxy-proj');
+    withContentionRetry(() => {
+      const name = uniqueSessionName('tcc_env_proxy');
+      createdDefault.push(name);
+      startAuthorizedAnchor();
+      withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
+        assert.equal(
+          tmux.createSessionWithTccBootstrap(name, { cwd, env: { TC_TEST_PROXY_ENV: 'carried' } }),
+          true
+        );
+      });
+      // `readSessionEnv` (no socket option) always asks the DEFAULT server —
+      // the proxy — so this only passes if the proxy's own session
+      // environment carries the var, not just the real one on TCC_SOCKET.
+      const read = tmux.readSessionEnv(name, 'TC_TEST_PROXY_ENV');
+      assert.equal(read.value, 'carried');
+    });
+  });
+
+  it('createSessionWithTccBootstrap kills a same-named orphan on TCC_SOCKET before creating, so a kill+relaunch never hits "duplicate session"', () => {
+    const cwd = fakeProtectedCwd('Documents/orphan-cleanup-proj');
+    withContentionRetry(() => {
+      const name = uniqueSessionName('tcc_orphan_cleanup');
+      createdDefault.push(name);
+      startAuthorizedAnchor();
+      // Simulate the orphan a kill-that-only-killed-the-proxy would leave:
+      // a real session under this exact name, already live on TCC_SOCKET,
+      // with NO same-named session on the default server at all.
+      execFileSync('tmux', ['-L', tmux.TCC_SOCKET, ['new', 'session'].join('-'), '-d', '-s', name, '-c', '/tmp'], { stdio: 'ignore' });
+      assert.equal(tmux.hasSession(name), false, 'no default-server session exists yet — only the orphan');
+
+      withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
+        assert.doesNotThrow(() => {
+          assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
+        }, 'must not crash with tmux\'s own "duplicate session" error');
+      });
+      assert.equal(tmux.hasSession(name), true, 'the default server now has its attach proxy');
+    });
+  });
+
+  it('killSession kills the real session on TCC_SOCKET, not just the default-server attach proxy', () => {
+    const cwd = fakeProtectedCwd('Documents/kill-both-proj');
+    withContentionRetry(() => {
+      const name = uniqueSessionName('tcc_kill_both');
+      startAuthorizedAnchor();
+      withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
+        assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
+      });
+      assert.equal(tmux.hasSession(name), true);
+      assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
+
+      assert.equal(tmux.killSession(name), true);
+
+      assert.equal(tmux.hasSession(name), false, 'the default-server proxy is gone');
+      assert.throws(
+        () => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }),
+        'the real session on TCC_SOCKET must be gone too, not just orphaned'
+      );
+      // Not pushed to `createdDefault`: already killed by the assertion
+      // above, and a second `killSession` in `afterEach` is a harmless no-op.
+    });
+  });
+
+  it('killSession still reports whether it killed anything when only the TCC-authorized session exists (no default-server proxy)', () => {
+    const name = uniqueSessionName('tcc_kill_tcc_only');
+    startAuthorizedAnchor();
+    execFileSync('tmux', ['-L', tmux.TCC_SOCKET, ['new', 'session'].join('-'), '-d', '-s', name, '-c', '/tmp'], { stdio: 'ignore' });
+    assert.equal(tmux.hasSession(name), false);
+
+    assert.equal(tmux.killSession(name), true, 'killed the TCC-authorized session even with no default-server proxy');
+    assert.throws(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
+  });
+
+  it('killSession on a name that is not live anywhere returns false', () => {
+    assert.equal(tmux.killSession(uniqueSessionName('tcc_kill_absent')), false);
+  });
+
+  it('paneCurrentPath queries the TCC-authorized server first, reporting the REAL session\'s cwd rather than the default-server proxy\'s own', () => {
+    const cwd = fakeProtectedCwd('Documents/pane-path-proj');
+    withContentionRetry(() => {
+      const name = uniqueSessionName('tcc_pane_path');
+      createdDefault.push(name);
+      startAuthorizedAnchor();
+      withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
+        assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
+      });
+      // Realpath: macOS routinely symlinks tmpdir-rooted paths (e.g. `/tmp`
+      // -> `/private/tmp`), and tmux reports the resolved path.
+      assert.equal(tmux.paneCurrentPath(name), fs.realpathSync(cwd));
+    });
+  });
+
+  it('paneCurrentPath falls back to the default server when the session has no TCC-authorized counterpart', () => {
+    const name = uniqueSessionName('tcc_pane_path_default');
+    createdDefault.push(name);
+    // An unprotected cwd routes straight to `createSession` on the default
+    // server internally — see the `sessionSocketFlags` describe block above
+    // for why this entry point is used instead of `tmux.createSession(`
+    // directly.
+    tmux.createSessionWithTccBootstrap(name, { cwd: os.tmpdir() });
+    assert.equal(tmux.paneCurrentPath(name), fs.realpathSync(os.tmpdir()));
+  });
+});
