@@ -228,6 +228,28 @@
     </div>
   </div>
 
+  <!-- Engine Failover Modal (#109) — shown when the engine health probe
+       reports CRASHED. Deliberately NOT wired to backdrop click or Escape
+       (see public/engine-failover-modal.js): only an explicit button choice
+       closes it, so a crash is never silently swapped away from. -->
+  <div class="modal-backdrop" id="engineFailoverModal">
+    <div class="modal-content" role="dialog" aria-label="Engine stopped responding" aria-modal="true">
+      <h3 class="modal-title" id="engineFailoverTitle">⚠️ Engine stopped responding</h3>
+      <p class="modal-text" id="engineFailoverDetail"></p>
+      <div class="form-group">
+        <label class="form-label" for="engineFailoverTargetEngine">Swap engine to</label>
+        <select class="form-select" id="engineFailoverTargetEngine"></select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="engineFailoverContinueBtn">Continue manually</button>
+        <button class="btn" id="engineFailoverRestartBtn">Restart engine</button>
+        <button class="btn" id="engineFailoverSwapBtn">Swap engine</button>
+        <button class="btn btn-danger" id="engineFailoverKillBtn">Kill session</button>
+      </div>
+      <p class="modal-text" id="engineFailoverStatus" role="status" aria-live="polite"></p>
+    </div>
+  </div>
+
   <!-- Session Ended Bar — tmux is gone -->
   <div class="session-ended hidden" id="sessionEnded">
     <span>Session ended</span>
@@ -614,6 +636,7 @@
 
   <script src="/api-helper.js"></script>
   <script src="/medusa-loops-ui.js"></script>
+  <script src="/engine-failover-modal.js"></script>
   <script src="/reconnect-policy.js"></script>
   <script src="/update-beacon.js"></script>
   <script src="/wrap-stream-events.js"></script>

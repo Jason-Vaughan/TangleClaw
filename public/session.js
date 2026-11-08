@@ -1744,6 +1744,18 @@ function renderMedusaControl() { medusaControl.render(); }
  */
 function pollMedusa() { return medusaControl.poll(); }
 
+// Engine failover modal (#109) — same no-new-timer convention: `pollStatus`
+// calls `engineFailoverModal.poll()` on its own cadence below.
+const engineFailoverModal = window.tcCreateEngineFailoverModal({
+  doc: document,
+  api,
+  apiMutate,
+  projectName,
+  getEngines: () => sessionState.engines,
+  buildEngineOptions,
+  toast: (msg, isError) => showBannerActionToast(msg, isError)
+});
+
 /**
  * Poll this project's pending permission requests (#2352) on the same
  * cadence as `pollStatus` — no new timer, same convention as `pollMedusa`.
@@ -2039,6 +2051,10 @@ async function pollStatus() {
 
   // #2352 — same cadence, same reason: no new timer for one more small panel.
   if (!sessionState.ended) await pollPermissionRequests();
+
+  // #109 — same cadence: the engine-health probe loop runs server-side on
+  // its own timer, this just reads the latest classification.
+  if (!sessionState.ended) await engineFailoverModal.poll();
 
   // The Master's access level rides the same tick (#755). This is what makes a
   // flip from one session's bar reach another's — there is exactly one Master,
@@ -7742,6 +7758,10 @@ function bindEvents() {
   // the judge-mode/size-count inputs, the ⟳ chip and the panel's delegated
   // row controls (force-done, closeout, feedback, transcript) in one call.
   medusaLoops.mount();
+  // Engine failover modal (#109) — binds its own buttons only; deliberately
+  // not part of the Escape/outside-click cluster above, since it must never
+  // auto-dismiss.
+  engineFailoverModal.mount();
   // #2352 — the badge chip opens/closes the pending-permissions panel; its
   // row controls are delegated since the panel's content re-renders every poll.
   const permissionRequestsChip = $('permissionRequestsChip');
