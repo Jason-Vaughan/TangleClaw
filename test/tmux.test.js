@@ -1729,7 +1729,34 @@ describe('tmux', () => {
       // real session on the OTHER server, where a prefix match would be just
       // as unsafe as on the default one; and the proxy's own `status off`.
       // All three go through `_target()`, like every other site here.
-      assert.equal(targets.length, 32, `expected 32 -t sites in lib/tmux.js, found ${targets.length}`);
+      // Still 32 after #2929's EPERM fix to `probeTccReadable` (its probe
+      // stopped `chdir`-ing a throwaway session and started running `ls`
+      // inside the server via `run-shell`, which removed that `kill-session`
+      // target) — `sessionSocketFlags`'s own `has-session -t ${_target(name)}`
+      // (which server actually hosts a named session) replaced it, net zero.
+      // 35 since #2929's same-session follow-up (issue comment #6699775329)
+      // added three more, each a `-t ${_target(name)}`/`${_target(session)}`
+      // against the TCC-authorized socket: `createSessionWithTccBootstrap`
+      // killing a same-named orphan there before creating (a kill+relaunch
+      // used to crash with tmux's own "duplicate session" otherwise);
+      // `killSession` killing the real session there, not just the
+      // default-server attach proxy; and `paneCurrentPath` querying it
+      // FIRST, since the proxy's own pane is the attach command, not the
+      // engine's actual working directory.
+      // 34 since the SAME follow-up's Round 3 fix (PRR-A R-Gate HOLD [C2]):
+      // `paneCurrentPath` merged its two separate `display-message` calls
+      // (one per server) into ONE, parameterized by a conditional `-L`
+      // socket flag, after the original two-call version was found to check
+      // the default server's existence BEFORE ever trying `TCC_SOCKET`,
+      // returning null for a session that lived only there. The merge
+      // removed one `-t ${_target(session)}` site; `killSession`'s own two
+      // sites (TCC kill, default kill) are unchanged in count, just
+      // re-ordered — the default kill now re-checks existence AFTER the TCC
+      // kill rather than trusting a pre-kill snapshot, since killing the
+      // real session can make the default server's attach PROXY exit on
+      // its own, and the stale snapshot read that as the default kill
+      // itself failing.
+      assert.equal(targets.length, 34, `expected 34 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,
