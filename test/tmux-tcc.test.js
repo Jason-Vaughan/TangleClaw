@@ -647,16 +647,20 @@ describe('TCC attach-proxy follow-up fixes (#2929, issue comment #6699775329)', 
       });
       assert.equal(tmux.hasSession(name), true, 'the default-server proxy exists going in');
 
-      // A FAST failure (no timeout at all) whose text matches none of
-      // `_ABSENT_TCC_SESSION_RE`'s "nothing here" patterns — the exact gap
-      // a plain `err.tcTimedOut` check alone would miss: a real, quick
+      // A FAST failure (no timeout at all) in tmux's OWN real wording for
+      // a socket that exists but can't be connected to — confirmed against
+      // the real binary (a 0000-permission socket file) to say exactly
+      // this. Matches none of `_ABSENT_TCC_SESSION_RE`'s "nothing here"
+      // patterns: `error connecting to` alone used to match here too (R4's
+      // own regex, before this narrowing), which is exactly the false
+      // positive PRR-A's Round 5 finding caught — a real, quick
       // connection/permission problem is not the same as a confirmed-absent
       // session, and must not be read as one.
       const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-permfail-'));
       fs.writeFileSync(path.join(binDir, 'tmux'), [
         '#!/bin/sh',
         'case "$*" in',
-        '  "-L "*"has-session"*) echo "permission denied" >&2; exit 1 ;;',
+        '  "-L "*"has-session"*) echo "error connecting to /tmp/tmux-501/tangleclaw-tcc-authorized (Permission denied)" >&2; exit 1 ;;',
         `  *) exec ${REAL_TMUX} "$@" ;;`,
         'esac'
       ].join('\n'), { mode: 0o755 });
