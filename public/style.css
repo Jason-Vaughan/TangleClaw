@@ -3806,3 +3806,26 @@ body.setup-active { overflow: hidden; }
 }
 
 .btn-success { background-color: #28a745 !important; color: white !important; border-color: #28a745 !important; }
+
+/* #2930: subtle dashboard background watermark, behind the project cards
+   and drawers (those paint their own background over it in normal flow). */
+.tc-bg-watermark {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+}
+.tc-bg-watermark img {
+  width: min(82vw, 860px);
+  height: min(82vw, 860px);
+  object-fit: contain;
+  opacity: 0.06;
+  user-select: none;
+  -webkit-user-drag: none;
+}
