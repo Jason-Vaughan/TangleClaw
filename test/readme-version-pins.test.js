@@ -51,3 +51,38 @@ describe('README clone pins track version.json (#976)', () => {
     );
   });
 });
+
+describe('README top release banner tracks version.json (#2935)', () => {
+  // `scripts/release-prepare.js#updateReleaseBanner` keeps these three in
+  // sync on every release cut; this guard is what fails the release PR if
+  // that script was skipped or its regexes stopped matching.
+  const readme = fs.readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8');
+  const { version } = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'version.json'), 'utf8'));
+  const bannerLine = readme.split('\n').find((line) => line.startsWith('**Latest release:**'));
+
+  it('the README still has a `**Latest release:**` banner line (the guard has something to check)', () => {
+    assert.ok(bannerLine, 'expected a line starting with `**Latest release:**` in README.md');
+  });
+
+  it('the banner version tag matches version.json', () => {
+    const m = bannerLine.match(/\*\*Latest release:\*\*\s+`v(\d+\.\d+\.\d+)`/);
+    assert.ok(m, `expected the banner line to contain a backticked \`vX.Y.Z\` right after "Latest release:": ${bannerLine}`);
+    assert.equal(
+      m[1],
+      version,
+      `version.json is ${version} but the README banner still names v${m[1]}. `
+        + 'Run `node scripts/release-prepare.js` (the release PR already does) — nothing else updates it.'
+    );
+  });
+
+  it('the banner\'s release-status link and Sprint Report link both name the current version', () => {
+    const statusMatch = bannerLine.match(/docs\/releases\/v(\d+\.\d+\.\d+)\.md/);
+    assert.ok(statusMatch, `expected a \`docs/releases/vX.Y.Z.md\` link in the banner: ${bannerLine}`);
+    assert.equal(statusMatch[1], version, `banner release-status link names v${statusMatch[1]}, not the current ${version}`);
+
+    const reportMatch = bannerLine.match(/\[`v(\d+\.\d+\.\d+)`\s+Sprint Report\]\(https:\/\/jason-vaughan\.github\.io\/TangleClaw\/reports\/v(\d+\.\d+\.\d+)\/\)/);
+    assert.ok(reportMatch, `expected a "\`vX.Y.Z\` Sprint Report" link in the banner: ${bannerLine}`);
+    assert.equal(reportMatch[1], version, `banner Sprint Report link text names v${reportMatch[1]}, not the current ${version}`);
+    assert.equal(reportMatch[2], version, `banner Sprint Report link target names v${reportMatch[2]}, not the current ${version}`);
+  });
+});

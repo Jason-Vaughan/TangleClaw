@@ -18,7 +18,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
 
-**Latest release:** `v5.71.0` — “OpenClaw ordered fallback hosts, MagicDNS migration, update checks & header pills” ([release status](docs/releases/v5.71.0-status.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v5.71.0` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v5.71.0/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
+**Latest release:** `v5.71.0` — “OpenClaw ordered fallback hosts, MagicDNS migration, update checks & header pills” ([release status](docs/releases/v5.71.0.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v5.71.0` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v5.71.0/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
 
 One AI coding agent is easy. Five are not. They forget what the last session decided, edit the same files, fight over the same ports, and wait silently for an answer you did not know they needed. You end up watching terminals.
 
@@ -132,7 +132,7 @@ Then open the dashboard, finish the short first-run setup, and launch a session 
 - **HTTPS via mkcert, one click** — for direct (no-ingress) mode, a wizard generates localhost certs and hot-swaps the server to HTTPS
 
 ### Integrations
-- **[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)** — SSH or Web UI mode, connection registry, health checks, auto SSH tunnels with self-healing, reverse proxy, auto device pairing, instance version display, and a per-connection ClawBridge port (auto-allocated or explicit)
+- **[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)** — SSH or Web UI mode, connection registry, health checks, auto SSH tunnels with self-healing, reverse proxy, auto device pairing, instance version display, and a per-connection ClawBridge port (auto-allocated or explicit). A connection can declare ordered `fallbackHosts` (probed in priority order over SSH so a changed LAN IP doesn't strand the connection once a Tailscale/MagicDNS fallback is configured) and migrate an IP-literal host to a stable MagicDNS name, operator-confirmed, keeping the old IP as a fallback rather than discarding it (#1531, #363)
 - **[ClawBridge](https://github.com/Jason-Vaughan/ClawBridge)** — live background-process visibility on OpenClaw instances, remote session pre-create with permission modes, and remote wrap capture
 - **[Eval Audit Mode](docs/eval-audit-mode.md)** — multi-tiered AI agent evaluation: ingests exchange data, scores with intelligent gating, tracks baselines, detects drift, generates incidents
 
@@ -141,6 +141,8 @@ Then open the dashboard, finish the short first-run setup, and launch a session 
 - **Comprehensive test suite** — thousands of `node:test` cases, zero test dependencies, green as a merge gate
 - **SQLite storage** — runtime state in a single database file, JSON config for settings
 - **ADRs** — durable design decisions live in [docs/adr/](docs/adr/)
+- **Linux systemd service tooling** — `lib/linux-systemd.js` and `scripts/linux-systemd-install.js` generate, install, verify, and uninstall a `systemd --user` unit for running the server under service supervision outside the guided installer (#1424). The guided `deploy/install.sh` path remains **macOS-only** (see [Prerequisites](#prerequisites)); this is a standalone building block for a hand-run Linux install, not full platform parity yet
+- **Workspace root migration** — moves a project's directory out from under a macOS-TCC-protected folder (e.g. `~/Documents/Projects`) to the unprotected default, with a dry-run plan, active-session/collision checks, and automatic rollback on failure (`lib/tcc-workspace-migration.js`, #2626)
 
 </details>
 
@@ -148,7 +150,17 @@ Then open the dashboard, finish the short first-run setup, and launch a session 
 
 TangleClaw provides the infrastructure for an entire AI-driven Software Development Life Cycle (SDLC). To achieve this, TangleClaw is building out configurable base templates for specific organizational roles. These foundational templates map directly to SDLC departments, giving you a coordinated engineering organization out of the box.
 
-Today the Project Master is the one role that ships as a product feature. A Project Manager, an Architect and a Builder are ordinary sessions that take their role from the rules and instructions you give their projects; no role template can be selected yet.
+Today the Project Master is the one role that ships as a product feature. A Project Manager, an Architect, Builders, PR Reviewers, an Integrator and an Observer are ordinary sessions that take their role from the rules and instructions you give their projects — **no role template can be selected yet**; you write the rules, same as any other project convention.
+
+What TangleClaw *does* ship as structural support for running that pattern at scale, used daily to build TangleClaw itself against a multi-lane sprint queue:
+
+- **The `tc` CLI** — `tc start` (per-session launch context and attestation), `tc message` (the Medusa switchboard), `tc workload` (fleet-visible capacity reporting), `tc control` (durable HOLD/STOP across sessions), `tc branch check` (safe-to-retire verification), and `tc finalize` (headless session retirement) — one consistent command surface across every coordinating role
+- **Native sprint wave tracking** ([`lib/native-sprint-tracker.js`](lib/native-sprint-tracker.js), #2644) — the dashboard's own view of which car in a wave is dispatched, working, or merged
+- **Coordinator rotation & continuity capsules** ([`lib/coordinator-rotation.js`](lib/coordinator-rotation.js), #2821) — a PM or Architect session can hand off to a fresh one mid-sprint without losing its place
+- **Resource leases** ([`lib/resource-leases.js`](lib/resource-leases.js), #2014) — runtime-enforced, delegated claims on a shared resource, so two lanes can't silently step on the same one
+- **Merge-role-guard** (`lib/merge-role-guard.js`, Rule #282) — a `gh` PATH wrapper that mechanically blocks `gh pr merge` from a pane that isn't the project's designated merge executor, rather than relying on every session remembering not to
+
+None of this *is* a selectable "Builder" or "PR Reviewer" template — it's the plumbing a project's own rules lean on to make an informally-defined fleet of roles actually hold together across sessions, restarts, and engines.
 
 The ground set of foundational agent templates we are rolling out first:
 
