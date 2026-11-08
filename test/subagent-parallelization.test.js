@@ -12,14 +12,16 @@
  * source, against a mini-DOM, never a copy.
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 
 const subagent = require('../lib/subagent-parallelization');
 const engines = require('../lib/engines');
+const store = require('../lib/store');
 const { liftDeclaration } = require('./helpers/lift');
 const { makeDocument } = require('./_mini-dom');
 
@@ -92,6 +94,85 @@ describe('evaluateSubagentTask: the Read/Write heuristic (#1257)', () => {
       assert.match(result.reason, /no task description was given/);
     }
   });
+
+  it('fails closed on an unknown write status, rather than guessing "no writes" (A506-W2C-R6)', () => {
+    // {} is a well-formed object, so it passes the malformed-task guard above
+    // -- this is the PRR-B-caught bug: an absent `writes` must not be treated
+    // the same as a known `false`.
+    for (const bad of [{}, { writes: undefined }, { writes: null }, { writes: 'false' }, { writes: 0 }, { writes: 1 }]) {
+      const result = subagent.evaluateSubagentTask(bad);
+      assert.equal(result.parallelizable, false, JSON.stringify(bad));
+      assert.equal(result.reason, 'task.writes must be an explicit boolean — serialize rather than guess', JSON.stringify(bad));
+    }
+  });
+
+  it('a known writes:false is the only way to reach the fan-out branch', () => {
+    assert.equal(subagent.evaluateSubagentTask({ writes: false }).parallelizable, true);
+    assert.equal(subagent.evaluateSubagentTask({ writes: false, mutatesGitState: false }).parallelizable, true);
+  });
+});
+
+describe('evaluateSubagentDispatch: the combined gate (#1257, A506-W2C-R6)', () => {
+  const supporting = { id: 'claude', name: 'Claude Code', capabilities: { supportsSubagentDispatch: true } };
+  const unsupporting = { id: 'aider', name: 'Aider', capabilities: {} };
+
+  it('fails closed on engine capability first', () => {
+    const d = subagent.evaluateSubagentDispatch({
+      engineProfile: unsupporting, projectConfig: { subagentParallelizationEnabled: true }, task: { writes: false }
+    });
+    assert.equal(d.authorized, false);
+    assert.equal(d.reason, subagent.subagentDispatchReason(unsupporting));
+  });
+
+  it('fails closed on project authorization second, even on a supporting engine', () => {
+    const d = subagent.evaluateSubagentDispatch({
+      engineProfile: supporting, projectConfig: { subagentParallelizationEnabled: false }, task: { writes: false }
+    });
+    assert.equal(d.authorized, false);
+    assert.match(d.reason, /has not authorized/);
+  });
+
+  it('fails closed on the Read/Write heuristic third, even when engine and project both authorize', () => {
+    const d = subagent.evaluateSubagentDispatch({
+      engineProfile: supporting, projectConfig: { subagentParallelizationEnabled: true }, task: { writes: true }
+    });
+    assert.equal(d.authorized, false);
+    assert.match(d.reason, /writes into shared files/);
+  });
+
+  it('authorizes only when all three gates pass', () => {
+    const d = subagent.evaluateSubagentDispatch({
+      engineProfile: supporting, projectConfig: { subagentParallelizationEnabled: true }, task: { writes: false }
+    });
+    assert.equal(d.authorized, true);
+  });
+
+  it('never guesses from a missing opts object', () => {
+    const d = subagent.evaluateSubagentDispatch();
+    assert.equal(d.authorized, false);
+  });
+});
+
+describe('ingestSubagentFinding: a finding never reaches project state without an authorized dispatch (#1257, A506-W2C-R6)', () => {
+  const authorized = { authorized: true, reason: 'pure reading/discovery can fan out safely' };
+  const refused = { authorized: false, reason: 'this project has not authorized sub-agent parallelization' };
+
+  it('wraps the finding as a hypothesis when the dispatch verdict authorized it', () => {
+    const result = subagent.ingestSubagentFinding(authorized, 'the file is dead code', 'sub-1');
+    assert.deepEqual(result, { status: 'hypothesis', finding: 'the file is dead code', source: 'sub-1', verifiedAt: null });
+  });
+
+  it('refuses the finding outright when the dispatch verdict did not authorize it', () => {
+    const result = subagent.ingestSubagentFinding(refused, 'an unauthorized finding');
+    assert.equal(result.status, 'refused');
+    assert.equal(result.reason, refused.reason);
+  });
+
+  it('refuses rather than guesses when no dispatch verdict is given at all', () => {
+    const result = subagent.ingestSubagentFinding(null, 'x');
+    assert.equal(result.status, 'refused');
+    assert.match(result.reason, /no authorized dispatch verdict/);
+  });
 });
 
 describe('asHypothesis: a sub-agent finding is never adopted unverified (#1257)', () => {
@@ -104,6 +185,106 @@ describe('asHypothesis: a sub-agent finding is never adopted unverified (#1257)'
     const wrapped = subagent.asHypothesis('x');
     assert.equal(wrapped.source, null);
     assert.equal(wrapped.verifiedAt, null);
+  });
+});
+
+describe('carrier wiring: the toggle reaches the generated config (#1257, A506-W2C-R6)', () => {
+  const ON = { subagentParallelizationEnabled: true };
+  const OFF = { subagentParallelizationEnabled: false };
+  const UNSET = {};
+  let tmpDir;
+
+  // store.engines.get() only re-syncs its bundled-profile cache from the real
+  // data/engines/*.json once store.init() has run in this process — without
+  // it, generateConfig('claude', ...) reads a profile with no
+  // supportsSubagentDispatch flag at all, and every assertion below fails
+  // for a reason that has nothing to do with the code under test.
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-subagent-engines-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('claude.md carries the guidance when the project turned it on, on a supporting engine', () => {
+    const content = engines.generateConfig('claude', ON);
+    assert.match(content, /Sub-agent parallelization is authorized/);
+    assert.match(content, /#1257/);
+  });
+
+  it('claude.md is byte-for-byte unchanged when the toggle is off or unset', () => {
+    const off = engines.generateConfig('claude', OFF);
+    const unset = engines.generateConfig('claude', UNSET);
+    assert.doesNotMatch(off, /Sub-agent parallelization is authorized/);
+    assert.equal(off, unset, 'off must read identically to never having touched the setting');
+  });
+
+  it('never appears on an engine that does not declare supportsSubagentDispatch, even when the project turned it on', () => {
+    const content = engines.generateConfig('aider', ON);
+    assert.doesNotMatch(content, /Sub-agent parallelization is authorized/);
+  });
+
+  it('the aider conventions carrier (the second file) also carries it when authorized on a supporting profile', () => {
+    // generateConfig('aider', ...) renders .aider.conf.yml, a bare `read:`
+    // pointer with no rules content at all (lib/engines.js#_generateAiderConf)
+    // -- the actual rules carrier is the second file,
+    // _generateAiderConventionsMd, which this exercises directly against a
+    // FABRICATED supporting profile the bundled aider.json itself is not,
+    // proving the wiring (not aider's own declared capability).
+    const supportingProfile = { id: 'claude', name: 'Claude Code', capabilities: { supportsSubagentDispatch: true } };
+    const content = engines._generateAiderConventionsMd(ON, null, supportingProfile);
+    assert.match(content, /Sub-agent parallelization is authorized/);
+  });
+
+  it('codex.yaml and GEMINI.md carry it too, under the same gate', () => {
+    assert.match(engines.generateConfig('codex', ON), /Sub-agent parallelization is authorized/);
+    assert.match(engines.generateConfig('antigravity', ON), /Sub-agent parallelization is authorized/);
+  });
+
+  describe('saving the toggle through a real project refreshes the live carrier immediately', () => {
+    // Isolated store, same pattern test/projects.test.js's own before/after
+    // uses — a fresh temp projectsDir, never the real install's. Shadows the
+    // outer describe's own tmpDir/store init with its own, since this one
+    // also needs a projectsDir and a real project on disk.
+    const projects = require('../lib/projects');
+    let tmpDir;
+    let projectsDir;
+
+    before(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-subagent-carrier-'));
+      projectsDir = path.join(tmpDir, 'projects');
+      fs.mkdirSync(projectsDir, { recursive: true });
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+      const config = store.config.load();
+      config.projectsDir = projectsDir;
+      store.config.save(config);
+    });
+
+    after(() => {
+      store.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('CLAUDE.md gains the guidance only after the toggle is saved on', async () => {
+      const name = 'subagent-carrier-test';
+      const created = projects.createProject({ name, engine: 'claude' });
+      assert.deepEqual(created.errors, []);
+      const carrierPath = path.join(created.project.path, 'CLAUDE.md');
+
+      const before = fs.readFileSync(carrierPath, 'utf8');
+      assert.doesNotMatch(before, /Sub-agent parallelization is authorized/);
+
+      const updated = await projects.updateProject(name, { subagentParallelizationEnabled: true });
+      assert.deepEqual(updated.errors, []);
+
+      const after = fs.readFileSync(carrierPath, 'utf8');
+      assert.match(after, /Sub-agent parallelization is authorized/);
+    });
   });
 });
 
