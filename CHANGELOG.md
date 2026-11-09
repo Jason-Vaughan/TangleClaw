@@ -4,6 +4,110 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.72.0] - 2026-11-08
+
+### Added
+- Added an Adversarial Agent primitive (`lib/adversarial.js`): any methodology can call
+  `runAdversarialPass` to get structured, red-team findings (category/severity/scenario/
+  why-it-breaks/suggested-test) against a code surface, via a caller-injected
+  subagent-spawn function — TC never calls an LLM API itself and never decides when to
+  invoke it. Includes schema validation, severity/cap filtering, and a disposition audit
+  log that forbids silently ignoring a finding (#108).
+- Added engine-failure failover: a background probe (`lib/engine-health.js`) classifies each
+  project's active engine as HEALTHY, DEGRADED, or CRASHED — tmux sessions probed directly, OpenClaw
+  `webui` sessions via the existing sidecar health telemetry — and a non-dismissible session-page
+  modal offers Restart, Swap to another engine (with a context handoff prime), Continue manually, or
+  Kill once an engine stops responding. Every action requires explicit `userConfirmed: true`; nothing
+  auto-swaps (#109).
+- Added a secure clipboard / secret uploader: a session page's "Secure clipboard" control
+  (banner ⋯ menu) always saves a secret or file from the operator's own device into a private,
+  `0600` file under that project's `.tangleclaw/secrets/`, distinct from the ordinary, visible
+  uploads folder. "Notify in terminal" additionally drops a content-free pointer (the filename
+  and byte count, never the secret itself) into the live pane, so even an accidental Enter there
+  exposes nothing. A UTF-8 text write runs through `lib/secret-scan.js` and logs flagged
+  credential-shape types alongside the byte count; a base64 (binary upload) write logs the byte
+  count only. Neither ever logs the value (#1032).
+- Project Settings gains an "Allow sub-agent parallelization" authorization
+  toggle: grants a Builder session permission to fan chunk work out to
+  sub-agents (fan out on pure reading/discovery, serialize on writing or git
+  state), disabled with an honest reason on engines without native sub-agent
+  dispatch (#1257).
+- A project can now be configured to report to another ("session hierarchy"):
+  a standing, scoped delegation letting one session wrap or clear another
+  within explicit limits, never covering kill or delete. A superior/
+  subordinate "prepare to wrap"/"prepare to clear" handshake replaces an
+  implicit instruction (#1578).
+- Plan & Document Viewer pages (`/plans/:projectId/:file`) now carry a subtle
+  background watermark, a "Orchestrated by TangleClaw" brand kicker, and a
+  `TangleClaw.com — Many Agents. One Claw.` footer, print-safe and
+  non-interactive (#2928).
+- A subtle TangleClaw watermark now appears behind session terminal
+  viewports (including OpenClaw views) and the dashboard, never intercepting
+  clicks, selection, scrolling, or ordinary keystrokes. `Ctrl+Shift+Up/Down`
+  adjusts its opacity and `Ctrl+Shift+0` resets it, persisted across reloads
+  and synced live across open tabs (#2930).
+- Automated the README's top release banner (version tag, release-status link, and Sprint Report
+  link) in `scripts/release-prepare.js#updateReleaseBanner`, run on every release cut and guarded by
+  `test/readme-version-pins.test.js`. Modernized `README.md` and `ROADMAP.md` through `v5.71.0`
+  (SDLC roles section, Linux systemd service tooling, OpenClaw fallback hosts/MagicDNS, workspace
+  TCC migration), and codified native GitHub `Co-authored-by:` contributor attribution for
+  Operator-named contributors in `CONTRIBUTING.md` and ADR 0014 (#2935).
+- Added "Fleet Coordinator / Decider" project authority (`lib/fleet-provisioner.js`): the Operator
+  grants it per project (`tc fleet coordinator <project-id> on`), and that project may then
+  self-service provision its own `<Prefix>-*` sibling projects (`tc fleet provision --member
+  <name>`) — clone from its own git remote, register, configure, and seed each new child's
+  starting startup rules (the ratified onboarding trust rule plus any team/role rule content the
+  caller supplies), without a repeated per-project Operator approval. `control_assignments` binding
+  stays a real, separate Operator action by Architect ruling — provisioning returns a
+  `pendingControlBinds` list ready for that one step, never synthesizing the operator principal to
+  do it itself (#2937).
+- Added automatic Master lifecycle-API-token enablement: granting the Project Master `write` access
+  (`POST /api/master/authority` or `PATCH /api/config`) now also enables and mints its lifecycle
+  API token in the same step (`lib/master-authority.js#applyOperatorAuthorityChange`), instead of
+  leaving every lifecycle call refused with `MASTER_API_TOKEN_DISABLED` until a second, separate
+  action. The Master's own pane now carries `TANGLECLAW_MASTER_API_TOKEN` and
+  `TANGLECLAW_AUTHORITY_GENERATION` so it can call session-lifecycle routes (`launch`, `relaunch`,
+  `wrap`, `kill`, `clear`) directly when the Operator explicitly asks, and its generated identity
+  documents the required headers by name only — the raw token is never written into `CLAUDE.md`,
+  `memory/`, or any log (#2950).
+
+### Changed
+- The background TangleClaw watermark now ships at 16% opacity by default (up from 10% dark /
+  8% light), for both session terminal viewports and the dashboard. The `Ctrl+Shift+Up/Down/0`
+  opacity shortcut still works the same way (#2930).
+
+### Fixed
+- Fixed a macOS Sequoia/Tahoe TCC false-positive where `probeTccReadable` reported a protected `~/Documents` project directory as readable even though the tmux server could not actually read it, routing the launch onto the unprivileged default server, where the engine crashed within milliseconds on the real `EPERM`. The probe now tests the actual directory read inside the target server and treats any failure — not just a timeout — as unreadable; a post-launch readability probe is also routed to whichever server the session actually lives on, rather than a same-named attach proxy on the default server (#2929).
+- Fixed `test/tmux-tcc.test.js` falling through to a real Terminal.app/`osascript`
+  bootstrap on CI (Linux), where `osascript` doesn't exist: `probeTccReadable`'s
+  `run-shell` probe, unlike the old `new-session`-based one, never starts an
+  absent default tmux server, so a prior test's cleanup letting the default
+  server `exit-empty` read as a false "not readable." The suite now keeps one
+  real anchor session alive on the default server for its own run (#2945).
+- Fixed `GET /api/projects` taking 5-13+ seconds or stalling under load: `lib/projects.js`
+  now caches the `listUnregistered` directory scan (60s TTL, invalidated automatically on
+  any registered-project change and on a `dirScanner.request` reference swap) and
+  single-flight-coalesces both that scan and per-project facts reads, so concurrent polls
+  share one in-flight scanner request instead of queueing duplicate sweeps. `lib/session-leftovers.js`
+  now caps background session-leftover refreshes at `MAX_CONCURRENT_PROBES` (2) via a FIFO
+  queue, so a fleet restart with dozens of ended sessions no longer spawns 50+ simultaneous
+  `git` subprocesses at once (#2948).
+- Fixed the `gh`/`curl`/`tmux` PATH-wrapper scripts' own passthrough exec to
+  filter out any `merge-role-guard-wrapper`-named directory and drop the
+  recursion-guard env var before exec'ing the real binary -- on a machine
+  that already has a real wrapper directory on PATH (any TangleClaw-launched
+  pane), the wrapper's own end-to-end tests could resolve a nested test
+  wrapper back to that OTHER real wrapper instead of the real binary (#2949).
+
+### Security
+- Added a mechanical `tmux` PATH guard that refuses a bare `tmux kill-server`
+  (or one targeting the default or TCC-authorized socket) from inside an
+  agent pane -- the exact shape of the 2026-11-08 incident where a bare
+  `kill-server` took down all 22 live fleet sessions at once. An isolated
+  `-L __tc_test_*` socket, or a `-S` path under a scratch test directory, is
+  still permitted. Wired through the same PATH-wrapper directory
+  `lib/merge-role-guard.js` already writes on every session launch (#2946).
+
 ## [5.71.0] - 2026-11-06
 
 ### Added
