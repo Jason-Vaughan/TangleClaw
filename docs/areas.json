@@ -152,6 +152,7 @@
         "lib/master-authority.js",
         "lib/advisor.js",
         "lib/tmux.js",
+        "lib/tmux-guard.js",
         "lib/ttyd-*.js",
         "lib/pty-activity.js",
         "lib/transcript.js",
@@ -240,6 +241,7 @@
         "lib/engines/*.js",
         "lib/model-status.js",
         "lib/routes/engines-canary.js",
+        "lib/routes/engine-health-routes.js",
         "lib/aider-task-contract.js",
         "lib/subagent-parallelization.js"
       ]

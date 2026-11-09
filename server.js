@@ -8485,6 +8485,11 @@ require('./lib/routes/audit').register();
 // takes no deps.
 require('./lib/routes/engines-canary').register();
 
+// The engine health / failover routes (#109) likewise take no deps — every
+// proof they need already lives in `./_callers`, the same pattern as
+// launch-recovery, audit, and engines-canary above.
+require('./lib/routes/engine-health-routes').register();
+
 // ── Server Creation ──
 
 /**
@@ -9172,6 +9177,11 @@ if (require.main === module) {
     // it gates nothing.
     launchUnready.start();
     sessions.startLaunchBlockerSweep();
+    // Start the engine health probe loop (#109): classifies each project's
+    // active engine as HEALTHY/DEGRADED/CRASHED on a timer, same start-only-
+    // when-live convention as the sweep above — never during a test's
+    // `createServer()`, which never enters this block.
+    require('./lib/routes/engine-health-routes').startEngineHealthProbeLoop();
     // Start the workload nudge monitor (#2262): types one line into a session
     // whose workload report expired, for projects that turned it on. It reads
     // engine activity from the observer above and types only into a pane seen
@@ -9277,6 +9287,7 @@ if (require.main === module) {
     medusaWatchdog.stop();
     launchUnready.stop();
     sessions.stopLaunchBlockerSweep();
+    require('./lib/routes/engine-health-routes').stopEngineHealthProbeLoop();
     workloadNudge.stop();
     coordinatorRotation.stopRefreshMonitor();
     checkWatch.stop();
