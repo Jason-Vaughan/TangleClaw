@@ -220,6 +220,15 @@ const VALID_SETTINGS_PATCH = {
   name: 'two-phase-saved',
   activePlan: 'a-plan.md',
   engine: 'claude',
+  // #2188: Claude's own profile declares no `models` block, so `null` is
+  // the only value this fixture's `engine: 'claude'` can carry without the
+  // model validator refusing it with ENGINE_HAS_NO_MODELS — clearing is as
+  // "valid" a value as selecting one, the same as `wrapSections: null`
+  // below. `effort` has no such constraint: Claude's effort block is
+  // static (no installed-CLI roster to confirm against), so a real,
+  // offered level validates cleanly here.
+  model: null,
+  effort: 'high',
   tags: ['alpha'],
   silentPrime: true,
   evalAuditMode: { enabled: false },

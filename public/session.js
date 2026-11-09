@@ -524,8 +524,13 @@ async function loadProject() {
   if (data.engine) {
     engineEl.textContent = data.engine.name;
     engineEl.setAttribute('data-engine', data.engine.id);
-    // Fetch model status for this engine
-    loadModelStatus(data.engine.id);
+    // Fetch model status for this engine, THEN append the #2188
+    // current-vs-next-launch note (chained, not awaited here, so
+    // `loadProject` itself stays non-blocking) — `loadModelStatus` sets the
+    // pill's whole detail from engine health; running after it, appending
+    // rather than replacing, is what keeps both channels on screen instead
+    // of whichever one happened to finish last.
+    loadModelStatus(data.engine.id).then(() => renderModelEffortDivergence(data));
   }
 
   document.title = `TangleClaw \u2014 ${data.name}`;
@@ -1649,6 +1654,52 @@ async function loadModelStatus(engineId) {
   } else {
     setPillDetail(engineEl, (status.status || 'unknown').replace(/_/g, ' '));
   }
+}
+
+/**
+ * Append a current-vs-next-launch model/effort note to the engine pill's
+ * detail (#2188's "current vs next" condition), when the running session's
+ * launch parameters differ from what the project's settings will use on its
+ * NEXT launch. Saving a model/effort selection never implies the running
+ * session changed — this is the one place that says so on the banner
+ * itself, rather than leaving the operator to infer it from a settings
+ * value that silently stopped matching what is actually running.
+ *
+ * Must run AFTER `loadModelStatus` resolves (see its own call site): that
+ * function sets the pill's whole detail from engine health, and this
+ * APPENDS to whatever it left, so neither channel silently erases the
+ * other's text depending on which network call happens to finish last.
+ *
+ * @param {object} project - The project payload `loadProject` just fetched.
+ */
+function renderModelEffortDivergence(project) {
+  const engineEl = document.getElementById('bannerEngine');
+  if (!engineEl || !project) return;
+  const session = project.session;
+  // Nothing running to diverge from — the next-launch value is simply what
+  // the next launch will use, with no "current" to compare it against.
+  if (!session || !session.active) return;
+  const describe = (value) => value || '(engine default)';
+  const parts = [];
+  // (PRR-A R2) "launched with", never "running" or "verified": `launchedModel`/
+  // `launchedEffort` are what this session was REQUESTED with at launch
+  // (`profileReconciler.getDesiredProfile`), not a live-confirmed fact —
+  // model gets an actual post-launch verification pass (`_verifyModelAfterLaunch`),
+  // but effort never does (no adapter observes it at all), so neither word
+  // claims more certainty than the data backs.
+  const nextModel = project.model || null;
+  const runningModel = session.launchedModel || null;
+  if (nextModel !== runningModel) {
+    parts.push(`model launched with ${describe(runningModel)}, next launch ${describe(nextModel)}`);
+  }
+  const nextEffort = project.effort || null;
+  const runningEffort = session.launchedEffort || null;
+  if (nextEffort !== runningEffort) {
+    parts.push(`effort launched with ${describe(runningEffort)} (unverified), next launch ${describe(nextEffort)}`);
+  }
+  if (parts.length === 0) return;
+  const existing = engineEl.getAttribute('data-pill-detail') || '';
+  setPillDetail(engineEl, existing ? `${existing} · ${parts.join('; ')}` : parts.join('; '));
 }
 
 // ── Visibility-Aware Polling ──

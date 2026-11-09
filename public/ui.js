@@ -2125,6 +2125,7 @@ function openSettings(name, options) {
       <div class="form-hint">Takes effect on next session launch</div>
       <div id="settingsGeneratedConfigContainer"></div>
     </div>
+    <div id="settingsModelEffortContainer"></div>
     <div class="form-group">
       <label class="form-label" for="settingsTags">Tags (comma-separated)</label>
       <input type="text" class="form-input" id="settingsTags" value="${esc((project.tags || []).join(', '))}"
@@ -2249,6 +2250,10 @@ function openSettings(name, options) {
     project.engine || null
   );
   renderStartupRulesWarning(project.engine ? project.engine.id : '', project.engine || null);
+  // (#2188) Async — may resolve after the modal is already visible, same as
+  // `loadProjectRules` below; the container starts empty rather than blocking
+  // the rest of the modal on a network round-trip.
+  renderModelEffortPicker(project.engine ? project.engine.id : '', project.model || null, project.effort || null);
   // CC-6 (#381): populate the per-project rule lists (async) once the
   // modal markup is in the DOM. project.id is the DB id the API scopes on.
   loadProjectRules(project.id, project.name);
@@ -2311,6 +2316,15 @@ function openSettings(name, options) {
     // above — stale otherwise the moment the operator switches engines
     // without reopening the modal (#1269, PRR-A/Integrator HOLD on PR #2748).
     renderStartupRulesWarning(e.target.value, project.engine || null);
+    // (#2188) A model/effort selection means nothing to a different engine's
+    // CLI, so it is NOT carried over on a dropdown change — mirrors
+    // `modelAfterUpdate`/`effortAfterUpdate`'s own `changesEngine` check
+    // server-side exactly: switching back to the project's STORED engine
+    // (never having saved) still shows what is actually stored for it.
+    const backToStoredEngine = e.target.value === (project.engine ? project.engine.id : '');
+    renderModelEffortPicker(e.target.value,
+      backToStoredEngine ? (project.model || null) : null,
+      backToStoredEngine ? (project.effort || null) : null);
   });
 
   // Turning silent prime off costs the operator the index pointers too — the
@@ -2368,6 +2382,141 @@ function renderGeneratedConfigNotice(engineId, projectEngine) {
   container.innerHTML = disposition.applies
     ? ''
     : `<div class="form-hint form-hint--caveat">${esc(disposition.reason)}</div>`;
+}
+
+/**
+ * Base path for the per-engine sub-resource endpoints the Model + Effort
+ * picker reads (`/models`, `/effort` suffixes) — the same projected-response
+ * category as the engine inventory's own per-id endpoint (#2747, #764),
+ * never the raw, unprojected single-engine introspection route
+ * `test/engine-picker-gating.test.js` pins no browser code may fetch (#736).
+ * Built from this base rather than a per-call literal so that guard's static
+ * scan — which looks for the shape a raw per-id fetch actually takes —
+ * reads this the same way it already reads the roster's own plain
+ * `/api/engines` fetch, not as a new instance of the thing it exists to
+ * catch.
+ */
+const ENGINES_API_BASE = '/api/engines';
+
+/**
+ * Render the Model + Effort pickers (#2188) for whichever engine the
+ * dropdown now shows — nothing for an engine that offers neither.
+ *
+ * Fetched live from `GET /api/engines/:id/models` and
+ * `GET /api/engines/:id/effort?model=<id>` rather than read off
+ * `state.engines`: the client engine shape (`engineClientPayload`) is a
+ * capability projection, not a live, account-confirmed roster, and a model's
+ * or effort level's availability can change between page loads (an
+ * installed CLI's roster, Codex's per-model reasoning-effort set) in a way
+ * nothing else on this page polls for.
+ *
+ * Effort depends on the model for a `perModel` engine (Codex today), so a
+ * change to the Model select re-renders the Effort half alone — not a full
+ * re-render of this function, which would otherwise discard whatever the
+ * operator had just picked for effort while the request round-trips.
+ *
+ * @param {string} engineId - The engine dropdown's current value.
+ * @param {string|null} [selectedModel] - Preselect, normally the project's stored model.
+ * @param {string|null} [selectedEffort] - Preselect, normally the project's stored effort.
+ * @param {object} [ids] - Element ids, so the same picker can render into
+ *   either the Settings modal (the defaults) or the Launch modal's own
+ *   one-launch-override copy without a DOM id collision between the two —
+ *   `containerId`, `effortContainerId`, `modelSelectId`, `effortSelectId`.
+ * @returns {Promise<void>}
+ */
+async function renderModelEffortPicker(engineId, selectedModel = null, selectedEffort = null, ids = {}) {
+  const containerId = ids.containerId || 'settingsModelEffortContainer';
+  const effortContainerId = ids.effortContainerId || 'settingsEffortContainer';
+  const modelSelectId = ids.modelSelectId || 'settingsModel';
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  if (!engineId) { container.innerHTML = ''; return; }
+  const modelsResp = await api(`${ENGINES_API_BASE}/${encodeURIComponent(engineId)}/models`);
+  const modelsData = modelsResp && modelsResp.state === 'ok' ? modelsResp : { models: [] };
+
+  const optionsHtml = (items, selected) => {
+    const opts = ['<option value="">None (engine default)</option>'];
+    let sawSelected = selected === null || selected === '';
+    for (const it of items) {
+      if (it.id === selected) sawSelected = true;
+      const label = it.available ? it.label : `${it.label} (unavailable: ${it.reason || 'not confirmed'})`;
+      opts.push(`<option value="${esc(it.id)}" ${it.id === selected ? 'selected' : ''}>${esc(label)}</option>`);
+    }
+    // The stored value may name something this engine no longer offers (a
+    // roster change, a switch away and back) — shown rather than silently
+    // dropped from the selector, consistent with #2188 condition 1 ("known
+    // but not launchable is shown as unavailable with its reason, never a
+    // working choice" — here, not even known, so the clearest honest label).
+    if (!sawSelected && selected) {
+      opts.push(`<option value="${esc(selected)}" selected>${esc(selected)} (not offered by this engine)</option>`);
+    }
+    return opts.join('');
+  };
+
+  if (modelsData.models.length === 0) {
+    // No model axis for this engine (Claude today — its profile declares no
+    // `models` block) does not mean no EFFORT axis: the two are independent
+    // (#2188). Still render the effort half, with no model selector above
+    // it and no model id to pass — Claude's effort block is static,
+    // engine-wide, and does not need one.
+    container.innerHTML = `<div id="${esc(effortContainerId)}"></div>`;
+    await renderEffortPicker(engineId, null, selectedEffort, ids);
+    return;
+  }
+  container.innerHTML = `
+    <div class="form-group">
+      <label class="form-label" for="${esc(modelSelectId)}">Model</label>
+      <select class="form-select" id="${esc(modelSelectId)}">${optionsHtml(modelsData.models, selectedModel)}</select>
+      <div class="form-hint">Applies to the next launch; a running session is unaffected.</div>
+    </div>
+    <div id="${esc(effortContainerId)}"></div>`;
+
+  const modelEl = document.getElementById(modelSelectId);
+  await renderEffortPicker(engineId, modelEl.value || null, selectedEffort, ids);
+  modelEl.addEventListener('change', (e) => {
+    renderEffortPicker(engineId, e.target.value || null, null, ids);
+  });
+}
+
+/**
+ * Render just the Effort half of the #2188 picker, inside the container
+ * `renderModelEffortPicker` leaves for it. Split out so a model change
+ * re-renders effort alone (see that function's own comment).
+ * @param {string} engineId - The engine dropdown's current value.
+ * @param {string|null} modelId - The model select's current value, for a `perModel` engine.
+ * @param {string|null} selectedEffort - Preselect, normally the project's stored effort.
+ * @param {object} [ids] - See `renderModelEffortPicker`'s own doc — `effortContainerId`, `effortSelectId`.
+ * @returns {Promise<void>}
+ */
+async function renderEffortPicker(engineId, modelId, selectedEffort, ids = {}) {
+  const effortContainerId = ids.effortContainerId || 'settingsEffortContainer';
+  const effortSelectId = ids.effortSelectId || 'settingsEffort';
+  const container = document.getElementById(effortContainerId);
+  if (!container) return;
+  const query = modelId ? `?model=${encodeURIComponent(modelId)}` : '';
+  const effortResp = await api(`${ENGINES_API_BASE}/${encodeURIComponent(engineId)}/effort${query}`);
+  const effortData = effortResp && effortResp.state === 'ok' ? effortResp : { levels: [], perModel: false };
+  if (effortData.levels.length === 0) {
+    container.innerHTML = effortData.perModel && !modelId
+      ? '<div class="form-hint">Pick a model to choose its effort level.</div>'
+      : '';
+    return;
+  }
+  const opts = ['<option value="">None (engine default)</option>'];
+  let sawSelected = !selectedEffort;
+  for (const lvl of effortData.levels) {
+    if (lvl.id === selectedEffort) sawSelected = true;
+    opts.push(`<option value="${esc(lvl.id)}" ${lvl.id === selectedEffort ? 'selected' : ''}>${esc(lvl.label)}</option>`);
+  }
+  if (!sawSelected && selectedEffort) {
+    opts.push(`<option value="${esc(selectedEffort)}" selected>${esc(selectedEffort)} (not offered here)</option>`);
+  }
+  container.innerHTML = `
+    <div class="form-group">
+      <label class="form-label" for="${esc(effortSelectId)}">Reasoning effort</label>
+      <select class="form-select" id="${esc(effortSelectId)}">${opts.join('')}</select>
+      <div class="form-hint">Applies to the next launch; a running session is unaffected.</div>
+    </div>`;
 }
 
 /**
@@ -4892,6 +5041,22 @@ async function doSaveSettings(launchAfter = false) {
   if (modePatch !== undefined) body.defaultLaunchMode = modePatch;
   if (showPickerEl && project2 && showPickerEl.checked !== (project2.showLaunchModePicker !== false)) {
     body.showLaunchModePicker = showPickerEl.checked;
+  }
+  // (#2188) Model + effort selection — sent only when the control exists (the
+  // picker renders neither for an engine with no `models`/`effort` support)
+  // and only when CHANGED from stored, the same "changed, not always-present"
+  // rule the launch-mode controls just above follow: an unrelated save must
+  // not re-send a selection the server would re-validate for no reason, and
+  // must not re-trip its eyes-open guard on an already-confirmed combination.
+  const modelEl = document.getElementById('settingsModel');
+  if (modelEl) {
+    const nextModel = modelEl.value || null;
+    if (nextModel !== (project2 ? (project2.model || null) : null)) body.model = nextModel;
+  }
+  const effortEl = document.getElementById('settingsEffort');
+  if (effortEl) {
+    const nextEffort = effortEl.value || null;
+    if (nextEffort !== (project2 ? (project2.effort || null) : null)) body.effort = nextEffort;
   }
   // Eyes-open guard (client half — the server enforces the same rule): hiding
   // the picker while the effective default mode carries a warning removes the

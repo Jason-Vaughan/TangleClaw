@@ -101,6 +101,7 @@ const system = require('./lib/system');
 const systemHealth = require('./lib/system-health');
 const ptyActivity = require('./lib/pty-activity');
 const engines = require('./lib/engines');
+const engineModels = require('./lib/engine-models');
 const engineTabs = require('./lib/engine-tabs');
 const tmux = require('./lib/tmux');
 const projects = require('./lib/projects');
@@ -4102,6 +4103,44 @@ route('GET', '/api/engines/:id/inventory', (_req, res, params) => {
   jsonResponse(res, 200, row);
 });
 
+// GET /api/engines/:id/models — the models this engine offers right now, each
+// with whether it is actually selectable (#2188). The picker's own read, not
+// a reuse of the raw `/api/engines/:id` introspection endpoint above — that
+// endpoint's own comment says a browser caller must not read it directly.
+// `display: true` reuses `engine-models.js`'s bounded read-cache, the same
+// one the project poll already opts into, so a settings/launch modal
+// re-rendering this on every keystroke of an unrelated field does not re-read
+// the Codex cache file each time.
+route('GET', '/api/engines/:id/models', (_req, res, params) => {
+  if (!_isValidEngineId(params.id)) {
+    return errorResponse(res, 400, 'Invalid engine id', 'BAD_REQUEST');
+  }
+  const profile = engines.resolveProfile(params.id);
+  if (!profile) {
+    return errorResponse(res, 404, `Engine "${params.id}" not found`, 'NOT_FOUND');
+  }
+  jsonResponse(res, 200, engineModels.offeredWithAvailability(profile, { display: true }));
+});
+
+// GET /api/engines/:id/effort?model=<id> — this engine's reasoning-effort
+// levels right now (#2188's effort axis). `model` is required for a
+// `perModel` engine (Codex) — its levels differ by model, read fresh from the
+// same roster `/models` above reads — and ignored otherwise. Omitted or
+// unconfirmable for a `perModel` engine, this answers an empty `levels` list
+// rather than guessing a model to check against.
+route('GET', '/api/engines/:id/effort', (req, res, params) => {
+  if (!_isValidEngineId(params.id)) {
+    return errorResponse(res, 400, 'Invalid engine id', 'BAD_REQUEST');
+  }
+  const profile = engines.resolveProfile(params.id);
+  if (!profile) {
+    return errorResponse(res, 404, `Engine "${params.id}" not found`, 'NOT_FOUND');
+  }
+  const query = parseQuery(reqUrl(req).search);
+  const modelId = typeof query.model === 'string' && query.model.trim() ? query.model.trim() : null;
+  jsonResponse(res, 200, engineModels.offeredEffortsWithAvailability(profile, modelId, { display: true }));
+});
+
 // GET /api/engines/:id
 route('GET', '/api/engines/:id', (_req, res, params) => {
   if (!_isValidEngineId(params.id)) {
@@ -5230,6 +5269,14 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
     provenanceWatermark: result.project.provenanceWatermark,
     defaultLaunchMode: result.project.defaultLaunchMode,
     showLaunchModePicker: result.project.showLaunchModePicker,
+    // (#2188) So a settings/launch modal that just PATCHed a model or effort
+    // selection sees the saved, live-judged result immediately, without a
+    // second GET — the same reason every other launch-time-only field above
+    // rides this response.
+    model: result.project.model,
+    modelSelection: result.project.modelSelection,
+    effort: result.project.effort,
+    effortSelection: result.project.effortSelection,
     updatedAt: result.project.updatedAt
   };
 

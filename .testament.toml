@@ -627,6 +627,7 @@ files = [
   "test/engine-hooks-location.test.js",
   "test/engine-hooks-merge.test.js",
   "test/engine-launch-flags.test.js",
+  "test/engine-model-picker.test.js",
   "test/engine-models.test.js",
   "test/engine-switch-retires-config.test.js",
   "test/engine-wake-profiles.test.js",
