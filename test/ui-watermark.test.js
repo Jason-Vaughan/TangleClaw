@@ -121,14 +121,15 @@ describe('#2930 watermark CSS never intercepts input, and is opacity-var driven'
       assert.match(rule(css, `.${wrapperClass}`), /pointer-events:\s*none/);
     });
 
-    it(`${file}: .${wrapperClass} img reads --tc-watermark-opacity (default 0.10) with the ` +
-      "reference's rgba(86, 211, 100) glow, and a light-theme override (default 0.08)", () => {
+    it(`${file}: .${wrapperClass} img reads --tc-watermark-opacity (default 0.16, Car ` +
+      '5720-W3-E/#2930 follow-up — was 0.10) with the reference\'s rgba(86, 211, 100) ' +
+      'glow, and a light-theme override (also 0.16 as of this car — was 0.08)', () => {
       const css = readPublic(file);
       const img = rule(css, `.${wrapperClass} img`);
-      assert.match(img, /opacity:\s*var\(--tc-watermark-opacity,\s*0\.10\)/);
+      assert.match(img, /opacity:\s*var\(--tc-watermark-opacity,\s*0\.16\)/);
       assert.match(img, /rgba\(86,\s*211,\s*100,\s*0\.18\)/);
       const light = rule(css, `html[data-theme="light"] .${wrapperClass} img`);
-      assert.match(light, /opacity:\s*var\(--tc-watermark-opacity,\s*0\.08\)/);
+      assert.match(light, /opacity:\s*var\(--tc-watermark-opacity,\s*0\.16\)/);
     });
   }
 });
@@ -160,9 +161,9 @@ describe('#2930 api-helper.js opacity shortcut (Ctrl+Shift+Up/Down/0)', () => {
     const src = readPublic('api-helper.js');
     const constsStart = src.indexOf('const TC_WATERMARK_STORAGE_KEY');
     assert.notEqual(constsStart, -1, 'TC_WATERMARK_STORAGE_KEY must exist');
-    const constsEndMarker = "const TC_WATERMARK_DEFAULT_LIGHT = 0.08;";
+    const constsEndMarker = "const TC_WATERMARK_DEFAULT_LIGHT = 0.16;";
     const constsEndIdx = src.indexOf(constsEndMarker);
-    assert.notEqual(constsEndIdx, -1, 'TC_WATERMARK_DEFAULT_LIGHT must exist and be 0.08');
+    assert.notEqual(constsEndIdx, -1, 'TC_WATERMARK_DEFAULT_LIGHT must exist and be 0.16');
     const consts = src.slice(constsStart, constsEndIdx + constsEndMarker.length);
 
     const keydownStart = src.indexOf('function _tcHandleWatermarkKeydown(');
@@ -216,13 +217,13 @@ describe('#2930 api-helper.js opacity shortcut (Ctrl+Shift+Up/Down/0)', () => {
     };
   }
 
-  it('uses the underscored localStorage key and 0.10 default (the reference\'s actual ' +
-    'values, not the issue text\'s hyphenated "tc-watermark-opacity" typo)', () => {
+  it('uses the underscored localStorage key and the 0.16 default (Car 5720-W3-E, ' +
+    '#2930 follow-up — not the issue text\'s hyphenated "tc-watermark-opacity" typo)', () => {
     const factory = loadEasterEgg();
     const egg = factory({});
     assert.equal(egg.STORAGE_KEY, 'tc_watermark_opacity');
-    assert.equal(egg.DEFAULT, 0.10);
-    assert.equal(egg.DEFAULT_LIGHT, 0.08);
+    assert.equal(egg.DEFAULT, 0.16);
+    assert.equal(egg.DEFAULT_LIGHT, 0.16);
   });
 
   it('readWatermarkOpacity: null when unset, parses a valid stored value, rejects out-of-range/garbage', () => {
@@ -238,15 +239,20 @@ describe('#2930 api-helper.js opacity shortcut (Ctrl+Shift+Up/Down/0)', () => {
     assert.equal(egg.readWatermarkOpacity(), null);
   });
 
-  it('Ctrl+Shift+ArrowUp in LIGHT theme steps off the 0.08 CSS default, not the 0.10 ' +
-    'dark default -- an unset shortcut must start from what the watermark actually ' +
-    'renders at, so it goes 8% -> 10%, not 8% -> 12% (PRR-A I-Gate finding)', () => {
+  it('Ctrl+Shift+ArrowUp in LIGHT theme steps off the CSS default it actually renders ' +
+    'at, via _tcWatermarkThemeDefault\'s own theme branch, not a hardcoded value ' +
+    '(PRR-A I-Gate finding, originally 8% -> 10% when the two defaults differed; Car ' +
+    '5720-W3-E/#2930 made DEFAULT and DEFAULT_LIGHT the same 0.16, so this specific ' +
+    'assertion can no longer tell "used the light branch" apart from "always used the ' +
+    'dark one" by its OUTCOME alone — it still exercises the real code path, and its ' +
+    'full differentiating power returns automatically the moment the two constants ' +
+    'diverge again)', () => {
     const factory = loadEasterEgg();
     const localStorage = fakeLocalStorage();
     const document = fakeDocument({ theme: 'light' });
     const egg = factory({ localStorage, document });
     egg.handleWatermarkKeydown({ ctrlKey: true, shiftKey: true, key: 'ArrowUp', code: 'ArrowUp', preventDefault: () => {}, stopPropagation: () => {} });
-    assert.equal(localStorage.getItem('tc_watermark_opacity'), '0.1');
+    assert.equal(localStorage.getItem('tc_watermark_opacity'), '0.18');
   });
 
   it('Ctrl+Shift+ArrowUp increases opacity by 0.02 off the default and persists it', () => {
@@ -257,7 +263,7 @@ describe('#2930 api-helper.js opacity shortcut (Ctrl+Shift+Up/Down/0)', () => {
     let prevented = false;
     egg.handleWatermarkKeydown({ ctrlKey: true, shiftKey: true, key: 'ArrowUp', code: 'ArrowUp', preventDefault: () => { prevented = true; }, stopPropagation: () => {} });
     assert.equal(prevented, true);
-    assert.equal(localStorage.getItem('tc_watermark_opacity'), '0.12');
+    assert.equal(localStorage.getItem('tc_watermark_opacity'), '0.18');
   });
 
   it('Ctrl+Shift+ArrowDown decreases opacity by 0.02, clamped at 0', () => {

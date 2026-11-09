@@ -6632,17 +6632,26 @@
   // ── System-Wide Watermark Opacity Easter Egg (#2930) ──
   // Ctrl+Shift+Up / Ctrl+Alt+Up (or Ctrl+Shift+] ) -> increase opacity (+2%, max 60%)
   // Ctrl+Shift+Down / Ctrl+Alt+Down (or Ctrl+Shift+[ ) -> decrease opacity (-2%, min 0% off)
-  // Ctrl+Shift+0 / Ctrl+Alt+0 -> reset to default (10%)
+  // Ctrl+Shift+0 / Ctrl+Alt+0 -> reset to default (16%)
   // Syncs live across all open TangleClaw tabs via localStorage ('tc_watermark_opacity')
   // and works even when focus is inside the ttyd terminal iframe!
+  //
+  // Operator directive, Car 5720-W3-E (#2930 follow-up): ship at 16% out of
+  // the box, up from the original 10%/8% (dark/light) pair PR #2940 shipped.
+  // DEFAULT_LIGHT moves to the SAME 0.16 rather than a scaled-up light-theme
+  // value — the simpler, explicitly-requested reading of "ship at 16%" over
+  // inventing an unrequested ratio. The two constants (and the per-theme
+  // branch in `_tcWatermarkThemeDefault` below) stay separate so a future
+  // change can still give light its own value without restructuring this.
   const TC_WATERMARK_STORAGE_KEY = 'tc_watermark_opacity';
-  const TC_WATERMARK_DEFAULT = 0.10;
-  const TC_WATERMARK_DEFAULT_LIGHT = 0.08;
+  const TC_WATERMARK_DEFAULT = 0.16;
+  const TC_WATERMARK_DEFAULT_LIGHT = 0.16;
   let _tcWatermarkHudTimer = null;
 
   /**
-   * The CSS default this theme actually renders (0.10 dark / 0.08 light),
-   * so the first keyboard adjustment from an unset state steps off the
+   * The CSS default this theme actually renders (0.16 for both themes as
+   * of Car 5720-W3-E, #2930 — previously 0.10 dark / 0.08 light), so the
+   * first keyboard adjustment from an unset state steps off the
    * watermark's own visible opacity instead of always the dark value.
    * @returns {number}
    */
