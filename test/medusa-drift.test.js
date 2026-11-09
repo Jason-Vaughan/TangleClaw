@@ -259,35 +259,44 @@ describe('medusa-drift (#2956)', () => {
       assert.equal(seen.length, 1);
     });
 
-    it('the periodic background check calls refreshDrift on its own interval, and start() twice resets it rather than stacking a second timer', async (t) => {
+    it('the first check runs after initialDelayMs, then the periodic background check calls refreshDrift on its own interval -- and start() twice resets it rather than stacking a second timer', async (t) => {
       drift._internal.pathExists = () => false;
       drift._internal.fetchImpl = async () => { throw new Error('unreachable'); };
-      t.mock.timers.enable({ apis: ['setInterval'] });
+      t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
       const seen = [];
       drift.onDriftChange((snap) => seen.push(snap));
-      drift.start({ intervalMs: 1000 });
-      drift.start({ intervalMs: 1000 });
+      drift.start({ initialDelayMs: 500, intervalMs: 1000 });
+      drift.start({ initialDelayMs: 500, intervalMs: 1000 });
+      t.mock.timers.tick(499);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(seen.length, 0, 'not yet due -- one millisecond short of the initial delay');
+      t.mock.timers.tick(1);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(seen.length, 1, 'the first check, right after initialDelayMs, not after a full intervalMs');
       t.mock.timers.tick(1000);
       await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(seen.length, 1, 'exactly one periodic refresh per tick, not two stacked timers');
+      assert.equal(seen.length, 2, 'exactly one periodic refresh per tick after that, not two stacked timers');
       t.mock.timers.tick(1000);
       await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(seen.length, 2);
+      assert.equal(seen.length, 3);
     });
 
-    it('start() with no intervalMs uses DEFAULT_CHECK_INTERVAL_MS', async (t) => {
+    it('start() with no options uses DEFAULT_INITIAL_DELAY_MS, then DEFAULT_CHECK_INTERVAL_MS', async (t) => {
       drift._internal.pathExists = () => false;
       drift._internal.fetchImpl = async () => { throw new Error('unreachable'); };
-      t.mock.timers.enable({ apis: ['setInterval'] });
+      t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
       const seen = [];
       drift.onDriftChange((snap) => seen.push(snap));
       drift.start();
-      t.mock.timers.tick(drift.DEFAULT_CHECK_INTERVAL_MS - 1);
+      t.mock.timers.tick(drift.DEFAULT_INITIAL_DELAY_MS - 1);
       await new Promise((resolve) => setImmediate(resolve));
       assert.equal(seen.length, 0, 'not yet due');
       t.mock.timers.tick(1);
       await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(seen.length, 1);
+      assert.equal(seen.length, 1, 'the first check, after DEFAULT_INITIAL_DELAY_MS -- not DEFAULT_CHECK_INTERVAL_MS');
+      t.mock.timers.tick(drift.DEFAULT_CHECK_INTERVAL_MS);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(seen.length, 2, 'the periodic interval took over afterward');
     });
   });
 

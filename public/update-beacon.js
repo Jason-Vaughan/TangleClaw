@@ -706,9 +706,10 @@
    * Deliberately informational, with no apply/restart action: unlike this
    * file's own `tcCreateUpdateBeacon` above, there is no backend route yet
    * that fast-forwards the local Medusa checkout or restarts
-   * `com.medusa.hub` for a caller to invoke. That is a real TODO (the
-   * original #2956 proposal's "one-click Operator action"), tracked
-   * separately — this chip names what an operator needs to do by hand.
+   * `com.medusa.hub` for a caller to invoke. That is the original #2956
+   * proposal's "one-click Operator action", deferred to #2967 (R-Gate
+   * BLOCKING C2 on #2965's review) — this chip names what an operator
+   * needs to do by hand until #2967 ships.
    *
    * @param {Document} doc - The page document.
    * @param {string} elementId - Id of the warning chip element.
