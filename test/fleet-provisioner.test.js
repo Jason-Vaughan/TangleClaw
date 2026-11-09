@@ -328,3 +328,78 @@ describe('provisionFleet', () => {
     await assert.rejects(fp.provisionFleet(pm.id, [{ name: 'Lonely-Arc' }]), { code: 'NO_ORIGIN' });
   });
 });
+
+describe('POST /api/tc/fleet/coordinator — coordinatorRule validation (PRR-A R-Gate Round 3, PM Round 3 dispatch)', () => {
+  // No shared `before`/`after` here: the FILE-level `beforeEach`/`afterEach`
+  // swap in a brand new store before every single `it()`, including ones in
+  // this nested describe, and a nested `before()` runs once, before any of
+  // that — a server (and the signed-in session it produced) created there
+  // would end up bound to a store that gets replaced out from under it
+  // before the first real test runs. Building the server and signing in
+  // fresh inside each test is slower per test but the only ordering that is
+  // actually correct here.
+  async function _liveSignedInOperator() {
+    // This route's `signedInOperator` gate requires a real `req.tcSession`,
+    // which the dispatcher only ever resolves when the auth gate does NOT
+    // stand down (server.js: `if (!authGate.standsDown(gateState))`) — an
+    // open-gate install (this scratch store's default) never resolves one
+    // at all, so `operatorHeaders` alone (what this file's other describe
+    // blocks use, against routes with a looser gate) is not enough here.
+    // `signInOperator` only creates an account when the gate already reads
+    // `account-required`; a fresh store starts `open` instead (verified by
+    // running it standalone first), so `authEnabled` has to be armed by
+    // hand first — the same precondition `test/api-config.test.js`'s own
+    // `signInOperator` callers set up before calling it.
+    const config = store.config.load();
+    config.authEnabled = true;
+    store.config.save(config);
+
+    const { createServer } = require('../server');
+    const server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { signInOperator } = require('./_shared-docs-callers');
+    const headers = await signInOperator(server);
+    return { server, headers };
+  }
+
+  it('refuses a whitespace-only or non-string coordinatorRule with 400 and makes no mutation at all', async () => {
+    const { server, headers } = await _liveSignedInOperator();
+    try {
+      const { sendAs } = require('./_shared-docs-callers');
+      const projDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fleet-coord-route-'));
+      const project = store.projects.create({ name: 'RouteCheck-PM', path: projDir });
+
+      for (const bad of ['   ', '\n\t', 123, {}]) {
+        const res = await sendAs(server, 'POST', '/api/tc/fleet/coordinator',
+          { projectId: project.id, enabled: true, coordinatorRule: bad }, headers);
+        assert.equal(res.status, 400, `coordinatorRule ${JSON.stringify(bad)} must be refused`);
+
+        // No partial mutation: not the config flag, not the role, not a rule row.
+        const config = store.projectConfig.load(project.path);
+        assert.equal(config.fleetCoordinator, false, 'fleetCoordinator must not have been flipped on (the default, unset value)');
+        assert.equal(store.coordinatorRoles.getActiveForProject(project.id), null, 'no role must have been granted');
+        assert.deepEqual(store.sessionRules.listActiveForProject(project.id), [], 'no rule must have been created');
+      }
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('accepts a real coordinatorRule, trimmed, and completes the grant', async () => {
+    const { server, headers } = await _liveSignedInOperator();
+    try {
+      const { sendAs } = require('./_shared-docs-callers');
+      const projDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fleet-coord-route-ok-'));
+      const project = store.projects.create({ name: 'RouteCheckOk-PM', path: projDir });
+
+      const res = await sendAs(server, 'POST', '/api/tc/fleet/coordinator',
+        { projectId: project.id, enabled: true, coordinatorRule: '  Be excellent.  ' }, headers);
+      assert.equal(res.status, 200);
+      const rules = store.sessionRules.listActiveForProject(project.id);
+      assert.equal(rules.length, 1);
+      assert.equal(rules[0].content, 'Be excellent.', 'stored trimmed, not padded');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
