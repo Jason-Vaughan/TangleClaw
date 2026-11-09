@@ -70,12 +70,18 @@ or above `severityThreshold`, sorted highest-severity-first, capped at `maxFindi
 `top5` is the subagent's own `top_5_prioritized` list trimmed to ids that survived
 filtering.
 
-### `recordAdversarialDispositions(dispositions, { store, auditLogPath })`
+### `recordAdversarialDispositions(findings, dispositions, { store, auditLogPath })`
 
-Records one disposition per finding. Each entry requires `findingId`, a `disposition`
-from the vocabulary below, and a non-empty `rationale` — a missing rationale is rejected,
-since silent ignoring is forbidden. Writes via an injected `store(records)` function
-(preferred for tests) or by appending JSON lines to `auditLogPath`.
+Records one disposition per finding, checked against the *full* `findings` set — not
+just whatever subset `dispositions` happens to cover. Rejects outright (`ok: false`,
+nothing persisted) on a disposition for an unknown or duplicate finding id, or a finding
+with no disposition at all: this is what actually forbids silent ignoring, since a
+caller that silently dropped a finding from `dispositions` would otherwise get
+`ok: true` for the subset it did submit. Each disposition entry also requires a
+`disposition` from the vocabulary below and a non-empty `rationale`. Writes via an
+injected `store(records)` function (preferred for tests) or by appending JSON lines to
+`auditLogPath`; a throwing `store` or an inaccessible `auditLogPath` is caught and
+returned as `{ ok: false, recorded: [], error }` rather than propagating.
 
 ## Findings Schema
 

@@ -111,6 +111,14 @@ describe('validateAdversarialOutput — declines (never throws) on malformed inp
     assert.equal(result.valid, false);
     assert.match(result.errors.join(';'), /duplicate id/);
   });
+
+  it('declines a non-array top_5_prioritized instead of silently replacing it with [] (R-Gate Round 1 WARNING)', () => {
+    for (const bad of ['f1', 42, { f1: true }]) {
+      const result = validateAdversarialOutput({ findings: [sampleFinding()], top_5_prioritized: bad });
+      assert.equal(result.valid, false);
+      assert.match(result.errors.join(';'), /top_5_prioritized must be an array/);
+    }
+  });
 });
 
 describe('filterAndPrioritizeFindings', () => {
@@ -254,21 +262,39 @@ describe('runAdversarialPass — rejects malformed subagent output gracefully', 
 });
 
 describe('recordAdversarialDispositions — forbids silent ignoring', () => {
+  const twoFindings = [sampleFinding({ id: 'f1' }), sampleFinding({ id: 'f2' })];
+
+  it('rejects an empty/non-array findings list', () => {
+    for (const bad of [null, undefined, [], 'nope']) {
+      const result = recordAdversarialDispositions(
+        bad,
+        [{ findingId: 'f1', disposition: 'regression_test', rationale: 'added test/x.test.js' }],
+        { store: () => {} }
+      );
+      assert.equal(result.ok, false);
+    }
+  });
+
   it('rejects an empty/non-array dispositions list', () => {
     for (const bad of [null, undefined, [], 'nope']) {
-      const result = recordAdversarialDispositions(bad, { store: () => {} });
+      const result = recordAdversarialDispositions(twoFindings, bad, { store: () => {} });
       assert.equal(result.ok, false);
     }
   });
 
   it('requires either store or auditLogPath', () => {
-    const result = recordAdversarialDispositions([{ findingId: 'f1', disposition: 'regression_test', rationale: 'added test/x.test.js' }], {});
+    const result = recordAdversarialDispositions(
+      [sampleFinding({ id: 'f1' })],
+      [{ findingId: 'f1', disposition: 'regression_test', rationale: 'added test/x.test.js' }],
+      {}
+    );
     assert.equal(result.ok, false);
     assert.match(result.error, /requires options.store or options.auditLogPath/);
   });
 
   it('rejects an unrecognized disposition value', () => {
     const result = recordAdversarialDispositions(
+      [sampleFinding({ id: 'f1' })],
       [{ findingId: 'f1', disposition: 'shrug', rationale: 'eh' }],
       { store: () => {} }
     );
@@ -278,6 +304,7 @@ describe('recordAdversarialDispositions — forbids silent ignoring', () => {
 
   it('rejects a missing/empty rationale — the forbidden silent-ignore shape', () => {
     const result = recordAdversarialDispositions(
+      [sampleFinding({ id: 'f1' })],
       [{ findingId: 'f1', disposition: 'documented_non_issue', rationale: '' }],
       { store: () => {} }
     );
@@ -285,9 +312,53 @@ describe('recordAdversarialDispositions — forbids silent ignoring', () => {
     assert.match(result.error, /rationale must be a non-empty string/);
   });
 
-  it('records valid dispositions via an injected store function', () => {
+  it('rejects partial coverage — a presented finding with no disposition at all (R-Gate Round 1 BLOCKING 1)', () => {
+    const result = recordAdversarialDispositions(
+      twoFindings,
+      [{ findingId: 'f1', disposition: 'regression_test', rationale: 'added test/x.test.js' }],
+      { store: () => {} }
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.error, /missing a disposition for finding id\(s\): f2/);
+  });
+
+  it('rejects a disposition that references an unknown finding id', () => {
+    const result = recordAdversarialDispositions(
+      [sampleFinding({ id: 'f1' })],
+      [{ findingId: 'ghost', disposition: 'regression_test', rationale: 'added test/x.test.js' }],
+      { store: () => {} }
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.error, /"ghost" does not match any id in findings/);
+  });
+
+  it('rejects a duplicate disposition for the same finding id', () => {
+    const result = recordAdversarialDispositions(
+      [sampleFinding({ id: 'f1' })],
+      [
+        { findingId: 'f1', disposition: 'regression_test', rationale: 'added test/x.test.js' },
+        { findingId: 'f1', disposition: 'documented_non_issue', rationale: 'changed my mind' }
+      ],
+      { store: () => {} }
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.error, /duplicate disposition for finding id "f1"/);
+  });
+
+  it('rejects duplicate ids within the findings array itself', () => {
+    const result = recordAdversarialDispositions(
+      [sampleFinding({ id: 'dup' }), sampleFinding({ id: 'dup' })],
+      [{ findingId: 'dup', disposition: 'regression_test', rationale: 'added test/x.test.js' }],
+      { store: () => {} }
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.error, /findings contains duplicate ids/);
+  });
+
+  it('records valid dispositions via an injected store function, covering every finding exactly once', () => {
     const calls = [];
     const result = recordAdversarialDispositions(
+      twoFindings,
       [
         { findingId: 'f1', disposition: 'regression_test', rationale: 'added test/paginate.test.js', ref: 'test/paginate.test.js' },
         { findingId: 'f2', disposition: 'follow_up_issue', rationale: 'out of scope for this chunk', ref: '#999' }
@@ -307,11 +378,13 @@ describe('recordAdversarialDispositions — forbids silent ignoring', () => {
     const auditLogPath = path.join(dir, 'audit.jsonl');
     try {
       const first = recordAdversarialDispositions(
+        [sampleFinding({ id: 'f1' })],
         [{ findingId: 'f1', disposition: 'defensive_code', rationale: 'added input guard' }],
         { auditLogPath }
       );
       assert.equal(first.ok, true);
       const second = recordAdversarialDispositions(
+        [sampleFinding({ id: 'f2' })],
         [{ findingId: 'f2', disposition: 'documented_non_issue', rationale: 'not in our threat model' }],
         { auditLogPath }
       );
@@ -324,6 +397,28 @@ describe('recordAdversarialDispositions — forbids silent ignoring', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('returns ok:false (never throws) when the injected store throws (R-Gate Round 1 BLOCKING 2)', () => {
+    const result = recordAdversarialDispositions(
+      [sampleFinding({ id: 'f1' })],
+      [{ findingId: 'f1', disposition: 'regression_test', rationale: 'added test/x.test.js' }],
+      { store: () => { throw new Error('disk full'); } }
+    );
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.recorded, []);
+    assert.match(result.error, /could not persist dispositions: disk full/);
+  });
+
+  it('returns ok:false (never throws) when auditLogPath is inaccessible', () => {
+    const result = recordAdversarialDispositions(
+      [sampleFinding({ id: 'f1' })],
+      [{ findingId: 'f1', disposition: 'regression_test', rationale: 'added test/x.test.js' }],
+      { auditLogPath: path.join(os.tmpdir(), 'tc-adversarial-nonexistent-dir-xyz', 'audit.jsonl') }
+    );
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.recorded, []);
+    assert.match(result.error, /could not persist dispositions:/);
   });
 });
 
