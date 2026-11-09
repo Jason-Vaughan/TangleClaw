@@ -122,6 +122,12 @@ const NETWORK_FIRST_PATHS = new Set([
   // wrap-drawer.js is kept network-first to avoid below — keep it in the
   // same lockstep.
   '/medusa-loops-ui.js',
+  // secure-clipboard-ui.js (#1032) is the same shape: called at module top
+  // level by session.js (`window.tcCreateSecureClipboardModal`), across
+  // several review rounds so far — network-first avoids a CACHE_NAME bump
+  // on every one of those, the same reasoning this file gives above for
+  // medusa-loops-ui.js and below for remote-ca-assist.js.
+  '/secure-clipboard-ui.js',
   '/session.js',
   // wrap-drawer.js is the pure-helper sibling of session.js: session.js
   // (network-first) calls its helpers directly, so a stale wrap-drawer.js
