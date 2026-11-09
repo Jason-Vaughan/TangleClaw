@@ -152,6 +152,34 @@ describe('lib/system-health (#345)', () => {
         assert.match(c.detail, /did not parse as numbers/);
       });
 
+      it('is unknown, not clear, on trailing junk a bare parseInt would silently accept', () => {
+        // THE MUTATION THIS CATCHES: `parseInt('870junk', 10)` returns the
+        // finite number 870, so a `Number.isFinite` check alone reads a
+        // truncated/corrupted procfs line as a real, merely-smaller count.
+        systemHealth._setProbes({
+          platform: () => 'linux',
+          readLinuxPtyNr: () => '870junk',
+          readLinuxPtyMax: () => '4096'
+        });
+        const c = systemHealth.detectTtydLeak();
+        assert.equal(c.state, 'unknown');
+        assert.match(c.detail, /did not parse as numbers/);
+      });
+
+      it('is unknown, not clear, on a negative count a bare parseInt would silently accept', () => {
+        // THE MUTATION THIS CATCHES: `parseInt('-1', 10)` is finite too, so
+        // the old `!Number.isFinite(nr)` guard let a negative (impossible)
+        // PTY count through as though it were a real reading.
+        systemHealth._setProbes({
+          platform: () => 'linux',
+          readLinuxPtyNr: () => '-1',
+          readLinuxPtyMax: () => '4096'
+        });
+        const c = systemHealth.detectTtydLeak();
+        assert.equal(c.state, 'unknown');
+        assert.match(c.detail, /did not parse as numbers/);
+      });
+
       it('never touches the macOS measureLeak probe', async () => {
         let measured = false;
         systemHealth._setProbes({
