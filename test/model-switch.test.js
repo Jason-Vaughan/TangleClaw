@@ -1024,6 +1024,260 @@ describe('lib/model-switch — switchSessionModel', () => {
   });
 });
 
+/*
+ * #2598 follow-up (self/Coordinator admission bugs discovered during live
+ * Charter A508 boundary-switch execution): `_defaultCheckBoundary` is not
+ * exported, so these drive it through `switchSessionModel` with NO
+ * `checkBoundary` override, faking only the seams it already takes
+ * (`observer`, `execGit`) plus the store reads `workloadFleet.laneFor` makes
+ * internally (`launchSequences.getBySession`, `workloadReceipts.*`,
+ * `control.getOpenForProject`) — the same monkeypatch shape
+ * `test/workload-fleet.test.js`'s wrap-supersession test already uses for the
+ * same seam. This exercises the real boundary logic end to end, unlike the
+ * rest of this file's `switchSessionModel` tests, which intentionally stub
+ * `checkBoundary` to isolate the reconcile/relaunch pipeline instead.
+ */
+describe('lib/model-switch — _defaultCheckBoundary self-request exception (#2598)', () => {
+  let tmpDir;
+  let projectPath;
+  let project;
+
+  const target = () => ({
+    getEngineProfile: () => ({
+      id: 'claude', name: 'Claude',
+      models: { flag: '--model', offered: ['claude-sonnet-5'], roster: { source: 'codex-models-cache' } }
+    }),
+    readFile: () => JSON.stringify({ fetched_at: new Date().toISOString(), models: [{ slug: 'claude-sonnet-5', display_name: 'Sonnet' }] })
+  });
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-model-switch-self-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-model-switch-self-project-'));
+    project = store.projects.create({ name: `self-${Date.now()}-${Math.random().toString(36).slice(2)}`, path: projectPath });
+  });
+
+  function safeReceiptRow({ sessionId, launchId, state = 'complete', clearance = 'safe-to-clear' }) {
+    return {
+      project_id: project.id, session_id: sessionId, launch_id: launchId, assignment_id: null, seq: 1, state,
+      clearance, summary: 's', wait_kind: null, wait_detail: null, refs_json: '{}', branch: null,
+      head_sha: null, source: 'tc-cli', received_at: new Date().toISOString()
+    };
+  }
+
+  // Stubs the three `workloadFleet.laneFor` store reads so `_defaultCheckBoundary`
+  // (run for real, unstubbed) composes the exact lane this case needs, plus the
+  // `observer`/`execGit` seams `_defaultCheckBoundary` itself takes as `deps`.
+  function realBoundaryDeps({ requester, activity, receiptRow, launchId = 'L-self', narrowingRow = null, controlState = null }) {
+    const realGetBySession = store.launchSequences.getBySession;
+    const realLatest = store.workloadReceipts.latestForLaunch;
+    const realNarrow = store.workloadReceipts.activeNarrowing;
+    const realOpen = store.control.getOpenForProject;
+    store.launchSequences.getBySession = () => ({ launchId });
+    store.workloadReceipts.latestForLaunch = () => receiptRow;
+    store.workloadReceipts.activeNarrowing = () => narrowingRow;
+    store.control.getOpenForProject = () => (controlState ? { state: controlState, assignment_id: null } : null);
+    const restore = () => {
+      store.launchSequences.getBySession = realGetBySession;
+      store.workloadReceipts.latestForLaunch = realLatest;
+      store.workloadReceipts.activeNarrowing = realNarrow;
+      store.control.getOpenForProject = realOpen;
+    };
+    const deps = {
+      ...target(),
+      requester,
+      observer: { get: () => ({ activity: activity.activity, reason: activity.reason, observedAt: null, ageSeconds: 0, provenance: 'engine-observed' }) },
+      execGit: (args) => (args[0] === 'status' ? '' : '0'),
+      reconcile: () => ({ ok: true, state: 'verified' }),
+      setDesiredProfile: () => {},
+      recordCheckpoint: () => {}
+    };
+    return { deps, restore };
+  }
+
+  it('self succeeds while its own turn is in flight, given a current safe receipt', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const { deps, restore } = realBoundaryDeps({
+      requester: { kind: 'project', projectId: project.id, sessionId: session.id },
+      activity: { activity: 'busy', reason: 'turn-in-flight' },
+      receiptRow: safeReceiptRow({ sessionId: session.id, launchId: 'L-self' })
+    });
+    try {
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, deps);
+      assert.equal(result.ok, true, JSON.stringify(result));
+    } finally {
+      restore();
+    }
+  });
+
+  it('self succeeds while its own PTY is still writing, given a current safe receipt', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const { deps, restore } = realBoundaryDeps({
+      requester: { kind: 'project', projectId: project.id, sessionId: session.id },
+      activity: { activity: 'busy', reason: 'pane-writing' },
+      receiptRow: safeReceiptRow({ sessionId: session.id, launchId: 'L-self' })
+    });
+    try {
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, deps);
+      assert.equal(result.ok, true, JSON.stringify(result));
+    } finally {
+      restore();
+    }
+  });
+
+  it('self refuses to discount "agents-running" busy activity', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const { deps, restore } = realBoundaryDeps({
+      requester: { kind: 'project', projectId: project.id, sessionId: session.id },
+      activity: { activity: 'busy', reason: 'agents-running' },
+      receiptRow: safeReceiptRow({ sessionId: session.id, launchId: 'L-self' })
+    });
+    try {
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, deps);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'SESSION_NOT_AT_BOUNDARY');
+      assert.ok(result.blockers.some((b) => b.includes('may not discount engine activity "agents-running"')), JSON.stringify(result.blockers));
+    } finally {
+      restore();
+    }
+  });
+
+  it('self refuses to discount an unrecognized busy reason', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const { deps, restore } = realBoundaryDeps({
+      requester: { kind: 'project', projectId: project.id, sessionId: session.id },
+      activity: { activity: 'busy', reason: 'mystery-reason' },
+      receiptRow: safeReceiptRow({ sessionId: session.id, launchId: 'L-self' })
+    });
+    try {
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, deps);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'SESSION_NOT_AT_BOUNDARY');
+      assert.ok(result.blockers.some((b) => b.includes('may not discount engine activity "mystery-reason"')), JSON.stringify(result.blockers));
+    } finally {
+      restore();
+    }
+  });
+
+  it('self refuses without a current receipt (a stale provenance from a different live launch)', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const { deps, restore } = realBoundaryDeps({
+      requester: { kind: 'project', projectId: project.id, sessionId: session.id },
+      activity: { activity: 'busy', reason: 'turn-in-flight' },
+      // The receipt's own launch_id does not match the session's live
+      // launch_id ('L-self'), so `launchLive` is false and provenance comes
+      // back 'stale', not 'explicit-receipt'.
+      receiptRow: safeReceiptRow({ sessionId: session.id, launchId: 'L-OTHER' }),
+      launchId: 'L-self'
+    });
+    try {
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, deps);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'SESSION_NOT_AT_BOUNDARY');
+      assert.ok(result.blockers.some((b) => b.includes('requires a current explicit complete/safe receipt')), JSON.stringify(result.blockers));
+    } finally {
+      restore();
+    }
+  });
+
+  it('self refuses when the receipt is not in a complete/safe-to-clear state', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const { deps, restore } = realBoundaryDeps({
+      requester: { kind: 'project', projectId: project.id, sessionId: session.id },
+      activity: { activity: 'busy', reason: 'turn-in-flight' },
+      receiptRow: safeReceiptRow({ sessionId: session.id, launchId: 'L-self', state: 'working', clearance: 'do-not-clear' })
+    });
+    try {
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, deps);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'SESSION_NOT_AT_BOUNDARY');
+      assert.ok(result.blockers.some((b) => b.includes('requires a current explicit complete/safe receipt')), JSON.stringify(result.blockers));
+    } finally {
+      restore();
+    }
+  });
+
+  it('an active HOLD still blocks a self switch, even with a safe receipt and a discountable busy reason', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const { deps, restore } = realBoundaryDeps({
+      requester: { kind: 'project', projectId: project.id, sessionId: session.id },
+      activity: { activity: 'busy', reason: 'turn-in-flight' },
+      receiptRow: safeReceiptRow({ sessionId: session.id, launchId: 'L-self' }),
+      controlState: 'held'
+    });
+    try {
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, deps);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'SESSION_NOT_AT_BOUNDARY');
+      assert.ok(result.blockers.some((b) => b.includes('blocked by HOLD, STOP, or operator narrowing')), JSON.stringify(result.blockers));
+    } finally {
+      restore();
+    }
+  });
+
+  it('an active operator narrowing still blocks a self switch, even with a safe receipt and a discountable busy reason', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const { deps, restore } = realBoundaryDeps({
+      requester: { kind: 'project', projectId: project.id, sessionId: session.id },
+      activity: { activity: 'busy', reason: 'turn-in-flight' },
+      receiptRow: safeReceiptRow({ sessionId: session.id, launchId: 'L-self' }),
+      narrowingRow: { cap_clearance: 1, force_unknown: 0, reason: 'operator narrowed', created_at: new Date().toISOString() }
+    });
+    try {
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, deps);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'SESSION_NOT_AT_BOUNDARY');
+      assert.ok(result.blockers.some((b) => b.includes('blocked by HOLD, STOP, or operator narrowing')), JSON.stringify(result.blockers));
+    } finally {
+      restore();
+    }
+  });
+
+  it('a non-self (external) caller is still refused by a busy pane despite the target\'s own safe receipt', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const { deps, restore } = realBoundaryDeps({
+      // A different project/session entirely — not the self-exception path.
+      requester: { kind: 'project', projectId: project.id + 999, sessionId: session.id + 999 },
+      activity: { activity: 'busy', reason: 'pane-writing' },
+      receiptRow: safeReceiptRow({ sessionId: session.id, launchId: 'L-self' })
+    });
+    try {
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, deps);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'SESSION_NOT_AT_BOUNDARY');
+      // Still the GENERIC clearance blocker, never the self-exception path's
+      // own messages — an external caller gets no activity discount at all.
+      assert.ok(result.blockers.some((b) => b.includes('clearance is "do-not-clear"')), JSON.stringify(result.blockers));
+    } finally {
+      restore();
+    }
+  });
+
+  it('self still succeeds the ordinary way while idle with an already-safe receipt (no regression)', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const { deps, restore } = realBoundaryDeps({
+      requester: { kind: 'project', projectId: project.id, sessionId: session.id },
+      activity: { activity: 'at-rest', reason: 'at-rest' },
+      receiptRow: safeReceiptRow({ sessionId: session.id, launchId: 'L-self' })
+    });
+    try {
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, deps);
+      assert.equal(result.ok, true, JSON.stringify(result));
+    } finally {
+      restore();
+    }
+  });
+});
+
 describe('lib/model-switch — checkDeciderOutageEscalation', () => {
   it('does not escalate a decider that is merely slow but healthy', () => {
     const result = modelSwitch.checkDeciderOutageEscalation({
