@@ -73,13 +73,18 @@ describe('POST /api/sessions/:project/switch-model — Fleet Coordinator admissi
     const res = await sendAs(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/switch-model`,
       { engine: 'claude', model: 'claude-sonnet-5' }, pmBind.headers);
 
-    // Whatever switchSessionModel() itself makes of the request (here,
-    // ENGINE_HAS_NO_MODELS from this fresh store's real engine registry
-    // having no cached model list — a downstream validation detail, not
-    // this route's own admission gate) is fine. The one thing that must
-    // never happen is the 403 the route used to answer before #2598.
-    assert.notEqual(res.status, 403, JSON.stringify(res.data));
-    assert.notEqual(res.data.code, 'FORBIDDEN', 'must reach switchSessionModel, not be turned back at the 403 admission gate');
+    // Proves admission, not a full switch: the route has no deps-injection
+    // seam (unlike switchSessionModel() called directly, which
+    // test/model-switch.test.js already exercises end to end with fakes for
+    // the reconcile/relaunch pipeline), so this real call runs against this
+    // fresh store's real engine registry and deterministically reaches
+    // ENGINE_HAS_NO_MODELS — a downstream validation detail, not this
+    // route's own admission gate. The one thing under test here is that the
+    // admission gate itself lets the coordinator through to that downstream
+    // code at all, rather than turning it back with the 403 it got before
+    // #2598.
+    assert.equal(res.status, 400, JSON.stringify(res.data));
+    assert.equal(res.data.code, 'ENGINE_HAS_NO_MODELS', 'must reach switchSessionModel, not be turned back at the 403 admission gate');
   });
 
   it('refuses the same verified Fleet Coordinator for outage-takeover mode (self, Operator or Master only)', async () => {
@@ -128,10 +133,12 @@ describe('POST /api/sessions/:project/switch-model — Fleet Coordinator admissi
     const res = await sendAs(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/switch-model`,
       { engine: 'claude', model: 'claude-sonnet-5' }, selfBind.headers);
 
-    // Same reasoning as the coordinator case above: whatever downstream
-    // validation switchSessionModel() itself applies is not this test's
-    // concern. Self-service must never be turned back at the 403 gate.
-    assert.notEqual(res.status, 403, JSON.stringify(res.data));
-    assert.notEqual(res.data.code, 'FORBIDDEN');
+    // Same reasoning as the coordinator case above: switchSessionModel()
+    // validates engine/model before it ever reaches the boundary check, so
+    // this reaches the same deterministic ENGINE_HAS_NO_MODELS a downstream
+    // validation detail, not this test's concern. The one thing under test
+    // is that self-service is still admitted past the 403 gate at all.
+    assert.equal(res.status, 400, JSON.stringify(res.data));
+    assert.equal(res.data.code, 'ENGINE_HAS_NO_MODELS');
   });
 });
