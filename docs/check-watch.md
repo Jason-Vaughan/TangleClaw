@@ -104,29 +104,40 @@ anything sent to *Check Watch* is dropped. The monitor types into no pane, ends 
 changes nothing on GitHub.
 
 *Check Watch* listens only while it has somebody to tell: while a watch is open, or owes a message,
-for a project that has a connected session, or while a send is waiting on its second attempt. So
-the roster shows one more peer only while such a watch exists, and an install with no watch has no
-such listener. When it has been stopped, the pass that finds work starts it and the next pass
-sends, so the first message after a quiet spell can be a second minute late.
+for a project that has a connected session, or while a send awaits reconciliation. So the roster
+shows one more peer only while such a watch exists, and an install with no watch has no such
+listener. When it has been stopped, the pass that finds work starts it and the next pass sends, so
+the first message after a quiet spell can be a second minute late.
 
 **The marker.** Every message ends with a line `ref: <request id>`. The request id is
-`check-watch:wake:<watch id>` or `check-watch:alarm:<watch id>`, with `:2` added on a second
-attempt, so both attempts name the same watch and result. A message reaches its recipient before
-the Hub has answered the send, so in the ordinary case it is this line, read when the message
-arrives, that ties the Hub's message to the send. It binds only when the id names a send the
-monitor made, the message came from the workspace that send was made from, and it reached the
-workspace that send was addressed to. Nothing is ever matched by sender, recipient, order or time
-alone.
+`check-watch:wake:<watch id>` or `check-watch:alarm:<watch id>` — the same string for the life of
+that watch's message, never suffixed by attempt — so a reconciliation resend names the SAME send a
+recipient may already have seen. A message reaches its recipient before the Hub has answered the
+send, so in the ordinary case it is this line, read when the message arrives, that ties the Hub's
+message to the send. It binds only when the id names a send the monitor made, the message came
+from the workspace that send was made from, and it reached the workspace that send was addressed
+to. Nothing is ever matched by sender, recipient, order or time alone.
 
-**One second attempt, never a third.** When the outcome of a first send was never learned (the
-Hub's answer was lost, or the server stopped before it came), the monitor sends the message once
-more. It does so only when the recipient's listener has been connected for **two minutes without a
+**One wake, literally (#2347).** The request id doubles as the Hub's own idempotency key, and the
+text of a given watch's message never varies (an alarm's lateness, once decided, is fixed to the
+exchange's own `created_at`, never recomputed) — so a resend under that key is always
+byte-identical to the original, and the Hub treats it as a replay of the same message rather than a
+second one. When the outcome of a send was never learned (the Hub's answer was lost, or the server
+stopped before it came), the monitor reconciles rather than blindly resending: it asks the Hub,
+by that key, whether it already has the message. Found, the SAME exchange is bound to that
+answer and nothing more is sent. Not found, the monitor resends under the identical key and
+text — onto the SAME exchange, never a second one. The Hub refusing that resend with
+`IDEMPOTENCY_KEY_CONFLICT` is a final refusal, the same as an ordinary refusal, and is never
+retried; the Hub being unreachable for the reconciliation check itself leaves the exchange pending
+for a later pass rather than guessing.
+
+Reconciliation runs once the recipient's listener has been connected for **two minutes without a
 break**, counted from the later of the moment the outcome became uncertain and the moment that
-listener last connected, and no marked arrival has tied the first send to a Hub message in that
-time. Any disconnection starts the two minutes again. The second message says it is a second
-attempt. A send the Hub **refused** is final and is never sent again. An alarm gets no second
-attempt once its watch has a result: the wake for that result says what the check did. A second
-attempt of an alarm is called late only if the first was, and then names when the first was sent.
+listener last connected, and no marked arrival has tied the send to a Hub message in that time. Any
+disconnection starts the two minutes again. If the project's original recipient session has since
+ended, reconciliation follows the project's current live session instead, rather than waiting
+forever on one that is gone. An alarm reaches no reconciliation once its watch has a result: the
+wake for that result says what the check did.
 
 The two minutes are measured from `listeningSince`, the time a listener last reached `listening`.
 It is one more key in a listener's status, an ISO time while listening and `null` otherwise, and so
@@ -141,10 +152,12 @@ message is left open.
 ## What became of a message
 
 Every read of a watch carries `delivery.wake` and `delivery.alarm`. Each has a `state`, the
-`attempts` made (one or two, each with its own state, its exchange and the workspace it went to),
-`secondAttempt`, and `undeliverable` (the code and time of a recorded "nobody to tell", or `null`).
-The state is worked out from the switchboard's own facts on every read, never from what the monitor
-believed when it sent.
+`attempts` made (now always at most one — reconciliation rebinds the SAME exchange rather than
+opening a second, #2347 — each with its own state, its exchange and the workspace it went to),
+`secondAttempt` (kept for a watch whose second exchange predates #2347; always `false` for one
+registered after), and `undeliverable` (the code and time of a recorded "nobody to tell", or
+`null`). The state is worked out from the switchboard's own facts on every read, never from what
+the monitor believed when it sent.
 
 | State | Means |
 |---|---|
@@ -158,13 +171,14 @@ believed when it sent.
 | `read` | The recipient fetched it from its inbox |
 | `acknowledged` | The recipient marked it handled |
 
-With two attempts the state is the furthest either got. `read` and `acknowledged` count only when
-the recipient session itself did it: the dashboard marking a message handled leaves it `arrived`.
-The watch's history also keeps `woke` or `alarmed`, once, when the first send was made, with a code
-for how that send stood at that moment (`accepted`, `uncertain` or `refused`); what became of the
-message afterwards is in `delivery`, not in that code. `tc check show` prints one line for each
-message (`wake: arrived`, `alarm: not-owed`, with `second attempt made` when there was one) above
-the history; each attempt's own state is in the route's answer.
+A watch carrying a legacy second exchange from before #2347 reads the furthest either attempt got.
+`read` and `acknowledged` count only when the recipient session itself did it: the dashboard
+marking a message handled leaves it `arrived`. The watch's history also keeps `woke` or `alarmed`,
+once, when the first send was made, with a code for how that send stood at that moment
+(`accepted`, `uncertain` or `refused`); what became of the message afterwards is in `delivery`, not
+in that code. `tc check show` prints one line for each message (`wake: arrived`, `alarm:
+not-owed`, with `second attempt made` for a watch carrying a legacy second exchange) above the
+history; each attempt's own state is in the route's answer.
 
 ## Who may do what
 
@@ -227,28 +241,29 @@ it.
 - **A watch is read for at most 24 hours past its due time**, then expired (see The monitor).
 - **Neither table is pruned.** `check_watches` and `check_watch_facts` keep every watch and every
   fact of its history. The limit of 20 bounds open watches only, so the tables grow with use.
-- **A duplicate message is possible.** If the Hub accepted the first send, and no marked arrival
-  was tied to it within two uninterrupted connected minutes, the second attempt is a second message
-  for one result. Both carry the same watch id and result on their marker line, and the second says
-  it is a second attempt.
+- **A literal one-wake contract (#2347): a duplicate message is not possible.** If the Hub
+  accepted the send and no marked arrival was tied to it within two uninterrupted connected
+  minutes, reconciliation asks the Hub by the send's own idempotency key before ever resending; a
+  genuine resend carries that same key and byte-identical text, so the Hub answers with a replay
+  of the original rather than a second message.
 - **The marker and the recipient's inbox cannot be written together.** A marked message reaches
   the recipient's listener, which holds mail in memory, and the monitor then ties its Hub id to the
   send in the store: two steps, not one transaction. If the server stops between them, the store
-  does not know the message arrived; after the restart the send still has no Hub id, and unless the
-  Hub delivers that message again the second attempt is sent although the first was delivered. That
-  is a duplicate, counted under the limit above; it is never a false receipt and never a lost wake.
-- **A wake can still be lost** if both attempts were never taken by the Hub or never delivered.
-  The read then says `unconfirmed` and the session finds the result by reading its watch. The same
-  holds when the session the first send went to has ended before a second attempt could be made:
-  the second attempt goes only to the listener the first was addressed to, and a session that
-  replaces it is not sent the message.
+  does not know the message arrived; after the restart, reconciliation's receipt lookup is what
+  learns it did (the message is bound without anything being sent again) rather than the next pass
+  resending blind.
+- **A wake can still be lost** if the Hub never took it and reconciliation's own resend never
+  reaches the Hub either (an unreachable Hub leaves the exchange pending rather than resending).
+  The read then says `unconfirmed` and the session finds the result by reading its watch.
+  Reconciliation follows the project's CURRENT live session once the original recipient's is gone,
+  rather than waiting forever on one that cleared or relaunched.
 - **Never a false receipt:** nothing is tied to a send except by that send's own marker, checked
   against the sender it came from and the recipient it was addressed to. The Hub takes a message's
   sender as stated, so this holds against other sessions of this install, which can send only as
   themselves, and not against something that talks to the Hub directly.
 - **Up to one pass late** (60 seconds), and a second when *Check Watch* had to be started first.
 - **A Hub that restarts loses the messages it holds.** That is read from the Hub's code, where held
-  messages are kept in memory, and has not been measured. The second attempt is what covers it.
+  messages are kept in memory, and has not been measured. Reconciliation is what covers it.
 - **A refusal is final even when it is the Hub's mistake.** A send to a recipient whose connection
   the Hub has just seen close is refused at once and is not sent again (#2370 describes one such
   moment after a reconnect).
@@ -286,7 +301,8 @@ it.
 
 `lib/check-watch-state.js` (the states, the limits, the codes), `lib/check-watch-store.js` (the
 records), `lib/check-watch-api.js` (the routes' handlers and the delivery read),
-`lib/check-watch.js` (the monitor: the reads, the two messages, the marker and the second attempt;
-started and stopped by `server.js`, whose arrival observer hands it every received message),
+`lib/check-watch.js` (the monitor: the reads, the two messages, the marker and the idempotent
+reconciliation; started and stopped by `server.js`, whose arrival observer hands it every received
+message),
 `lib/github-checks.js` (the reader of a commit's check), the tracked send in `lib/medusa-send.js`
 with its exchanges in `lib/medusa-exchanges.js`, and the `check` verb in `lib/tc-verbs.js`.

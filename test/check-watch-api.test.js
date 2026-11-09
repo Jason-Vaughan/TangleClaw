@@ -560,6 +560,7 @@ describe('/api/tc/check-watches (#2323)', () => {
     const exchanges = require('../lib/medusa-exchanges');
     const MESSAGES = '/api/sessions/builder-a/medusa';
     const realSend = medusa.sendMessage;
+    const realGetMessageReceipt = medusa.getMessageReceipt;
     const realMonitor = { ...monitor._internal };
     const realStoreNow = watchStore._internal.now;
     /** Each listener's socket and workspace, by listener key. */
@@ -567,6 +568,8 @@ describe('/api/tc/check-watches (#2323)', () => {
     /** What the stand-in Hub does with the next sends: `deliver`, `lost` or `refuse`. */
     let hubDoes = 'deliver';
     let issued = 0;
+    /** Every send this stand-in Hub actually took, by idempotency key (#2347). */
+    let sentCopies = [];
 
     /** A socket the test opens, registers and feeds frames to. */
     class Socket {
@@ -657,18 +660,30 @@ describe('/api/tc/check-watches (#2323)', () => {
     before(() => {
       monitor._internal.readCheck = async () => ({ status: 'running', runId: '1', app: 'github-actions' });
       monitor._internal.medusa = () => ({ ...medusa, startSession: listen });
-      medusa.sendMessage = async ({ sessionId, to, message, beforeHub }) => {
+      medusa.sendMessage = async ({ sessionId, to, message, idempotencyKey, beforeHub }) => {
         const from = medusa.getStatus(sessionId).workspaceId;
         if (!from) throw Object.assign(new Error('not listening'), { httpStatus: 409, code: 'NOT_LISTENING' });
-        beforeHub({ from });
+        const intent = typeof beforeHub === 'function' ? beforeHub({ from }) : undefined;
+        // A FUNCTION message (#2347 R4) is resolved only now, against
+        // whatever `beforeHub` just returned -- mirroring the real
+        // `medusa.sendMessage`'s own order.
+        const text = (typeof message === 'function' ? message(intent) : message).trim();
         if (hubDoes !== 'deliver') {
           throw Object.assign(new Error(`hub ${hubDoes}`), { httpStatus: 502, code: 'SEND_REJECTED', hubOutcome: hubDoes === 'refuse' ? 'refused' : 'unknown' });
         }
         const id = `api-hub-${++issued}`;
+        sentCopies.push({ id, idempotencyKey, to, message: text });
         const recipient = [...wires.values()].find((wire) => wire.workspaceId === to);
         // The message is with the recipient before the Hub's answer is back.
-        recipient.socket.frame({ type: 'new_message', messageId: id, message: { id, from, to, message: message.trim() } });
+        recipient.socket.frame({ type: 'new_message', messageId: id, message: { id, from, to, message: text } });
         return { status: 'received', id, to };
+      };
+      // The Hub's receipt-lookup endpoint (#2347): found when this stand-in
+      // genuinely took a send under this key -- `hubDoes !== 'deliver'` never
+      // reaches `sentCopies` at all, so it correctly reads as not-found too.
+      medusa.getMessageReceipt = async ({ idempotencyKey }) => {
+        const copy = sentCopies.find((c) => c.idempotencyKey === idempotencyKey);
+        return copy ? { found: true, id: copy.id, status: 'received', to: copy.to } : { found: false };
       };
       listen({ projectPath: owner.path, sessionId: bOwner.sessionId, name: owner.name });
       connect(bOwner.sessionId);
@@ -681,6 +696,7 @@ describe('/api/tc/check-watches (#2323)', () => {
       await monitor.settled();
       medusa.stopSession(bOwner.sessionId);
       medusa.sendMessage = realSend;
+      medusa.getMessageReceipt = realGetMessageReceipt;
       Object.assign(monitor._internal, realMonitor);
       watchStore._internal.now = realStoreNow;
     });
@@ -760,31 +776,41 @@ describe('/api/tc/check-watches (#2323)', () => {
       assert.deepEqual(wake.attempts.map((a) => a.state), ['refused']);
       assert.equal(wake.secondAttempt, false);
       hubDoes = 'deliver';
-      assert.equal((await pass(10 * 60000)).secondAttempts, 0);
+      assert.equal((await pass(10 * 60000)).reconciled, 0);
       assert.equal((await delivery(watch)).wake.state, 'refused');
     });
 
-    it('says unconfirmed while no attempt is proven, shows the second attempt, and reads as far as either got', async () => {
+    it('says unconfirmed while no attempt is proven, and reconciliation rebinds the SAME exchange rather than opening a second (#2347)', async () => {
       const watch = await registered();
       resolve(watch);
       hubDoes = 'lost';
       assert.equal((await pass()).sent, 1);
       let wake = (await delivery(watch)).wake;
       assert.deepEqual([wake.state, wake.secondAttempt, wake.attempts.map((a) => a.state)], ['unconfirmed', false, ['unconfirmed']]);
+      const [firstAttempt] = wake.attempts;
 
-      assert.equal((await pass(monitor.SECOND_ATTEMPT_AFTER_MS + 1000)).secondAttempts, 1);
+      // Still lost: reconciliation finds no receipt, resends under the SAME
+      // key, and is lost again -- still one attempt, the same exchange.
+      assert.equal((await pass(monitor.RECONCILE_AFTER_MS + 1000)).reconciled, 0);
       wake = (await delivery(watch)).wake;
-      assert.deepEqual([wake.state, wake.secondAttempt, wake.attempts.map((a) => a.state)], ['unconfirmed', true, ['unconfirmed', 'unconfirmed']]);
-      assert.deepEqual(wake.attempts.map((a) => a.attempt), [1, 2]);
+      assert.deepEqual([wake.state, wake.secondAttempt, wake.attempts.map((a) => a.state)], ['unconfirmed', false, ['unconfirmed']]);
+      assert.equal(wake.attempts[0].exchangeId, firstAttempt.exchangeId);
 
-      // A second attempt the Hub takes is what the message reads as; the first stays unproven.
+      // Done observing it: cancel it so it stops being reconciled on every
+      // later pass, and does not collide with the next watch's own
+      // reconciliation once `hubDoes` flips back to 'deliver' below.
+      assert.equal((await sendAs(server, 'POST', `${ROOT}/${watch.watchId}/cancel`, {}, bOwner.headers)).status, 200);
+
+      // A second watch: the Hub takes the reconciliation resend, and the SAME exchange now reads as arrived.
       const other = await registered();
       resolve(other);
       assert.equal((await pass()).sent, 1);
+      const otherFirst = (await delivery(other)).wake.attempts[0];
       hubDoes = 'deliver';
-      assert.equal((await pass(monitor.SECOND_ATTEMPT_AFTER_MS + 1000)).secondAttempts, 1);
+      assert.equal((await pass(monitor.RECONCILE_AFTER_MS + 1000)).reconciled, 1);
       wake = (await delivery(other)).wake;
-      assert.deepEqual([wake.state, wake.secondAttempt, wake.attempts.map((a) => a.state)], ['arrived', true, ['unconfirmed', 'arrived']]);
+      assert.deepEqual([wake.state, wake.secondAttempt, wake.attempts.map((a) => a.state)], ['arrived', false, ['arrived']]);
+      assert.equal(wake.attempts[0].exchangeId, otherFirst.exchangeId);
     });
 
     it('reads the alarm the same way, apart from the wake', async () => {

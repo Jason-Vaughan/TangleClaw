@@ -1534,6 +1534,13 @@ function makeFakeBridge() {
   const loops = [];
   /** @type {Map<string, object>} */
   const loopStore = new Map();
+  // Every send this fake Bridge has committed under an idempotencyKey (#2347),
+  // keyed by that string: a resend under the SAME key replays the SAME id
+  // when `{to, message}` is unchanged, and is refused (409
+  // IDEMPOTENCY_KEY_CONFLICT) when either differs -- mirroring the real Hub's
+  // own idempotency contract (Jason-Vaughan/Medusa#67/#69).
+  const idempotencyStore = new Map();
+  let nextIdempotentId = 0;
   /** @type {object[]} */
   let roster = [
     { id: 'live-ws', name: 'Live', listener: { active: true }, connected: true },
@@ -1552,14 +1559,36 @@ function makeFakeBridge() {
       const body = raw ? JSON.parse(raw) : {};
       if (req.method === 'POST' && req.url === '/messages/direct') {
         received.push(body);
+        if (body.idempotencyKey) {
+          const prior = idempotencyStore.get(body.idempotencyKey);
+          if (prior && (prior.to !== body.to || prior.message !== body.message)) {
+            return json(res, 409, { error: 'idempotencyKey was already used for a different message', code: 'IDEMPOTENCY_KEY_CONFLICT' });
+          }
+          if (prior) {
+            return json(res, 200, { success: true, status: prior.status, id: prior.id, replayed: true, message: 'Replayed: already sent under this key.' });
+          }
+        }
+        const commit = (status, id) => {
+          if (body.idempotencyKey) idempotencyStore.set(body.idempotencyKey, { to: body.to, message: body.message, status, id });
+        };
         if (body.to === 'offline-ws') {
-          return json(res, 200, { success: true, status: 'queued', id: 'q-1', message: 'Workspace offline. Message queued in Hub inbox.' });
+          const id = body.idempotencyKey ? `q-idem-${++nextIdempotentId}` : 'q-1';
+          commit('queued', id);
+          return json(res, 200, { success: true, status: 'queued', id, message: 'Workspace offline. Message queued in Hub inbox.' });
         }
         if (body.to === 'live-ws' || roster.some((w) => w.id === body.to)) {
-          return json(res, 200, { success: true, status: 'received', id: 'r-1', message: 'Delivered over WebSocket.' });
+          const id = body.idempotencyKey ? `r-idem-${++nextIdempotentId}` : 'r-1';
+          commit('received', id);
+          return json(res, 200, { success: true, status: 'received', id, message: 'Delivered over WebSocket.' });
         }
         // Mirror the real Bridge: unknown target → 404 not-found (a real failure).
         return json(res, 404, { error: `Peer/Workspace ${body.to} not found.` });
+      }
+      if (req.method === 'GET' && req.url.startsWith('/messages/receipts/')) {
+        const key = decodeURIComponent(req.url.slice('/messages/receipts/'.length));
+        const prior = idempotencyStore.get(key);
+        if (!prior) return json(res, 404, { error: 'No message under that idempotency key' });
+        return json(res, 200, { id: prior.id, status: prior.status, to: prior.to });
       }
       if (req.method === 'GET' && req.url === '/workspaces') {
         return json(res, 200, { count: roster.length, workspaces: roster, telemetry: {} });
@@ -1636,7 +1665,7 @@ function makeFakeBridge() {
       return json(res, 404, { error: 'unmatched' });
     });
   });
-  return { server, received, loops, loopStore, setRoster: (r) => { roster = r; } };
+  return { server, received, loops, loopStore, setRoster: (r) => { roster = r; }, idempotencyStore };
 }
 
 describe('lib/medusa — send / roster (MED-2K9P Chunk 03)', () => {
@@ -1769,6 +1798,51 @@ describe('lib/medusa — send / roster (MED-2K9P Chunk 03)', () => {
       }),
       (err) => { assert.equal(err.code, 'BRIDGE_UNREACHABLE'); assert.equal(err.httpStatus, 502); return true; }
     );
+  });
+
+  describe('idempotencyKey (#2347, Jason-Vaughan/Medusa#67/#69)', () => {
+    it('a plain send omits idempotencyKey from the body, unchanged from before #2347', async () => {
+      await medusa.sendMessage({ sessionId: sid, to: 'live-ws', message: 'no key here' });
+      assert.equal('idempotencyKey' in bridge.received[0], false);
+    });
+
+    it('a resend under the SAME key and identical {to, message} replays: the SAME id, replayed:true', async () => {
+      const first = await medusa.sendMessage({ sessionId: sid, to: 'live-ws', message: 'hold the line', idempotencyKey: 'ck-1' });
+      assert.equal(first.id, 'r-idem-1');
+
+      const again = await medusa.sendMessage({ sessionId: sid, to: 'live-ws', message: 'hold the line', idempotencyKey: 'ck-1' });
+      assert.equal(again.id, first.id, 'the replayed id, never a second one');
+      assert.equal(bridge.received.length, 2, 'two POSTs were made -- the replay is in the ANSWER, not skipped client-side');
+    });
+
+    it('the same key with a different recipient or text is refused 409, surfaced as hubOutcome: conflict, never retried', async () => {
+      await medusa.sendMessage({ sessionId: sid, to: 'live-ws', message: 'original text', idempotencyKey: 'ck-2' });
+      await assert.rejects(
+        () => medusa.sendMessage({ sessionId: sid, to: 'live-ws', message: 'a different message entirely', idempotencyKey: 'ck-2' }),
+        (err) => {
+          assert.equal(err.httpStatus, 409);
+          assert.equal(err.code, 'IDEMPOTENCY_KEY_CONFLICT');
+          assert.equal(err.hubOutcome, 'conflict');
+          return true;
+        }
+      );
+    });
+
+    it('getMessageReceipt finds a key this Hub genuinely committed, and reports not found for one it never saw', async () => {
+      const sent = await medusa.sendMessage({ sessionId: sid, to: 'live-ws', message: 'reconcile me', idempotencyKey: 'ck-3' });
+      const receipt = await medusa.getMessageReceipt({ idempotencyKey: 'ck-3' });
+      assert.deepEqual(receipt, { found: true, id: sent.id, status: 'received', to: 'live-ws' });
+
+      const missing = await medusa.getMessageReceipt({ idempotencyKey: 'ck-never-sent' });
+      assert.deepEqual(missing, { found: false });
+    });
+
+    it('getMessageReceipt surfaces an unreachable Hub honestly rather than a false not-found', async () => {
+      await assert.rejects(
+        () => medusa.getMessageReceipt({ idempotencyKey: 'ck-4', fetchImpl: () => Promise.reject(new Error('ECONNREFUSED')) }),
+        (err) => { assert.equal(err.code, 'BRIDGE_UNREACHABLE'); assert.equal(err.httpStatus, 502); return true; }
+      );
+    });
   });
 
   it('roster returns other workspaces and excludes the calling session', async () => {
