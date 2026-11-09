@@ -54,10 +54,14 @@
       <span id="bindNotice" class="dash-auth-warning hidden" role="status"></span>
       <span id="ttydNotice" class="dash-auth-warning hidden" role="status"></span>
       <!-- Medusa upstream & local Hub drift (#2956): rendered by
-           tcRenderMedusaDriftNotice (public/update-beacon.js), polled from
-           public/ui.js. Same shape as the warning chips above — hidden
-           until GET /api/system/medusa-drift says there is something to say. -->
-      <span id="medusaDriftNotice" class="dash-auth-warning hidden" role="status"></span>
+           tcRenderMedusaDriftNotice and wired by tcWireMedusaDriftAction
+           (public/update-beacon.js), polled/wired once from public/ui.js.
+           A real button, not a styled span like the warning chips above:
+           this one is also the one-click Operator action (POST
+           /api/system/medusa-drift/apply), so it needs to be reachable by
+           keyboard and announced as actionable -- no `role="status"` here,
+           which would override its own interactive semantics. -->
+      <button type="button" id="medusaDriftNotice" class="dash-auth-warning hidden"></button>
     </div>
     <div class="dash-stats" id="dashStats">
       <span class="dash-stat"><span class="dash-stat-label">CPU</span><span class="stat-value" id="statCpu">--</span></span>

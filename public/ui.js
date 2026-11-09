@@ -8012,5 +8012,13 @@ async function loadMedusaDrift() {
   window.tcRenderMedusaDriftNotice(document, 'medusaDriftNotice', data);
 }
 
+// Wired once: the chip itself is the one-click Operator action's button
+// (POST /api/system/medusa-drift/apply), confirmed and applied through
+// tcWireMedusaDriftAction (public/update-beacon.js) — not re-wired on
+// every poll, since that would stack confirm dialogs behind a stale click.
+if (typeof window.tcWireMedusaDriftAction === 'function') {
+  window.tcWireMedusaDriftAction(document, 'medusaDriftNotice', { apiMutate });
+}
+
 loadMedusaDrift();
 setInterval(loadMedusaDrift, MEDUSA_DRIFT_POLL_MS);

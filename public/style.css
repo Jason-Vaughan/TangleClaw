@@ -220,6 +220,15 @@ html[data-tc-keyboard] body {
   cursor: default;
 }
 .dash-auth-warning.hidden { display: none; }
+/* #medusaDriftNotice (#2956) is the one chip here that is also a real
+   button -- the one-click Operator action -- so it needs its own cursor
+   and interactive states; the other .dash-auth-warning chips stay
+   non-interactive (cursor: default above) and are unaffected by this ID
+   selector. */
+#medusaDriftNotice { font-family: inherit; cursor: pointer; }
+#medusaDriftNotice:hover,
+#medusaDriftNotice:focus-visible { background: rgba(255, 179, 0, 0.24); }
+#medusaDriftNotice:disabled { opacity: 0.7; cursor: default; }
 /* Orphan hooks repair banner (#145, chunk 2) */
 .orphan-banner {
   display: flex;

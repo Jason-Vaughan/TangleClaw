@@ -3993,6 +3993,22 @@ route('GET', '/api/system/medusa-drift', async (req, res) => {
   jsonResponse(res, 200, drift);
 });
 
+// POST /api/system/medusa-drift/apply — the one-click Operator action
+// #2956's own proposal asked for: fast-forward the local Medusa checkout
+// onto origin/main when behind, restart com.medusa.hub when it needs one
+// (or was just fast-forwarded), then answer with the fresh snapshot.
+// Refuses rather than discarding on a dirty checkout -- see
+// lib/medusa-drift.js#applyDriftAction's own doc for why that differs from
+// lib/update-applier.js's discardDirty option for TangleClaw's own update.
+route('POST', '/api/system/medusa-drift/apply', async (_req, res) => {
+  const result = await medusaDrift.applyDriftAction();
+  if (result.ok) {
+    jsonResponse(res, 200, result);
+    return;
+  }
+  jsonResponse(res, result.code === 'git-error' || result.code === 'restart-failed' ? 500 : 409, result);
+}, { signedInOperator: { action: 'fast-forward the local Medusa checkout and/or restart com.medusa.hub' } });
+
 // GET /api/system/pty-activity — terminal attaches and detaches through the
 // `/terminal` proxy since this process started (#1949). Release-candidate
 // certification reads it for its PTY-use target; `instance` changes with every

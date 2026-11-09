@@ -703,13 +703,12 @@
    * timer: the notice clears itself the next time the poll behind it reads
    * clean, exactly like `renderBindNotice`).
    *
-   * Deliberately informational, with no apply/restart action: unlike this
-   * file's own `tcCreateUpdateBeacon` above, there is no backend route yet
-   * that fast-forwards the local Medusa checkout or restarts
-   * `com.medusa.hub` for a caller to invoke. That is the original #2956
-   * proposal's "one-click Operator action", deferred to #2967 (R-Gate
-   * BLOCKING C2 on #2965's review) — this chip names what an operator
-   * needs to do by hand until #2967 ships.
+   * The chip is itself the one-click Operator action's button — see
+   * {@link tcWireMedusaDriftAction}, which wires its click to
+   * `POST /api/system/medusa-drift/apply` and re-renders from the fresh
+   * snapshot that call returns. This function only ever draws the current
+   * state; it never disables or re-labels the chip mid-click, which is
+   * `tcWireMedusaDriftAction`'s own job while a request is in flight.
    *
    * @param {Document} doc - The page document.
    * @param {string} elementId - Id of the warning chip element.
@@ -737,13 +736,70 @@
         ? `the local Medusa checkout is ${behind} commit${behind === 1 ? '' : 's'} behind origin/main`
         : 'the local Medusa checkout is behind origin/main');
     }
+    // The Hub's own reported capabilities (#2956, paired with
+    // Jason-Vaughan/Medusa#70) -- named here only when the Hub exposes
+    // them at all, never guessed at for one that predates that handshake.
+    if (data.hub && Array.isArray(data.hub.capabilities) && data.hub.capabilities.length > 0) {
+      reasons.push(`the Hub currently reports: ${data.hub.capabilities.join(', ')}`);
+    }
     el.textContent = `⚠ ${data.hubRestartNeeded ? 'Medusa Hub restart needed' : 'Medusa update available'}`;
-    el.title = `${reasons.join('; ')}.`;
+    el.title = `${reasons.join('; ')}. Click to fast-forward/restart now.`;
     el.classList.remove('hidden');
+  }
+
+  /**
+   * Wire the Medusa drift chip's click to the one-click Operator action
+   * (#2956): confirm, then `POST /api/system/medusa-drift/apply`, which
+   * fast-forwards the local Medusa checkout and/or restarts
+   * `com.medusa.hub` server-side (`lib/medusa-drift.js#applyDriftAction`).
+   * Re-renders from the fresh snapshot the apply call itself returns,
+   * through {@link tcRenderMedusaDriftNotice} — never from a second poll,
+   * so the chip reflects exactly what the action it just ran observed.
+   *
+   * Idempotent: a second call replaces the click handler rather than
+   * stacking a duplicate, the same posture `tcCreateUpdateBeacon`'s own
+   * `setDot` takes for its dot's click listener.
+   *
+   * @param {Document} doc - The page document.
+   * @param {string} elementId - Id of the warning chip element (a button).
+   * @param {{apiMutate: Function, confirm?: Function, alert?: Function}} deps -
+   *   `apiMutate(url, method, body)` is the page's own, same contract as
+   *   `tcCreateApiMutate` produces. `confirm`/`alert` are injectable for
+   *   tests; production defaults to the real `window.confirm`/`window.alert`.
+   * @returns {void}
+   */
+  function tcWireMedusaDriftAction(doc, elementId, deps) {
+    const el = doc.getElementById(elementId);
+    if (!el) return;
+    const confirmFn = deps.confirm || ((msg) => global.confirm(msg));
+    const alertFn = deps.alert || ((msg) => global.alert(msg));
+    if (el._tcMedusaDriftHandler) el.removeEventListener('click', el._tcMedusaDriftHandler);
+    const handler = async () => {
+      if (el.classList.contains('hidden') || el.disabled) return;
+      if (!confirmFn('Fast-forward the local Medusa checkout and/or restart com.medusa.hub now?')) return;
+      const wasText = el.textContent;
+      el.disabled = true;
+      el.textContent = '⚠ Applying…';
+      let result;
+      try {
+        result = await deps.apiMutate('/api/system/medusa-drift/apply', 'POST', {});
+      } finally {
+        el.disabled = false;
+      }
+      if (!result || !result.ok) {
+        el.textContent = wasText;
+        alertFn(`Medusa drift action failed: ${(result && result.error) || 'request did not complete'}`);
+        return;
+      }
+      tcRenderMedusaDriftNotice(doc, elementId, result.snapshot);
+    };
+    el._tcMedusaDriftHandler = handler;
+    el.addEventListener('click', handler);
   }
 
   global.tcCreateUpdateBeacon = tcCreateUpdateBeacon;
   global.tcIsUpdateAnswer = tcIsUpdateAnswer;
   global.tcUpdateAnswerState = tcUpdateAnswerState;
   global.tcRenderMedusaDriftNotice = tcRenderMedusaDriftNotice;
+  global.tcWireMedusaDriftAction = tcWireMedusaDriftAction;
 })(typeof window !== 'undefined' ? window : globalThis);

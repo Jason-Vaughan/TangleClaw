@@ -1158,4 +1158,161 @@ describe('tcRenderMedusaDriftNotice (#2956)', () => {
   it('a missing element (renamed/removed chip) is a quiet no-op, never a throw', () => {
     assert.doesNotThrow(() => render({ updateAvailable: true, hubRestartNeeded: false }, { missingElement: true }));
   });
+
+  it('names the Hub\'s own reported capabilities in the title when present', () => {
+    const chip = render({ updateAvailable: true, hubRestartNeeded: false, local: { commitsBehind: 1 }, hub: { capabilities: ['idempotency', 'drift-report'] } });
+    assert.match(chip.title, /the Hub currently reports: idempotency, drift-report/);
+  });
+
+  it('says nothing about capabilities for a Hub that predates the handshake (none reported)', () => {
+    const chip = render({ updateAvailable: true, hubRestartNeeded: false, local: { commitsBehind: 1 }, hub: { capabilities: null } });
+    assert.ok(!/currently reports/.test(chip.title));
+  });
+
+  it('ends with the click hint', () => {
+    const chip = render({ updateAvailable: true, hubRestartNeeded: false, local: { commitsBehind: 1 } });
+    assert.match(chip.title, /Click to fast-forward\/restart now\.$/);
+  });
+});
+
+describe('tcWireMedusaDriftAction (#2956)', () => {
+  /**
+   * A fake interactive chip: everything `fakeChip()` above has, plus
+   * addEventListener/removeEventListener/disabled -- enough for
+   * tcWireMedusaDriftAction's own click handler, and for
+   * tcRenderMedusaDriftNotice (which the handler calls on success) to
+   * still work against the same object.
+   * @returns {object}
+   */
+  function fakeButton() {
+    const classes = new Set(['dash-auth-warning', 'hidden']);
+    const listeners = {};
+    return {
+      textContent: '',
+      title: '',
+      disabled: false,
+      classList: {
+        add: (c) => classes.add(c),
+        remove: (c) => classes.delete(c),
+        contains: (c) => classes.has(c)
+      },
+      addEventListener: (type, fn) => { listeners[type] = fn; },
+      removeEventListener: (type, fn) => { if (listeners[type] === fn) delete listeners[type]; },
+      click: async () => { if (listeners.click) await listeners.click(); },
+      _classes: classes,
+      _listeners: listeners
+    };
+  }
+
+  /**
+   * Wire the real function (and the real tcRenderMedusaDriftNotice it
+   * calls on success) in a fresh vm context against one fake button.
+   * @param {object} deps - Same contract tcWireMedusaDriftAction takes
+   * @returns {{btn: object, ctx: object}}
+   */
+  function wire(deps) {
+    const btn = fakeButton();
+    btn._classes.delete('hidden'); // the button is only ever wired while shown
+    const ctx = { document: { getElementById: () => btn } };
+    vm.createContext(ctx);
+    vm.runInContext(liftDeclaration(BEACON_SRC, 'function tcRenderMedusaDriftNotice('), ctx);
+    vm.runInContext(liftDeclaration(BEACON_SRC, 'function tcWireMedusaDriftAction('), ctx);
+    ctx.tcWireMedusaDriftAction(ctx.document, 'medusaDriftNotice', deps);
+    return { btn, ctx };
+  }
+
+  it('a click while hidden is a no-op: no confirm, no apiMutate', async () => {
+    const btn = fakeButton(); // starts hidden
+    const ctx = { document: { getElementById: () => btn } };
+    vm.createContext(ctx);
+    vm.runInContext(liftDeclaration(BEACON_SRC, 'function tcRenderMedusaDriftNotice('), ctx);
+    vm.runInContext(liftDeclaration(BEACON_SRC, 'function tcWireMedusaDriftAction('), ctx);
+    let confirmCalled = false;
+    ctx.tcWireMedusaDriftAction(ctx.document, 'medusaDriftNotice', { apiMutate: async () => { throw new Error('must not be called'); }, confirm: () => { confirmCalled = true; return true; } });
+    await btn.click();
+    assert.equal(confirmCalled, false);
+  });
+
+  it('a declined confirm never calls apiMutate, and leaves the button untouched', async () => {
+    const { btn } = wire({ apiMutate: async () => { throw new Error('must not be called'); }, confirm: () => false });
+    btn.textContent = '⚠ Medusa update available';
+    await btn.click();
+    assert.equal(btn.textContent, '⚠ Medusa update available');
+    assert.equal(btn.disabled, false);
+  });
+
+  it('a confirmed click POSTs to /api/system/medusa-drift/apply, disables the button while in flight, and re-renders from the returned snapshot on success', async () => {
+    const calls = [];
+    let resolveApply;
+    const { btn } = wire({
+      confirm: () => true,
+      apiMutate: async (url, method, body) => {
+        calls.push([url, method, body]);
+        return new Promise((resolve) => { resolveApply = resolve; });
+      }
+    });
+    btn.textContent = '⚠ Medusa Hub restart needed';
+    const clickPromise = btn.click();
+    // Still in flight: disabled and showing progress.
+    await new Promise((r) => setImmediate(r));
+    assert.equal(btn.disabled, true);
+    assert.equal(btn.textContent, '⚠ Applying…');
+    resolveApply({ ok: true, fastForwarded: true, restarted: true, snapshot: { updateAvailable: false, hubRestartNeeded: false } });
+    await clickPromise;
+    // Not a blanket deepEqual on the whole tuple: the body object was built
+    // inside the vm context, so it has that realm's Object.prototype, not
+    // this file's -- structurally identical, but assert/strict's
+    // deepEqual (deepStrictEqual) treats the two prototypes as unequal.
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], '/api/system/medusa-drift/apply');
+    assert.equal(calls[0][1], 'POST');
+    assert.deepEqual({ ...calls[0][2] }, {});
+    assert.equal(btn.disabled, false);
+    // Re-rendered from the snapshot: no more drift, so hidden and cleared --
+    // tcRenderMedusaDriftNotice's own behavior, proving the handler called it.
+    assert.equal(btn.textContent, '');
+    assert.equal(btn._classes.has('hidden'), true);
+  });
+
+  it('a refused/failed apply restores the prior text and alerts with the error, never silently', async () => {
+    const alerts = [];
+    const { btn } = wire({
+      confirm: () => true,
+      alert: (msg) => alerts.push(msg),
+      apiMutate: async () => ({ ok: false, code: 'dirty-tree', error: 'the local Medusa checkout has uncommitted changes' })
+    });
+    btn.textContent = '⚠ Medusa update available';
+    await btn.click();
+    assert.equal(btn.textContent, '⚠ Medusa update available', 'restored, not left on "Applying…"');
+    assert.equal(btn.disabled, false);
+    assert.equal(alerts.length, 1);
+    assert.match(alerts[0], /uncommitted changes/);
+  });
+
+  it('a request that never completes (apiMutate throws) still re-enables the button and restores its text', async () => {
+    const alerts = [];
+    const { btn } = wire({
+      confirm: () => true,
+      alert: (msg) => alerts.push(msg),
+      apiMutate: async () => { throw new Error('ECONNREFUSED'); }
+    });
+    btn.textContent = '⚠ Medusa update available';
+    await assert.rejects(() => btn.click());
+    assert.equal(btn.disabled, false, 'the finally re-enables it even though the call threw past the handler');
+  });
+
+  it('wiring twice replaces the handler rather than stacking a second one (one confirm, one apiMutate call per click)', async () => {
+    const confirms = [];
+    const { btn, ctx } = wire({ confirm: () => { confirms.push(1); return true; }, apiMutate: async () => ({ ok: true, snapshot: { updateAvailable: false, hubRestartNeeded: false } }) });
+    ctx.tcWireMedusaDriftAction(ctx.document, 'medusaDriftNotice', { confirm: () => { confirms.push(1); return true; }, apiMutate: async () => ({ ok: true, snapshot: { updateAvailable: false, hubRestartNeeded: false } }) });
+    await btn.click();
+    assert.equal(confirms.length, 1, 'only the SECOND wiring\'s handler fired, not both');
+  });
+
+  it('a missing element is a quiet no-op, never a throw', () => {
+    const ctx = { document: { getElementById: () => null } };
+    vm.createContext(ctx);
+    vm.runInContext(liftDeclaration(BEACON_SRC, 'function tcWireMedusaDriftAction('), ctx);
+    assert.doesNotThrow(() => ctx.tcWireMedusaDriftAction(ctx.document, 'medusaDriftNotice', { apiMutate: async () => ({ ok: true }) }));
+  });
 });
