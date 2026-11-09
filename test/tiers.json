@@ -109,6 +109,7 @@
     "test/launch-rule-drift.test.js",
     "test/launchagent-scan.test.js",
     "test/lift-helper.test.js",
+    "test/linux-systemd-install.test.js",
     "test/linux-systemd.test.js",
     "test/live-checkout-banner.test.js",
     "test/logger.test.js",

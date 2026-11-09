@@ -5405,4 +5405,63 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       assert.equal(crashCause(session.id), 'trust_required');
     });
   });
+
+  describe('startupReadiness (#2953)', () => {
+    let sessions;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+    });
+
+    /**
+     * A minimal launch-sequence row, as `store.launchSequences.getBySession`
+     * would shape one. `sessionId: null` keeps this a pure unit test of
+     * `startupReadiness`'s own branching: with no session id, the model-
+     * admission check it runs first (#2188) short-circuits to null, which is
+     * unrelated to the bug this describe block covers.
+     * @param {object} [over] - Fields to override
+     * @returns {object}
+     */
+    function seq(over = {}) {
+      return {
+        id: 1, sessionId: null, revision: 1, applicability: 'applicable', cursor: 3,
+        recovery: 'none', recoveryMode: null, recoveryClearedAt: null,
+        unreadyAt: null, readyAt: null, preflight: null,
+        ...over
+      };
+    }
+
+    it('reads "ready" once a sequence has attested READY, even though the 2-minute observation window stamped it unready first', () => {
+      const out = sessions.startupReadiness(seq({ unreadyAt: '2026-11-09 00:56:00', readyAt: '2026-11-09 00:58:10' }));
+      assert.equal(out.state, 'ready');
+      assert.equal(out.blocker, null);
+      assert.equal(out.readyAt, '2026-11-09 00:58:10');
+    });
+
+    it('still reads "needs-attention"/"unready" when the window fired and READY was never attested', () => {
+      const out = sessions.startupReadiness(seq({ unreadyAt: '2026-11-09 00:56:00' }));
+      assert.equal(out.state, 'needs-attention');
+      assert.equal(out.blocker, 'unready');
+      assert.equal(out.step, `Starting — step 4 of ${store.LAUNCH_STEP_IDS.length}`);
+    });
+
+    it('reads "starting" with neither readyAt nor unreadyAt set', () => {
+      const out = sessions.startupReadiness(seq());
+      assert.equal(out.state, 'starting');
+      assert.equal(out.blocker, null);
+    });
+
+    it('a withheld recovery task step still wins over a stamped READY (defensive: recovery/damaged-handoff are checked before readyAt)', () => {
+      const out = sessions.startupReadiness(seq({
+        recovery: 'required', recoveryMode: 'strict', cursor: 3, readyAt: '2026-11-09 00:58:10', unreadyAt: '2026-11-09 00:56:00'
+      }));
+      assert.equal(out.state, 'needs-attention');
+      assert.equal(out.blocker, 'recovery-required');
+    });
+
+    it('a not-applicable sequence with no damaged handoff reads "ready" regardless of a stamped unreadyAt', () => {
+      const out = sessions.startupReadiness(seq({ applicability: 'not-applicable', unreadyAt: '2026-11-09 00:56:00' }));
+      assert.equal(out.state, 'ready');
+    });
+  });
 });
