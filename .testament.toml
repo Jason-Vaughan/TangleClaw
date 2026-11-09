@@ -632,6 +632,7 @@ files = [
   "test/exec-timeout.test.js",
   "test/exec.test.js",
   "test/feature-index.test.js",
+  "test/fleet-provisioner.test.js",
   "test/fleet-recovery-panel.test.js",
   "test/gate-fallback-command.test.js",
   "test/git-budget.test.js",

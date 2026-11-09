@@ -246,6 +246,19 @@ Optional `workload set` metadata:
 --head <sha>
 ```
 
+## Fleet Coordinator / Decider
+
+A project the Operator has granted "Fleet Coordinator / Decider" authority
+(#2937) may provision its own `<Prefix>-*` sibling fleet without a repeated
+per-project Operator approval. See `lib/fleet-provisioner.js`'s module doc
+for what provisioning deliberately does NOT do on its own authority
+(bind `control_assignments`; author startup-rule content) and why.
+
+| Command | What it does |
+| --- | --- |
+| `tc fleet coordinator <project-id> <on\|off>` | Turns a project's Fleet Coordinator / Decider authority on or off. Operator only — the server enforces this. |
+| `tc fleet provision --member <name>[:<engine>] [--member <name>[:<engine>] ...]` | A Fleet Coordinator's own delegated self-service: clones, registers and configures each named `<Prefix>-*` sibling from this project's own git remote. Reports a `pendingControlBinds` list — those still need an Operator-run control-assignment bind; this never happens automatically. |
+
 ## Durable interactive decisions
 
 | Command | What it does |

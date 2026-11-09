@@ -342,6 +342,13 @@
         "lib/fleet-provisioning.js"
       ]
     },
+    "fleet-provisioner": {
+      "label": "area:fleet-provisioner",
+      "why": "Fleet Coordinator / Decider self-service provisioning (#2937): a project the Operator has marked fleetCoordinator:true clones, registers and configures its own <Prefix>-* sibling projects from its own git remote. Distinct from the fleet-provisioning area just above (#2825's shared LANE_QUEUE/project-group/merge-queue bootstrap for an ALREADY-registered fleet) -- this one stands up the member PROJECTS themselves. Deliberately does not bind control_assignments or author startup-rule content; see the module's own doc for why. Owned by no other family.",
+      "paths": [
+        "lib/fleet-provisioner.js"
+      ]
+    },
     "fleet-views": {
       "label": "area:fleet-views",
       "why": "Fleet and dashboard view projections for the landing page and Master fleet view (#349, #1923), opt-in switchboard auto-inject gating and swarm stats (#801), a visible project-version-cache write-failure diagnostic (#1046), and recorded test-suite duration stats (#1784) -- the `v5.60.0 Fleet and dashboard views` milestone's own Car 60-C. Distinct from `sessions`' `lib/workload*.js` (asserted lane availability for dispatch) and `medusa`'s `lib/medusa*.js` (the switchboard engine itself): these are read-only projections over already-fetched facts from both, built for display rather than dispatch. Owned by no other family. `lib/fleet-visibility-routes.js` (#2858, Ruling A503-R1, Car 66-C) is the Slice 2 route adapter this area's own text already named as a tracked follow-up: composed controller functions over all four libraries here, ready for Milestone #54's real route mount.",
