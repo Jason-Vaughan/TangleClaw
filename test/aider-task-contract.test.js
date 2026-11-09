@@ -66,10 +66,16 @@ describe('aider-task-contract', () => {
       }
     });
 
-    it('blocks the newline injection that installed Aider pathspec would interpret as reopening unrelated files', (t) => {
+    it('blocks newline injection, with an installed-Aider pathspec cross-check when available', (t) => {
+      assert.throws(
+        () => contract.buildTaskContract({ repoPath, editableFiles: ['safe.js\n!/*'], message: 'x' }),
+        /control characters/,
+        'the contract must reject the payload before any aiderignore is generated'
+      );
+
       const which = realSpawnSync('which', ['aider'], { encoding: 'utf8' });
       if (!which || which.status !== 0 || !String(which.stdout || '').trim()) {
-        t.skip('installed Aider is required for the pathspec behavioral cross-check');
+        t.diagnostic('installed Aider unavailable; primary rejection regression still ran');
         return;
       }
 
@@ -77,7 +83,7 @@ describe('aider-task-contract', () => {
       const shebang = fs.readFileSync(aiderPath, 'utf8').split('\n', 1)[0];
       const match = shebang.match(/^#!\s*(.+)$/);
       if (!match) {
-        t.skip('installed Aider launcher does not expose its Python interpreter');
+        t.diagnostic('installed Aider launcher does not expose its Python interpreter');
         return;
       }
 
@@ -88,17 +94,12 @@ describe('aider-task-contract', () => {
         "print(json.dumps({'safe.js': spec.match_file('safe.js'), 'other.js': spec.match_file('other.js')}))"
       ].join('; ')], { encoding: 'utf8' });
       if (!probe || probe.status !== 0) {
-        t.skip('installed Aider environment does not expose pathspec');
+        t.diagnostic('installed Aider environment does not expose pathspec');
         return;
       }
 
       assert.deepEqual(JSON.parse(probe.stdout), { 'safe.js': false, 'other.js': false },
         'the injected !/* directive makes pathspec treat unrelated other.js as not ignored');
-      assert.throws(
-        () => contract.buildTaskContract({ repoPath, editableFiles: ['safe.js\n!/*'], message: 'x' }),
-        /control characters/,
-        'the contract must reject the payload before any aiderignore is generated'
-      );
     });
 
     it('rejects an empty message', () => {
