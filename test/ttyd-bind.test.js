@@ -19,7 +19,8 @@ const assert = require('node:assert/strict');
 
 const ttydBind = require('../lib/ttyd-bind');
 const { desiredBind, parseProgramArguments, describeInstalledBind, planReconcile,
-        reconcileInstalledJob } = ttydBind;
+        reconcileInstalledJob, parseExecStartArgs, planReconcileSystemd,
+        TTYD_SYSTEMD_UNIT } = ttydBind;
 
 /** A plist in the shape install.sh produced BEFORE #710: port only, no interface. */
 function legacyPlist() {
@@ -53,6 +54,26 @@ function pinnedPlist(iface = '127.0.0.1') {
     '        <string>--port</string>',
     `        <string>--interface</string>\n        <string>${iface}</string>\n        <string>--port</string>`
   );
+}
+
+/** The Linux (systemd) analogue of {@link legacyPlist} (#2933): port only, no interface. */
+function legacyUnit() {
+  return `[Unit]
+Description=TangleClaw ttyd terminal
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/ttyd --writable --url-arg --port 3100 --client-option scrollback=10000 /home/x/.tangleclaw/deploy/ttyd-attach.sh
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+/** The Linux analogue of {@link pinnedPlist}: an explicit interface ahead of the port. */
+function pinnedUnit(iface = '127.0.0.1') {
+  return legacyUnit().replace(' --port', ` --interface ${iface} --port`);
 }
 
 describe('ttyd-bind.desiredBind', () => {
@@ -209,6 +230,81 @@ describe('ttyd-bind.planReconcile', () => {
   });
 });
 
+describe('ttyd-bind.planReconcileSystemd (#2933)', () => {
+  it('rewrites a legacy port-only job to loopback', () => {
+    const plan = planReconcileSystemd(legacyUnit(), { ingressMode: 'direct' });
+    assert.equal(plan.action, 'rewrite');
+    assert.equal(plan.to, '127.0.0.1');
+    const { args } = parseExecStartArgs(plan.unitText);
+    assert.deepEqual(
+      args.slice(args.indexOf('--url-arg') + 1, args.indexOf('--client-option')),
+      ['--interface', '127.0.0.1', '--port', '3100'],
+      'the interface is inserted ahead of the port and nothing else moves'
+    );
+  });
+
+  it('changes nothing else in the file', () => {
+    const before = legacyUnit();
+    const plan = planReconcileSystemd(before, { ingressMode: 'direct' });
+    const stripped = plan.unitText.replace('--interface 127.0.0.1 --port', '--port');
+    assert.equal(stripped, before, 'the edit must be surgical, not a regeneration');
+  });
+
+  it('is a no-op once the job is already correct', () => {
+    const plan = planReconcileSystemd(pinnedUnit(), { ingressMode: 'direct' });
+    assert.equal(plan.action, 'none');
+    assert.equal(plan.reason, 'already-correct');
+  });
+
+  it('re-pins a job someone widened, rather than honouring it', () => {
+    // Same regression this guards on Linux: bindAllInterfaces:true must not
+    // drag the terminal port open with it on the next restart either.
+    const plan = planReconcileSystemd(pinnedUnit('0.0.0.0'), { ingressMode: 'direct', bindAllInterfaces: true });
+    assert.equal(plan.action, 'rewrite');
+    assert.equal(plan.to, '127.0.0.1');
+    assert.equal(describeInstalledBind(parseExecStartArgs(plan.unitText).args).iface, '127.0.0.1');
+  });
+
+  it('leaves a caddy install alone entirely', () => {
+    const plan = planReconcileSystemd(legacyUnit(), { ingressMode: 'caddy' });
+    assert.equal(plan.action, 'none');
+  });
+
+  it('REFUSES a job it does not recognize as ours', () => {
+    const foreign = legacyUnit().replace('--writable', '--readonly');
+    const plan = planReconcileSystemd(foreign, { ingressMode: 'direct' });
+    assert.equal(plan.action, 'refuse');
+    assert.match(plan.reason, /unrecognized-job/);
+  });
+
+  it('REFUSES a socket-bound job even when config claims direct mode', () => {
+    const plan = planReconcileSystemd(pinnedUnit('/home/x/.tangleclaw/run/ttyd.sock'), { ingressMode: 'direct' });
+    assert.equal(plan.action, 'refuse');
+    assert.match(plan.reason, /socket-bound/);
+  });
+
+  it('REFUSES an unparseable unit rather than guessing', () => {
+    for (const junk of ['', 'not a unit file', '[Service]\nExecStop=true\n']) {
+      assert.equal(planReconcileSystemd(junk, { ingressMode: 'direct' }).action, 'refuse');
+    }
+  });
+
+  it('never returns a rewrite without the rewritten document', () => {
+    // A caller that trusted `action` alone and wrote `plan.unitText` would
+    // truncate the operator's unit file to nothing.
+    for (const unitText of [legacyUnit(), pinnedUnit(), 'junk', '']) {
+      for (const cfg of [{ ingressMode: 'direct' }, { ingressMode: 'caddy' }]) {
+        const plan = planReconcileSystemd(unitText, cfg);
+        if (plan.action === 'rewrite') {
+          assert.ok(typeof plan.unitText === 'string' && plan.unitText.length > 0);
+        } else {
+          assert.equal(plan.unitText, null);
+        }
+      }
+    }
+  });
+});
+
 describe('reconcileInstalledJob.stillWide — what server.js actually reads', () => {
   const HOME = '/home/x';
   const PLIST = '/home/x/Library/LaunchAgents/com.tangleclaw.ttyd.plist';
@@ -235,8 +331,11 @@ describe('reconcileInstalledJob.stillWide — what server.js actually reads', ()
     };
   }
 
+  // Pinned to darwin (#2933): this suite's harness/fixtures are launchd-shaped
+  // (a plist, `uid`, `plutil`/`launchctl` stubs), and the default platform param
+  // must not silently drift to whatever OS actually runs the test.
   const run = (opts, config = { ingressMode: 'direct' }) =>
-    reconcileInstalledJob({ home: HOME, config, deps: harness(opts).deps });
+    reconcileInstalledJob({ home: HOME, config, deps: harness(opts).deps, platform: 'darwin' });
 
   it('reports STILL WIDE when staging fails and the live job was never touched', () => {
     // The regression that prompted this: a plan carrying the post-apply state
@@ -304,7 +403,7 @@ describe('ttyd-bind.reconcileInstalledJob — the apply must be reversible', () 
 
   it('backs up and lint-validates BEFORE the live plist is replaced', () => {
     const h = harness();
-    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps });
+    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps, platform: 'darwin' });
     assert.equal(r.action, 'rewrite');
     const copyAt = h.calls.findIndex((c) => c.startsWith('copy:'));
     const lintAt = h.calls.findIndex((c) => c === 'plutil -lint');
@@ -316,7 +415,7 @@ describe('ttyd-bind.reconcileInstalledJob — the apply must be reversible', () 
 
   it('never touches the live job when the candidate fails lint', () => {
     const h = harness({ lintFails: true });
-    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps });
+    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps, platform: 'darwin' });
     assert.equal(r.action, 'refuse');
     assert.equal(h.files[PLIST], legacyPlist(), 'the installed plist must be byte-identical');
     assert.ok(!h.calls.some((c) => c.startsWith('launchctl bootstrap')), 'nothing should have been reloaded');
@@ -327,7 +426,7 @@ describe('ttyd-bind.reconcileInstalledJob — the apply must be reversible', () 
     // still does not start. Without the probe this looks like success and the
     // operator finds a dead terminal later, with no idea why.
     const h = harness({ listening: false });
-    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps });
+    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps, platform: 'darwin' });
     assert.equal(r.action, 'refuse');
     assert.equal(r.rolledBack, true);
     assert.equal(h.files[PLIST], legacyPlist(), 'the operator keeps the job that worked');
@@ -335,7 +434,7 @@ describe('ttyd-bind.reconcileInstalledJob — the apply must be reversible', () 
 
   it('rolls back when launchd refuses the new job', () => {
     const h = harness({ bootstrapFails: true });
-    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps });
+    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps, platform: 'darwin' });
     assert.equal(r.rolledBack, true);
     assert.equal(h.files[PLIST], legacyPlist());
   });
@@ -343,16 +442,159 @@ describe('ttyd-bind.reconcileInstalledJob — the apply must be reversible', () 
   it('does nothing at all when there is no installed plist', () => {
     const h = harness();
     delete h.files[PLIST];
-    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps });
+    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps, platform: 'darwin' });
     assert.equal(r.action, 'none');
     assert.equal(h.calls.length, 0, 'a machine without the job must not be poked');
   });
 
   it('does not reload anything when the job is already correct', () => {
     const h = harness({ initial: pinnedPlist() });
-    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps });
+    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps, platform: 'darwin' });
     assert.equal(r.action, 'none');
     assert.ok(!h.calls.some((c) => c.startsWith('launchctl')), 'an idempotent boot must not restart terminals');
+  });
+});
+
+describe('reconcileInstalledJob.stillWide on linux — what server.js actually reads (#2933)', () => {
+  const HOME = '/home/x';
+  const UNIT = '/home/x/.config/systemd/user/tangleclaw-ttyd.service';
+
+  function harness({ initial = legacyUnit(), verifyFails = false, listening = true } = {}) {
+    const files = { [UNIT]: initial };
+    return {
+      files,
+      deps: {
+        fs: {
+          existsSync: (p) => Object.prototype.hasOwnProperty.call(files, p),
+          readFileSync: (p) => files[p],
+          writeFileSync: (p, c) => { files[p] = c; },
+          copyFileSync: (a, b) => { files[b] = files[a]; },
+          renameSync: (a, b) => { files[b] = files[a]; delete files[a]; },
+          rmSync: (p) => { delete files[p]; }
+        },
+        path: { join: (...parts) => parts.join('/') },
+        execFileSync: (cmd) => { if (cmd === 'systemd-analyze' && verifyFails) throw new Error('invalid unit'); },
+        log: { info() {}, warn() {}, error() {} },
+        probe: () => listening
+      }
+    };
+  }
+
+  const run = (opts, config = { ingressMode: 'direct' }) =>
+    reconcileInstalledJob({ home: HOME, config, deps: harness(opts).deps, platform: 'linux' });
+
+  it('reports STILL WIDE when staging fails and the live job was never touched', () => {
+    const r = run({ verifyFails: true });
+    assert.equal(r.action, 'refuse');
+    assert.equal(r.stillWide, true, 'the wide job is still installed');
+  });
+
+  it('reports not-wide after a successful pin', () => {
+    const r = run({});
+    assert.equal(r.action, 'rewrite');
+    assert.equal(r.stillWide, false);
+  });
+
+  it('reports not-wide when the job was already correct', () => {
+    assert.equal(run({ initial: pinnedUnit() }).stillWide, false);
+  });
+
+  it('reports not-wide for an unrecognized job that is nonetheless pinned', () => {
+    const foreign = pinnedUnit().replace('--writable', '--readonly');
+    const r = run({ initial: foreign });
+    assert.equal(r.action, 'refuse');
+    assert.equal(r.stillWide, false, 'not ours, but not exposed either — do not cry wolf');
+  });
+
+  it('always returns a boolean, on every path server.js can reach', () => {
+    for (const opts of [{}, { verifyFails: true }, { listening: false }, { initial: pinnedUnit() }]) {
+      assert.equal(typeof run(opts).stillWide, 'boolean');
+    }
+    assert.equal(typeof run({}, { ingressMode: 'caddy' }).stillWide, 'boolean');
+  });
+});
+
+describe('ttyd-bind.reconcileInstalledJob on linux — the apply must be reversible (#2933)', () => {
+  const HOME = '/home/x';
+  const UNIT = '/home/x/.config/systemd/user/tangleclaw-ttyd.service';
+
+  /** Minimal injected environment with an in-memory filesystem; no `uid` — systemd user units need none. */
+  function harness({ initial = legacyUnit(), verifyFails = false, restartFails = false, listening = true } = {}) {
+    const files = { [UNIT]: initial };
+    const calls = [];
+    const deps = {
+      fs: {
+        existsSync: (p) => Object.prototype.hasOwnProperty.call(files, p),
+        readFileSync: (p) => files[p],
+        writeFileSync: (p, c) => { files[p] = c; calls.push(`write:${p}`); },
+        copyFileSync: (a, b) => { files[b] = files[a]; calls.push(`copy:${a}->${b}`); },
+        renameSync: (a, b) => { files[b] = files[a]; delete files[a]; calls.push(`rename:${a}->${b}`); },
+        rmSync: (p) => { delete files[p]; }
+      },
+      path: { join: (...parts) => parts.join('/') },
+      execFileSync: (cmd, args) => {
+        calls.push(`${cmd} ${args.join(' ')}`);
+        if (cmd === 'systemd-analyze' && verifyFails) throw new Error('invalid unit');
+        if (cmd === 'systemctl' && args[1] === 'restart' && restartFails) throw new Error('restart refused');
+      },
+      log: { info() {}, warn() {}, error() {} },
+      probe: () => listening
+    };
+    return { files, calls, deps };
+  }
+
+  it('backs up and verifies BEFORE the live unit is replaced', () => {
+    const h = harness();
+    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps, platform: 'linux' });
+    assert.equal(r.action, 'rewrite');
+    const copyAt = h.calls.findIndex((c) => c.startsWith('copy:'));
+    const verifyAt = h.calls.findIndex((c) => c.startsWith('systemd-analyze verify'));
+    const swapAt = h.calls.findIndex((c) => c.startsWith('rename:'));
+    assert.ok(copyAt > -1 && copyAt < swapAt, 'a backup must exist before the swap');
+    assert.ok(verifyAt > -1 && verifyAt < swapAt, 'validity must be proven before the swap');
+    assert.equal(describeInstalledBind(parseExecStartArgs(h.files[UNIT]).args).iface, '127.0.0.1');
+  });
+
+  it('never touches the live job when the candidate fails verify', () => {
+    const h = harness({ verifyFails: true });
+    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps, platform: 'linux' });
+    assert.equal(r.action, 'refuse');
+    assert.equal(h.files[UNIT], legacyUnit(), 'the installed unit must be byte-identical');
+    assert.ok(!h.calls.some((c) => c.startsWith(`systemctl --user restart ${TTYD_SYSTEMD_UNIT}`)),
+      'nothing should have been reloaded');
+  });
+
+  it('rolls back when ttyd does not come back listening', () => {
+    // The failure that matters: the unit is valid, systemd accepts it, and
+    // ttyd still does not start. Without the probe this looks like success
+    // and the operator finds a dead terminal later, with no idea why.
+    const h = harness({ listening: false });
+    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps, platform: 'linux' });
+    assert.equal(r.action, 'refuse');
+    assert.equal(r.rolledBack, true);
+    assert.equal(h.files[UNIT], legacyUnit(), 'the operator keeps the job that worked');
+  });
+
+  it('rolls back when systemd refuses the new job', () => {
+    const h = harness({ restartFails: true });
+    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps, platform: 'linux' });
+    assert.equal(r.rolledBack, true);
+    assert.equal(h.files[UNIT], legacyUnit());
+  });
+
+  it('does nothing at all when there is no installed unit', () => {
+    const h = harness();
+    delete h.files[UNIT];
+    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps, platform: 'linux' });
+    assert.equal(r.action, 'none');
+    assert.equal(h.calls.length, 0, 'a machine without the job must not be poked');
+  });
+
+  it('does not reload anything when the job is already correct', () => {
+    const h = harness({ initial: pinnedUnit() });
+    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps: h.deps, platform: 'linux' });
+    assert.equal(r.action, 'none');
+    assert.ok(!h.calls.some((c) => c.startsWith('systemctl')), 'an idempotent boot must not restart terminals');
   });
 });
 
@@ -423,7 +665,7 @@ describe('stillWide — whether a refusal left an open shell behind', () => {
         }
       };
     })();
-    const r = reconcileInstalledJob({ home: '/home/x', config: { ingressMode: 'direct' }, deps: h.deps });
+    const r = reconcileInstalledJob({ home: '/home/x', config: { ingressMode: 'direct' }, deps: h.deps, platform: 'darwin' });
     assert.equal(r.rolledBack, true);
     assert.equal(r.stillWide, true, 'the restored job is the wide one');
   });

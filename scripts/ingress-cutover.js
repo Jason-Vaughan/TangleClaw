@@ -44,6 +44,7 @@ const hostInventory = require(path.join(REPO_DIR, 'lib', 'host-inventory'));
 const tailnetCutover = require(path.join(REPO_DIR, 'lib', 'tailnet-cutover'));
 const bindPolicy = require(path.join(REPO_DIR, 'lib', 'bind-policy'));
 const tangleclawHome = require('../lib/tangleclaw-home');
+const linuxSystemd = require('../lib/linux-systemd');
 
 const DEPLOY_DIR = path.join(REPO_DIR, 'deploy');
 const SERVER_LABEL = 'com.tangleclaw.server';
@@ -79,6 +80,25 @@ function certHostUnion(certPath, config) {
 /** @returns {object} lib/https-setup, resolved lazily (REPO_DIR-relative like the others). */
 function httpsSetupModule() {
   return require(path.join(REPO_DIR, 'lib', 'https-setup'));
+}
+
+/**
+ * The command that restarts the TangleClaw server job itself (#2933) — the
+ * one `launchctl` step in this script's plan that has a Linux equivalent.
+ * The Caddy/ttyd plist writes and reloads around it stay launchd-only: their
+ * systemd analogues are a separate, not-yet-built car (#2931's generators are
+ * for `lib/ttyd-bind.js`/`lib/admin-credential.js`, not this script), so this
+ * is deliberately narrower than "every launchctl call in this file".
+ *
+ * @param {string} serverTarget - The launchd `gui/<uid>/<label>` target (macOS only).
+ * @param {string} [platform] - Defaults to `process.platform`; injectable for tests.
+ * @returns {{cmd: string, args: string[]}}
+ */
+function serverRestartCommand(serverTarget, platform = process.platform) {
+  if (platform === 'linux') {
+    return { cmd: 'systemctl', args: ['--user', 'restart', linuxSystemd.SERVICE_NAME] };
+  }
+  return { cmd: 'launchctl', args: ['kickstart', '-k', serverTarget] };
 }
 
 /**
@@ -945,7 +965,14 @@ function main() {
     }
     for (const f of plan.plists) process.stdout.write(`  write plist:     ${f.path}\n`);
     process.stdout.write(`  config patch:    ${JSON.stringify(plan.configPatch)}\n`);
-    for (const c of plan.launchctl) process.stdout.write(`  launchctl ${c.join(' ')}\n`);
+    for (const [sub, ...rest] of plan.launchctl) {
+      if (sub === 'kickstart') {
+        const { cmd, args } = serverRestartCommand(rest[rest.length - 1]);
+        process.stdout.write(`  ${cmd} ${args.join(' ')}\n`);
+      } else {
+        process.stdout.write(`  launchctl ${[sub, ...rest].join(' ')}\n`);
+      }
+    }
     process.stdout.write(`  ttyd runtime:    ${describeTtydRuntime(ttydRuntime)}\n`);
     process.stdout.write(`  health check:    ${plan.healthUrl}\n`);
     process.stdout.write(`  rollback:        ${plan.rollbackHint}\n`);
@@ -1060,12 +1087,18 @@ function main() {
   store.config.save(config);
 
   // 5. launchctl sequence. unload may legitimately fail (job not loaded) — tolerate.
+  // The 'kickstart' step restarts the TangleClaw server itself (#2933: systemd
+  // --user restart on Linux); every other step is Caddy/ttyd plist management,
+  // which stays launchd-only.
   for (const [sub, ...rest] of plan.launchctl) {
+    const { cmd, args } = sub === 'kickstart'
+      ? serverRestartCommand(rest[rest.length - 1])
+      : { cmd: 'launchctl', args: [sub, ...rest] };
     try {
-      execFileSync('launchctl', [sub, ...rest], { stdio: ['ignore', 'ignore', 'pipe'] });
+      execFileSync(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'] });
     } catch (err) {
       if (sub !== 'unload') {
-        process.stderr.write(`WARNING: launchctl ${sub} ${rest.join(' ')} failed: ${err.message}\n`);
+        process.stderr.write(`WARNING: ${cmd} ${args.join(' ')} failed: ${err.message}\n`);
       }
     }
   }
@@ -1134,7 +1167,8 @@ function main() {
  * @param {string|null} args.tailnetBackup - Where those bytes were copied.
  * @param {Function} args.finish - The run's `finish(code, error, extra)`.
  * @param {object} [args.deps] - Seams for tests: `verify` (verifyTailnetApply),
- *   `execFile` (execFileSync for launchctl) and `configStore` (the store's config API).
+ *   `execFile` (execFileSync for launchctl/systemctl), `configStore` (the
+ *   store's config API) and `platform` (defaults to `process.platform`; #2933).
  * @returns {Promise<void>}
  */
 async function runTailnetVerification({
@@ -1143,6 +1177,7 @@ async function runTailnetVerification({
   const verify = deps.verify || tailnetCutover.verifyTailnetApply;
   const execFile = deps.execFile || execFileSync;
   const configStore = deps.configStore || store.config;
+  const platform = deps.platform || process.platform;
   // The backup holds the prior file, which can carry a basic_auth hash. It is
   // kept only while a recovery might need it.
   const dropBackup = () => {
@@ -1185,7 +1220,10 @@ async function runTailnetVerification({
           try { execFile('launchctl', ['unload', caddyPlist.path], { stdio: ['ignore', 'ignore', 'pipe'] }); } catch { /* not loaded */ }
           execFile('launchctl', ['load', caddyPlist.path], { stdio: ['ignore', 'ignore', 'pipe'] });
         }
-        if (serverKick) execFile('launchctl', serverKick, { stdio: ['ignore', 'ignore', 'pipe'] });
+        if (serverKick) {
+          const restart = serverRestartCommand(serverKick[serverKick.length - 1], platform);
+          execFile(restart.cmd, restart.args, { stdio: ['ignore', 'ignore', 'pipe'] });
+        }
       },
       verifyLocal: () => verify([localCheck])
     }
@@ -1273,4 +1311,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { DRY_RUN_WOULD_REFUSE_EXIT, describeGateChange, planCutover, runTailnetVerification, describeTtydRuntime, describeDirectBind, describeGeneratedGate, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES };
+module.exports = { DRY_RUN_WOULD_REFUSE_EXIT, describeGateChange, planCutover, runTailnetVerification, describeTtydRuntime, describeDirectBind, describeGeneratedGate, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES, serverRestartCommand };

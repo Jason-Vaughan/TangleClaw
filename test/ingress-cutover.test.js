@@ -907,3 +907,143 @@ describe('ingress-cutover — the gate a refresh converges to (#1901)', () => {
     }
   });
 });
+
+describe('ingress-cutover.serverRestartCommand — the one launchctl step with a Linux equivalent (#2933)', () => {
+  const linuxSystemd = require('../lib/linux-systemd');
+  const SERVER_TARGET = 'gui/501/com.tangleclaw.server';
+
+  it('uses launchctl kickstart on darwin', () => {
+    assert.deepEqual(
+      cutover.serverRestartCommand(SERVER_TARGET, 'darwin'),
+      { cmd: 'launchctl', args: ['kickstart', '-k', SERVER_TARGET] }
+    );
+  });
+
+  it('uses launchctl kickstart on any platform that is not linux (fail-closed toward the existing behaviour)', () => {
+    for (const platform of ['darwin', 'win32', 'freebsd']) {
+      assert.deepEqual(
+        cutover.serverRestartCommand(SERVER_TARGET, platform),
+        { cmd: 'launchctl', args: ['kickstart', '-k', SERVER_TARGET] },
+        `${platform} must not pick up the linux branch`
+      );
+    }
+  });
+
+  it('uses systemctl --user restart on linux, reusing linux-systemd.js\'s own SERVICE_NAME constant', () => {
+    assert.deepEqual(
+      cutover.serverRestartCommand(SERVER_TARGET, 'linux'),
+      { cmd: 'systemctl', args: ['--user', 'restart', linuxSystemd.SERVICE_NAME] }
+    );
+  });
+
+  it('ignores the launchd-only serverTarget entirely on linux — there is no gui/<uid> target there', () => {
+    const a = cutover.serverRestartCommand(SERVER_TARGET, 'linux');
+    const b = cutover.serverRestartCommand('gui/999/something-else-entirely', 'linux');
+    assert.deepEqual(a, b);
+  });
+
+  it('defaults the platform param to process.platform', () => {
+    const cmd = cutover.serverRestartCommand(SERVER_TARGET);
+    assert.equal(cmd.cmd, process.platform === 'linux' ? 'systemctl' : 'launchctl');
+  });
+
+  it('is wired into the main() launchctl-sequence closure rather than a hardcoded launchctl call (source-pinned — see the CUTOVER_SRC note above)', () => {
+    assert.match(
+      CUTOVER_SRC,
+      /sub === 'kickstart'[\s\S]{0,40}\? serverRestartCommand\(rest\[rest\.length - 1\]\)/,
+      'the server-restart step of the launchctl sequence must dispatch through serverRestartCommand'
+    );
+  });
+
+  it('is wired into the dry-run preview the same way, so the preview never shows a command on Linux it will not actually run', () => {
+    assert.match(
+      CUTOVER_SRC,
+      /if \(sub === 'kickstart'\) \{\s*\n\s*const \{ cmd, args \} = serverRestartCommand/,
+      'the dry-run listing must print the dispatched command, not a hardcoded "launchctl kickstart" line'
+    );
+  });
+});
+
+describe('ingress-cutover — a failed tailnet move rolls the server back on linux too (#2933)', () => {
+  let dir;
+  let caddyfilePath;
+
+  before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cutover-tailnet-linux-')); });
+  after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  function makePlan() {
+    caddyfilePath = path.join(dir, 'Caddyfile');
+    fs.writeFileSync(caddyfilePath, 'prior-caddyfile-content\n', { mode: 0o600 });
+    return {
+      caddyfile: { path: caddyfilePath, content: 'new-caddyfile-content\n' },
+      // No caddy plist in this plan — isolates the assertion to the server-restart
+      // step, which is the one #2933 actually changes here.
+      plists: [],
+      launchctl: [['kickstart', '-k', 'gui/501/com.tangleclaw.server']],
+      healthUrl: 'https://localhost:8443/api/health'
+    };
+  }
+
+  it('restarts the server via systemctl --user, never launchctl, when deps.platform is linux', async () => {
+    const execCalls = [];
+    const configState = { caddyTailnetHost: 'old-host.example.ts.net' };
+    let finished = null;
+
+    await cutover.runTailnetVerification({
+      plan: makePlan(),
+      ctx: { tailnetHost: 'new-host.example.ts.net', priorTailnetHost: 'old-host.example.ts.net' },
+      localCheck: { label: 'local', url: 'https://localhost:8443/api/health' },
+      siteCheck: { label: 'new-host.example.ts.net', url: 'https://127.0.0.1:8443/api/health', servername: 'new-host.example.ts.net' },
+      priorCaddyfile: Buffer.from('prior-caddyfile-content\n'),
+      tailnetBackup: null,
+      finish: (code, error, extra) => { finished = { code, error, extra }; },
+      deps: {
+        // Force the rollback path — the moved site never answers healthy.
+        verify: async () => ({ ok: false, last: [] }),
+        execFile: (cmd, args) => { execCalls.push({ cmd, args }); },
+        configStore: { load: () => ({ ...configState }), save: (cfg) => { Object.assign(configState, cfg); } },
+        platform: 'linux'
+      }
+    });
+
+    assert.ok(finished, 'finish() must be called on every path out of this function');
+    assert.ok(
+      execCalls.some((c) => c.cmd === 'systemctl' && c.args.join(' ') === '--user restart tangleclaw.service'),
+      `expected a systemctl --user restart call; got: ${JSON.stringify(execCalls)}`
+    );
+    assert.ok(
+      !execCalls.some((c) => c.cmd === 'launchctl'),
+      `must not fall back to launchctl on linux; got: ${JSON.stringify(execCalls)}`
+    );
+  });
+
+  it('still restarts the server via launchctl kickstart when no platform is injected (darwin default)', async () => {
+    const execCalls = [];
+    const configState = { caddyTailnetHost: 'old-host.example.ts.net' };
+
+    await cutover.runTailnetVerification({
+      plan: makePlan(),
+      ctx: { tailnetHost: 'new-host.example.ts.net', priorTailnetHost: 'old-host.example.ts.net' },
+      localCheck: { label: 'local', url: 'https://localhost:8443/api/health' },
+      siteCheck: { label: 'new-host.example.ts.net', url: 'https://127.0.0.1:8443/api/health', servername: 'new-host.example.ts.net' },
+      priorCaddyfile: Buffer.from('prior-caddyfile-content\n'),
+      tailnetBackup: null,
+      finish: () => {},
+      deps: {
+        verify: async () => ({ ok: false, last: [] }),
+        execFile: (cmd, args) => { execCalls.push({ cmd, args }); },
+        configStore: { load: () => ({ ...configState }), save: (cfg) => { Object.assign(configState, cfg); } }
+        // No `platform` override — exercises the real process.platform default.
+      }
+    });
+
+    if (process.platform === 'linux') {
+      assert.ok(execCalls.some((c) => c.cmd === 'systemctl'));
+    } else {
+      assert.ok(
+        execCalls.some((c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'),
+        `expected a launchctl kickstart call on ${process.platform}; got: ${JSON.stringify(execCalls)}`
+      );
+    }
+  });
+});

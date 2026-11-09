@@ -424,7 +424,10 @@ async function drive({ dir, verifyResults, execFile = () => {} }) {
     priorCaddyfile: Buffer.from('prior\n'),
     tailnetBackup: backup,
     finish: (code, error, extra) => Object.assign(out, { code, error, extra }),
-    deps: { verify, configStore, execFile: (...a) => { calls.push(a); return execFile(...a); } }
+    // Pinned to darwin (#2933): this harness's calls/assertions are launchctl-shaped
+    // ('kickstart' as the server-restart step), and the default must not silently
+    // follow whatever OS actually runs the test.
+    deps: { verify, configStore, execFile: (...a) => { calls.push(a); return execFile(...a); }, platform: 'darwin' }
   });
   return { ...out, configStore, caddyfilePath, backup, calls };
 }

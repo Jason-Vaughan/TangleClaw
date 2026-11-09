@@ -50,6 +50,67 @@ describe('reloadCaddyArgs', () => {
   });
 });
 
+describe('reloadCaddyCommand — platform dispatch (#2933)', () => {
+  it('returns the launchctl argv on darwin (and any non-linux platform), unchanged from reloadCaddyArgs', () => {
+    for (const platform of ['darwin', 'win32', 'freebsd']) {
+      assert.deepEqual(cred.reloadCaddyCommand(501, platform), {
+        cmd: 'launchctl', args: cred.reloadCaddyArgs(501)
+      });
+    }
+  });
+
+  it('returns systemctl --user reload-or-restart on the one named unit on linux', () => {
+    assert.deepEqual(cred.reloadCaddyCommand(501, 'linux'), {
+      cmd: 'systemctl', args: ['--user', 'reload-or-restart', 'tangleclaw-caddy.service']
+    });
+  });
+
+  it('ignores uid on linux — systemd user units have no per-uid gui target', () => {
+    assert.deepEqual(cred.reloadCaddyCommand(0, 'linux'), cred.reloadCaddyCommand(999, 'linux'));
+  });
+
+  it('names the Linux unit from one exported constant, so a rename cannot reload nothing', () => {
+    assert.equal(cred.CADDY_SYSTEMD_UNIT, 'tangleclaw-caddy.service');
+    assert.ok(cred.reloadCaddyCommand(501, 'linux').args.includes(cred.CADDY_SYSTEMD_UNIT));
+  });
+});
+
+describe('reloadCaddy / reloadCaddyAsync — platform dispatch (#2933)', () => {
+  it('reloadCaddy execs systemctl on linux, not launchctl', () => {
+    const calls = [];
+    const r = cred.reloadCaddy(501, (cmd, args, opts) => { calls.push({ cmd, args, opts }); }, 'linux');
+    assert.equal(r.ok, true);
+    assert.equal(r.command, 'systemctl --user reload-or-restart tangleclaw-caddy.service');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].cmd, 'systemctl');
+    assert.deepEqual(calls[0].args, ['--user', 'reload-or-restart', 'tangleclaw-caddy.service']);
+  });
+
+  it('reloadCaddy still execs launchctl on darwin, unaffected by the new parameter', () => {
+    const calls = [];
+    const r = cred.reloadCaddy(501, (cmd, args) => { calls.push({ cmd, args }); }, 'darwin');
+    assert.equal(r.ok, true);
+    assert.equal(r.command, 'launchctl kickstart -k gui/501/com.tangleclaw.caddy');
+    assert.equal(calls[0].cmd, 'launchctl');
+  });
+
+  it('reloadCaddy reports failure the same way on linux as on darwin', () => {
+    const r = cred.reloadCaddy(501, () => { throw new Error('systemctl: unit not found'); }, 'linux');
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'systemctl: unit not found');
+  });
+
+  it('reloadCaddyAsync builds the same systemctl command on linux as the sync form', () => {
+    // reloadCaddyAsync has no execFn injection point (it always calls the real
+    // node:child_process execFile, destructured at module load, so it cannot be
+    // intercepted here) — unchanged by this car, and not newly tested by it. What
+    // IS new is the platform dispatch, which both functions share via
+    // reloadCaddyCommand; this pins that they stay in sync rather than duplicating
+    // the platform check and drifting.
+    assert.deepEqual(cred.reloadCaddyCommand(501, 'linux'), { cmd: 'systemctl', args: ['--user', 'reload-or-restart', 'tangleclaw-caddy.service'] });
+  });
+});
+
 describe('canChangeCredential — the one predicate that guards this surface', () => {
   const gated = { state: 'generated', user: 'jason' };
   const configured = { ingressMode: 'caddy', basicAuthUser: 'jason', basicAuthHash: HASH_OLD };
@@ -249,7 +310,8 @@ describe('applyCredentialChange', () => {
     const r = cred.applyCredentialChange({
       caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: (cmd, argv) => { calls.push({ cmd, argv }); },
-      validateFn: () => ({ ok: true })
+      validateFn: () => ({ ok: true }),
+      platform: 'darwin' // pinned (#2933) — this test asserts the launchctl argv shape
     });
 
     assert.equal(r.ok, true);
@@ -288,7 +350,8 @@ describe('applyCredentialChange', () => {
     const r = cred.applyCredentialChange({
       caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: () => { throw new Error('launchctl: no such process'); },
-      validateFn: () => ({ ok: true })
+      validateFn: () => ({ ok: true }),
+      platform: 'darwin' // pinned (#2933) — this test asserts the launchctl reloadCommand text
     });
 
     assert.equal(r.ok, true, 'the credential did change');
@@ -728,7 +791,8 @@ describe('createGate — an install that completed setup with no login', () => {
     const r = cred.createGate({
       caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: (cmd, argv) => { calls.push({ cmd, argv }); },
-      validateFn: () => ({ ok: true })
+      validateFn: () => ({ ok: true }),
+      platform: 'darwin' // pinned (#2933) — this test asserts the launchctl argv shape
     });
 
     assert.equal(r.ok, true, r.error || '');

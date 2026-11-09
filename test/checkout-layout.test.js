@@ -22,7 +22,7 @@ const { initRepo } = require('./_temp-repo');
 const {
   realOrSelf, locateCheckouts, linkedWorktreeRoots, landsInPrimary, OVERRIDE_FILE, OVERRIDE_ENV,
   resolveServerCheckoutRoot, describeServerRootCoupling, validateServerCheckoutRoot, SERVER_ROOT_ENV,
-  renderLaunchdServerPlist, repointLaunchdServerPlist, provisionDedicatedServerCheckout, _runCli
+  renderLaunchdServerPlist, repointLaunchdServerPlist, repointSystemdServerUnit, provisionDedicatedServerCheckout, _runCli
 } = require('../lib/checkout-layout');
 const guardSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'guard-primary-checkout.js'), 'utf8');
 const installerSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'install-primary-guard.js'), 'utf8');
@@ -342,7 +342,9 @@ describe('describeServerRootCoupling (#1672)', () => {
   // these would default to reading THIS machine's real
   // ~/Library/LaunchAgents/com.tangleclaw.server.plist if one happens to be
   // installed, making the assertion depend on ambient machine state.
-  function noPlist() { return { launchdPlistPath: path.join(base, 'no-such-plist.plist') }; }
+  // Pinned to darwin (#2933): these legacy callers never set opts.platform, and
+  // the default must not silently follow whatever OS actually runs the test.
+  function noPlist() { return { launchdPlistPath: path.join(base, 'no-such-plist.plist'), platform: 'darwin' }; }
 
   it('reports an uncoupled dedicated checkout: a primary with no linked worktrees', () => {
     const primary = path.join(base, 'dedicated');
@@ -400,21 +402,54 @@ describe('describeServerRootCoupling (#1672)', () => {
     const primary = path.join(base, 'dedicated');
     fs.mkdirSync(primary);
     initRepo(primary, ['-b', 'main']);
-    const result = describeServerRootCoupling(primary, { launchdPlistPath: plistPath });
+    const result = describeServerRootCoupling(primary, { launchdPlistPath: plistPath, platform: 'darwin' });
     assert.equal(result.launchdWorkingDirectory, '/declared/root');
   });
 
   it('reports launchdWorkingDirectory as null when the plist has no WorkingDirectory key', () => {
     const plistPath = path.join(base, 'no-wd.plist');
     fs.writeFileSync(plistPath, '<plist><dict><key>Label</key><string>com.tangleclaw.server</string></dict></plist>');
-    assert.equal(describeServerRootCoupling(base, { launchdPlistPath: plistPath }).launchdWorkingDirectory, null);
+    assert.equal(describeServerRootCoupling(base, { launchdPlistPath: plistPath, platform: 'darwin' }).launchdWorkingDirectory, null);
   });
 
   it('reports launchdWorkingDirectory as null, never throwing, for a malformed/unreadable plist', () => {
     const plistPath = path.join(base, 'a-directory-not-a-file.plist');
     fs.mkdirSync(plistPath); // exists, but readFileSync on a directory throws
-    assert.doesNotThrow(() => describeServerRootCoupling(base, { launchdPlistPath: plistPath }));
-    assert.equal(describeServerRootCoupling(base, { launchdPlistPath: plistPath }).launchdWorkingDirectory, null);
+    assert.doesNotThrow(() => describeServerRootCoupling(base, { launchdPlistPath: plistPath, platform: 'darwin' }));
+    assert.equal(describeServerRootCoupling(base, { launchdPlistPath: plistPath, platform: 'darwin' }).launchdWorkingDirectory, null);
+  });
+
+  describe('on linux (#2933)', () => {
+    it('reports launchdWorkingDirectory from an injected systemd unit path, same field name as darwin', () => {
+      const unitPath = path.join(base, 'tangleclaw.service');
+      fs.writeFileSync(unitPath, '[Unit]\nDescription=TangleClaw\n\n[Service]\nType=simple\nWorkingDirectory=/declared/linux-root\nExecStart=node server.js\nKillMode=process\n');
+      const primary = path.join(base, 'dedicated');
+      fs.mkdirSync(primary);
+      initRepo(primary, ['-b', 'main']);
+      const result = describeServerRootCoupling(primary, { systemdUnitPath: unitPath, platform: 'linux' });
+      assert.equal(result.launchdWorkingDirectory, '/declared/linux-root');
+    });
+
+    it('reports launchdWorkingDirectory as null when the unit has no WorkingDirectory key', () => {
+      const unitPath = path.join(base, 'no-wd.service');
+      fs.writeFileSync(unitPath, '[Unit]\nDescription=TangleClaw\n');
+      assert.equal(describeServerRootCoupling(base, { systemdUnitPath: unitPath, platform: 'linux' }).launchdWorkingDirectory, null);
+    });
+
+    it('reports launchdWorkingDirectory as null, never throwing, for a malformed/unreadable unit', () => {
+      const unitPath = path.join(base, 'a-directory-not-a-file.service');
+      fs.mkdirSync(unitPath);
+      assert.doesNotThrow(() => describeServerRootCoupling(base, { systemdUnitPath: unitPath, platform: 'linux' }));
+      assert.equal(describeServerRootCoupling(base, { systemdUnitPath: unitPath, platform: 'linux' }).launchdWorkingDirectory, null);
+    });
+
+    it('never reads the darwin plist path when platform is linux, even if one is also injected', () => {
+      const plistPath = path.join(base, 'fake.plist');
+      fs.writeFileSync(plistPath, '<plist><dict><key>WorkingDirectory</key><string>/darwin/only</string></dict></plist>');
+      const unitPath = path.join(base, 'absent.service'); // never written
+      const result = describeServerRootCoupling(base, { launchdPlistPath: plistPath, systemdUnitPath: unitPath, platform: 'linux' });
+      assert.equal(result.launchdWorkingDirectory, null, 'the darwin plist must not leak into the linux read path');
+    });
   });
 });
 
@@ -598,6 +633,117 @@ describe('repointLaunchdServerPlist (#1672 Round 3 → Round 4)', () => {
   });
 });
 
+describe('repointSystemdServerUnit (#2933)', () => {
+  let base;
+  beforeEach(() => { base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-repoint-systemd-'))); });
+  afterEach(() => fs.rmSync(base, { recursive: true, force: true }));
+
+  /** A real, valid server checkout: git-initialized, has server.js. No deploy/
+   *  template needed — unlike the plist case, generateUnitFile builds the unit
+   *  from scratch. */
+  function makeValidTarget() {
+    const target = path.join(base, 'dedicated');
+    fs.mkdirSync(target);
+    initRepo(target, ['-b', 'main']);
+    fs.writeFileSync(path.join(target, 'server.js'), '// stand-in\n');
+    return target;
+  }
+
+  it('fails closed for an invalid target checkout, touching no filesystem write at all', () => {
+    const unitPath = path.join(base, 'should-not-exist.service');
+    assert.throws(() => repointSystemdServerUnit(path.join(base, 'nope'), { unitPath }));
+    assert.equal(fs.existsSync(unitPath), false, 'nothing must be written when validation fails');
+  });
+
+  it('writes a freshly generated unit to unitPath with WorkingDirectory pointed at the target, satisfying its own contract', () => {
+    const target = makeValidTarget();
+    const unitPath = path.join(base, 'out.service');
+    const result = repointSystemdServerUnit(target, { unitPath, nodeBin: '/opt/node/bin/node' });
+    assert.equal(result.reloaded, false);
+    assert.equal(fs.existsSync(unitPath), true);
+    const written = fs.readFileSync(unitPath, 'utf8');
+    assert.match(written, new RegExp(`^WorkingDirectory=${target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
+    assert.match(written, /^ExecStart=\/opt\/node\/bin\/node .*server\.js$/m);
+    assert.match(written, /^KillMode=process$/m);
+  });
+
+  it('throws, writing nothing, if the generated unit somehow failed its own contract', () => {
+    // generateUnitFile cannot actually produce a contract violation given valid
+    // inputs — this pins that repointSystemdServerUnit checks before writing at
+    // all, by forcing verifyUnitFileContract to fail via an impossible nodeBin.
+    const target = makeValidTarget();
+    const unitPath = path.join(base, 'out.service');
+    const linuxSystemd = require('../lib/linux-systemd');
+    const real = linuxSystemd.verifyUnitFileContract;
+    linuxSystemd.verifyUnitFileContract = () => ['forced failure for this test'];
+    try {
+      assert.throws(() => repointSystemdServerUnit(target, { unitPath }), /fails its own contract/);
+      assert.equal(fs.existsSync(unitPath), false);
+    } finally {
+      linuxSystemd.verifyUnitFileContract = real;
+    }
+  });
+
+  it('never calls execFileSync unless reload is true', () => {
+    const target = makeValidTarget();
+    const unitPath = path.join(base, 'out.service');
+    let called = false;
+    repointSystemdServerUnit(target, { unitPath, execFileSync: () => { called = true; } });
+    assert.equal(called, false);
+  });
+
+  it('runs systemctl --user daemon-reload then restart tangleclaw.service, through the injected execFileSync, only when reload is true', () => {
+    const target = makeValidTarget();
+    const unitPath = path.join(base, 'out.service');
+    const calls = [];
+    const result = repointSystemdServerUnit(target, {
+      unitPath, reload: true, execFileSync: (cmd, args) => calls.push([cmd, ...args])
+    });
+    assert.equal(result.reloaded, true);
+    assert.deepEqual(calls, [
+      ['systemctl', '--user', 'daemon-reload'],
+      ['systemctl', '--user', 'restart', 'tangleclaw.service']
+    ]);
+  });
+
+  it('writes atomically: no temp file is left behind on success', () => {
+    const target = makeValidTarget();
+    const unitPath = path.join(base, 'out.service');
+    repointSystemdServerUnit(target, { unitPath });
+    const leftovers = fs.readdirSync(base).filter((f) => f.startsWith('out.service.tmp-'));
+    assert.deepEqual(leftovers, []);
+  });
+
+  it('defaults unitPath to lib/linux-systemd.js\'s own unitFilePath(), so it stays the single source of that path', () => {
+    const target = makeValidTarget();
+    const linuxSystemd = require('../lib/linux-systemd');
+    const homeDir = base;
+    const result = repointSystemdServerUnit(target, { homeDir });
+    assert.equal(result.unitPath, linuxSystemd.unitFilePath(homeDir));
+  });
+});
+
+describe('_runCli --repoint on linux (#2933)', () => {
+  let base;
+  beforeEach(() => { base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cli-repoint-systemd-'))); });
+  afterEach(() => fs.rmSync(base, { recursive: true, force: true }));
+
+  it('dispatches --repoint to repointSystemdServerUnit when platform is linux', () => {
+    const target = path.join(base, 'dedicated');
+    fs.mkdirSync(target);
+    initRepo(target, ['-b', 'main']);
+    fs.writeFileSync(path.join(target, 'server.js'), '// stand-in\n');
+    const unitPath = path.join(base, 'out.service');
+    const logs = [];
+    const result = _runCli(['--repoint', target, '--unit', unitPath], {
+      log: (l) => logs.push(l), platform: 'linux'
+    });
+    assert.equal(fs.existsSync(unitPath), true);
+    assert.equal(result.unitPath, unitPath);
+    assert.match(logs[0], /WorkingDirectory=/);
+  });
+});
+
 describe('provisionDedicatedServerCheckout (#1672 Round 3)', () => {
   let base, primary;
   beforeEach(() => {
@@ -655,7 +801,8 @@ describe('_runCli (#1672 Round 3)', () => {
     const calls = [];
     const result = _runCli(['--repoint', target, '--plist', plistPath, '--reload'], {
       log: (m) => logs.push(m),
-      fns: { execFileSync: (cmd, args) => calls.push([cmd, ...args]) }
+      fns: { execFileSync: (cmd, args) => calls.push([cmd, ...args]) },
+      platform: 'darwin' // pinned (#2933) — exercises the launchd branch regardless of the host OS
     });
     assert.equal(result.reloaded, true);
     assert.equal(calls.length, 2);
