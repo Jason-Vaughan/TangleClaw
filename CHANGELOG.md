@@ -4,6 +4,83 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.73.0] - 2026-11-09
+
+### Added
+- Linux's `systemd --user` background-service support now manages the same three companion
+  daemons macOS's `launchd` already does — `ttyd` (terminal bridge), `caddy` (ingress reverse
+  proxy), and the Discord bridge helper — alongside the existing TangleClaw server unit, for
+  1-to-1 background-daemon parity. `scripts/linux-systemd-install.js install|verify|status|uninstall`
+  gained a `--unit server|ttyd|caddy|bridge-helper` flag (defaulting to `server`, unchanged from
+  before) (#2931).
+- `deploy/install.sh` now supports Linux as a first-class platform alongside
+  macOS: it detects the host package manager (`apt-get`, `dnf`, or `pacman`)
+  and auto-installs dependencies (`tmux`, `jq`, `git`, `curl`, `caddy`,
+  `mkcert`, and ttyd's build prerequisites), builds the owned ttyd runtime
+  via `scripts/build-ttyd.js` (now Linux-capable), and installs the
+  `tangleclaw`/`tangleclaw-ttyd` services via `scripts/linux-systemd-install.js`
+  instead of launchd. Caddy-mode ingress is not yet supported on Linux —
+  install.sh runs in direct mode there and says so (#2932).
+- Service reloads now work on Linux, not just macOS: a Caddy credential change reloads via
+  `systemctl --user reload-or-restart tangleclaw-caddy.service`, a ttyd rebind updates
+  `~/.config/systemd/user/tangleclaw-ttyd.service` and runs `systemctl --user daemon-reload` +
+  `restart`, and a primary-checkout switch repoints/restarts the server's own `tangleclaw.service`
+  user unit the same way `launchctl`/plist rewriting does on macOS. The ingress cutover
+  (`scripts/ingress-cutover.js --to caddy|direct`) now does the same full Linux plan/apply/rollback
+  as the macOS launchd path: it writes `tangleclaw-ttyd.service`/`tangleclaw-caddy.service` unit
+  files (via `lib/linux-systemd.js`'s generators) instead of launchd plists, and its reload
+  sequence — including the `--tailnet-host` rollback path — runs `systemctl --user daemon-reload`,
+  `restart`/`stop` for Caddy and ttyd, and `restart` for the server, never `launchctl` (#2933).
+- Added Linux PTY exhaustion probing to the ttyd health detector
+  (`lib/system-health.js#detectTtydLeak`): on `platform === 'linux'` it now
+  reads `/proc/sys/kernel/pty/nr` against `/proc/sys/kernel/pty/max`
+  directly and fires at the same 85% threshold `ttyd-watcher.js` uses on
+  macOS, instead of the generic "not applicable" every non-darwin platform
+  got before. Remediation strings in `lib/system-health.js` and
+  `lib/master.js` are now platform-aware: on Linux, the ttyd PTY detector
+  restarts the `tangleclaw-ttyd.service` companion unit (matching macOS's
+  `com.tangleclaw.ttyd`), separate from `lib/master.js`'s own
+  `systemctl --user status tangleclaw.service` check for the Node server
+  (`com.tangleclaw.server`'s counterpart) — on macOS both still name
+  `launchctl` (#2934).
+- Added a Medusa upstream & local Hub drift check, pull and push, with a dashboard
+  notice and a one-click Operator fix: `lib/medusa-drift.js` compares the local
+  `Jason-Vaughan/Medusa` checkout's HEAD against its own `origin/main`
+  (`updateAvailable`) and the running Hub's reported `gitSha` against that
+  checkout's disk HEAD (`hubRestartNeeded`), tolerating a Hub that predates
+  `Jason-Vaughan/Medusa#70`'s `gitSha`/`capabilities` fields. Checked ~1 minute
+  after startup and every 30 minutes after, exposed at `GET /api/system/medusa-drift`
+  (`?refresh=1` forces a fresh, fetch-first check), and refreshed immediately on a
+  `hub.version_updated` WebSocket frame or a `registered` handshake that carries
+  `version`/`gitSha`/`capabilities` (`lib/medusa-listener.js`, fanned out via
+  `lib/medusa.js`'s new `onHubVersionUpdated`/`applyHubVersionUpdate`). The
+  Dashboard shows a warning chip when either condition holds, naming the Hub's
+  own reported capabilities when present; clicking it calls the new
+  `POST /api/system/medusa-drift/apply`, which fast-forwards the checkout
+  (refusing outright, never discarding, on a dirty tree), restarts
+  `com.medusa.hub` whenever that just happened or the Hub was already
+  reporting stale — even if the Hub was unreachable going in, since a
+  restart can also be what starts it back up — and verifies the Hub
+  actually comes back reporting the new HEAD before calling it done (#2956).
+
+### Changed
+- Check watch's wake/alarm messages now follow a literal one-wake contract: a send whose
+  outcome was never learned is reconciled under the SAME idempotency key (derived from the
+  watch id and message kind, with no `:2`/attempt suffix) rather than opening a second
+  exchange. Reconciliation first asks the Medusa Hub's receipt-lookup endpoint whether it
+  already has the message before ever resending, and a resend always carries byte-identical
+  text to the original send, so a reply that was merely delayed replays instead of
+  duplicating. A 409 `IDEMPOTENCY_KEY_CONFLICT` from the Hub is treated as a final refusal,
+  never retried (#2347).
+
+### Fixed
+- Fixed `startupReadiness` reading a session stuck at "needs-attention" ("Starting —
+  step 5 of 4", blocker `unready`) forever once it had actually attested READY, if the
+  2-minute unready-observation window had fired for it first. `markReady` never clears
+  that window's own `unready_at` stamp — it is kept as the historical record that the
+  window fired — so the check now reads `readyAt` before `unreadyAt`, matching the
+  documented contract that the window is an observation, never a gate (#2953).
+
 ## [5.72.0] - 2026-11-08
 
 ### Added

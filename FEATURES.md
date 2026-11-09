@@ -17,6 +17,15 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.73.0 — Linux systemd companion stack, service reloads, and Medusa drift notifier
+
+- **Manage Linux companion services** (#2931) — `lib/linux-systemd.js#generateTtydUnitFile`/`#generateCaddyUnitFile`/`#generateBridgeHelperUnitFile` (+ matching `verify*UnitFileContract` checkers) give `scripts/linux-systemd-install.js` 1-to-1 parity with macOS's four `launchd` jobs via a `--unit server|ttyd|caddy|bridge-helper` flag.
+- **Bootstrap TangleClaw on Linux** (#2932) — `deploy/install.sh` detects the host package manager (`apt-get`/`dnf`/`pacman`), installs dependencies, builds ttyd via `scripts/build-ttyd.js`, and installs the systemd units instead of launchd; Caddy ingress is not yet supported there and install.sh says so.
+- **Reload Linux services without a restart** (#2933) — `lib/admin-credential.js#reloadCaddyArgs`, `lib/ttyd-bind.js`, and `lib/checkout-layout.js` branch on `process.platform === 'linux'` to run `systemctl --user reload-or-restart`/`restart` on the companion units; `scripts/ingress-cutover.js --to caddy|direct` runs the same full plan/apply/rollback on Linux as the macOS launchd path.
+- **Probe Linux PTY exhaustion** (#2934) — `lib/system-health.js#detectTtydLeak` reads `/proc/sys/kernel/pty/{nr,max}` directly on Linux at the same 85% threshold `ttyd-watcher.js` uses on macOS, restarting the `tangleclaw-ttyd.service` companion unit; `lib/master.js`'s troubleshooting prose is platform-aware too.
+- **Stop a READY launch from reading as stuck forever** (#2953) — `lib/launch-sequence.js#_statusBlock` now reads `readyAt` before `unreadyAt`, so a launch that attested READY after the 2-minute unready-observation window fired no longer reports "needs-attention" indefinitely.
+- **Notify on Medusa Hub/upstream drift** (#2956) — `lib/medusa-drift.js#getDrift`/`#applyDriftAction` compare the local `Medusa` checkout against `origin/main` and the running Hub's reported `gitSha`, exposed at `GET /api/system/medusa-drift` and `POST /api/system/medusa-drift/apply`; `lib/medusa.js#onHubVersionUpdated`/`#applyHubVersionUpdate` refresh it immediately on a Hub version-change frame.
+
 ## v5.72.0 — Fleet authority, engine resilience, and release automation
 
 - **Run adversarial red-team passes** (#108) — `lib/adversarial.js#runAdversarialPass` returns structured, severity-capped findings (category/severity/scenario/why-it-breaks/suggested-test) for a caller-injected subagent-spawn function, with schema validation and a disposition audit log that forbids silently ignoring a finding.
