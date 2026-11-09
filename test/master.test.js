@@ -195,10 +195,23 @@ describe('buildMasterClaudeMd', () => {
     // A sandboxed Codex session read its blocked loopback as "3102 is down" and
     // the Master would have relayed it. The identity names the host-context
     // checks that settle it.
-    const md = master.buildMasterClaudeMd({ serverPort: 3102 });
-    assert.match(md, /not proof of outage/);
-    assert.match(md, /launchctl print gui\/\$UID\/com\.tangleclaw\.server/);
-    assert.match(md, /lsof -nP -iTCP:3102 -sTCP:LISTEN/, 'the real port, not a placeholder');
+    //
+    // Pinned to 'darwin' explicitly (#2934): this test never stubbed
+    // process.platform before the Master's own check-from-the-host line
+    // became platform-aware, so it silently depended on whichever OS
+    // happened to run it — green on a macOS dev box, red on GitHub Actions'
+    // Linux runners the moment lib/master.js started branching on it for
+    // real.
+    const original = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    try {
+      const md = master.buildMasterClaudeMd({ serverPort: 3102 });
+      assert.match(md, /not proof of outage/);
+      assert.match(md, /launchctl print gui\/\$UID\/com\.tangleclaw\.server/);
+      assert.match(md, /lsof -nP -iTCP:3102 -sTCP:LISTEN/, 'the real port, not a placeholder');
+    } finally {
+      Object.defineProperty(process, 'platform', original);
+    }
   });
 
   it('names the systemd check instead of launchctl on Linux (#2934)', () => {
