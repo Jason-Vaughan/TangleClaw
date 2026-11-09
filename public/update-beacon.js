@@ -696,7 +696,53 @@
     return { render, reopen, apply: applyUpdateAndRestart };
   }
 
+  /**
+   * Render a Medusa drift notice (#2956) into a warning chip — the same
+   * shape as the auth/bind-notice chips elsewhere on this page (amber,
+   * hidden until there is something to say, no dismiss control and no
+   * timer: the notice clears itself the next time the poll behind it reads
+   * clean, exactly like `renderBindNotice`).
+   *
+   * Deliberately informational, with no apply/restart action: unlike this
+   * file's own `tcCreateUpdateBeacon` above, there is no backend route yet
+   * that fast-forwards the local Medusa checkout or restarts
+   * `com.medusa.hub` for a caller to invoke. That is a real TODO (the
+   * original #2956 proposal's "one-click Operator action"), tracked
+   * separately — this chip names what an operator needs to do by hand.
+   *
+   * @param {Document} doc - The page document.
+   * @param {string} elementId - Id of the warning chip element.
+   * @param {object|null} data - A `GET /api/system/medusa-drift` payload, or
+   *   null when the request itself did not complete (leaves the chip as it was).
+   * @returns {void}
+   */
+  function tcRenderMedusaDriftNotice(doc, elementId, data) {
+    const el = doc.getElementById(elementId);
+    if (!el) return;
+    if (!data) return; // a failed poll says nothing about drift; leave the chip as it was
+    if (!data.updateAvailable && !data.hubRestartNeeded) {
+      el.textContent = '';
+      el.title = '';
+      el.classList.add('hidden');
+      return;
+    }
+    const reasons = [];
+    if (data.hubRestartNeeded) {
+      reasons.push('the running Medusa Hub has not restarted onto the checkout already on disk');
+    }
+    if (data.updateAvailable) {
+      const behind = data.local && typeof data.local.commitsBehind === 'number' ? data.local.commitsBehind : null;
+      reasons.push(behind !== null
+        ? `the local Medusa checkout is ${behind} commit${behind === 1 ? '' : 's'} behind origin/main`
+        : 'the local Medusa checkout is behind origin/main');
+    }
+    el.textContent = `⚠ ${data.hubRestartNeeded ? 'Medusa Hub restart needed' : 'Medusa update available'}`;
+    el.title = `${reasons.join('; ')}.`;
+    el.classList.remove('hidden');
+  }
+
   global.tcCreateUpdateBeacon = tcCreateUpdateBeacon;
   global.tcIsUpdateAnswer = tcIsUpdateAnswer;
   global.tcUpdateAnswerState = tcUpdateAnswerState;
+  global.tcRenderMedusaDriftNotice = tcRenderMedusaDriftNotice;
 })(typeof window !== 'undefined' ? window : globalThis);

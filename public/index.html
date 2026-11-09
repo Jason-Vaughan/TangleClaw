@@ -53,6 +53,11 @@
       <span id="authStatusWarning" class="dash-auth-warning hidden" role="status"></span>
       <span id="bindNotice" class="dash-auth-warning hidden" role="status"></span>
       <span id="ttydNotice" class="dash-auth-warning hidden" role="status"></span>
+      <!-- Medusa upstream & local Hub drift (#2956): rendered by
+           tcRenderMedusaDriftNotice (public/update-beacon.js), polled from
+           public/ui.js. Same shape as the warning chips above — hidden
+           until GET /api/system/medusa-drift says there is something to say. -->
+      <span id="medusaDriftNotice" class="dash-auth-warning hidden" role="status"></span>
     </div>
     <div class="dash-stats" id="dashStats">
       <span class="dash-stat"><span class="dash-stat-label">CPU</span><span class="stat-value" id="statCpu">--</span></span>

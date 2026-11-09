@@ -25,6 +25,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { makeDocument } = require('./_mini-dom');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const BEACON_SRC = fs.readFileSync(path.join(PUB, 'update-beacon.js'), 'utf8');
@@ -1058,5 +1059,103 @@ describe('#994 the beacon never promises a version the applier did not commit to
       const window = lines.slice(i, i + 4).join('\n');
       assert.match(window, /or newer/, `unqualified version in ${f}: ${lines[i].trim()}`);
     }
+  });
+});
+
+describe('tcRenderMedusaDriftNotice (#2956)', () => {
+  // A smaller, pure function (document, elementId, data) -> DOM mutation,
+  // with no fetch/timer/dialog surface of its own -- lifted and run alone
+  // rather than wired through the full loadBeacon() sandbox above, which
+  // exists for tcCreateUpdateBeacon's much larger apply/restart flow.
+
+  /**
+   * A fake warning-chip element, as the function touches it: textContent,
+   * title, and a classList with add/remove/contains('hidden').
+   * @returns {object}
+   */
+  function fakeChip() {
+    const classes = new Set(['dash-auth-warning', 'hidden']);
+    return {
+      textContent: '',
+      title: '',
+      classList: {
+        add: (c) => classes.add(c),
+        remove: (c) => classes.delete(c),
+        contains: (c) => classes.has(c)
+      },
+      _classes: classes
+    };
+  }
+
+  /**
+   * Run the real function in a fresh vm context against one fake chip.
+   * @param {object|null} data - The payload to render
+   * @param {{missingElement?: boolean}} [opts]
+   * @returns {object} The fake chip
+   */
+  function render(data, opts = {}) {
+    const chip = fakeChip();
+    const ctx = {
+      document: { getElementById: (id) => (opts.missingElement ? null : (id === 'medusaDriftNotice' ? chip : null)) }
+    };
+    vm.createContext(ctx);
+    vm.runInContext(liftDeclaration(BEACON_SRC, 'function tcRenderMedusaDriftNotice('), ctx);
+    ctx.tcRenderMedusaDriftNotice(ctx.document, 'medusaDriftNotice', data);
+    return chip;
+  }
+
+  it('hides the chip and clears its text/title for a clean payload', () => {
+    const chip = render({ updateAvailable: false, hubRestartNeeded: false });
+    assert.equal(chip.textContent, '');
+    assert.equal(chip.title, '');
+    assert.equal(chip._classes.has('hidden'), true);
+  });
+
+  it('shows "Medusa update available" when only updateAvailable is true, naming commitsBehind', () => {
+    const chip = render({ updateAvailable: true, hubRestartNeeded: false, local: { commitsBehind: 3 } });
+    assert.equal(chip.textContent, '⚠ Medusa update available');
+    assert.match(chip.title, /3 commits behind origin\/main/);
+    assert.equal(chip._classes.has('hidden'), false);
+  });
+
+  it('says "1 commit" (singular) for exactly one', () => {
+    const chip = render({ updateAvailable: true, hubRestartNeeded: false, local: { commitsBehind: 1 } });
+    assert.match(chip.title, /1 commit behind origin\/main/);
+    assert.ok(!/1 commits/.test(chip.title));
+  });
+
+  it('still names the condition when commitsBehind is not a number (unknown)', () => {
+    const chip = render({ updateAvailable: true, hubRestartNeeded: false, local: { commitsBehind: null } });
+    assert.match(chip.title, /the local Medusa checkout is behind origin\/main/);
+  });
+
+  it('shows "Medusa Hub restart needed" and takes priority in the headline when both are true, but names both reasons', () => {
+    const chip = render({ updateAvailable: true, hubRestartNeeded: true, local: { commitsBehind: 2 } });
+    assert.equal(chip.textContent, '⚠ Medusa Hub restart needed');
+    assert.match(chip.title, /has not restarted onto the checkout already on disk/);
+    assert.match(chip.title, /2 commits behind origin\/main/);
+  });
+
+  it('shows "Medusa Hub restart needed" when only hubRestartNeeded is true', () => {
+    const chip = render({ updateAvailable: false, hubRestartNeeded: true });
+    assert.equal(chip.textContent, '⚠ Medusa Hub restart needed');
+    assert.ok(!/behind origin\/main/.test(chip.title));
+  });
+
+  it('a null payload (a failed poll) leaves the chip exactly as it was, never forced hidden or shown', () => {
+    const chip = fakeChip();
+    chip.textContent = '⚠ Medusa update available';
+    chip.title = 'stale but still true';
+    chip._classes.delete('hidden');
+    const ctx = { document: { getElementById: () => chip } };
+    vm.createContext(ctx);
+    vm.runInContext(liftDeclaration(BEACON_SRC, 'function tcRenderMedusaDriftNotice('), ctx);
+    ctx.tcRenderMedusaDriftNotice(ctx.document, 'medusaDriftNotice', null);
+    assert.equal(chip.textContent, '⚠ Medusa update available');
+    assert.equal(chip._classes.has('hidden'), false);
+  });
+
+  it('a missing element (renamed/removed chip) is a quiet no-op, never a throw', () => {
+    assert.doesNotThrow(() => render({ updateAvailable: true, hubRestartNeeded: false }, { missingElement: true }));
   });
 });
