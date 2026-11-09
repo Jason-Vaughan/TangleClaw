@@ -97,6 +97,92 @@ describe('listProjects facts cache (#2771, server side)', () => {
     }
   });
 
+  it('stale-while-revalidate: answers with the stale snapshot immediately, before a held background refresh completes (PRR-B R-Gate Round 1, #2948)', async () => {
+    const result = projects.createProject({ name: 'swr-facts-project' });
+    assert.ok(result.project);
+    await projects.listProjects(); // warms the cache with the real facts
+
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    const calls = [];
+    projects._internal.readProjectFacts = async (p, opts) => {
+      calls.push(p.name);
+      if (p.name !== 'swr-facts-project') return originalReadProjectFacts(p, opts);
+      await held;
+      return originalReadProjectFacts(p, opts);
+    };
+
+    const realNow = Date.now;
+    Date.now = () => realNow() + projects.FACTS_CACHE_TTL_MS + 1000;
+    try {
+      const started = Date.now();
+      // Must resolve immediately — the stale snapshot — rather than hang on
+      // the held background refresh it starts (a bare `await` on the stub
+      // without this fix would never return, since `held` isn't released yet).
+      await projects.listProjects();
+      assert.ok(Date.now() - started < 50,
+        'a stale entry must answer immediately, not wait on the background refresh');
+      assert.equal(calls.filter((n) => n === 'swr-facts-project').length, 1,
+        'the stale-serving call still STARTS exactly one background refresh');
+
+      release();
+      // Poll until the background refresh's own chain (held -> readProjectFacts
+      // -> cache write -> inflight cleanup) has actually landed: once it has,
+      // a further call reads the now-fresh cache rather than starting another
+      // refresh, so the call count stops climbing. Each iteration's own call
+      // may itself join the still-in-flight single-flighted refresh (another
+      // harmless, uncounted join) rather than start a second one, so a flat
+      // count across two consecutive polls is the real signal, not a fixed
+      // tick budget.
+      let countAfter;
+      for (let tick = 0; tick < 200; tick += 1) {
+        await new Promise((r) => setImmediate(r));
+        await projects.listProjects();
+        const countNow = calls.filter((n) => n === 'swr-facts-project').length;
+        if (countNow === countAfter) break;
+        countAfter = countNow;
+      }
+      assert.equal(countAfter, 1,
+        'once the background refresh lands, further calls read the now-fresh cache rather than starting another');
+    } finally {
+      Date.now = realNow;
+      afterEachRestore();
+    }
+  });
+
+  it('stale-while-revalidate: a rejecting background refresh neither breaks the stale response nor wedges the cache (#2948)', async () => {
+    const result = projects.createProject({ name: 'swr-facts-error-project' });
+    assert.ok(result.project);
+    await projects.listProjects(); // warms the cache
+
+    let shouldFail = true;
+    projects._internal.readProjectFacts = async (p, opts) => {
+      if (p.name !== 'swr-facts-error-project') return originalReadProjectFacts(p, opts);
+      if (shouldFail) throw new Error('simulated refresh failure');
+      return originalReadProjectFacts(p, opts);
+    };
+
+    const realNow = Date.now;
+    Date.now = () => realNow() + projects.FACTS_CACHE_TTL_MS + 1000;
+    try {
+      // The failing background refresh must not reject/throw into this call.
+      const facts = await projects.listProjects();
+      assert.ok(facts.find((f) => f.name === 'swr-facts-error-project'),
+        'the stale snapshot still answers even though its background refresh is about to fail');
+      await new Promise((r) => setImmediate(r)); // let the rejection settle (no unhandledRejection)
+
+      // The cache entry is unchanged (still stale, same age) — the next call
+      // retries the refresh rather than being stuck forever.
+      shouldFail = false;
+      const calls = countingFacts();
+      await projects.listProjects();
+      assert.ok(calls.includes('swr-facts-error-project'), 'the next call retries the refresh');
+    } finally {
+      Date.now = realNow;
+      afterEachRestore();
+    }
+  });
+
   it('a project with no cache entry yet still gets fresh facts even while a SIBLING project is warm', async () => {
     const a = projects.createProject({ name: 'already-cached-project' });
     assert.ok(a.project);
@@ -289,6 +375,78 @@ describe('listAllProjects listUnregistered cache + single-flight (#2948, server 
     release();
     const [r1, r2] = await Promise.all([p1, p2]);
     assert.ok(Array.isArray(r1.projects) && Array.isArray(r2.projects));
+  });
+
+  it('stale-while-revalidate: answers with the stale scan immediately, before a held background refresh completes (PRR-B R-Gate Round 1, #2948)', async () => {
+    const result = projects.createProject({ name: `unreg-swr-${seq}` });
+    assert.ok(result.project);
+
+    // ONE stub for the whole test — reassigning dirScanner.request again
+    // partway through would itself force a hard (identity) miss, which is
+    // not what this test is isolating; only the TTL governs staleness here.
+    let mode = 'warm';
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    const scanner = stubListUnregistered(() => (mode === 'held'
+      ? held.then(() => ({ unregistered: [], truncated: false }))
+      : Promise.resolve({ unregistered: [], truncated: false })));
+
+    await projects.listAllProjects(); // warms the cache
+    assert.equal(scanner.calls(), 1);
+
+    mode = 'held';
+    const realNow = Date.now;
+    Date.now = () => realNow() + projects.UNREGISTERED_CACHE_TTL_MS + 1000;
+    try {
+      const started = Date.now();
+      await projects.listAllProjects();
+      assert.ok(Date.now() - started < 50,
+        'a stale unregistered-scan entry must answer immediately, not wait on the background refresh');
+      assert.equal(scanner.calls(), 2, 'the stale-serving call STARTS exactly one more background refresh');
+
+      release();
+      let countAfter;
+      for (let tick = 0; tick < 200; tick += 1) {
+        await new Promise((r) => setImmediate(r));
+        await projects.listAllProjects();
+        const countNow = scanner.calls();
+        if (countNow === countAfter) break;
+        countAfter = countNow;
+      }
+      assert.equal(countAfter, 2,
+        'once the background refresh lands, further calls read the now-fresh cache rather than starting another');
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it('stale-while-revalidate: a rejecting background scan neither breaks the stale response nor wedges the cache (#2948)', async () => {
+    const result = projects.createProject({ name: `unreg-swr-error-${seq}` });
+    assert.ok(result.project);
+
+    let shouldFail = false;
+    const scanner = stubListUnregistered(() => (shouldFail
+      ? Promise.reject(new Error('simulated scan failure'))
+      : Promise.resolve({ unregistered: [], truncated: false })));
+
+    await projects.listAllProjects(); // warms the cache
+    assert.equal(scanner.calls(), 1);
+
+    shouldFail = true;
+    const realNow = Date.now;
+    Date.now = () => realNow() + projects.UNREGISTERED_CACHE_TTL_MS + 1000;
+    try {
+      const result2 = await projects.listAllProjects();
+      assert.ok(Array.isArray(result2.projects),
+        'the stale scan still answers even though its background refresh is about to fail');
+      await new Promise((r) => setImmediate(r)); // let the rejection settle (no unhandledRejection)
+
+      shouldFail = false;
+      await projects.listAllProjects();
+      assert.ok(scanner.calls() >= 3, 'the next call retries the refresh rather than being stuck forever');
+    } finally {
+      Date.now = realNow;
+    }
   });
 });
 
