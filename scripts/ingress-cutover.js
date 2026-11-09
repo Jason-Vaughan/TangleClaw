@@ -677,9 +677,13 @@ function which(bin) {
  * @param {object} [o.deps] - Seams for tests: `fs`, `execFile`
  *   (execFileSync for launchctl/systemctl), `configStore` (the store's
  *   config API).
- * @returns {{ok: true} | {ok: false, error: string, restored: string}}
- *   `restored` is a semicolon-joined note per thing rolled back, for the
- *   operator-facing error line.
+ * @returns {{ok: true} | {ok: false, error: string, restored: string, rollbackErrors: string[]}}
+ *   `restored` is a semicolon-joined note per on-disk thing rolled back.
+ *   `rollbackErrors` (round 4, PRR-B R-Gate R3) names any LIVE-service
+ *   compensation that itself failed — empty means the rollback is
+ *   complete, non-empty means a service may still be running in the state
+ *   an earlier, already-succeeded step in this same sequence left it in,
+ *   and the caller must say so rather than claim "ingress untouched".
  */
 function applyPlanAndReload({ plan, config, priorCaddyfile, deps = {} }) {
   const fsImpl = deps.fs || fs;
@@ -730,19 +734,68 @@ function applyPlanAndReload({ plan, config, priorCaddyfile, deps = {} }) {
     return notes.join('; ');
   };
 
+  /**
+   * Put each already-succeeded Linux service step back the way it would
+   * have been had this run never started (round 4, PRR-B R-Gate R3).
+   * Restoring the FILES above is not restoring the LIVE state: a `stop`
+   * that already ran left a service down; a `restart`/`reload-or-restart`
+   * that already ran left one running on the NEW unit content, which the
+   * file restore above just replaced on disk without telling the running
+   * daemon. `daemon-reload` first, so systemd sees the just-restored files;
+   * then every completed step, in REVERSE order, gets undone:
+   *   - a completed `stop <unit>` → `restart <unit>` (bring it back up)
+   *   - a completed `restart`/`reload-or-restart <unit>` → `restart <unit>`
+   *     if that unit's file existed before this run (so it now holds the
+   *     restored content), or `stop <unit>` if it did not (the file was
+   *     just unlinked above — there is nothing to restart it onto).
+   * @param {Array<{cmd: string, args: string[]}>} completedSystemctlSteps -
+   *   In the order they actually ran.
+   * @returns {string[]} One message per compensating command that itself
+   *   failed; empty means every live service is back where it started.
+   */
+  const compensateLiveServices = (completedSystemctlSteps) => {
+    if (completedSystemctlSteps.length === 0) return [];
+    const errors = [];
+    try {
+      execFile('systemctl', ['--user', 'daemon-reload'], { stdio: ['ignore', 'ignore', 'pipe'] });
+    } catch (err) {
+      errors.push(`daemon-reload failed: ${err.message}`);
+    }
+    const unitExistedBefore = (unit) => {
+      const entry = priorPlists.find((p) => p.path.endsWith(unit));
+      return Boolean(entry && entry.existed);
+    };
+    for (const step of completedSystemctlSteps.slice().reverse()) {
+      const verb = step.args[1];
+      const unit = step.args[step.args.length - 1];
+      const compensating = verb === 'stop' || unitExistedBefore(unit)
+        ? { cmd: 'systemctl', args: ['--user', 'restart', unit] }
+        : { cmd: 'systemctl', args: ['--user', 'stop', unit] };
+      try {
+        execFile(compensating.cmd, compensating.args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      } catch (err) {
+        errors.push(`${compensating.cmd} ${compensating.args.join(' ')} failed: ${err.message}`);
+      }
+    }
+    return errors;
+  };
+
   // The platform-appropriate reload sequence: launchctl/plist steps on
   // macOS, systemctl --user/systemd-unit steps on Linux — planCutover
   // already resolved which, per step. A step marked `optional` may
   // legitimately fail (e.g. macOS's `unload`/Linux's `stop` of a job that
   // was never loaded) — tolerate those.
+  const completedSystemctlSteps = [];
   for (const step of plan.launchctl) {
     try {
       execFile(step.cmd, step.args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      if (step.cmd === 'systemctl' && step.kind !== 'system') completedSystemctlSteps.push(step);
     } catch (err) {
       if (step.optional) continue;
       if (step.cmd === 'systemctl') {
         const restored = restorePriorState();
-        return { ok: false, error: `${step.cmd} ${step.args.join(' ')} failed: ${err.message}`, restored };
+        const rollbackErrors = compensateLiveServices(completedSystemctlSteps);
+        return { ok: false, error: `${step.cmd} ${step.args.join(' ')} failed: ${err.message}`, restored, rollbackErrors };
       }
       process.stderr.write(`WARNING: ${step.cmd} ${step.args.join(' ')} failed: ${err.message}\n`);
     }
@@ -1257,10 +1310,19 @@ function main() {
   // asked for an EXECUTED test of the rollback.
   const applied = applyPlanAndReload({ plan, config, priorCaddyfile });
   if (!applied.ok) {
-    process.stderr.write(
-      `ERROR: ${applied.error} — rolling back (ingress untouched; ${applied.restored}):\n`
-    );
-    finish(CUTOVER_CODES.FAILED, applied.error);
+    // "ingress untouched" is a claim about LIVE service state, not just the
+    // files applyPlanAndReload put back — round 4 (PRR-B R-Gate R3) found an
+    // earlier, already-succeeded step in the same sequence can leave a
+    // service running (or stopped) on content the file restore alone never
+    // tells it about. Only say "untouched" when every compensating command
+    // also succeeded; otherwise name exactly what may still be live wrong.
+    const rollbackErrors = applied.rollbackErrors || [];
+    const outcome = rollbackErrors.length === 0
+      ? `ingress untouched; ${applied.restored}`
+      : `files restored (${applied.restored}), but the LIVE service state may still be WRONG — `
+        + `compensating command(s) failed: ${rollbackErrors.join('; ')}`;
+    process.stderr.write(`ERROR: ${applied.error} — rolling back (${outcome}):\n`);
+    finish(CUTOVER_CODES.FAILED, applied.error, { rollbackErrors });
     return;
   }
 
