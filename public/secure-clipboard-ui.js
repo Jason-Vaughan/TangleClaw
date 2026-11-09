@@ -209,7 +209,15 @@
     /** Close the modal. @returns {void} */
     function close() {
       isOpen = false;
-      const { backdrop } = els();
+      // PRR-B round 2 warning: closing without sending must not leave a
+      // typed secret or a picked file's base64 content sitting in the DOM
+      // or in this module's memory until the next open() — clear both here
+      // too, not only at open().
+      pickedFile = null;
+      const { backdrop, text, filename, fileInput } = els();
+      if (text) text.value = '';
+      if (filename) filename.value = '';
+      if (fileInput) fileInput.value = '';
       if (backdrop) backdrop.classList.remove('open');
     }
 
