@@ -57,21 +57,23 @@ describe('aider-task-contract', () => {
         /no '\.\.' segment/);
     });
 
-    it('rejects control characters before an editable path can become an aiderignore directive', () => {
-      for (const control of ['\0', '\r', '\n', '\t', '\x1b', '\x7f']) {
+    it('rejects control characters and Python line separators before they can become aiderignore directives', () => {
+      for (const control of ['\0', '\r', '\n', '\t', '\x1b', '\x7f', '\x85', '\u2028', '\u2029']) {
         assert.throws(
           () => contract.buildTaskContract({ repoPath, editableFiles: [`safe.js${control}!/*`], message: 'x' }),
-          /editableFiles\[0\].*control characters/
+          /editableFiles\[0\].*(?:control characters|line separators)/
         );
       }
     });
 
-    it('blocks newline injection, with an installed-Aider pathspec cross-check when available', (t) => {
-      assert.throws(
-        () => contract.buildTaskContract({ repoPath, editableFiles: ['safe.js\n!/*'], message: 'x' }),
-        /control characters/,
-        'the contract must reject the payload before any aiderignore is generated'
-      );
+    it('blocks Python splitlines injection, with an installed-Aider pathspec cross-check when available', (t) => {
+      for (const separator of ['\n', '\x85', '\u2028', '\u2029']) {
+        assert.throws(
+          () => contract.buildTaskContract({ repoPath, editableFiles: [`safe.js${separator}!/*`], message: 'x' }),
+          /control characters|line separators/,
+          'the contract must reject the payload before any aiderignore is generated'
+        );
+      }
 
       const which = realSpawnSync('which', ['aider'], { encoding: 'utf8' });
       if (!which || which.status !== 0 || !String(which.stdout || '').trim()) {
@@ -90,16 +92,21 @@ describe('aider-task-contract', () => {
       const probe = realSpawnSync(match[1], ['-c', [
         'import json',
         'from pathspec import PathSpec',
-        "spec = PathSpec.from_lines('gitwildmatch', ['/*', '!/safe.js', '!/*'])",
-        "print(json.dumps({'safe.js': spec.match_file('safe.js'), 'other.js': spec.match_file('other.js')}))"
+        "separators = ['\\n', '\\u0085', '\\u2028', '\\u2029']",
+        "results = {f'U+{ord(sep):04X}': PathSpec.from_lines('gitwildmatch', ('/*\\n!/safe.js' + sep + '!/*\\n').splitlines()).match_file('other.js') for sep in separators}",
+        'print(json.dumps(results, sort_keys=True))'
       ].join('; ')], { encoding: 'utf8' });
       if (!probe || probe.status !== 0) {
         t.diagnostic('installed Aider environment does not expose pathspec');
         return;
       }
 
-      assert.deepEqual(JSON.parse(probe.stdout), { 'safe.js': false, 'other.js': false },
-        'the injected !/* directive makes pathspec treat unrelated other.js as not ignored');
+      assert.deepEqual(JSON.parse(probe.stdout), {
+        'U+000A': false,
+        'U+0085': false,
+        'U+2028': false,
+        'U+2029': false
+      }, 'each injected !/* directive makes pathspec treat unrelated other.js as not ignored');
     });
 
     it('rejects an empty message', () => {
