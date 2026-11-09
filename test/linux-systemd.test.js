@@ -93,6 +93,58 @@ describe('generateTtydUnitFile / verifyTtydUnitFileContract (#2931)', () => {
     assert.match(goodDirect, /ttyd-attach\.sh/);
   });
 
+  it('passes the real ttyd command as positional args after a static "$@" script, never embedded inside it (#2931 PRR-A R1)', () => {
+    const execStart = /^ExecStart=(.+)$/m.exec(goodDirect)[1];
+    const tokens = systemd._internal.tokenizeSystemdExecStart(execStart);
+    assert.deepEqual(tokens.slice(0, 4), [
+      '/bin/bash', '-c',
+      'if [ -n "$TTYD_SOCKET" ]; then rm -f "$TTYD_SOCKET"; fi; exec "$@"',
+      'ttyd-launch'
+    ]);
+    assert.deepEqual(tokens.slice(4), [
+      '/home/jason/.tangleclaw/bin/ttyd', '--writable', '--interface', '127.0.0.1',
+      '--port', '3100', '--url-arg', '--client-option', 'scrollback=10000',
+      '/home/jason/.tangleclaw/deploy/ttyd-attach.sh'
+    ]);
+  });
+
+  it('refuses an argument containing a single quote — it cannot be safely systemd-quoted', () => {
+    assert.throws(
+      () => systemd.generateTtydUnitFile({ ttydPath: "/x/tty'd", attachScriptPath: '/x/attach.sh' }),
+      systemd.LinuxSystemdError
+    );
+  });
+
+  it('REGRESSION (#2931 PRR-A R1): verifyTtydUnitFileContract flags a script that swallows the real command via nested quoting', () => {
+    // Reconstructs the exact Round 1 bug: each real argv token was shell-quoted
+    // with single quotes, then embedded INSIDE the systemd single-quoted -c
+    // script. Per systemd.syntax(7), systemd's own tokenizer closes the -c
+    // word at the first single quote it finds after "exec " — truncating the
+    // script to "...exec " and spilling --writable/--interface/etc. out as
+    // bash's own $1, $2, ... instead of the script's "$@". A regex scan for
+    // the substring "--writable" would NOT catch this: the substring is still
+    // present in the line, just in the wrong token.
+    const buggy = [
+      '[Unit]',
+      'Description=TangleClaw ttyd (terminal bridge)',
+      'After=network.target',
+      '',
+      '[Service]',
+      'Type=simple',
+      'Environment=TTYD_SOCKET=',
+      'ExecStart=/bin/bash -c \'if [ -n "$TTYD_SOCKET" ]; then rm -f "$TTYD_SOCKET"; fi; exec \'/x/ttyd\' \'--writable\' \'--interface\' \'127.0.0.1\' \'--port\' \'3100\' \'--url-arg\' \'--client-option\' \'scrollback=10000\' \'/x/attach.sh\'\'',
+      'Restart=on-failure',
+      'RestartSec=5',
+      '',
+      '[Install]',
+      'WantedBy=default.target',
+      ''
+    ].join('\n');
+    const violations = systemd.verifyTtydUnitFileContract(buggy);
+    assert.ok(violations.length > 0, 'expected the swallowed-script bug to be flagged');
+    assert.ok(violations.some((v) => v.includes('-c script must be exactly')));
+  });
+
   it('caddy mode: binds the Unix socket and carries it in TTYD_SOCKET for the self-heal unlink', () => {
     const text = systemd.generateTtydUnitFile({
       ttydPath: '/x/ttyd', attachScriptPath: '/x/attach.sh',
