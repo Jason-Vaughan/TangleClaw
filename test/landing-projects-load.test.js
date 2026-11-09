@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -114,6 +114,181 @@ describe('listProjects facts cache (#2771, server side)', () => {
     } finally {
       afterEachRestore();
     }
+  });
+
+  it('coalesces concurrent listProjects() calls into one in-flight read per project (#2948)', async () => {
+    const result = projects.createProject({ name: 'concurrent-facts-project' });
+    assert.ok(result.project);
+    const calls = [];
+    const releasers = [];
+    projects._internal.readProjectFacts = async (p, opts) => {
+      calls.push(p.name);
+      if (p.name === 'concurrent-facts-project') {
+        await new Promise((resolve) => { releasers.push(resolve); });
+      }
+      return originalReadProjectFacts(p, opts);
+    };
+    try {
+      const p1 = projects.listProjects();
+      const p2 = projects.listProjects();
+      // Earlier tests in this describe left their own projects registered
+      // (the file's own comment on this pattern applies here too), so this
+      // project's turn in each call's sequential per-project loop may be
+      // several real reads away — poll instead of assuming one tick reaches it.
+      for (let tick = 0; tick < 100 && releasers.length === 0; tick += 1) {
+        await new Promise((resolve) => { setImmediate(resolve); });
+      }
+      assert.equal(releasers.length, 1, 'only one read must actually be pending for the held project');
+      assert.equal(calls.filter((n) => n === 'concurrent-facts-project').length, 1,
+        'two concurrent listProjects() calls must share one in-flight read for the same project');
+      releasers[0]();
+      const [facts1, facts2] = await Promise.all([p1, p2]);
+      assert.ok(Array.isArray(facts1) && Array.isArray(facts2));
+    } finally {
+      afterEachRestore();
+    }
+  });
+});
+
+describe('listAllProjects listUnregistered cache + single-flight (#2948, server side)', () => {
+  const dirScanner = require('../lib/dir-scanner');
+  let tmpDir;
+  let projectsDir;
+  let realRequest;
+  let seq = 0;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-unreg-cache-'));
+    projectsDir = path.join(tmpDir, 'projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+    store.init();
+    const cfg = store.config.load();
+    cfg.projectsDir = projectsDir;
+    store.config.save(cfg);
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    seq += 1;
+    projects._resetFactsCache();
+    realRequest = dirScanner.request;
+  });
+
+  afterEach(() => {
+    dirScanner.request = realRequest;
+    projects._resetFactsCache();
+  });
+
+  /**
+   * Stub `dirScanner.request` so only the `listUnregistered` op is counted/faked;
+   * any other op (`project-facts.js`'s own per-project POLLED read uses the same
+   * function) passes through to the real implementation untouched.
+   * @param {(payload: object) => {unregistered: object[], truncated: boolean}|Promise<object>} onListUnregistered
+   * @returns {{calls: () => number}}
+   */
+  function stubListUnregistered(onListUnregistered) {
+    let count = 0;
+    dirScanner.request = (op, payload, opts) => {
+      if (op !== 'listUnregistered') return realRequest(op, payload, opts);
+      count += 1;
+      return Promise.resolve(onListUnregistered(payload));
+    };
+    return { calls: () => count };
+  }
+
+  it('serves a cached scan on a second call within UNREGISTERED_CACHE_TTL_MS — no second scanner request', async () => {
+    const result = projects.createProject({ name: `unreg-cache-${seq}` });
+    assert.ok(result.project);
+    const scanner = stubListUnregistered(() => ({ unregistered: [], truncated: false }));
+    await projects.listAllProjects();
+    assert.equal(scanner.calls(), 1, 'first call reads the scanner');
+    await projects.listAllProjects();
+    assert.equal(scanner.calls(), 1, 'second call within the TTL must not read the scanner again');
+  });
+
+  it('reads a fresh scan again once the cache entry is older than UNREGISTERED_CACHE_TTL_MS', async () => {
+    const result = projects.createProject({ name: `unreg-expiry-${seq}` });
+    assert.ok(result.project);
+    const scanner = stubListUnregistered(() => ({ unregistered: [], truncated: false }));
+    await projects.listAllProjects();
+    assert.equal(scanner.calls(), 1);
+    const realNow = Date.now;
+    Date.now = () => realNow() + projects.UNREGISTERED_CACHE_TTL_MS + 1000;
+    try {
+      await projects.listAllProjects();
+    } finally {
+      Date.now = realNow;
+    }
+    assert.equal(scanner.calls(), 2, 'a stale unregistered-scan cache entry must be refreshed, not served forever');
+  });
+
+  it('invalidates automatically when a new project is registered, since the cache key includes the registered-name set', async () => {
+    const a = projects.createProject({ name: `unreg-before-${seq}` });
+    assert.ok(a.project);
+    const seenSkipNames = [];
+    const scanner = stubListUnregistered((payload) => {
+      seenSkipNames.push([...payload.skipNames].sort());
+      return { unregistered: [], truncated: false };
+    });
+    await projects.listAllProjects();
+    assert.equal(scanner.calls(), 1);
+
+    const b = projects.createProject({ name: `unreg-after-${seq}` });
+    assert.ok(b.project);
+    await projects.listAllProjects();
+    assert.equal(scanner.calls(), 2, 'a newly-registered project must trigger a fresh scan, not reuse the pre-create cache entry');
+    assert.ok(seenSkipNames[1].includes(`unreg-after-${seq}`),
+      'the fresh scan must skip the newly-registered name so it is not reported as unregistered');
+  });
+
+  it('_resetFactsCache also clears the unregistered-scan cache', async () => {
+    const result = projects.createProject({ name: `unreg-reset-${seq}` });
+    assert.ok(result.project);
+    const scanner = stubListUnregistered(() => ({ unregistered: [], truncated: false }));
+    await projects.listAllProjects();
+    assert.equal(scanner.calls(), 1);
+    projects._resetFactsCache();
+    await projects.listAllProjects();
+    assert.equal(scanner.calls(), 2, '_resetFactsCache must force a fresh scan, not leave the old one cached');
+  });
+
+  it('bypasses a stale cache entry when dirScanner.request is reassigned to a different function, even within the TTL', async () => {
+    const result = projects.createProject({ name: `unreg-stub-swap-${seq}` });
+    assert.ok(result.project);
+    const first = stubListUnregistered(() => ({ unregistered: [], truncated: false }));
+    await projects.listAllProjects();
+    assert.equal(first.calls(), 1);
+
+    // A DIFFERENT stub, same op, same key: Architect Ruling A506-W3C-SCOPE-R2's
+    // identity-keying must treat this as a miss regardless of the TTL, which is
+    // exactly what every dirScanner-stubbing test elsewhere in this repo relies on.
+    const second = stubListUnregistered(() => ({ unregistered: [], truncated: false }));
+    await projects.listAllProjects();
+    assert.equal(second.calls(), 1, 'a new dirScanner.request reference must not be served the prior reference\'s cached result');
+  });
+
+  it('coalesces concurrent listAllProjects() calls into one in-flight scanner request', async () => {
+    // Deliberately no registered project here: this isolates the coalescing
+    // under test (the `listUnregistered` scanner request) from a concurrent
+    // enrichProject() pass over any registered project, which is a separate
+    // concern this test is not about.
+    let release;
+    const scanner = stubListUnregistered(() => new Promise((resolve) => { release = resolve; })
+      .then(() => ({ unregistered: [], truncated: false })));
+    const p1 = projects.listAllProjects();
+    const p2 = projects.listAllProjects();
+    for (let tick = 0; tick < 100 && !release; tick += 1) {
+      await new Promise((resolve) => { setImmediate(resolve); });
+    }
+    assert.equal(scanner.calls(), 1, 'two concurrent calls must share one in-flight scanner request');
+    release();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    assert.ok(Array.isArray(r1.projects) && Array.isArray(r2.projects));
   });
 });
 

@@ -385,6 +385,11 @@ describe('Landing Page API Integration', () => {
       const projectsDir = path.resolve(config.projectsDir);
       const unregDir = path.join(projectsDir, 'unreg-api-test');
       fs.mkdirSync(unregDir, { recursive: true });
+      // Architect Ruling A506-W3C-SCOPE-R4 (#2948): listAllProjects now caches
+      // the unregistered-directory scan, so a directory created after an
+      // earlier call in this file would otherwise be served a scan from
+      // before it existed.
+      require('../lib/projects')._resetFactsCache();
 
       const res = await request('/api/projects');
       assert.equal(res.status, 200);
