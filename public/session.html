@@ -145,6 +145,12 @@
           <button class="banner-btn" id="cmdBtn" aria-label="Toggle command bar"
                   aria-expanded="false" aria-controls="commandBar">Command bar</button>
           <button class="banner-btn" id="peekBtn" aria-label="Peek at terminal output">Peek</button>
+          <!-- #1032: carry a secret from this device into the session's pane
+               or its private `.tangleclaw/secrets/` workspace, without it
+               ever appearing in a log line, a chat history or a terminal
+               command history. -->
+          <button class="banner-btn" id="secureClipboardBtn" aria-label="Secure clipboard: send a secret into this session"
+                  aria-haspopup="dialog" aria-controls="secureClipboardModal">Secure clipboard</button>
         </span>
       </span>
       <!-- #1181: the per-session chime, promoted out of the settings modal.
@@ -467,6 +473,45 @@
     </div>
   </div>
 
+  <!-- Secure Clipboard Modal (#1032). Distinct from the Upload modal above:
+       Upload lands in the project's ordinary, visible uploads folder
+       (`/api/uploads`, flagged but not protected). Both buttons below ALWAYS
+       save to a private, 0600 `.tangleclaw/secrets/` file nothing else in
+       the project surfaces — "Save as secret file" is the primary action and
+       stops there; "Notify in terminal" additionally drops a content-free
+       pointer (the filename and byte count, never the secret) into the live
+       pane, for when the agent/operator needs to know it arrived without
+       leaving a pane. Neither button ever places the secret value itself in
+       a tmux pane, so neither can expose it to chat/log/command history. -->
+  <div class="modal-backdrop" id="secureClipboardModal">
+    <div class="modal-content" role="dialog" aria-label="Secure clipboard" aria-modal="true">
+      <h3 class="modal-title">Secure Clipboard</h3>
+      <div class="form-group">
+        <label class="form-label" for="secureClipboardText">Secret text</label>
+        <textarea class="form-textarea" id="secureClipboardText" rows="4"
+                  placeholder="Paste an API key, token, password or credential…"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="secureClipboardFile">…or choose a file</label>
+        <input type="file" class="upload-file-input" id="secureClipboardFile">
+      </div>
+      <div class="form-group" id="secureClipboardFilenameGroup">
+        <label class="form-label" for="secureClipboardFilename">Filename</label>
+        <input type="text" class="form-input" id="secureClipboardFilename" placeholder="e.g. api-key.txt">
+      </div>
+      <p class="form-hint">Both options save to a private file in this session's workspace, never visible
+        in the ordinary uploads list. "Notify in terminal" additionally tells the pane where to find it — a
+        filename and size only, never the secret itself, so even an accidental Enter there exposes nothing.</p>
+      <div id="secureClipboardStatus" class="form-hint" role="status"></div>
+      <div id="secureClipboardFiles" class="form-hint"></div>
+      <div class="modal-actions">
+        <button class="btn" id="secureClipboardCancelBtn">Cancel</button>
+        <button class="btn" id="secureClipboardPasteBtn">Notify in terminal</button>
+        <button class="btn btn-primary" id="secureClipboardSaveBtn">Save as secret file</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Medusa Loop Setup Modal (MED-2K9P v2 T3). Replaces the deprecated manual
        compose box: the initiator picks a target session, states the task + the
        done criteria it will judge against, chooses the judge mode, and sets the
@@ -645,6 +690,7 @@
   <script src="/api-helper.js"></script>
   <script src="/medusa-loops-ui.js"></script>
   <script src="/engine-failover-modal.js"></script>
+  <script src="/secure-clipboard-ui.js"></script>
   <script src="/reconnect-policy.js"></script>
   <script src="/update-beacon.js"></script>
   <script src="/wrap-stream-events.js"></script>
