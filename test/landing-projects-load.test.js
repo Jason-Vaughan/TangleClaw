@@ -20,28 +20,32 @@ const { liftDeclaration } = require('./helpers/lift');
 
 describe('listProjects facts cache (#2771, server side)', () => {
   let tmpDir;
-  let projectsDir;
   let originalReadProjectFacts;
 
-  before(() => {
+  // A fresh store PER TEST (#2948 Round 4), not once for the whole describe:
+  // Round 3's global serial facts-refresh queue (MAX_CONCURRENT_FACTS_REFRESHES)
+  // means every project any sibling test left registered now competes for the
+  // SAME one admission slot, so a test asserting "my project's read starts
+  // promptly" could be stuck behind however many sibling projects preceded it
+  // in iteration order — exactly what broke two of these tests on a slower CI
+  // runner even with a generous poll budget. A fresh store removes the
+  // variable entirely rather than tuning tick counts against it.
+  beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-projects-cache-'));
-    projectsDir = path.join(tmpDir, 'projects');
+    const projectsDir = path.join(tmpDir, 'projects');
     fs.mkdirSync(projectsDir, { recursive: true });
     store._setBasePath(path.join(tmpDir, 'tangleclaw'));
     store.init();
     const cfg = store.config.load();
     cfg.projectsDir = projectsDir;
     store.config.save(cfg);
-  });
-
-  after(() => {
-    store.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  beforeEach(() => {
     projects._resetFactsCache();
     originalReadProjectFacts = projects._internal.readProjectFacts;
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   function afterEachRestore() {
@@ -79,8 +83,8 @@ describe('listProjects facts cache (#2771, server side)', () => {
     const calls = countingFacts();
     try {
       await projects.listProjects();
-      // Filtered by name, not a raw count: earlier tests in this describe
-      // block leave their own projects registered in the same store.
+      // Filtered by name, not a raw count, defensively — this store is fresh
+      // per test (#2948 Round 4), but the pattern costs nothing to keep.
       assert.equal(calls.filter((n) => n === 'cache-expiry-project').length, 1);
       // Fast-forward past the TTL rather than waiting it out for real.
       const realNow = Date.now;
@@ -360,28 +364,26 @@ describe('listProjects facts stale-while-revalidate + serial background refresh 
 describe('listAllProjects listUnregistered cache + single-flight (#2948, server side)', () => {
   const dirScanner = require('../lib/dir-scanner');
   let tmpDir;
-  let projectsDir;
   let realRequest;
   let seq = 0;
 
-  before(() => {
+  // A fresh store PER TEST (#2948 Round 4), not once for the whole describe —
+  // same reason as the facts-cache describe above: Round 3's global serial
+  // facts-refresh queue means listAllProjects()'s own facts phase (every
+  // registered project, including whatever sibling tests left behind) now
+  // serializes before it ever reaches the unregistered-scan call under test,
+  // which is exactly what broke 'coalesces concurrent listAllProjects()
+  // calls' on CI even with no project of its own.
+  beforeEach(() => {
+    seq += 1;
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-unreg-cache-'));
-    projectsDir = path.join(tmpDir, 'projects');
+    const projectsDir = path.join(tmpDir, 'projects');
     fs.mkdirSync(projectsDir, { recursive: true });
     store._setBasePath(path.join(tmpDir, 'tangleclaw'));
     store.init();
     const cfg = store.config.load();
     cfg.projectsDir = projectsDir;
     store.config.save(cfg);
-  });
-
-  after(() => {
-    store.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  beforeEach(() => {
-    seq += 1;
     projects._resetFactsCache();
     realRequest = dirScanner.request;
   });
@@ -389,6 +391,8 @@ describe('listAllProjects listUnregistered cache + single-flight (#2948, server 
   afterEach(() => {
     dirScanner.request = realRequest;
     projects._resetFactsCache();
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   /**
