@@ -2751,6 +2751,17 @@ describe('projects', () => {
   });
 
   describe('listAllProjects', () => {
+    // Architect Ruling A506-W3C-SCOPE-R2 (#2948): these tests use the REAL,
+    // unstubbed scanner throughout, so the identity-keying that lets a
+    // STUBBED dirScanner.request always bypass a stale cache entry (see the
+    // `#859` describe block above) does not apply here — the reference never
+    // changes. An explicit reset is what makes each test's own filesystem
+    // change (creating `unregistered-proj` here, for instance) visible on its
+    // very next scan instead of being served a scan cached before it existed.
+    beforeEach(() => {
+      projects._resetFactsCache();
+    });
+
     it('includes both registered and unregistered projects', async () => {
       // Create an unregistered directory
       fs.mkdirSync(path.join(projectsDir, 'unregistered-proj'), { recursive: true });

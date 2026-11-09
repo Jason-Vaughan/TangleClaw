@@ -472,4 +472,115 @@ describe('session leftovers (#1544)', () => {
       assert.equal(a.unpushed, 0);
     });
   });
+
+  describe('MAX_CONCURRENT_PROBES caps background refreshes across many projects (#2948)', () => {
+    it('never runs more probes at once than the cap, across many killed-session projects', async () => {
+      const projectCount = leftovers.MAX_CONCURRENT_PROBES + 3;
+      const many = [];
+      for (let i = 0; i < projectCount; i += 1) {
+        const dir = fs.mkdtempSync(path.join(storeDir, 'proj-mcp-'));
+        const p = store.projects.create({ name: `mcp-${seq}-${i}`, path: dir, engine: 'claude' });
+        store.sessions.kill(
+          store.sessions.start({
+            projectId: p.id,
+            engineId: 'claude',
+            launchBaseline: { sha: SHA, toplevel: p.path, dirty: { paths: [], truncated: false } }
+          }).id,
+          'test'
+        );
+        many.push(p);
+      }
+
+      let active = 0;
+      let maxActive = 0;
+      let started = 0;
+      const releasers = [];
+      leftovers._internal.exec = async (file, args, options) => {
+        assert.equal(file, 'git');
+        if (args[0] === '--version') return { exitCode: 0, stdout: 'git version 2.x\n', stderr: '', error: null };
+        if (args[0] === 'rev-parse') {
+          started += 1;
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          await new Promise((resolve) => { releasers.push(resolve); });
+          active -= 1;
+          // Each project's own baseline.toplevel is its own path (set above) —
+          // answering with the CALLER's cwd, not a fixed project, is what keeps
+          // every one of them 'clean' rather than 'unknown' (a mismatched toplevel).
+          return { exitCode: 0, stdout: `${options.cwd}\n`, stderr: '', error: null };
+        }
+        if (args[0] === 'status') return { exitCode: 0, stdout: '', stderr: '', error: null };
+        if (args[0] === 'rev-list') return { exitCode: 0, stdout: '0\n', stderr: '', error: null };
+        throw new Error(`unexpected git ${args.join(' ')}`);
+      };
+
+      const promises = many.map((p) => leftovers.refresh(p));
+
+      for (let tick = 0; tick < 100 && releasers.length < Math.min(projectCount, leftovers.MAX_CONCURRENT_PROBES); tick += 1) {
+        await new Promise((r) => setImmediate(r));
+      }
+      assert.equal(releasers.length, leftovers.MAX_CONCURRENT_PROBES,
+        `expected exactly ${leftovers.MAX_CONCURRENT_PROBES} probes held at once, saw ${releasers.length}`);
+      assert.equal(maxActive, leftovers.MAX_CONCURRENT_PROBES);
+
+      let guard = 0;
+      while ((started < projectCount || releasers.length > 0) && guard < 500) {
+        guard += 1;
+        if (releasers.length > 0) releasers.shift()();
+        await new Promise((r) => setImmediate(r));
+      }
+      assert.ok(guard < 500, 'the queue must drain in a bounded number of ticks');
+
+      const answers = await Promise.all(promises);
+      assert.equal(answers.length, projectCount);
+      assert.ok(answers.every((a) => a && a.state === 'clean'));
+      assert.equal(started, projectCount, 'every project was eventually probed');
+      assert.ok(maxActive <= leftovers.MAX_CONCURRENT_PROBES,
+        `saw ${maxActive} concurrent probes, cap is ${leftovers.MAX_CONCURRENT_PROBES}`);
+    });
+
+    it('a direct probe() call bypasses the queue and runs immediately even while it is saturated', async () => {
+      const holders = [];
+      leftovers._internal.exec = async (file, args, options) => {
+        if (args[0] === '--version') return { exitCode: 0, stdout: 'git version 2.x\n', stderr: '', error: null };
+        if (args[0] === 'rev-parse') {
+          // Only a saturating OTHER project's probe holds forever; the direct
+          // probe() call under test (on `project`) must answer immediately —
+          // that is the whole point of bypassing the queue.
+          if (options.cwd !== project.path) {
+            await new Promise((resolve) => { holders.push(resolve); });
+          }
+          return { exitCode: 0, stdout: `${options.cwd}\n`, stderr: '', error: null };
+        }
+        if (args[0] === 'status') return { exitCode: 0, stdout: '', stderr: '', error: null };
+        if (args[0] === 'rev-list') return { exitCode: 0, stdout: '0\n', stderr: '', error: null };
+        throw new Error(`unexpected git ${args.join(' ')}`);
+      };
+
+      // Saturate the queue with background refreshes for OTHER projects that never release.
+      for (let i = 0; i < leftovers.MAX_CONCURRENT_PROBES; i += 1) {
+        const dir = fs.mkdtempSync(path.join(storeDir, 'proj-mcp-sat-'));
+        const other = store.projects.create({ name: `mcp-sat-${seq}-${i}`, path: dir, engine: 'claude' });
+        store.sessions.kill(
+          store.sessions.start({
+            projectId: other.id,
+            engineId: 'claude',
+            launchBaseline: { sha: SHA, toplevel: other.path, dirty: { paths: [], truncated: false } }
+          }).id,
+          'test'
+        );
+        leftovers.refresh(other); // fire-and-forget, deliberately never awaited or released
+      }
+      for (let tick = 0; tick < 100 && holders.length < leftovers.MAX_CONCURRENT_PROBES; tick += 1) {
+        await new Promise((r) => setImmediate(r));
+      }
+      assert.equal(holders.length, leftovers.MAX_CONCURRENT_PROBES, 'the queue must actually be saturated first');
+
+      const session = sessionThat('killed');
+      const directAnswer = await leftovers.probe(project, session, null);
+      assert.equal(directAnswer.state, 'clean', 'a direct probe() call must complete without waiting on a queue slot');
+
+      holders.forEach((h) => h());
+    });
+  });
 });
