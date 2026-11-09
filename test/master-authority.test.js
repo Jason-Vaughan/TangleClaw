@@ -390,7 +390,10 @@ describe('lib/master-authority.js', () => {
 
     it('refuses when the token gate itself is disabled', () => {
       const config = store.config.load();
-      masterAuthority.applyOperatorAuthorityChange(config, { accessLevel: 'write', actor: 'x' });
+      // #2950: a plain `write` transition now auto-enables the token gate
+      // (that is the fix), so this scenario needs the explicit override to
+      // still reach a genuinely disabled gate.
+      masterAuthority.applyOperatorAuthorityChange(config, { accessLevel: 'write', actor: 'x', apiTokenEnabled: false });
       const result = masterAuthority.evaluateLifecycleCall(config, { headers: {}, action: 'launch' });
       assert.equal(result.allowed, false);
       assert.equal(result.code, 'MASTER_API_TOKEN_DISABLED');
