@@ -2675,7 +2675,11 @@ route('POST', '/api/caddy-drift/resolve', (req, res, _params, body) => {
     });
   });
 
-  const reloadCommand = `launchctl ${adminCredential.reloadCaddyArgs(process.getuid()).join(' ')}`;
+  // #2933: platform-aware (systemctl --user on Linux, launchctl on macOS),
+  // same {cmd,args}-destructuring convention as applyCredentialChange/
+  // createGate in lib/admin-credential.js.
+  const { cmd: reloadCmd, args: reloadArgs } = adminCredential.reloadCaddyCommand(process.getuid());
+  const reloadCommand = `${reloadCmd} ${reloadArgs.join(' ')}`;
   jsonResponse(res, 200, { ok: true, backup: written.backup, reloadCommand });
 }, { signedInOperator: { action: 'resolve a Caddy Drift finding' } });
 
