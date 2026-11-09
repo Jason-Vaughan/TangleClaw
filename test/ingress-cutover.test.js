@@ -1051,10 +1051,13 @@ describe('ingress-cutover.serverRestartCommand — the one launchctl step with a
     );
   });
 
-  it('main() and the dry-run preview execute/print whatever the plan says, never a hardcoded "launchctl" (source-pinned)', () => {
+  it('applyPlanAndReload and the dry-run preview execute/print whatever the plan says, never a hardcoded "launchctl" (source-pinned)', () => {
+    // applyPlanAndReload (round 3, PRR-B R-Gate R2) is where the execution
+    // loop now lives — extracted out of main() so the rollback it added gets
+    // an EXECUTED test (see the describe block below), not just this one.
     assert.match(
       CUTOVER_SRC,
-      /for \(const step of plan\.launchctl\) \{\s*\n\s*try \{\s*\n\s*execFileSync\(step\.cmd, step\.args,/,
+      /for \(const step of plan\.launchctl\) \{\s*\n\s*try \{\s*\n\s*execFile\(step\.cmd, step\.args,/,
       'the execution loop must run step.cmd/step.args, not a hardcoded launchctl binary'
     );
     assert.match(
@@ -1063,6 +1066,156 @@ describe('ingress-cutover.serverRestartCommand — the one launchctl step with a
       'the dry-run listing must print step.cmd/step.args, never a hardcoded "launchctl" line — it would otherwise ' +
         'show a macOS command on Linux it will not actually run'
     );
+  });
+});
+
+describe('applyPlanAndReload (#2933 round 3, PRR-B R-Gate R2)', () => {
+  /** An in-memory fs + execFile recorder for applyPlanAndReload's own deps seam. */
+  function harness(initial = {}) {
+    const files = { ...initial };
+    const calls = [];
+    const deps = {
+      fs: {
+        existsSync: (p) => Object.prototype.hasOwnProperty.call(files, p),
+        readFileSync: (p) => files[p],
+        writeFileSync: (p, c) => { files[p] = c; },
+        unlinkSync: (p) => { delete files[p]; }
+      },
+      execFile: (cmd, args) => { calls.push(`${cmd} ${args.join(' ')}`); },
+      configStore: { save: () => {} }
+    };
+    return { files, calls, deps };
+  }
+
+  const TTYD_UNIT = '/home/x/.config/systemd/user/tangleclaw-ttyd.service';
+  const CADDY_UNIT = '/home/x/.config/systemd/user/tangleclaw-caddy.service';
+  const CADDYFILE = '/home/x/.tangleclaw/Caddyfile';
+
+  function linuxPlan() {
+    return {
+      caddyfile: { path: CADDYFILE, content: 'NEW CADDYFILE\n' },
+      plists: [
+        { path: TTYD_UNIT, content: 'NEW TTYD UNIT\n' },
+        { path: CADDY_UNIT, content: 'NEW CADDY UNIT\n' }
+      ],
+      configPatch: { ingressMode: 'caddy' },
+      launchctl: [
+        { cmd: 'systemctl', args: ['--user', 'daemon-reload'], optional: false, kind: 'system' },
+        { cmd: 'systemctl', args: ['--user', 'restart', 'tangleclaw-ttyd.service'], optional: false, kind: 'ttyd' },
+        { cmd: 'systemctl', args: ['--user', 'restart', 'tangleclaw-caddy.service'], optional: false, kind: 'caddy' },
+        { cmd: 'systemctl', args: ['--user', 'restart', 'tangleclaw.service'], optional: false, kind: 'server' }
+      ]
+    };
+  }
+
+  it('writes the plists, patches config, and reports ok:true when every step succeeds', () => {
+    // The Caddyfile itself is NOT this function's job to write — main()'s own
+    // step 1 (validate-before-anything-else) already did that before calling
+    // here; pre-populate it to prove applyPlanAndReload leaves it alone.
+    const h = harness({ [CADDYFILE]: 'NEW CADDYFILE\n' });
+    const config = { ingressMode: 'direct' };
+    const result = cutover.applyPlanAndReload({ plan: linuxPlan(), config, priorCaddyfile: 'OLD CADDYFILE\n', deps: h.deps });
+    assert.deepEqual(result, { ok: true });
+    assert.equal(h.files[TTYD_UNIT], 'NEW TTYD UNIT\n');
+    assert.equal(h.files[CADDY_UNIT], 'NEW CADDY UNIT\n');
+    assert.equal(h.files[CADDYFILE], 'NEW CADDYFILE\n', 'applyPlanAndReload must not touch the Caddyfile on success — it only restores it on failure');
+    assert.deepEqual(config, { ingressMode: 'caddy' });
+    assert.deepEqual(h.calls, [
+      'systemctl --user daemon-reload',
+      'systemctl --user restart tangleclaw-ttyd.service',
+      'systemctl --user restart tangleclaw-caddy.service',
+      'systemctl --user restart tangleclaw.service'
+    ]);
+  });
+
+  it('rolls the Caddyfile, every unit file, and config all the way back when a required systemctl step fails', () => {
+    const h = harness({
+      [TTYD_UNIT]: 'OLD TTYD UNIT\n', [CADDY_UNIT]: 'OLD CADDY UNIT\n', [CADDYFILE]: 'OLD CADDYFILE\n'
+    });
+    h.deps.execFile = (cmd, args) => {
+      h.calls.push(`${cmd} ${args.join(' ')}`);
+      if (cmd === 'systemctl' && args.includes('tangleclaw-caddy.service')) {
+        throw new Error('Unit tangleclaw-caddy.service failed to start');
+      }
+    };
+    const config = { ingressMode: 'direct' };
+    const result = cutover.applyPlanAndReload({
+      plan: linuxPlan(), config, priorCaddyfile: 'OLD CADDYFILE\n', deps: h.deps
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error, /systemctl --user restart tangleclaw-caddy\.service failed: Unit tangleclaw-caddy\.service failed to start/);
+    assert.match(result.restored, /Caddyfile restored/);
+    assert.match(result.restored, new RegExp(`${TTYD_UNIT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} restored`));
+    assert.match(result.restored, new RegExp(`${CADDY_UNIT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} restored`));
+    assert.match(result.restored, /config restored/);
+
+    assert.equal(h.files[CADDYFILE], 'OLD CADDYFILE\n', 'the Caddyfile must not be left holding the new, never-applied content');
+    assert.equal(h.files[TTYD_UNIT], 'OLD TTYD UNIT\n');
+    assert.equal(h.files[CADDY_UNIT], 'OLD CADDY UNIT\n');
+    assert.deepEqual(config, { ingressMode: 'direct' }, 'config must not be left claiming a mode that never actually came up');
+    assert.ok(!h.calls.some((c) => c.includes('tangleclaw.service')),
+      'the server-restart step must never run once an earlier required step has failed');
+  });
+
+  it('removes a unit file on rollback that did not exist before this run (a first-ever caddy-mode apply)', () => {
+    const h = harness(); // nothing pre-existing — this is the very first apply
+    h.deps.execFile = (cmd, args) => {
+      if (cmd === 'systemctl' && args.includes('tangleclaw-caddy.service')) throw new Error('start failed');
+    };
+    const config = {};
+    const result = cutover.applyPlanAndReload({ plan: linuxPlan(), config, priorCaddyfile: null, deps: h.deps });
+    assert.equal(result.ok, false);
+    assert.equal(h.files[TTYD_UNIT], undefined, 'a unit this run itself created must not survive a rollback');
+    assert.equal(h.files[CADDY_UNIT], undefined);
+    assert.equal(h.files[CADDYFILE], undefined);
+    assert.deepEqual(config, {}, 'a configPatch key the prior config never had must be removed, not left at the new value');
+  });
+
+  it('tolerates an optional step failing on either platform, with no rollback', () => {
+    const h = harness({ [CADDY_UNIT]: 'OLD\n' });
+    h.deps.execFile = (cmd, args) => {
+      h.calls.push(`${cmd} ${args.join(' ')}`);
+      if (args.includes('stop')) throw new Error('Unit not loaded');
+    };
+    const config = { ingressMode: 'caddy' };
+    const plan = {
+      caddyfile: null,
+      plists: [],
+      configPatch: { ingressMode: 'direct' },
+      launchctl: [
+        { cmd: 'systemctl', args: ['--user', 'stop', 'tangleclaw-caddy.service'], optional: true, kind: 'caddy' },
+        { cmd: 'systemctl', args: ['--user', 'restart', 'tangleclaw.service'], optional: false, kind: 'server' }
+      ]
+    };
+    const result = cutover.applyPlanAndReload({ plan, config, priorCaddyfile: null, deps: h.deps });
+    assert.deepEqual(result, { ok: true });
+    assert.deepEqual(config, { ingressMode: 'direct' });
+    assert.ok(h.calls.some((c) => c === 'systemctl --user restart tangleclaw.service'),
+      'a tolerated optional failure must not stop the remaining steps from running');
+  });
+
+  it('keeps macOS\'s long-standing behaviour unchanged: a required launchctl failure logs a WARNING and still reports ok:true', () => {
+    const h = harness();
+    h.deps.execFile = (cmd, args) => {
+      h.calls.push(`${cmd} ${args.join(' ')}`);
+      if (cmd === 'launchctl' && args[0] === 'load') throw new Error('Load failed: 5: Input/output error');
+    };
+    const config = { ingressMode: 'direct' };
+    const plan = {
+      caddyfile: null,
+      plists: [],
+      configPatch: { ingressMode: 'caddy' },
+      launchctl: [
+        { cmd: 'launchctl', args: ['load', '/L/com.tangleclaw.ttyd.plist'], optional: false, kind: 'ttyd' },
+        { cmd: 'launchctl', args: ['kickstart', '-k', 'gui/501/com.tangleclaw.server'], optional: false, kind: 'server' }
+      ]
+    };
+    const result = cutover.applyPlanAndReload({ plan, config, priorCaddyfile: null, deps: h.deps });
+    assert.deepEqual(result, { ok: true },
+      'round 3 must not change macOS behaviour — the plist write already happened and the job is still live');
+    assert.deepEqual(config, { ingressMode: 'caddy' }, 'macOS leaves the applied patch in place even though a step failed');
+    assert.ok(h.calls.some((c) => c.startsWith('launchctl kickstart')), 'subsequent steps still run on macOS');
   });
 });
 

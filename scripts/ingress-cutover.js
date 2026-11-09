@@ -648,6 +648,108 @@ function which(bin) {
   catch { return null; }
 }
 
+/**
+ * Write `plan.plists`, patch+save `config`, then run `plan.launchctl`'s
+ * reload sequence — the one span main() needed to roll ALL THREE back out
+ * on a failed REQUIRED Linux step (#2933 round 3, PRR-B R-Gate R2).
+ * Extracted and exported so this gets an EXECUTED test rather than only the
+ * CUTOVER_SRC source-pinning the rest of main() relies on (see that note
+ * above) — this is the one span the finding specifically named.
+ *
+ * A required step failing is NOT symmetric across platforms. macOS keeps
+ * its long-standing behaviour unchanged: log a WARNING and report success
+ * anyway, because the plist write already happened and the job is still
+ * live even if this particular `launchctl` call failed — the next boot
+ * retries the reload. Linux's systemd steps have no such safety net the way
+ * this script applies them (no separate "job stays installed, retry
+ * later"), so a required `systemctl` failure instead rolls the plists,
+ * Caddyfile, and config all the way back to what they were before this
+ * call, and reports failure.
+ *
+ * @param {object} o
+ * @param {object} o.plan - From planCutover.
+ * @param {object} o.config - Mutated in place on success (`plan.configPatch`
+ *   applied and saved); restored in place, key by key, on a rolled-back
+ *   failure.
+ * @param {(Buffer|null)} o.priorCaddyfile - The Caddyfile's bytes before
+ *   this run (step 1, main()'s own `priorCaddyfile`); null when none
+ *   existed. Used only when `plan.caddyfile` is non-null.
+ * @param {object} [o.deps] - Seams for tests: `fs`, `execFile`
+ *   (execFileSync for launchctl/systemctl), `configStore` (the store's
+ *   config API).
+ * @returns {{ok: true} | {ok: false, error: string, restored: string}}
+ *   `restored` is a semicolon-joined note per thing rolled back, for the
+ *   operator-facing error line.
+ */
+function applyPlanAndReload({ plan, config, priorCaddyfile, deps = {} }) {
+  const fsImpl = deps.fs || fs;
+  const execFile = deps.execFile || execFileSync;
+  const configStore = deps.configStore || store.config;
+
+  const priorPlists = plan.plists.map((f) => {
+    const existed = fsImpl.existsSync(f.path);
+    return { path: f.path, existed, content: existed ? fsImpl.readFileSync(f.path) : null };
+  });
+  const priorConfigKeys = Object.keys(config);
+  const priorConfigSnapshot = { ...config };
+
+  for (const f of plan.plists) fsImpl.writeFileSync(f.path, f.content);
+  Object.assign(config, plan.configPatch);
+  configStore.save(config);
+
+  const restorePriorState = () => {
+    const notes = [];
+    if (plan.caddyfile) {
+      try {
+        if (priorCaddyfile === null) fsImpl.unlinkSync(plan.caddyfile.path);
+        else fsImpl.writeFileSync(plan.caddyfile.path, priorCaddyfile, { mode: 0o600 });
+        notes.push('Caddyfile restored');
+      } catch (err) {
+        notes.push(`Caddyfile COULD NOT be restored (${err.message})`);
+      }
+    }
+    for (const p of priorPlists) {
+      try {
+        if (p.existed) fsImpl.writeFileSync(p.path, p.content);
+        else fsImpl.unlinkSync(p.path);
+        notes.push(`${p.path} restored`);
+      } catch (err) {
+        notes.push(`${p.path} COULD NOT be restored (${err.message})`);
+      }
+    }
+    try {
+      for (const key of Object.keys(plan.configPatch)) {
+        if (priorConfigKeys.includes(key)) config[key] = priorConfigSnapshot[key];
+        else delete config[key];
+      }
+      configStore.save(config);
+      notes.push('config restored');
+    } catch (err) {
+      notes.push(`config COULD NOT be restored (${err.message})`);
+    }
+    return notes.join('; ');
+  };
+
+  // The platform-appropriate reload sequence: launchctl/plist steps on
+  // macOS, systemctl --user/systemd-unit steps on Linux — planCutover
+  // already resolved which, per step. A step marked `optional` may
+  // legitimately fail (e.g. macOS's `unload`/Linux's `stop` of a job that
+  // was never loaded) — tolerate those.
+  for (const step of plan.launchctl) {
+    try {
+      execFile(step.cmd, step.args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    } catch (err) {
+      if (step.optional) continue;
+      if (step.cmd === 'systemctl') {
+        const restored = restorePriorState();
+        return { ok: false, error: `${step.cmd} ${step.args.join(' ')} failed: ${err.message}`, restored };
+      }
+      process.stderr.write(`WARNING: ${step.cmd} ${step.args.join(' ')} failed: ${err.message}\n`);
+    }
+  }
+  return { ok: true };
+}
+
 function main() {
   const { target, dryRun, force, resultFile, tailnetHost = null } = parseArgs(process.argv.slice(2));
   if (!target) {
@@ -1147,26 +1249,19 @@ function main() {
     try { fs.rmSync(ctx.socketPath, { force: true }); } catch { /* best-effort; bind will surface real failures */ }
   }
 
-  // 3. Write plists.
-  for (const f of plan.plists) fs.writeFileSync(f.path, f.content);
-
-  // 4. Apply the config patch (the restarted server reads the new ingressMode).
-  Object.assign(config, plan.configPatch);
-  store.config.save(config);
-
-  // 5. The platform-appropriate reload sequence (#2933: launchctl/plist steps
-  // on macOS, systemctl --user/systemd-unit steps on Linux — planCutover
-  // already resolved which, per step). A step marked `optional` may
-  // legitimately fail (e.g. macOS's `unload`/Linux's `stop` of a job that was
-  // never loaded) — tolerate those; nothing else.
-  for (const step of plan.launchctl) {
-    try {
-      execFileSync(step.cmd, step.args, { stdio: ['ignore', 'ignore', 'pipe'] });
-    } catch (err) {
-      if (!step.optional) {
-        process.stderr.write(`WARNING: ${step.cmd} ${step.args.join(' ')} failed: ${err.message}\n`);
-      }
-    }
+  // 3-5: write the plists/units, patch config, and run the reload sequence —
+  // rolling all three back out on a Linux systemctl required-step failure.
+  // Extracted (#2933 round 3, PRR-B R-Gate R2) so it is directly testable:
+  // everything else in main() is CLI-only closures only source-pinning can
+  // reach (see the CUTOVER_SRC note above), but this finding specifically
+  // asked for an EXECUTED test of the rollback.
+  const applied = applyPlanAndReload({ plan, config, priorCaddyfile });
+  if (!applied.ok) {
+    process.stderr.write(
+      `ERROR: ${applied.error} — rolling back (ingress untouched; ${applied.restored}):\n`
+    );
+    finish(CUTOVER_CODES.FAILED, applied.error);
+    return;
   }
 
   process.stdout.write(`\nIngress switched to '${target}'.\n  Health: ${plan.healthUrl}\n  Rollback: ${plan.rollbackHint}\n`);
@@ -1379,4 +1474,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { DRY_RUN_WOULD_REFUSE_EXIT, describeGateChange, planCutover, runTailnetVerification, describeTtydRuntime, describeDirectBind, describeGeneratedGate, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES, serverRestartCommand };
+module.exports = { DRY_RUN_WOULD_REFUSE_EXIT, describeGateChange, planCutover, runTailnetVerification, describeTtydRuntime, describeDirectBind, describeGeneratedGate, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES, serverRestartCommand, applyPlanAndReload };
