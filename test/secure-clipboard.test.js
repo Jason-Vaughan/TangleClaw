@@ -51,6 +51,20 @@ describe('lib/secure-clipboard', () => {
       );
     });
 
+    it('rejects a filename of exactly "." or ".." (Architect hardening, round 2)', () => {
+      assert.throws(
+        () => secureClipboard.writeSecretFile(project, { filename: '.', content: 'x' }),
+        /filename must be/
+      );
+      assert.throws(
+        () => secureClipboard.writeSecretFile(project, { filename: '..', content: 'x' }),
+        /filename must be/
+      );
+      // A dotfile with a REAL name is still fine — only the bare tokens are refused.
+      const result = secureClipboard.writeSecretFile(project, { filename: '.env', content: 'x' });
+      assert.equal(result.bytes, 1);
+    });
+
     it('rejects empty content', () => {
       assert.throws(
         () => secureClipboard.writeSecretFile(project, { filename: 'empty.txt', content: '' }),

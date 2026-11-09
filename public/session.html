@@ -475,11 +475,14 @@
 
   <!-- Secure Clipboard Modal (#1032). Distinct from the Upload modal above:
        Upload lands in the project's ordinary, visible uploads folder
-       (`/api/uploads`, flagged but not protected); this always saves to a
-       private, 0600 `.tangleclaw/secrets/` file nothing else in the project
-       surfaces, and "Paste into terminal" additionally drops a content-free
-       pointer to that file into the live pane — never the secret itself, so
-       a later Enter in the pane can expose only the filename, not the value. -->
+       (`/api/uploads`, flagged but not protected). Both buttons below ALWAYS
+       save to a private, 0600 `.tangleclaw/secrets/` file nothing else in
+       the project surfaces — "Save as secret file" is the primary action and
+       stops there; "Notify in terminal" additionally drops a content-free
+       pointer (the filename and byte count, never the secret) into the live
+       pane, for when the agent/operator needs to know it arrived without
+       leaving a pane. Neither button ever places the secret value itself in
+       a tmux pane, so neither can expose it to chat/log/command history. -->
   <div class="modal-backdrop" id="secureClipboardModal">
     <div class="modal-content" role="dialog" aria-label="Secure clipboard" aria-modal="true">
       <h3 class="modal-title">Secure Clipboard</h3>
@@ -496,12 +499,15 @@
         <label class="form-label" for="secureClipboardFilename">Filename</label>
         <input type="text" class="form-input" id="secureClipboardFilename" placeholder="e.g. api-key.txt">
       </div>
+      <p class="form-hint">Both options save to a private file in this session's workspace, never visible
+        in the ordinary uploads list. "Notify in terminal" additionally tells the pane where to find it — a
+        filename and size only, never the secret itself, so even an accidental Enter there exposes nothing.</p>
       <div id="secureClipboardStatus" class="form-hint" role="status"></div>
       <div id="secureClipboardFiles" class="form-hint"></div>
       <div class="modal-actions">
         <button class="btn" id="secureClipboardCancelBtn">Cancel</button>
-        <button class="btn" id="secureClipboardSaveBtn">Save as file</button>
-        <button class="btn btn-primary" id="secureClipboardPasteBtn">Paste into terminal</button>
+        <button class="btn" id="secureClipboardPasteBtn">Notify in terminal</button>
+        <button class="btn btn-primary" id="secureClipboardSaveBtn">Save as secret file</button>
       </div>
     </div>
   </div>
