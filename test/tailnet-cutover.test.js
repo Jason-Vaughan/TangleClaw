@@ -415,8 +415,17 @@ async function drive({ dir, verifyResults, execFile = () => {} }) {
     plan: {
       healthUrl: 'https://localhost:8443/api/health',
       caddyfile: { path: caddyfilePath },
-      plists: [{ path: '/L/com.tangleclaw.caddy.plist' }, { path: '/L/com.tangleclaw.ttyd.plist' }],
-      launchctl: [['kickstart', '-k', 'gui/501/com.tangleclaw.server']]
+      plists: [],
+      // #2933 round 2: every step now carries its own already-resolved
+      // {cmd, args, kind, optional} — runTailnetVerification has no platform
+      // seam of its own and just runs whatever the plan says. This harness's
+      // steps are launchctl-shaped (darwin); a sibling test below drives a
+      // systemctl-shaped (Linux) plan through the identical rollback path.
+      launchctl: [
+        { cmd: 'launchctl', args: ['unload', '/L/com.tangleclaw.caddy.plist'], optional: true, kind: 'caddy' },
+        { cmd: 'launchctl', args: ['load', '/L/com.tangleclaw.caddy.plist'], optional: false, kind: 'caddy' },
+        { cmd: 'launchctl', args: ['kickstart', '-k', 'gui/501/com.tangleclaw.server'], optional: false, kind: 'server' }
+      ]
     },
     ctx: { tailnetHost: NEW, priorTailnetHost: OLD },
     localCheck: { label: 'local', url: 'https://localhost:8443/api/health' },
@@ -467,6 +476,54 @@ describe('runTailnetVerification, driven', () => {
     assert.equal(run.extra.residual.caddyfile, 'restored');
     assert.match(run.extra.recovery, /ingress-cutover\.js --to caddy/);
     assert.equal(fs.existsSync(run.backup), true, 'the backup stays while recovery may need it');
+  });
+
+  it('an unhealthy move on a Linux-shaped plan rolls Caddy back via systemctl, never launchctl (#2933)', async () => {
+    // Same scenario as the darwin test above, but every launchctl step in the
+    // plan is systemctl-shaped instead — proving the rollback path reads the
+    // plan's own {cmd, args, kind} rather than assuming launchd.
+    const dir2 = fresh();
+    const caddyfilePath = path.join(dir2, 'Caddyfile');
+    const backup = path.join(dir2, 'Caddyfile.tailnet-x.bak');
+    fs.writeFileSync(caddyfilePath, 'moved\n');
+    fs.writeFileSync(backup, 'prior\n');
+    let saved = { ingressMode: 'caddy', caddyTailnetHost: NEW };
+    const configStore = { load: () => ({ ...saved }), save: (c) => { saved = { ...c }; } };
+    const calls = [];
+    let n = 0;
+    const verifyResults = [false, true];
+    const verify = async (checks) => {
+      const ok = verifyResults[Math.min(n, verifyResults.length - 1)];
+      n += 1;
+      return { ok, rounds: 1, last: checks.map((c) => ({ label: c.label, ok, error: ok ? null : 'HTTP 503' })) };
+    };
+    const out = {};
+    await cutover.runTailnetVerification({
+      plan: {
+        healthUrl: 'https://localhost:8443/api/health',
+        caddyfile: { path: caddyfilePath },
+        plists: [],
+        launchctl: [
+          { cmd: 'systemctl', args: ['--user', 'restart', 'tangleclaw-caddy.service'], optional: false, kind: 'caddy' },
+          { cmd: 'systemctl', args: ['--user', 'restart', 'tangleclaw.service'], optional: false, kind: 'server' }
+        ]
+      },
+      ctx: { tailnetHost: NEW, priorTailnetHost: OLD },
+      localCheck: { label: 'local', url: 'https://localhost:8443/api/health' },
+      siteCheck: { label: NEW, url: 'https://127.0.0.1:8443/api/health', servername: NEW },
+      priorCaddyfile: Buffer.from('prior\n'),
+      tailnetBackup: backup,
+      finish: (code, error, extra) => Object.assign(out, { code, error, extra }),
+      deps: { verify, configStore, execFile: (...a) => { calls.push(a); } }
+    });
+
+    assert.equal(out.code, cutover.CUTOVER_CODES.TAILNET_ROLLED_BACK);
+    assert.deepEqual(out.extra.residual, { caddyfile: 'restored', caddyTailnetHost: 'restored', reload: 'restored' });
+    assert.deepEqual(
+      calls.map((c) => `${c[0]} ${c[1].join(' ')}`),
+      ['systemctl --user restart tangleclaw-caddy.service', 'systemctl --user restart tangleclaw.service'],
+      'Caddy and the server are both reloaded via systemctl, in order, never launchctl'
+    );
   });
 
   it('a reload that leaves the site unhealthy is a rollback failure, not a rollback', async () => {

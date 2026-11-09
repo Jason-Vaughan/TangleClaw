@@ -51,7 +51,15 @@ const GUARD_SOURCES = [
   path.join('lib', 'checkout-layout.js'),
   path.join('lib', 'project-paths.js'),
   path.join('lib', 'tangleclaw-home.js'),
-  path.join('lib', 'shell-word.js')
+  path.join('lib', 'shell-word.js'),
+  // checkout-layout.js's Linux repoint branch (#2933) pulled in this whole chain:
+  // linux-systemd -> exec -> {exec-timeout, remote-output -> secret-scan}, logger.
+  path.join('lib', 'linux-systemd.js'),
+  path.join('lib', 'exec.js'),
+  path.join('lib', 'exec-timeout.js'),
+  path.join('lib', 'remote-output.js'),
+  path.join('lib', 'secret-scan.js'),
+  path.join('lib', 'logger.js')
 ];
 
 /**

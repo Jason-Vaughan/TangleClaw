@@ -49,6 +49,20 @@ const {
 
 const FIXTURE_DIR = path.join(__dirname, 'fixtures');
 const CADDY_AVAILABLE = caddy.detectCaddy().available;
+
+// The server dispatches the Caddy reload command by the REAL process.platform
+// (#2933: launchctl on macOS, systemctl --user on Linux) — this repo's own
+// pre-push pool runs these tests inside a Linux container, so the expected
+// command shape must follow the host actually running the suite, not assume
+// the developer's own machine. `CADDY_RELOAD_COMMAND_RE` matches the full
+// command (binary included), as rendered into `reloadCommand`; the stub logs
+// only argv (never argv[0]), so the log content needs the binary-less form.
+const CADDY_RELOAD_COMMAND_RE = process.platform === 'linux'
+  ? /systemctl --user reload-or-restart tangleclaw-caddy\.service/
+  : /launchctl kickstart -k gui\/\d+\/com\.tangleclaw\.caddy/;
+const CADDY_RELOAD_ARGS_RE = process.platform === 'linux'
+  ? /reload-or-restart/
+  : /kickstart/;
 const LANDING_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
 
 /**
@@ -1456,7 +1470,7 @@ describe('POST /api/caddy-drift/resolve (#1415, W2-A route)', () => {
     assert.equal(res.status, 200, JSON.stringify(res.data));
     assert.equal(res.data.ok, true);
     assert.ok(res.data.backup);
-    assert.match(res.data.reloadCommand, /launchctl kickstart -k gui\/\d+\/com\.tangleclaw\.caddy/);
+    assert.match(res.data.reloadCommand, CADDY_RELOAD_COMMAND_RE);
 
     const live = fs.readFileSync(caddy.getCaddyfilePath(), 'utf8');
     assert.notEqual(live, handEdited, 'the hand edit must be gone');
@@ -1485,7 +1499,7 @@ describe('POST /api/caddy-drift/resolve (#1415, W2-A route)', () => {
       await new Promise((r) => setTimeout(r, 25));
       logged = fs.readFileSync(caddyStub.launchctlLog, 'utf8');
     }
-    assert.match(logged, /kickstart/, 'the reload must still happen — just after the response, not before it');
+    assert.match(logged, CADDY_RELOAD_ARGS_RE, 'the reload must still happen — just after the response, not before it');
   });
 
   it('restore-baseline leaves the Caddyfile untouched when the baseline fails validation', async () => {

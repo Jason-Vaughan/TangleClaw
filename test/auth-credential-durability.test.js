@@ -151,7 +151,11 @@ function makeCtx(overrides = {}) {
     existingCaddyfileText: overrides.existingCaddyfileText !== undefined
       ? overrides.existingCaddyfileText
       : null,
-    gateState: overrides.gateState
+    gateState: overrides.gateState,
+    // Pinned to darwin (#2933): this file's env (launchAgentsDir, a homebrew
+    // caddyPath) is launchd-shaped, and planCutover's default must not
+    // silently follow whatever OS actually runs the test.
+    platform: overrides.platform === undefined ? 'darwin' : overrides.platform
   };
 }
 

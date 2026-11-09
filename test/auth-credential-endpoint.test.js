@@ -21,6 +21,20 @@ const { createServer, _setRestartScheduler } = require('../server');
 const { installCaddyStub } = require('./_caddy-stub');
 const { operatorHeaders, signInOperator } = require('./_shared-docs-callers');
 
+// The server dispatches the Caddy reload command by the REAL process.platform
+// (#2933: launchctl on macOS, systemctl --user on Linux) — this repo's own
+// pre-push pool runs these tests inside a Linux container, so the expected
+// command shape must follow the host actually running the suite, not assume
+// the developer's own machine. `CADDY_RELOAD_COMMAND_RE` matches the full
+// command (binary included), as rendered into `reloadCommand`; the stub logs
+// only argv (never argv[0]), so the log content needs the binary-less form.
+const CADDY_RELOAD_COMMAND_RE = process.platform === 'linux'
+  ? /systemctl --user reload-or-restart tangleclaw-caddy\.service/
+  : /launchctl kickstart -k gui\/\d+\/com\.tangleclaw\.caddy/;
+const CADDY_RELOAD_ARGS_RE = process.platform === 'linux'
+  ? /--user reload-or-restart tangleclaw-caddy\.service/
+  : /kickstart -k gui\/\d+\/com\.tangleclaw\.caddy/;
+
 const STUB_HASH = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
 const OLD_HASH = '$2b$12$' + 'o'.repeat(53);
 const GOOD_PASSWORD = 'a-perfectly-fine-passphrase';
@@ -399,7 +413,7 @@ describe('POST /api/auth/credential', () => {
       // pretend to carry it.
       assert.ok(!('reloaded' in data),
         'no reload result can exist yet — the restart has not been asked for');
-      assert.match(data.reloadCommand, /launchctl kickstart -k gui\/\d+\/com\.tangleclaw\.caddy/,
+      assert.match(data.reloadCommand, CADDY_RELOAD_COMMAND_RE,
         'the operator\'s recourse ships unconditionally, since a failed restart cannot be reported');
 
       // ...and the restart really is asked for, once the response is out. Polled
@@ -409,10 +423,10 @@ describe('POST /api/auth/credential', () => {
       let logged = '';
       while (Date.now() < deadline) {
         logged = fs.readFileSync(caddyStub.launchctlLog, 'utf8');
-        if (logged.includes('kickstart')) break;
+        if (CADDY_RELOAD_ARGS_RE.test(logged)) break;
         await new Promise((r) => setTimeout(r, 20));
       }
-      assert.match(logged, /kickstart -k gui\/\d+\/com\.tangleclaw\.caddy/,
+      assert.match(logged, CADDY_RELOAD_ARGS_RE,
         'the reload must still happen — just after the response, not before it');
     });
 

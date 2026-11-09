@@ -86,6 +86,13 @@ exit 1
  * assertion is worth. Recording the argv means the reload can still be asserted:
  * the stub proves the call was made without making it for real.
  *
+ * `systemctl` gets the identical treatment, logging to the SAME file (#2933):
+ * `lib/admin-credential.js#reloadCaddyCommand` dispatches to `systemctl --user
+ * reload-or-restart tangleclaw-caddy.service` on Linux instead of `launchctl
+ * kickstart`, and this repo's own pre-push pool runs that tier in a Linux
+ * container — so a caller that only ever stubbed `launchctl` silently recorded
+ * nothing there the moment the real code took the other branch.
+ *
  * @param {string} dir - Directory to write the stub into. Must exist.
  * @returns {string} Path to the invocation log the stub appends to.
  */
@@ -96,6 +103,7 @@ echo "$*" >> ${JSON.stringify(logPath)}
 exit 0
 `;
   fs.writeFileSync(path.join(dir, 'launchctl'), script, { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, 'systemctl'), script, { mode: 0o755 });
   return logPath;
 }
 

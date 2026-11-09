@@ -18,8 +18,9 @@
 //                                                          caller that is not reading stdout
 //
 // Fail-closed: in caddy mode the Caddyfile is `caddy validate`d BEFORE any
-// launchd reload, so a bad config can never take the ingress down. The flip
-// restarts the TC server so its listener re-binds for the new mode.
+// service reload (launchd on macOS, systemd --user on Linux, #2933), so a bad
+// config can never take the ingress down. The flip restarts the TC server so
+// its listener re-binds for the new mode.
 //
 // #397 production-durability fixes: (1) the cert is STAGED into the non-TCC store
 // dir so the launchd caddy (no Full Disk Access) can read it; (2) ttyd's launchd
@@ -44,6 +45,7 @@ const hostInventory = require(path.join(REPO_DIR, 'lib', 'host-inventory'));
 const tailnetCutover = require(path.join(REPO_DIR, 'lib', 'tailnet-cutover'));
 const bindPolicy = require(path.join(REPO_DIR, 'lib', 'bind-policy'));
 const tangleclawHome = require('../lib/tangleclaw-home');
+const linuxSystemd = require('../lib/linux-systemd');
 
 const DEPLOY_DIR = path.join(REPO_DIR, 'deploy');
 const SERVER_LABEL = 'com.tangleclaw.server';
@@ -79,6 +81,25 @@ function certHostUnion(certPath, config) {
 /** @returns {object} lib/https-setup, resolved lazily (REPO_DIR-relative like the others). */
 function httpsSetupModule() {
   return require(path.join(REPO_DIR, 'lib', 'https-setup'));
+}
+
+/**
+ * The command that restarts the TangleClaw server job itself (#2933) — the
+ * one `launchctl` step in this script's plan that has a Linux equivalent.
+ * The Caddy/ttyd plist writes and reloads around it stay launchd-only: their
+ * systemd analogues are a separate, not-yet-built car (#2931's generators are
+ * for `lib/ttyd-bind.js`/`lib/admin-credential.js`, not this script), so this
+ * is deliberately narrower than "every launchctl call in this file".
+ *
+ * @param {string} serverTarget - The launchd `gui/<uid>/<label>` target (macOS only).
+ * @param {string} [platform] - Defaults to `process.platform`; injectable for tests.
+ * @returns {{cmd: string, args: string[]}}
+ */
+function serverRestartCommand(serverTarget, platform = process.platform) {
+  if (platform === 'linux') {
+    return { cmd: 'systemctl', args: ['--user', 'restart', linuxSystemd.SERVICE_NAME] };
+  }
+  return { cmd: 'launchctl', args: ['kickstart', '-k', serverTarget] };
 }
 
 /**
@@ -119,17 +140,35 @@ function fillTemplate(tpl, subs) {
  * @param {string} [ctx.tailnetHost] - A validated `--tailnet-host` name (#1905). Set,
  *   the Caddyfile's tailnet site uses it and `configPatch` carries it, so the site
  *   and `caddyTailnetHost` move in the same transaction. Absent, config decides.
- * @returns {{ target, caddyfile: {path,content}|null, plists: Array<{path,content}>, configPatch: object, launchctl: Array<string[]>, healthUrl: string, rollbackHint: string, bindNote: string|null, gateNote: string|null }}
+ * @param {string} [ctx.platform] - Defaults to `process.platform`; injectable for
+ *   tests (#2933). On Linux, `plists` holds systemd unit files instead of launchd
+ *   plists (`lib/linux-systemd.js`'s generators) and `launchctl` holds `systemctl
+ *   --user` steps instead of `launchctl` ones — same field names, so the executor
+ *   and the tailnet-rollback reload stay platform-agnostic; every step this
+ *   function builds decides its own `{cmd, args}` up front.
+ * @returns {{ target, caddyfile: {path,content}|null, plists: Array<{path,content}>, configPatch: object,
+ *   launchctl: Array<{cmd: string, args: string[], optional: boolean, kind: ('ttyd'|'caddy'|'server'|'system')}>,
+ *   healthUrl: string, rollbackHint: string, bindNote: string|null, gateNote: string|null }}
  *   `gateNote` is set on a move to caddy mode: whether the written Caddyfile
  *   carries `basic_auth`, and the gate state that decided it.
  *   `bindNote` is set on a move to direct mode: what the saved
  *   `bindAllInterfaces` will do there, which caddy mode had hidden (#1055).
+ *   Each `launchctl` step's `optional` is true when its failure is tolerated
+ *   (the macOS `unload`/Linux `stop` of a job that may never have been
+ *   running) and false when it must succeed; `kind` is how a caller (the
+ *   tailnet rollback) finds "the caddy step" or "the server step" without
+ *   caring which platform built the plan.
  */
 function planCutover(target, ctx) {
   const { config, env, upstreamPort } = ctx;
+  const platform = ctx.platform || process.platform;
+  const isLinux = platform === 'linux';
   const ttydPlistPath = path.join(env.launchAgentsDir, `${TTYD_LABEL}.plist`);
   const caddyPlistPath = path.join(env.launchAgentsDir, `${CADDY_LABEL}.plist`);
+  const ttydServicePath = isLinux ? linuxSystemd.unitFilePath(env.home, linuxSystemd.TTYD_SERVICE_NAME) : ttydPlistPath;
+  const caddyServicePath = isLinux ? linuxSystemd.unitFilePath(env.home, linuxSystemd.CADDY_SERVICE_NAME) : caddyPlistPath;
   const serverTarget = `gui/${env.uid}/${SERVER_LABEL}`;
+  const serverStep = { ...serverRestartCommand(serverTarget, platform), optional: false, kind: 'server' };
 
   if (target === 'caddy') {
     const httpsPort = config.caddyHttpsPort || 8443;
@@ -193,43 +232,74 @@ function planCutover(target, ctx) {
       // the name.
       lanHost: ctx.lanHost
     });
-    const ttydPlist = fillTemplate(ctx.ttydTemplate, {
-      TTYD_PATH: env.ttydPath, HOME: env.home,
-      // #500: the attach script lives outside the repo (non-TCC); main() syncs
-      // the copy before applying the plan.
-      TTYD_ATTACH: ttydAttach.attachScriptPath(env.baseDir),
-      LAUNCHD_PATH: env.launchdPath,
-      TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ctx.socketPath,
-      // Ignored by ttyd when the interface is a unix socket (verified: no TCP
-      // listener is opened), but the template slot must still be filled or the
-      // literal placeholder would reach argv.
-      TTYD_PORT: String(config.ttydPort || 3100),
-      // #397 bug 2: tell the inline launcher which socket to unlink before bind.
-      TTYD_SOCKET: ctx.socketPath
-    });
-    const caddyPlist = fillTemplate(ctx.caddyTemplate, {
-      CADDY_PATH: env.caddyPath, CADDYFILE: ctx.caddyfilePath,
-      HOME: env.home, LAUNCHD_PATH: env.launchdPath
-    });
+    let ttydService;
+    let caddyService;
+    if (isLinux) {
+      ttydService = linuxSystemd.generateTtydUnitFile({
+        ttydPath: env.ttydPath,
+        // #500: the attach script lives outside the repo (non-TCC); main() syncs
+        // the copy before applying the plan.
+        attachScriptPath: ttydAttach.attachScriptPath(env.baseDir),
+        bindKey: '--interface', bindVal: ctx.socketPath,
+        port: config.ttydPort || 3100,
+        // #397 bug 2: tell the inline self-heal which socket to unlink before bind.
+        socketPath: ctx.socketPath
+      });
+      const ttydViolations = linuxSystemd.verifyTtydUnitFileContract(ttydService);
+      if (ttydViolations.length > 0) {
+        throw new Error(`generated ttyd unit file fails its own contract: ${ttydViolations.join('; ')}`);
+      }
+      caddyService = linuxSystemd.generateCaddyUnitFile({
+        caddyPath: env.caddyPath, caddyfilePath: ctx.caddyfilePath, homeDir: env.home
+      });
+      const caddyViolations = linuxSystemd.verifyCaddyUnitFileContract(caddyService);
+      if (caddyViolations.length > 0) {
+        throw new Error(`generated caddy unit file fails its own contract: ${caddyViolations.join('; ')}`);
+      }
+    } else {
+      ttydService = fillTemplate(ctx.ttydTemplate, {
+        TTYD_PATH: env.ttydPath, HOME: env.home,
+        TTYD_ATTACH: ttydAttach.attachScriptPath(env.baseDir),
+        LAUNCHD_PATH: env.launchdPath,
+        TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ctx.socketPath,
+        // Ignored by ttyd when the interface is a unix socket (verified: no TCP
+        // listener is opened), but the template slot must still be filled or the
+        // literal placeholder would reach argv.
+        TTYD_PORT: String(config.ttydPort || 3100),
+        TTYD_SOCKET: ctx.socketPath
+      });
+      caddyService = fillTemplate(ctx.caddyTemplate, {
+        CADDY_PATH: env.caddyPath, CADDYFILE: ctx.caddyfilePath,
+        HOME: env.home, LAUNCHD_PATH: env.launchdPath
+      });
+    }
     return {
       target,
       caddyfile: { path: ctx.caddyfilePath, content: caddyfile },
       plists: [
-        { path: ttydPlistPath, content: ttydPlist },
-        { path: caddyPlistPath, content: caddyPlist }
+        { path: ttydServicePath, content: ttydService },
+        { path: caddyServicePath, content: caddyService }
       ],
       configPatch: ctx.tailnetHost !== undefined
         ? { ingressMode: 'caddy', caddyTailnetHost: ctx.tailnetHost }
         : { ingressMode: 'caddy' },
       // Reload ttyd onto the socket, bring Caddy up, restart the server so it
-      // re-binds localhost plain-HTTP. unload-before-load is idempotent.
-      launchctl: [
-        ['unload', ttydPlistPath],
-        ['load', ttydPlistPath],
-        ['unload', caddyPlistPath],
-        ['load', caddyPlistPath],
-        ['kickstart', '-k', serverTarget]
-      ],
+      // re-binds localhost plain-HTTP. unload-before-load is idempotent; a
+      // Linux unit's content never changes without a daemon-reload picking it up.
+      launchctl: isLinux
+        ? [
+            { cmd: 'systemctl', args: ['--user', 'daemon-reload'], optional: false, kind: 'system' },
+            { cmd: 'systemctl', args: ['--user', 'restart', linuxSystemd.TTYD_SERVICE_NAME], optional: false, kind: 'ttyd' },
+            { cmd: 'systemctl', args: ['--user', 'restart', linuxSystemd.CADDY_SERVICE_NAME], optional: false, kind: 'caddy' },
+            serverStep
+          ]
+        : [
+            { cmd: 'launchctl', args: ['unload', ttydServicePath], optional: true, kind: 'ttyd' },
+            { cmd: 'launchctl', args: ['load', ttydServicePath], optional: false, kind: 'ttyd' },
+            { cmd: 'launchctl', args: ['unload', caddyServicePath], optional: true, kind: 'caddy' },
+            { cmd: 'launchctl', args: ['load', caddyServicePath], optional: false, kind: 'caddy' },
+            serverStep
+          ],
       healthUrl: `https://localhost:${httpsPort}/api/health`,
       rollbackHint: 'node scripts/ingress-cutover.js --to direct',
       bindNote: null,
@@ -248,28 +318,51 @@ function planCutover(target, ctx) {
   // about reaching the DASHBOARD remotely, and nothing addresses ttyd directly
   // since TC proxies to it. See lib/ttyd-bind.js#desiredBind.
   const ttydBindAddress = '127.0.0.1';
-  const ttydPlist = fillTemplate(ctx.ttydTemplate, {
-    TTYD_PATH: env.ttydPath, HOME: env.home,
-    // #500: attach script installed outside the repo (non-TCC).
-    TTYD_ATTACH: ttydAttach.attachScriptPath(env.baseDir),
-    LAUNCHD_PATH: env.launchdPath,
-    TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ttydBindAddress,
-    TTYD_PORT: String(config.ttydPort || 3100),
-    // Direct mode binds TCP — no socket to unlink; leave TTYD_SOCKET empty.
-    TTYD_SOCKET: ''
-  });
+  let ttydService;
+  if (isLinux) {
+    ttydService = linuxSystemd.generateTtydUnitFile({
+      ttydPath: env.ttydPath,
+      // #500: attach script installed outside the repo (non-TCC).
+      attachScriptPath: ttydAttach.attachScriptPath(env.baseDir),
+      bindKey: '--interface', bindVal: ttydBindAddress,
+      port: config.ttydPort || 3100,
+      // Direct mode binds TCP — no socket to unlink; leave socketPath empty.
+      socketPath: ''
+    });
+    const violations = linuxSystemd.verifyTtydUnitFileContract(ttydService);
+    if (violations.length > 0) {
+      throw new Error(`generated ttyd unit file fails its own contract: ${violations.join('; ')}`);
+    }
+  } else {
+    ttydService = fillTemplate(ctx.ttydTemplate, {
+      TTYD_PATH: env.ttydPath, HOME: env.home,
+      TTYD_ATTACH: ttydAttach.attachScriptPath(env.baseDir),
+      LAUNCHD_PATH: env.launchdPath,
+      TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ttydBindAddress,
+      TTYD_PORT: String(config.ttydPort || 3100),
+      // Direct mode binds TCP — no socket to unlink; leave TTYD_SOCKET empty.
+      TTYD_SOCKET: ''
+    });
+  }
   const protocol = (config.httpsEnabled && config.httpsCertPath && config.httpsKeyPath) ? 'https' : 'http';
   return {
     target,
     caddyfile: null,
-    plists: [{ path: ttydPlistPath, content: ttydPlist }],
+    plists: [{ path: ttydServicePath, content: ttydService }],
     configPatch: { ingressMode: 'direct' },
-    launchctl: [
-      ['unload', caddyPlistPath],
-      ['unload', ttydPlistPath],
-      ['load', ttydPlistPath],
-      ['kickstart', '-k', serverTarget]
-    ],
+    launchctl: isLinux
+      ? [
+          { cmd: 'systemctl', args: ['--user', 'daemon-reload'], optional: false, kind: 'system' },
+          { cmd: 'systemctl', args: ['--user', 'stop', linuxSystemd.CADDY_SERVICE_NAME], optional: true, kind: 'caddy' },
+          { cmd: 'systemctl', args: ['--user', 'restart', linuxSystemd.TTYD_SERVICE_NAME], optional: false, kind: 'ttyd' },
+          serverStep
+        ]
+      : [
+          { cmd: 'launchctl', args: ['unload', caddyServicePath], optional: true, kind: 'caddy' },
+          { cmd: 'launchctl', args: ['unload', ttydServicePath], optional: true, kind: 'ttyd' },
+          { cmd: 'launchctl', args: ['load', ttydServicePath], optional: false, kind: 'ttyd' },
+          serverStep
+        ],
     healthUrl: `${protocol}://localhost:${upstreamPort}/api/health`,
     rollbackHint: 'node scripts/ingress-cutover.js --to caddy',
     bindNote: describeDirectBind(config, ctx.gateState),
@@ -553,6 +646,204 @@ function describeTtydRuntime(selected) {
 function which(bin) {
   try { return execFileSync('which', [bin], { encoding: 'utf8' }).trim(); }
   catch { return null; }
+}
+
+/**
+ * Write `plan.plists`, patch+save `config`, then run `plan.launchctl`'s
+ * reload sequence — the one span main() needed to roll ALL THREE back out
+ * on a failed REQUIRED Linux step (#2933 round 3, PRR-B R-Gate R2).
+ * Extracted and exported so this gets an EXECUTED test rather than only the
+ * CUTOVER_SRC source-pinning the rest of main() relies on (see that note
+ * above) — this is the one span the finding specifically named.
+ *
+ * A required step failing is NOT symmetric across platforms. macOS keeps
+ * its long-standing behaviour unchanged: log a WARNING and report success
+ * anyway, because the plist write already happened and the job is still
+ * live even if this particular `launchctl` call failed — the next boot
+ * retries the reload. Linux's systemd steps have no such safety net the way
+ * this script applies them (no separate "job stays installed, retry
+ * later"), so a required `systemctl` failure instead rolls the plists,
+ * Caddyfile, and config all the way back to what they were before this
+ * call, and reports failure.
+ *
+ * @param {object} o
+ * @param {object} o.plan - From planCutover.
+ * @param {object} o.config - Mutated in place on success (`plan.configPatch`
+ *   applied and saved); restored in place, key by key, on a rolled-back
+ *   failure.
+ * @param {(Buffer|null)} o.priorCaddyfile - The Caddyfile's bytes before
+ *   this run (step 1, main()'s own `priorCaddyfile`); null when none
+ *   existed. Used only when `plan.caddyfile` is non-null.
+ * @param {object} [o.deps] - Seams for tests: `fs`, `execFile`
+ *   (execFileSync for launchctl/systemctl), `configStore` (the store's
+ *   config API), `isActive` (unit name -> boolean, defaults to
+ *   `systemctl --user is-active`; round 5, Integrator R-Gate R4).
+ * @returns {{ok: true} | {ok: false, error: string, restored: string, rollbackErrors: string[]}}
+ *   `restored` is a semicolon-joined note per on-disk thing rolled back.
+ *   `rollbackErrors` names any LIVE-service reconciliation that itself
+ *   failed — empty means every service is back where it was before this
+ *   run, non-empty means one may still be running (or stopped) wrong, and
+ *   the caller must say so rather than claim "ingress untouched".
+ */
+function applyPlanAndReload({ plan, config, priorCaddyfile, deps = {} }) {
+  const fsImpl = deps.fs || fs;
+  const execFile = deps.execFile || execFileSync;
+  const configStore = deps.configStore || store.config;
+  const isActive = deps.isActive || ((unit) => {
+    try {
+      execFileSync('systemctl', ['--user', 'is-active', unit], { stdio: ['ignore', 'pipe', 'ignore'] });
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+  const priorPlists = plan.plists.map((f) => {
+    const existed = fsImpl.existsSync(f.path);
+    return { path: f.path, existed, content: existed ? fsImpl.readFileSync(f.path) : null };
+  });
+  const priorConfigKeys = Object.keys(config);
+  const priorConfigSnapshot = { ...config };
+
+  // Snapshot each real service unit's ACTUAL liveness before touching
+  // anything (round 5, Integrator R-Gate R4) — this is a fact about the
+  // running daemon, not about whether its file exists. A unit's file can
+  // exist while it sits stopped (an operator disabled it by hand, or this
+  // very script's own `stop` step from a prior, unrelated run), so a
+  // reconciliation keyed on file existence can restart something that was
+  // correctly, deliberately down.
+  const serviceUnits = [...new Set(
+    plan.launchctl.filter((s) => s.cmd === 'systemctl' && s.kind !== 'system').map((s) => s.args[s.args.length - 1])
+  )];
+  const priorLiveState = {};
+  for (const unit of serviceUnits) priorLiveState[unit] = isActive(unit);
+
+  for (const f of plan.plists) fsImpl.writeFileSync(f.path, f.content);
+  Object.assign(config, plan.configPatch);
+  configStore.save(config);
+
+  /**
+   * Put the Caddyfile, every unit/plist file, and config back on disk.
+   * @returns {{summary: string, errors: string[]}} `summary` is a
+   *   semicolon-joined note per thing (always, success or failure);
+   *   `errors` (round 6, PRR-B R-Gate R5) holds just the failures — a
+   *   restore that could not actually write a file is itself a reason
+   *   main() must not claim "ingress untouched", same as a live-service
+   *   reconciliation failure, and round 5 never surfaced it as one.
+   */
+  const restorePriorState = () => {
+    const notes = [];
+    const errors = [];
+    const fail = (msg) => { notes.push(msg); errors.push(msg); };
+    if (plan.caddyfile) {
+      try {
+        if (priorCaddyfile === null) fsImpl.unlinkSync(plan.caddyfile.path);
+        else fsImpl.writeFileSync(plan.caddyfile.path, priorCaddyfile, { mode: 0o600 });
+        notes.push('Caddyfile restored');
+      } catch (err) {
+        fail(`Caddyfile COULD NOT be restored (${err.message})`);
+      }
+    }
+    for (const p of priorPlists) {
+      try {
+        if (p.existed) fsImpl.writeFileSync(p.path, p.content);
+        else fsImpl.unlinkSync(p.path);
+        notes.push(`${p.path} restored`);
+      } catch (err) {
+        fail(`${p.path} COULD NOT be restored (${err.message})`);
+      }
+    }
+    try {
+      for (const key of Object.keys(plan.configPatch)) {
+        if (priorConfigKeys.includes(key)) config[key] = priorConfigSnapshot[key];
+        else delete config[key];
+      }
+      configStore.save(config);
+      notes.push('config restored');
+    } catch (err) {
+      fail(`config COULD NOT be restored (${err.message})`);
+    }
+    return { summary: notes.join('; '), errors };
+  };
+
+  /**
+   * Put every Linux service unit this run attempted back to its TRUE
+   * pre-apply liveness (round 5/6, Integrator R-Gate R4/R5). Restoring the
+   * FILES above is not restoring the LIVE state, in either direction:
+   * - A step that threw can still have changed live state before it did —
+   *   `systemctl restart` is stop-then-start, so a restart whose start half
+   *   fails leaves the unit stopped; an OPTIONAL step (e.g. `stop`) can
+   *   likewise stop the real process and still exit non-zero for an
+   *   unrelated reason (round 6: round 5 only tracked steps that returned
+   *   success, silently dropping an optional step that threw even though it
+   *   may have already acted).
+   * - A step that succeeded already changed that unit's live state, which
+   *   the file restore never undoes either.
+   * `daemon-reload` runs first, so systemd sees the just-restored unit
+   * files; then every ATTEMPTED unit — success or throw, optional or
+   * required, most-recently-attempted first, each at most once — is set
+   * back to whatever `priorLiveState` says it actually was: `restart` if it
+   * was active before this run, `stop` if it was not. Never inferred from
+   * the step's own verb, its outcome, or file existence, any of which can
+   * disagree with the unit's real state.
+   * @param {string[]} touchedUnits - Every real service unit a step
+   *   attempted, in the order those attempts happened (one entry per
+   *   attempt, success or throw).
+   * @returns {string[]} One message per reconciling command that itself
+   *   failed; empty means every touched unit is back where it started.
+   */
+  const reconcileLiveState = (touchedUnits) => {
+    const seen = new Set();
+    const units = [];
+    for (const unit of touchedUnits.slice().reverse()) {
+      if (!seen.has(unit)) { seen.add(unit); units.push(unit); }
+    }
+    if (units.length === 0) return [];
+    const errors = [];
+    try {
+      execFile('systemctl', ['--user', 'daemon-reload'], { stdio: ['ignore', 'ignore', 'pipe'] });
+    } catch (err) {
+      errors.push(`daemon-reload failed: ${err.message}`);
+    }
+    for (const unit of units) {
+      const verb = priorLiveState[unit] ? 'restart' : 'stop';
+      try {
+        execFile('systemctl', ['--user', verb, unit], { stdio: ['ignore', 'ignore', 'pipe'] });
+      } catch (err) {
+        errors.push(`systemctl --user ${verb} ${unit} failed: ${err.message}`);
+      }
+    }
+    return errors;
+  };
+
+  // The platform-appropriate reload sequence: launchctl/plist steps on
+  // macOS, systemctl --user/systemd-unit steps on Linux — planCutover
+  // already resolved which, per step. A step marked `optional` may
+  // legitimately fail (e.g. macOS's `unload`/Linux's `stop` of a job that
+  // was never loaded) — tolerate those, but still record the unit as
+  // touched (round 6): "failed" and "had no live effect" are not the same
+  // fact, and only the live-state snapshot above can tell them apart.
+  const touchedUnits = [];
+  for (const step of plan.launchctl) {
+    const unit = step.cmd === 'systemctl' && step.kind !== 'system' ? step.args[step.args.length - 1] : null;
+    try {
+      execFile(step.cmd, step.args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      if (unit) touchedUnits.push(unit);
+    } catch (err) {
+      if (unit) touchedUnits.push(unit);
+      if (step.optional) continue;
+      if (step.cmd === 'systemctl') {
+        const { summary: restored, errors: restoreErrors } = restorePriorState();
+        const liveErrors = reconcileLiveState(touchedUnits);
+        return {
+          ok: false, error: `${step.cmd} ${step.args.join(' ')} failed: ${err.message}`,
+          restored, rollbackErrors: [...restoreErrors, ...liveErrors]
+        };
+      }
+      process.stderr.write(`WARNING: ${step.cmd} ${step.args.join(' ')} failed: ${err.message}\n`);
+    }
+  }
+  return { ok: true };
 }
 
 function main() {
@@ -945,7 +1236,9 @@ function main() {
     }
     for (const f of plan.plists) process.stdout.write(`  write plist:     ${f.path}\n`);
     process.stdout.write(`  config patch:    ${JSON.stringify(plan.configPatch)}\n`);
-    for (const c of plan.launchctl) process.stdout.write(`  launchctl ${c.join(' ')}\n`);
+    for (const step of plan.launchctl) {
+      process.stdout.write(`  ${step.cmd} ${step.args.join(' ')}\n`);
+    }
     process.stdout.write(`  ttyd runtime:    ${describeTtydRuntime(ttydRuntime)}\n`);
     process.stdout.write(`  health check:    ${plan.healthUrl}\n`);
     process.stdout.write(`  rollback:        ${plan.rollbackHint}\n`);
@@ -1052,22 +1345,28 @@ function main() {
     try { fs.rmSync(ctx.socketPath, { force: true }); } catch { /* best-effort; bind will surface real failures */ }
   }
 
-  // 3. Write plists.
-  for (const f of plan.plists) fs.writeFileSync(f.path, f.content);
-
-  // 4. Apply the config patch (the restarted server reads the new ingressMode).
-  Object.assign(config, plan.configPatch);
-  store.config.save(config);
-
-  // 5. launchctl sequence. unload may legitimately fail (job not loaded) — tolerate.
-  for (const [sub, ...rest] of plan.launchctl) {
-    try {
-      execFileSync('launchctl', [sub, ...rest], { stdio: ['ignore', 'ignore', 'pipe'] });
-    } catch (err) {
-      if (sub !== 'unload') {
-        process.stderr.write(`WARNING: launchctl ${sub} ${rest.join(' ')} failed: ${err.message}\n`);
-      }
-    }
+  // 3-5: write the plists/units, patch config, and run the reload sequence —
+  // rolling all three back out on a Linux systemctl required-step failure.
+  // Extracted (#2933 round 3, PRR-B R-Gate R2) so it is directly testable:
+  // everything else in main() is CLI-only closures only source-pinning can
+  // reach (see the CUTOVER_SRC note above), but this finding specifically
+  // asked for an EXECUTED test of the rollback.
+  const applied = applyPlanAndReload({ plan, config, priorCaddyfile });
+  if (!applied.ok) {
+    // "ingress untouched" is a claim about LIVE service state, not just the
+    // files applyPlanAndReload put back — round 4 (PRR-B R-Gate R3) found an
+    // earlier, already-succeeded step in the same sequence can leave a
+    // service running (or stopped) on content the file restore alone never
+    // tells it about. Only say "untouched" when every compensating command
+    // also succeeded; otherwise name exactly what may still be live wrong.
+    const rollbackErrors = applied.rollbackErrors || [];
+    const outcome = rollbackErrors.length === 0
+      ? `ingress untouched; ${applied.restored}`
+      : `files restored (${applied.restored}), but the LIVE service state may still be WRONG — `
+        + `compensating command(s) failed: ${rollbackErrors.join('; ')}`;
+    process.stderr.write(`ERROR: ${applied.error} — rolling back (${outcome}):\n`);
+    finish(CUTOVER_CODES.FAILED, applied.error, { rollbackErrors });
+    return;
   }
 
   process.stdout.write(`\nIngress switched to '${target}'.\n  Health: ${plan.healthUrl}\n  Rollback: ${plan.rollbackHint}\n`);
@@ -1134,7 +1433,9 @@ function main() {
  * @param {string|null} args.tailnetBackup - Where those bytes were copied.
  * @param {Function} args.finish - The run's `finish(code, error, extra)`.
  * @param {object} [args.deps] - Seams for tests: `verify` (verifyTailnetApply),
- *   `execFile` (execFileSync for launchctl) and `configStore` (the store's config API).
+ *   `execFile` (execFileSync for launchctl/systemctl), and `configStore` (the
+ *   store's config API). No platform seam is needed here (#2933): `plan`
+ *   already carries platform-resolved `{cmd, args}` steps from planCutover.
  * @returns {Promise<void>}
  */
 async function runTailnetVerification({
@@ -1158,8 +1459,8 @@ async function runTailnetVerification({
   const cause = tailnetCutover.describeChecks(applied.last);
   process.stderr.write(`ERROR: the moved tailnet site is not healthy (${cause}) — rolling back\n`);
 
-  const caddyPlist = plan.plists.find((f) => /caddy/i.test(path.basename(f.path)));
-  const serverKick = plan.launchctl.find(([sub]) => sub === 'kickstart');
+  const caddySteps = plan.launchctl.filter((s) => s.kind === 'caddy');
+  const serverStep = plan.launchctl.find((s) => s.kind === 'server');
   const rollback = await tailnetCutover.rollbackTailnetApply({
     caddyfilePath: plan.caddyfile.path,
     priorCaddyfile,
@@ -1179,13 +1480,18 @@ async function runTailnetVerification({
       readTailnetHost: () => configStore.load().caddyTailnetHost || null,
       reload: () => {
         // Caddy re-reads the restored file; the server re-reads the restored
-        // config. Unload may fail harmlessly (job not loaded); load and the
-        // kickstart may not.
-        if (caddyPlist) {
-          try { execFile('launchctl', ['unload', caddyPlist.path], { stdio: ['ignore', 'ignore', 'pipe'] }); } catch { /* not loaded */ }
-          execFile('launchctl', ['load', caddyPlist.path], { stdio: ['ignore', 'ignore', 'pipe'] });
+        // config. An optional step (macOS's `unload`) may fail harmlessly
+        // (job not loaded); every other step must succeed. Both the macOS
+        // unload+load pair and Linux's single systemctl restart are tagged
+        // `kind: 'caddy'` by planCutover, so this needs no platform check.
+        for (const step of caddySteps) {
+          if (step.optional) {
+            try { execFile(step.cmd, step.args, { stdio: ['ignore', 'ignore', 'pipe'] }); } catch { /* not loaded */ }
+          } else {
+            execFile(step.cmd, step.args, { stdio: ['ignore', 'ignore', 'pipe'] });
+          }
         }
-        if (serverKick) execFile('launchctl', serverKick, { stdio: ['ignore', 'ignore', 'pipe'] });
+        if (serverStep) execFile(serverStep.cmd, serverStep.args, { stdio: ['ignore', 'ignore', 'pipe'] });
       },
       verifyLocal: () => verify([localCheck])
     }
@@ -1273,4 +1579,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { DRY_RUN_WOULD_REFUSE_EXIT, describeGateChange, planCutover, runTailnetVerification, describeTtydRuntime, describeDirectBind, describeGeneratedGate, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES };
+module.exports = { DRY_RUN_WOULD_REFUSE_EXIT, describeGateChange, planCutover, runTailnetVerification, describeTtydRuntime, describeDirectBind, describeGeneratedGate, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES, serverRestartCommand, applyPlanAndReload };
