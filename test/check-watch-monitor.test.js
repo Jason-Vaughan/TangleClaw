@@ -1137,6 +1137,10 @@ describe('check-watch monitor: reconciliation by idempotency key (#2347)', () =>
     assert.equal(hub.sent.length, 1);
     assert.equal(hub.sent[0].idempotencyKey, `check-watch:wake:${id}`);
     assert.equal(hub.sent[0].message.split('\n').at(-1), `ref: check-watch:wake:${id}`);
+    // Byte-identical to the LITERAL text persisted at the first attempt
+    // (#2347 R2) -- the resend replayed that string verbatim, never
+    // re-rendered one from the watch's own state.
+    assert.equal(hub.sent[0].message, watches.sentText(id, 'wake'));
   });
 
   it('the message arrived and the server stopped before the bind: reconciliation finds the Hub\'s receipt and resends nothing, even across the restart', async () => {
@@ -1189,6 +1193,24 @@ describe('check-watch monitor: reconciliation by idempotency key (#2347)', () =>
     assert.equal(exchangeOf(id, 'wake').terminal_code, 'idempotency-key-conflict');
     for (let i = 0; i < 5; i++) assert.deepEqual(await pass(MINUTE), counts());
     assert.equal(hub.sent.length, 0, 'never retried after a conflict refusal');
+  });
+
+  it('a late-committing original under the SAME key races the reconciliation resend but never conflicts: both carry the IDENTICAL persisted text (#2347 R2)', async () => {
+    const { a, id } = await firstSend('lost');
+    const text = watches.sentText(id, 'wake');
+    // Simulate the race the IDEMPOTENCY_KEY_CONFLICT test above forces
+    // deliberately NOT to match: the ORIGINAL attempt actually lands on the
+    // Hub moments after our own receipt lookup read 404 for it, so the Hub
+    // already holds a record under this key by the time the resend's own
+    // generic reused-key check runs -- but carrying the LITERAL text
+    // `_recordSent` persisted at the first attempt (#2347 R2), never a
+    // re-rendered approximation of it, so it can only ever be this exact
+    // string, never a different one.
+    hub.held.push({ id: 'hub-late-original', from: MONITOR_WS, to: a.workspaceId, message: text, idempotencyKey: `check-watch:wake:${id}` });
+    hub.receiptBehave = (key) => (key === `check-watch:wake:${id}` ? 'not-found' : undefined);
+    assert.equal((await pass(monitor.RECONCILE_AFTER_MS)).reconciled, 1);
+    assert.notEqual(exchangeOf(id, 'wake').state, 'undeliverable', 'never refused as a conflict');
+    assert.equal(exchangeOf(id, 'wake').terminal_code, null);
   });
 
   it('a pass does not wait for ever on a Hub that never answers, and the reads go on', async () => {
@@ -1256,6 +1278,8 @@ describe('check-watch monitor: reconciliation by idempotency key (#2347)', () =>
     // watch has not expired yet.
     assert.deepEqual(await pass(HOUR), counts({ open: 1, read: 1, sent: 1 }));
     assert.equal(exchangeOf(id, 'alarm').state, 'send_unknown');
+    const firstText = watches.sentText(id, 'alarm');
+    assert.ok(firstText && !/expired/.test(firstText), 'persisted at the first attempt, before expiry');
 
     // Disconnect through expiry: reconciliation's own two-minute gate never
     // closes while disconnected, so this exchange sits "awaiting
@@ -1278,6 +1302,9 @@ describe('check-watch monitor: reconciliation by idempotency key (#2347)', () =>
     // attempt actually transmitted, under the SAME idempotency key.
     assert.ok(!/expired/.test(resent), 'still reads as not-yet-expired, matching the original attempt\'s own moment');
     assert.match(resent, /still read until/);
+    // Not merely similar: the LITERAL string persisted at the first
+    // attempt, replayed verbatim (#2347 R2).
+    assert.equal(resent, firstText);
   });
 });
 

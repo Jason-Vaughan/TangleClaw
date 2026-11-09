@@ -431,6 +431,16 @@ describe('check-watch-store: recording the wake and the alarm (#2323)', () => {
     assert.deepEqual(history(id), ['registered', 'resolved', 'woke']);
   });
 
+  it('a sent message\'s exact text is persisted and read back verbatim (#2347 R2) -- null before it is sent, for the OTHER message kind, and for an unknown watch', () => {
+    const id = registered();
+    watches.recordRead(id, concluded());
+    assert.equal(watches.sentText(id, 'wake'), null);
+    watches.recordSent(id, 'wake', { ...SENT, text: 'Check watch: exactly this text, verbatim.' });
+    assert.equal(watches.sentText(id, 'wake'), 'Check watch: exactly this text, verbatim.');
+    assert.equal(watches.sentText(id, 'alarm'), null, 'a different message kind of the same watch has no text of its own');
+    assert.equal(watches.sentText('cw_missing', 'wake'), null, 'an unknown watch has no text, never a crash');
+  });
+
   it('a second record of the same wake is refused and hands back the first, so a retry finds what was sent', () => {
     const id = registered();
     watches.recordRead(id, concluded());
