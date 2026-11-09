@@ -342,6 +342,56 @@ describe('ensureMasterSession', () => {
       'the launch command is PATH-floor wrapped like a project pane\'s (#1140)');
   });
 
+  describe('TANGLECLAW_MASTER_API_TOKEN / TANGLECLAW_AUTHORITY_GENERATION (#2950, Ruling A506-W3D-ARCH-R1)', () => {
+    // Every test here writes `config.master`; reset it afterward so a later,
+    // unrelated describe block in this file does not inherit a stray
+    // `accessLevel: 'write'` left over from one of these.
+    afterEach(() => {
+      const config = store.config.load();
+      delete config.master;
+      store.config.save(config);
+    });
+
+    it('carries both only when accessLevel, apiTokenEnabled, apiToken AND a real audited generation are all present', () => {
+      const config = store.config.load();
+      // All three audit fields together, the real shape
+      // `applyOperatorAuthorityChange` produces — `getAuthorityState`'s own
+      // "all three or none" rule means a bare `lifecycleGeneration` alone
+      // (without `lifecycleUpdatedAt`/`lifecycleUpdatedBy`) reads as no
+      // recorded transition at all, generation 0.
+      config.master = {
+        accessLevel: 'write', apiTokenEnabled: true, apiToken: 'tc_master_realvalue',
+        lifecycleGeneration: 4, lifecycleUpdatedAt: '2026-11-09T00:00:00.000Z', lifecycleUpdatedBy: 'operator'
+      };
+      store.config.save(config);
+
+      const t = fakeTmux({ alive: false });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: availableEngines });
+      assert.equal(r.created, true);
+      const env = t.calls[0].opts.env;
+      assert.equal(env.TANGLECLAW_MASTER_API_TOKEN, 'tc_master_realvalue');
+      assert.equal(env.TANGLECLAW_AUTHORITY_GENERATION, '4');
+    });
+
+    it('omits both when the token gate is disabled or no token is minted', () => {
+      const disabled = store.config.load();
+      disabled.master = { accessLevel: 'write', apiTokenEnabled: false };
+      store.config.save(disabled);
+      const t1 = fakeTmux({ alive: false });
+      master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t1, enginesLib: availableEngines });
+      assert.equal(t1.calls[0].opts.env.TANGLECLAW_MASTER_API_TOKEN, undefined);
+      assert.equal(t1.calls[0].opts.env.TANGLECLAW_AUTHORITY_GENERATION, undefined);
+
+      const home2 = path.join(tmpDir, `master-home-notoken-${Date.now()}`);
+      const enabledNoToken = store.config.load();
+      enabledNoToken.master = { accessLevel: 'write', apiTokenEnabled: true };
+      store.config.save(enabledNoToken);
+      const t2 = fakeTmux({ alive: false });
+      master.ensureMasterSession({ refreshFleet: NO_FLEET, home: home2, tmuxLib: t2, enginesLib: availableEngines });
+      assert.equal(t2.calls[0].opts.env.TANGLECLAW_MASTER_API_TOKEN, undefined);
+    });
+  });
+
   it('the Master\'s pane gets the engine\'s private temp root, like a project pane (#1904)', () => {
     const engineTempRoot = require('../lib/engine-temp-root');
     const original = engineTempRoot.resolve;
