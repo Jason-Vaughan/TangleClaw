@@ -529,6 +529,84 @@ describe('medusa-drift (#2956)', () => {
       assert.match(out.error, /No such process/);
     });
 
+    it('verification requires a positive gitSha match, not just the absence of a detected mismatch: a pre-#70 Hub (gitSha unknown) after a restart reports restart-unverified, never a false ok:true (#2956 R-Gate R3)', async () => {
+      drift._internal.pathExists = () => true;
+      const { impl, calls } = gitStub({ commitsBehind: 1, dirty: false });
+      drift._internal.execFileAsync = async (cmd, args) => {
+        if (cmd !== 'git') calls.push('restart-marker');
+        return impl(cmd, args);
+      };
+      // Reachable throughout, but never reports a gitSha at all -- a Hub
+      // predating Jason-Vaughan/Medusa#70. hubRestartNeeded's plain
+      // comparison reads false for this (can't detect a mismatch it can't
+      // see), which must NOT be read as "verified current".
+      drift._internal.fetchImpl = async () => ({ ok: true, json: async () => ({}) });
+      drift._internal.restartHubCommand = () => ({ cmd: 'true', args: [] });
+      const out = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
+      assert.equal(out.ok, false);
+      assert.equal(out.code, 'restart-unverified');
+      assert.equal(out.fastForwarded, true);
+      assert.equal(out.restarted, true);
+      assert.equal(out.snapshot.hub.reachable, true);
+      assert.equal(out.snapshot.hub.gitSha, null);
+      assert.match(out.error, /does not report its own gitSha/);
+    });
+
+    it('a restart left unverified by one applyDriftAction call is retried by the next, instead of a silent no-op success (#2956 R-Gate R3, persistent _restartPending)', async () => {
+      drift._internal.pathExists = () => true;
+      const { impl, calls } = gitStub({ commitsBehind: 0 });
+      let restartCount = 0;
+      drift._internal.execFileAsync = async (cmd, args) => {
+        if (cmd !== 'git') { restartCount += 1; calls.push('restart-marker'); }
+        return impl(cmd, args);
+      };
+      // Click 1 sees a REAL mismatch (ordinary trigger). Once a restart has
+      // run once, the Hub stops reporting any gitSha at all -- simulating
+      // a Hub that came back up but can no longer be compared, which a
+      // fresh, isolated check could misread as "nothing to do".
+      drift._internal.fetchImpl = async () => {
+        if (restartCount > 0) return { ok: true, json: async () => ({}) };
+        return { ok: true, json: async () => ({ gitSha: UPSTREAM_SHA }) };
+      };
+      drift._internal.restartHubCommand = () => ({ cmd: 'true', args: [] });
+
+      const first = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
+      assert.equal(first.ok, false);
+      assert.equal(first.code, 'restart-unverified');
+      assert.equal(first.fastForwarded, false);
+      assert.equal(restartCount, 1);
+
+      const second = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
+      assert.equal(second.restarted, true, 'retried, not a silent no-op success, even though a fresh plain comparison alone reads nothing to do (gitSha now unknown)');
+      assert.equal(restartCount, 2);
+    });
+
+    it('_restartPending clears once a fresh check proves the Hub reachable and reporting the checkout\'s own current gitSha', async () => {
+      drift._internal.pathExists = () => true;
+      const { impl, calls } = gitStub({ commitsBehind: 0 });
+      let restartCount = 0;
+      drift._internal.execFileAsync = async (cmd, args) => {
+        if (cmd !== 'git') { restartCount += 1; calls.push('restart-marker'); }
+        return impl(cmd, args);
+      };
+      // Click 1: mismatch, restart "succeeds" but the mock never updates
+      // its own reported sha (same unverified shape as the dedicated
+      // restart-unverified test above).
+      drift._internal.fetchImpl = async () => ({ ok: true, json: async () => ({ gitSha: UPSTREAM_SHA }) });
+      drift._internal.restartHubCommand = () => ({ cmd: 'true', args: [] });
+      const first = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
+      assert.equal(first.code, 'restart-unverified');
+
+      // Between clicks, the Hub actually catches up on its own (e.g. an
+      // operator-triggered restart outside this action).
+      drift._internal.fetchImpl = async () => ({ ok: true, json: async () => ({ gitSha: LOCAL_SHA }) });
+      const cleared = await drift.getDrift({ force: true, checkoutPath: '/fake/Medusa-PM' });
+      assert.equal(cleared.hubRestartNeeded, false, '_restartPending must not keep flagging once genuinely confirmed current');
+
+      const second = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
+      assert.equal(second.restarted, false, 'nothing pending any more, so this click is a true no-op');
+    });
+
     it('exposes its retry bound and delay as named constants, not a magic number buried in the loop', () => {
       assert.equal(typeof drift.HUB_RESTART_VERIFY_ATTEMPTS, 'number');
       assert.ok(drift.HUB_RESTART_VERIFY_ATTEMPTS >= 1);
