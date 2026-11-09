@@ -3,6 +3,12 @@
 // #1424 — the Linux systemd service layer. `systemctl`/`loginctl` are faked
 // through `_internal.exec`; nothing here reaches a real init system (physical
 // Linux verification is #1564, deferred under Ruling A185).
+//
+// #2931 (Car 5730-W1-B) added the three companion units (ttyd, caddy,
+// bridge-helper) below. The CLI's own tests moved out to their own file,
+// test/linux-systemd-install.test.js, which this issue's file envelope also
+// names — one test file per source file, matching e.g.
+// test/cache-bump-guard.test.js/scripts/cache-bump-guard.js.
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -11,7 +17,6 @@ const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const systemd = require('../lib/linux-systemd');
-const cli = require('../scripts/linux-systemd-install.js');
 
 setLevel('error');
 
@@ -73,6 +78,149 @@ describe('verifyUnitFileContract', () => {
   });
 });
 
+describe('generateTtydUnitFile / verifyTtydUnitFileContract (#2931)', () => {
+  const goodDirect = systemd.generateTtydUnitFile({
+    ttydPath: '/home/jason/.tangleclaw/bin/ttyd',
+    attachScriptPath: '/home/jason/.tangleclaw/deploy/ttyd-attach.sh'
+  });
+
+  it('defaults to direct mode: loopback, port 3100, an empty socket to unlink', () => {
+    assert.match(goodDirect, /^Environment=TTYD_SOCKET=$/m);
+    assert.match(goodDirect, /--interface' '127\.0\.0\.1'/);
+    assert.match(goodDirect, /--port' '3100'/);
+    assert.match(goodDirect, /--writable/);
+    assert.match(goodDirect, /--client-option' 'scrollback=10000'/);
+    assert.match(goodDirect, /ttyd-attach\.sh/);
+  });
+
+  it('caddy mode: binds the Unix socket and carries it in TTYD_SOCKET for the self-heal unlink', () => {
+    const text = systemd.generateTtydUnitFile({
+      ttydPath: '/x/ttyd', attachScriptPath: '/x/attach.sh',
+      bindVal: '/x/run/ttyd.sock', socketPath: '/x/run/ttyd.sock'
+    });
+    assert.match(text, /^Environment=TTYD_SOCKET=\/x\/run\/ttyd\.sock$/m);
+    assert.match(text, /--interface' '\/x\/run\/ttyd\.sock'/);
+    assert.match(text, /rm -f "\$TTYD_SOCKET"/);
+  });
+
+  it('is pure: identical options produce byte-identical output', () => {
+    const opts = { ttydPath: '/x/ttyd', attachScriptPath: '/x/attach.sh' };
+    assert.equal(systemd.generateTtydUnitFile(opts), systemd.generateTtydUnitFile(opts));
+  });
+
+  it('refuses a relative ttydPath or attachScriptPath', () => {
+    assert.throws(() => systemd.generateTtydUnitFile({ ttydPath: 'ttyd', attachScriptPath: '/x/attach.sh' }), systemd.LinuxSystemdError);
+    assert.throws(() => systemd.generateTtydUnitFile({ ttydPath: '/x/ttyd', attachScriptPath: 'attach.sh' }), systemd.LinuxSystemdError);
+  });
+
+  it('refuses an out-of-range port', () => {
+    assert.throws(() => systemd.generateTtydUnitFile({ ttydPath: '/x/ttyd', attachScriptPath: '/x/attach.sh', port: 0 }), systemd.LinuxSystemdError);
+    assert.throws(() => systemd.generateTtydUnitFile({ ttydPath: '/x/ttyd', attachScriptPath: '/x/attach.sh', port: 65536 }), systemd.LinuxSystemdError);
+  });
+
+  it('is satisfied by a correctly generated unit, in either mode', () => {
+    assert.deepEqual(systemd.verifyTtydUnitFileContract(goodDirect), []);
+    const caddyMode = systemd.generateTtydUnitFile({ ttydPath: '/x/ttyd', attachScriptPath: '/x/attach.sh', bindVal: '/x/run/ttyd.sock', socketPath: '/x/run/ttyd.sock' });
+    assert.deepEqual(systemd.verifyTtydUnitFileContract(caddyMode), []);
+  });
+
+  it('flags a missing --writable', () => {
+    const bad = goodDirect.replace("'--writable' ", '');
+    assert.ok(systemd.verifyTtydUnitFileContract(bad).some((v) => v.includes('--writable')));
+  });
+
+  it('flags a missing --interface (AUTH-1: an unqualified bind is every interface)', () => {
+    const bad = goodDirect.replace("'--interface' '127.0.0.1' ", '');
+    assert.ok(systemd.verifyTtydUnitFileContract(bad).some((v) => v.includes('--interface')));
+  });
+
+  it('flags --interface 0.0.0.0 — ttyd must never bind a public interface', () => {
+    const bad = systemd.generateTtydUnitFile({ ttydPath: '/x/ttyd', attachScriptPath: '/x/attach.sh', bindVal: '0.0.0.0' });
+    assert.ok(systemd.verifyTtydUnitFileContract(bad).some((v) => v.includes('0.0.0.0')));
+  });
+
+  it('flags a missing ExecStart entirely', () => {
+    const bad = goodDirect.split('\n').filter((l) => !l.startsWith('ExecStart=')).join('\n');
+    assert.ok(systemd.verifyTtydUnitFileContract(bad).some((v) => v.includes('ExecStart is missing')));
+  });
+});
+
+describe('generateCaddyUnitFile / verifyCaddyUnitFileContract (#2931)', () => {
+  const good = systemd.generateCaddyUnitFile({
+    caddyPath: '/usr/bin/caddy', caddyfilePath: '/home/jason/.tangleclaw/Caddyfile', homeDir: '/home/jason'
+  });
+
+  it('execs caddy run --config <file> --adapter caddyfile', () => {
+    assert.match(good, /^ExecStart=\/usr\/bin\/caddy run --config \/home\/jason\/\.tangleclaw\/Caddyfile --adapter caddyfile$/m);
+  });
+
+  it('sets XDG_DATA_HOME/XDG_CONFIG_HOME under <homeDir>/.tangleclaw/caddy, not the real XDG defaults', () => {
+    assert.match(good, /^Environment=XDG_DATA_HOME=\/home\/jason\/\.tangleclaw\/caddy\/data$/m);
+    assert.match(good, /^Environment=XDG_CONFIG_HOME=\/home\/jason\/\.tangleclaw\/caddy\/config$/m);
+  });
+
+  it('refuses a relative caddyPath, caddyfilePath, or homeDir', () => {
+    assert.throws(() => systemd.generateCaddyUnitFile({ caddyPath: 'caddy', caddyfilePath: '/x/Caddyfile', homeDir: '/home/jason' }), systemd.LinuxSystemdError);
+    assert.throws(() => systemd.generateCaddyUnitFile({ caddyPath: '/x/caddy', caddyfilePath: 'Caddyfile', homeDir: '/home/jason' }), systemd.LinuxSystemdError);
+    assert.throws(() => systemd.generateCaddyUnitFile({ caddyPath: '/x/caddy', caddyfilePath: '/x/Caddyfile', homeDir: 'home' }), systemd.LinuxSystemdError);
+  });
+
+  it('is satisfied by a correctly generated unit', () => {
+    assert.deepEqual(systemd.verifyCaddyUnitFileContract(good), []);
+  });
+
+  it('flags ExecStart missing run/--config/--adapter caddyfile', () => {
+    const bad = good.replace('--adapter caddyfile', '--adapter nginx');
+    assert.ok(systemd.verifyCaddyUnitFileContract(bad).some((v) => v.includes('--adapter caddyfile')));
+  });
+
+  it('flags a missing XDG_DATA_HOME or XDG_CONFIG_HOME', () => {
+    const noData = good.split('\n').filter((l) => !l.startsWith('Environment=XDG_DATA_HOME=')).join('\n');
+    assert.ok(systemd.verifyCaddyUnitFileContract(noData).some((v) => v.includes('XDG_DATA_HOME')));
+    const noConfig = good.split('\n').filter((l) => !l.startsWith('Environment=XDG_CONFIG_HOME=')).join('\n');
+    assert.ok(systemd.verifyCaddyUnitFileContract(noConfig).some((v) => v.includes('XDG_CONFIG_HOME')));
+  });
+
+  it('flags a missing ExecStart entirely', () => {
+    const bad = good.split('\n').filter((l) => !l.startsWith('ExecStart=')).join('\n');
+    assert.ok(systemd.verifyCaddyUnitFileContract(bad).some((v) => v.includes('ExecStart is missing')));
+  });
+});
+
+describe('generateBridgeHelperUnitFile / verifyBridgeHelperUnitFileContract (#2931)', () => {
+  const good = systemd.generateBridgeHelperUnitFile({ repoDir: '/opt/tangleclaw' });
+
+  it('execs node bin/tc-bridge-helper run, with WorkingDirectory set, RestartSec defaulting to 30', () => {
+    assert.match(good, /^ExecStart=node \/opt\/tangleclaw\/bin\/tc-bridge-helper run$/m);
+    assert.match(good, /^WorkingDirectory=\/opt\/tangleclaw$/m);
+    assert.match(good, /^RestartSec=30$/m);
+  });
+
+  it('refuses a relative repoDir or an empty nodeBin', () => {
+    assert.throws(() => systemd.generateBridgeHelperUnitFile({ repoDir: 'opt/tangleclaw' }), systemd.LinuxSystemdError);
+    assert.throws(() => systemd.generateBridgeHelperUnitFile({ repoDir: '/opt/tangleclaw', nodeBin: '' }), systemd.LinuxSystemdError);
+  });
+
+  it('is satisfied by a correctly generated unit', () => {
+    assert.deepEqual(systemd.verifyBridgeHelperUnitFileContract(good), []);
+  });
+
+  it('flags ExecStart not running tc-bridge-helper run', () => {
+    const bad = good.replace('bin/tc-bridge-helper run', 'bin/other-thing run');
+    assert.ok(systemd.verifyBridgeHelperUnitFileContract(bad).some((v) => v.includes('tc-bridge-helper run')));
+  });
+
+  it('flags RestartSec below 30 — the systemd analogue of the launchd plist\'s ThrottleInterval=30', () => {
+    const bad = systemd.generateBridgeHelperUnitFile({ repoDir: '/opt/tangleclaw', restartSec: 10 });
+    assert.ok(systemd.verifyBridgeHelperUnitFileContract(bad).some((v) => v.includes('RestartSec')));
+  });
+
+  it('flags a missing ExecStart entirely', () => {
+    const bad = good.split('\n').filter((l) => !l.startsWith('ExecStart=')).join('\n');
+    assert.ok(systemd.verifyBridgeHelperUnitFileContract(bad).some((v) => v.includes('ExecStart is missing')));
+  });
+});
+
 describe('parseSystemctlShow / verifyRestartButtonContract', () => {
   const GOOD_OUTPUT = 'LoadState=loaded\nKillMode=process\nNeedDaemonReload=no\nMainPID=4242\n';
 
@@ -110,6 +258,18 @@ describe('unitFilePath', () => {
 
   it('defaults to os.homedir()', () => {
     assert.equal(systemd.unitFilePath(), path.join(os.homedir(), '.config', 'systemd', 'user', 'tangleclaw.service'));
+  });
+
+  it('the three companion service names are fixed (#2931)', () => {
+    assert.equal(systemd.TTYD_SERVICE_NAME, 'tangleclaw-ttyd.service');
+    assert.equal(systemd.CADDY_SERVICE_NAME, 'tangleclaw-caddy.service');
+    assert.equal(systemd.BRIDGE_HELPER_SERVICE_NAME, 'tangleclaw-bridge-helper.service');
+  });
+
+  it('a second argument picks a companion\'s own file, not the server\'s (#2931)', () => {
+    assert.equal(systemd.unitFilePath('/home/jason', systemd.TTYD_SERVICE_NAME), '/home/jason/.config/systemd/user/tangleclaw-ttyd.service');
+    assert.equal(systemd.unitFilePath('/home/jason', systemd.CADDY_SERVICE_NAME), '/home/jason/.config/systemd/user/tangleclaw-caddy.service');
+    assert.equal(systemd.unitFilePath('/home/jason', systemd.BRIDGE_HELPER_SERVICE_NAME), '/home/jason/.config/systemd/user/tangleclaw-bridge-helper.service');
   });
 });
 
@@ -217,104 +377,115 @@ describe('install / uninstall / status', () => {
     assert.equal(result.available, false);
     assert.ok(result.reason);
   });
+
+  it('uninstall against a non-default serviceName removes THAT unit\'s own file, not tangleclaw.service\'s (#2931 regression — the file path never carried serviceName before this car)', async () => {
+    const serverFile = systemd.unitFilePath(tmpDir);
+    const ttydFile = systemd.unitFilePath(tmpDir, systemd.TTYD_SERVICE_NAME);
+    fs.mkdirSync(path.dirname(serverFile), { recursive: true });
+    fs.writeFileSync(serverFile, 'server placeholder');
+    fs.writeFileSync(ttydFile, 'ttyd placeholder');
+    systemd._internal.exec = async () => ({ exitCode: 0, stdout: '', stderr: '', error: null });
+    const result = await systemd.uninstall({ homeDir: tmpDir, serviceName: systemd.TTYD_SERVICE_NAME });
+    assert.equal(result.ok, true);
+    assert.equal(result.file, ttydFile);
+    assert.equal(fs.existsSync(ttydFile), false, 'the ttyd unit file must be the one removed');
+    assert.equal(fs.existsSync(serverFile), true, 'the server unit file must be left alone');
+  });
 });
 
-describe('scripts/linux-systemd-install.js CLI (#1424, PRR-A Round 1 on PR #2899)', () => {
+describe('installTtyd / installCaddy / installBridgeHelper (#2931)', () => {
   let original;
   let tmpDir;
-  let out;
-  let origWrite;
 
   beforeEach(() => {
     original = systemd._internal.exec;
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-systemd-cli-'));
-    out = [];
-    origWrite = process.stdout.write;
-    process.stdout.write = (chunk) => { out.push(chunk); return true; };
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-systemd-companions-'));
   });
 
   afterEach(() => {
     systemd._internal.exec = original;
-    process.stdout.write = origWrite;
     try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
   });
 
-  describe('parseArgs', () => {
-    it('accepts each subcommand with its defaults (repo root, process.execPath, no home-dir override)', () => {
-      const opts = cli.parseArgs(['verify']);
-      assert.equal(opts.command, 'verify');
-      assert.equal(opts.repoDir, cli.REPO_ROOT);
-      assert.equal(opts.nodeBin, process.execPath);
-      assert.equal(opts.homeDir, undefined);
+  it('installTtyd writes tangleclaw-ttyd.service and runs the same 4-step orchestration', async () => {
+    const calls = [];
+    systemd._internal.exec = async (file, args) => {
+      calls.push([file, ...args]);
+      return { exitCode: 0, stdout: '', stderr: '', error: null };
+    };
+    const result = await systemd.installTtyd({
+      ttydPath: '/x/ttyd', attachScriptPath: '/x/attach.sh', homeDir: tmpDir
     });
-
-    it('accepts --repo-dir, --node-bin and --home-dir overrides', () => {
-      const opts = cli.parseArgs(['install', '--repo-dir', '/opt/tc', '--node-bin', '/usr/bin/node', '--home-dir', '/home/tc']);
-      assert.equal(opts.repoDir, '/opt/tc');
-      assert.equal(opts.nodeBin, '/usr/bin/node');
-      assert.equal(opts.homeDir, '/home/tc');
-    });
-
-    it('refuses an unknown subcommand, an unrecognized flag, and a flag missing its value', () => {
-      assert.throws(() => cli.parseArgs(['nope']));
-      assert.throws(() => cli.parseArgs(['verify', '--nope', 'x']));
-      assert.throws(() => cli.parseArgs(['install', '--repo-dir']));
-    });
+    assert.equal(result.ok, true);
+    assert.equal(result.file, systemd.unitFilePath(tmpDir, systemd.TTYD_SERVICE_NAME));
+    assert.equal(fs.existsSync(result.file), true);
+    assert.deepEqual(calls, [
+      ['systemctl', '--user', 'daemon-reload'],
+      ['loginctl', 'enable-linger'],
+      ['systemctl', '--user', 'enable', 'tangleclaw-ttyd.service'],
+      ['systemctl', '--user', 'start', 'tangleclaw-ttyd.service']
+    ]);
   });
 
-  it('verify passes for a unit file that meets its own contract', async () => {
-    const code = await cli.main(['verify', '--repo-dir', '/opt/tangleclaw', '--node-bin', '/usr/bin/node']);
-    assert.equal(code, 0, out.join(''));
-    assert.match(out.join(''), /verify passed/);
+  it('installTtyd refuses before any exec call when the generated unit fails its own contract', async () => {
+    let execCalled = false;
+    systemd._internal.exec = async () => { execCalled = true; return { exitCode: 0, stdout: '', stderr: '', error: null }; };
+    await assert.rejects(
+      () => systemd.installTtyd({ ttydPath: '/x/ttyd', attachScriptPath: '/x/attach.sh', bindVal: '0.0.0.0', homeDir: tmpDir }),
+      systemd.LinuxSystemdError
+    );
+    assert.equal(execCalled, false);
   });
 
-  it('verify fails, with the reason on stderr, for a repoDir that is not absolute', async () => {
-    const stderrChunks = [];
-    const origErr = process.stderr.write;
-    process.stderr.write = (chunk) => { stderrChunks.push(chunk); return true; };
-    try {
-      const code = await cli.main(['verify', '--repo-dir', 'relative/path']);
-      assert.equal(code, 1);
-      assert.match(stderrChunks.join(''), /could not generate the unit file/);
-    } finally {
-      process.stderr.write = origErr;
-    }
-  });
-
-  it('install writes the unit file under --home-dir, never the real home directory', async () => {
+  it('installCaddy writes tangleclaw-caddy.service', async () => {
     systemd._internal.exec = async () => ({ exitCode: 0, stdout: '', stderr: '', error: null });
-    const code = await cli.main(['install', '--repo-dir', '/opt/tangleclaw', '--node-bin', '/usr/bin/node', '--home-dir', tmpDir]);
-    assert.equal(code, 0, out.join(''));
-    assert.equal(fs.existsSync(systemd.unitFilePath(tmpDir)), true);
+    const result = await systemd.installCaddy({
+      caddyPath: '/usr/bin/caddy', caddyfilePath: path.join(tmpDir, 'Caddyfile'), homeDir: tmpDir
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.file, systemd.unitFilePath(tmpDir, systemd.CADDY_SERVICE_NAME));
+    assert.equal(fs.existsSync(result.file), true);
+    assert.match(fs.readFileSync(result.file, 'utf8'), new RegExp(`XDG_DATA_HOME=${tmpDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
   });
 
-  it('uninstall against --home-dir is a no-op success when nothing was installed there', async () => {
-    systemd._internal.exec = async (f, args) => (args[1] === 'stop'
-      ? { exitCode: 5, stdout: '', stderr: 'Unit tangleclaw.service not loaded.', error: null }
-      : { exitCode: 0, stdout: '', stderr: '', error: null });
-    const code = await cli.main(['uninstall', '--home-dir', tmpDir]);
-    assert.equal(code, 0, out.join(''));
-    assert.match(out.join(''), /uninstall ok/);
+  it('installCaddy refuses before any exec call when the generated unit fails its own contract', async () => {
+    let execCalled = false;
+    systemd._internal.exec = async () => { execCalled = true; return { exitCode: 0, stdout: '', stderr: '', error: null }; };
+    await assert.rejects(
+      () => systemd.installCaddy({ caddyPath: 'caddy', caddyfilePath: path.join(tmpDir, 'Caddyfile'), homeDir: tmpDir }),
+      systemd.LinuxSystemdError
+    );
+    assert.equal(execCalled, false);
   });
 
-  it('status reports unavailable, with its reason, when systemctl is not installed', async () => {
-    systemd._internal.exec = async () => ({ exitCode: 1, stdout: '', stderr: '', error: null, errorCode: 'ENOENT', timedOut: false });
-    const code = await cli.main(['status']);
-    assert.equal(code, 1);
-    assert.match(out.join(''), /status unavailable/);
+  it('installBridgeHelper writes tangleclaw-bridge-helper.service', async () => {
+    systemd._internal.exec = async () => ({ exitCode: 0, stdout: '', stderr: '', error: null });
+    const result = await systemd.installBridgeHelper({ repoDir: '/opt/tangleclaw', homeDir: tmpDir });
+    assert.equal(result.ok, true);
+    assert.equal(result.file, systemd.unitFilePath(tmpDir, systemd.BRIDGE_HELPER_SERVICE_NAME));
+    assert.equal(fs.existsSync(result.file), true);
   });
 
-  it('exits 4 and prints to stderr, not stdout, for an unparseable argv', async () => {
-    const stderrChunks = [];
-    const origErr = process.stderr.write;
-    process.stderr.write = (chunk) => { stderrChunks.push(chunk); return true; };
-    try {
-      const code = await cli.main(['nope']);
-      assert.equal(code, 4);
-      assert.deepEqual(out, []);
-      assert.ok(stderrChunks.join('').includes('unknown subcommand'));
-    } finally {
-      process.stderr.write = origErr;
-    }
+  it('installBridgeHelper refuses before any exec call when the generated unit fails its own contract', async () => {
+    let execCalled = false;
+    systemd._internal.exec = async () => { execCalled = true; return { exitCode: 0, stdout: '', stderr: '', error: null }; };
+    await assert.rejects(
+      () => systemd.installBridgeHelper({ repoDir: '/opt/tangleclaw', restartSec: 5, homeDir: tmpDir }),
+      systemd.LinuxSystemdError
+    );
+    assert.equal(execCalled, false);
+  });
+
+  it('all three companions and the server install side by side without colliding', async () => {
+    systemd._internal.exec = async () => ({ exitCode: 0, stdout: '', stderr: '', error: null });
+    await systemd.install({ repoDir: '/opt/tangleclaw', homeDir: tmpDir });
+    await systemd.installTtyd({ ttydPath: '/x/ttyd', attachScriptPath: '/x/attach.sh', homeDir: tmpDir });
+    await systemd.installCaddy({ caddyPath: '/usr/bin/caddy', caddyfilePath: path.join(tmpDir, 'Caddyfile'), homeDir: tmpDir });
+    await systemd.installBridgeHelper({ repoDir: '/opt/tangleclaw', homeDir: tmpDir });
+    const dir = path.dirname(systemd.unitFilePath(tmpDir));
+    assert.deepEqual(
+      fs.readdirSync(dir).sort(),
+      ['tangleclaw-bridge-helper.service', 'tangleclaw-caddy.service', 'tangleclaw-ttyd.service', 'tangleclaw.service']
+    );
   });
 });
