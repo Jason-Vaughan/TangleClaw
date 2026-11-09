@@ -253,6 +253,28 @@ describe('#2188 engine-model-picker — effort axis', () => {
 });
 
 describe('#2188 engine-model-picker — lib/engines.js ENGINE_EFFORT attachment', () => {
+  // `engines.resolveProfile` reads `store.engines`, which is populated from a
+  // PER-BASEPATH copy of the bundled profiles (`lib/store.js`'s
+  // `_syncBundledEngines`), not read directly from `data/engines/*.json` —
+  // own `before`/`after` here, the same pattern `test/engines.test.js`'s own
+  // top-level describe uses, rather than trusting whatever ambient state an
+  // EARLIER file in the same `node --test` process happened to leave behind.
+  // Running this file alone (or via the testament pool's own "small" tier
+  // selection) never exercised that dependency; CI's full-suite run, where
+  // some other file's own basePath/init churn runs first, did (#2974 Round
+  // 2, CI run 42708349085: `effortSelectionState` read `none` instead of
+  // `ok` because `store.engines.get('codex'/'claude')` answered nothing).
+  let tmpDir;
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-engine-effort-attach-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
   it('attaches a usable effort block to claude and codex', () => {
     const claude = engines.resolveProfile('claude');
     assert.equal(models.effortSelectionState(claude).state, 'ok');
