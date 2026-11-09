@@ -1252,8 +1252,14 @@ describe('API endpoints', () => {
           // exact regression assertion that this save, not just the response,
           // carries the new generation to disk.
           const stored = store.config.load().master;
+          // #2950: a transition to `write` now also auto-enables and mints
+          // the lifecycle API token, in the same motion as the grant itself
+          // — asserted structurally (prefix, not the random value) rather
+          // than widening this test's "changes nothing else" claim to a lie.
+          assert.equal(stored.apiTokenEnabled, true);
+          assert.match(stored.apiToken, /^tc_master_/);
           assert.deepEqual(stored, {
-            ...before, accessLevel: 'write',
+            ...before, accessLevel: 'write', apiTokenEnabled: true, apiToken: stored.apiToken,
             lifecycleGeneration: 1, lifecycleUpdatedAt: stored.lifecycleUpdatedAt, lifecycleUpdatedBy: 'operator'
           });
           assert.match(stored.lifecycleUpdatedAt, /^\d{4}-\d{2}-\d{2}T/);
