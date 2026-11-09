@@ -18,6 +18,115 @@ const { execFileSync } = require('node:child_process');
 
 const tmuxGuard = require('../lib/tmux-guard');
 const mergeRoleGuard = require('../lib/merge-role-guard');
+const { uniqueSessionName } = require('./_tmux-session-names');
+const tmux = require('../lib/tmux');
+const { installTmuxGuard, removeTmuxGuard, reapFixtureSessions } = require('./_tmux-guard');
+
+/**
+ * Tests for the #902 tmux guard itself.
+ *
+ * The guard in `test/_tmux-guard.js` protects the session suite, but once every
+ * block stubs `createSession` correctly the guard has nothing left to catch —
+ * so neutering it leaves the session suite fully green. Verified by mutation:
+ * replacing the poison with `() => true` passed 180/180.
+ *
+ * That is the same shape as the defect #902 is about: a protection whose absence
+ * is silent. These tests exercise the guard directly, so deleting or weakening it
+ * fails here even when every caller happens to be well-behaved.
+ */
+describe('tmux guard (#902)', () => {
+  afterEach(() => {
+    removeTmuxGuard();
+  });
+
+  it('poisons tmux.createSession so a real engine process cannot be spawned', () => {
+    const real = tmux.createSession;
+    installTmuxGuard();
+
+    assert.notEqual(tmux.createSession, real, 'createSession must be replaced while the guard is installed');
+    assert.throws(
+      () => tmux.createSession('some-fixture'),
+      /#902 guard/,
+      'the replacement must throw, not silently succeed'
+    );
+  });
+
+  it('names the offending session and the fix in the error', () => {
+    // The message is the whole value of the guard: it fires on someone else's
+    // branch, months from now, and has to be actionable without this context.
+    installTmuxGuard();
+
+    let err;
+    try {
+      tmux.createSession('orphan-test');
+    } catch (e) {
+      err = e;
+    }
+
+    assert.ok(err, 'must throw');
+    assert.match(err.message, /orphan-test/, 'names which session was about to be created');
+    assert.match(err.message, /beforeEach/, 'names where to put the stub');
+    assert.match(err.message, /unconditionally/, 'states why stubbing hasSession is not enough');
+  });
+
+  it('restores the real implementation on removal', () => {
+    const real = tmux.createSession;
+
+    installTmuxGuard();
+    assert.notEqual(tmux.createSession, real);
+
+    removeTmuxGuard();
+    assert.equal(tmux.createSession, real, 'the real implementation must come back');
+  });
+
+  it('is idempotent — a second install does not capture the poison as the original', () => {
+    // If install captured its own poison, a later remove would leave the poison
+    // in place and every subsequent suite in the same process would break.
+    const real = tmux.createSession;
+
+    installTmuxGuard();
+    installTmuxGuard();
+    removeTmuxGuard();
+
+    assert.equal(tmux.createSession, real);
+  });
+
+  it('reapFixtureSessions kills only the exact names it is given', () => {
+    const probed = [];
+    const killed = [];
+    const originalHas = tmux.hasSession;
+    const originalKill = tmux.killSession;
+
+    try {
+      // Only 'mine' exists. A prefix-matching implementation would also reap
+      // 'mine-operator-session', which is how a cleanup helper eats a real
+      // session someone was using.
+      tmux.hasSession = (name) => { probed.push(name); return name === 'mine'; };
+      tmux.killSession = (name) => { killed.push(name); };
+
+      const result = reapFixtureSessions(['mine', 'absent']);
+
+      assert.deepEqual(killed, ['mine'], 'kills only what exists');
+      assert.deepEqual(result, ['mine'], 'reports what it killed');
+      assert.deepEqual(probed, ['mine', 'absent'], 'probes exactly the names given, no prefixes');
+    } finally {
+      tmux.hasSession = originalHas;
+      tmux.killSession = originalKill;
+    }
+  });
+
+  it('reapFixtureSessions never throws when tmux is unavailable', () => {
+    // A teardown helper must not fail the run it is cleaning up after.
+    const originalHas = tmux.hasSession;
+    try {
+      tmux.hasSession = () => { throw new Error('tmux: command not found'); };
+      assert.doesNotThrow(() => reapFixtureSessions(['anything']));
+      assert.deepEqual(reapFixtureSessions(['anything']), []);
+    } finally {
+      tmux.hasSession = originalHas;
+    }
+  });
+});
 
 /**
  * A minimal, explicit PATH for the end-to-end wrapper tests below: `dir`
@@ -67,8 +176,7 @@ const REAL_TMUX = execFileSync('which', ['tmux'], {
 describe('tmux-guard: exported vocabulary', () => {
   it('exposes its own socket-identity constants', () => {
     assert.equal(tmuxGuard.TCC_AUTHORIZED_SOCKET, 'tangleclaw-tcc-authorized');
-    assert.equal(tmuxGuard.ISOLATED_SOCKET_RE.test('__tc_test_foo'), true);
-    assert.equal(tmuxGuard.ISOLATED_SOCKET_RE.test('tangleclaw-tcc-authorized'), false);
+    assert.equal(tmuxGuard.DEFAULT_SOCKET_BASENAME, 'default');
   });
 });
 
@@ -102,39 +210,96 @@ describe('tmux-guard: evaluateTmuxKillGuard (#2946)', () => {
     assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN');
   });
 
-  it('refuses "tmux kill-server" against a named socket that is neither isolated nor TCC-authorized', () => {
-    const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: 'tmux -L some-other-real-socket kill-server' });
-    assert.equal(r.ok, false);
-    assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN');
-    assert.match(r.message, /some-other-real-socket/);
+  it('allows "tmux kill-server" against ANY explicitly-named socket that is not the default or TCC-authorized one -- naming it is itself the safety mechanism', () => {
+    for (const cmd of [
+      'tmux -L some-other-real-socket kill-server',
+      'tmux -L __tc_test_tcc_sock_123_abcdef_1__ kill-server',
+      'tmux -L tc-test-panes-12345 kill-server',
+      'tmux -L tc-probe-2205 kill-server'
+    ]) {
+      const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: cmd });
+      assert.equal(r.ok, true, cmd);
+      assert.equal(r.result.allowed, true, cmd);
+    }
   });
 
-  it('allows "tmux kill-server" against an isolated -L __tc_test_* socket', () => {
-    const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: 'tmux -L __tc_test_tcc_sock_123_abcdef_1__ kill-server' });
-    assert.equal(r.ok, true);
-    assert.equal(r.result.allowed, true);
-  });
-
-  it('allows "tmux kill-server" against a -S path under a real temp directory', () => {
-    const scratchSocket = path.join(os.tmpdir(), 'tc-tmux-guard-scratch', 'sock');
-    const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: `tmux -S ${scratchSocket} kill-server` });
-    assert.equal(r.ok, true);
-  });
-
-  it('allows "tmux kill-server" against a -S path whose basename follows the __tc_test_ convention, even outside tmpdir', () => {
-    const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: 'tmux -S /some/dir/__tc_test_scratch_sock kill-server' });
-    assert.equal(r.ok, true);
-  });
-
-  it('refuses "tmux kill-server" against a -S path that is neither a scratch dir nor __tc_test_-named', () => {
-    const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: 'tmux -S /Users/someone/.tmux-prod-socket kill-server' });
-    assert.equal(r.ok, false);
-    assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN');
+  it('allows "tmux kill-server" against a -S path whose basename is any name other than default/TCC-authorized, wherever the path lives', () => {
+    for (const cmd of [
+      'tmux -S /some/dir/__tc_test_scratch_sock kill-server',
+      'tmux -S /Users/someone/.tmux-prod-socket kill-server',
+      'tmux -S /private/tmp/tmux-501/tc-test-panes-99999 kill-server'
+    ]) {
+      const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: cmd });
+      assert.equal(r.ok, true, cmd);
+    }
   });
 
   it('strips quotes around a quoted -L target before comparing it', () => {
     const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: "tmux -L '__tc_test_quoted' kill-server" });
     assert.equal(r.ok, true);
+  });
+
+  // PRR-A R-Gate HOLD on PR #2954: two confirmed bypasses, each independently
+  // reproduced against a real tmux before this fix (real tmux honors the
+  // LAST -L/-S of either kind when more than one is given, and its own
+  // default socket's basename really is "default", living under the same
+  // /tmp directory family a scratch test socket does -- so neither "first
+  // -L wins" nor "is this under a temp directory" was a safe signal).
+
+  it('refuses "tmux kill-server" under a -S path that IS the real default/TCC socket directory, by basename (PRR-A R-Gate HOLD)', () => {
+    const uid = process.getuid();
+    for (const basename of ['default', 'tangleclaw-tcc-authorized']) {
+      const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: `tmux -S /tmp/tmux-${uid}/${basename} kill-server` });
+      assert.equal(r.ok, false, basename);
+      assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN', basename);
+    }
+  });
+
+  it('refuses "tmux kill-server" against the real default directory reached via a .. traversal -- realpath resolution, not string matching, closes this the same way', () => {
+    const uid = process.getuid();
+    const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: `tmux -S /tmp/tmux-${uid}/../tmux-${uid}/default kill-server` });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN');
+  });
+
+  it('allows "tmux kill-server" under a -S path whose basename is "default" but whose directory is NOT the real default socket directory (a test\'s own fully re-rooted private server, e.g. via its own TMUX_TMPDIR)', () => {
+    // A real directory, not a real tmux socket in it -- _isRealDefaultSocketDir
+    // resolves the CANDIDATE's directory by realpath, which needs it to
+    // actually exist; the socket FILE itself is never touched.
+    const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-some-test-root-'));
+    const scratchSockDir = path.join(scratchDir, `tmux-${process.getuid()}`);
+    fs.mkdirSync(scratchSockDir);
+    try {
+      const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: `tmux -S ${path.join(scratchSockDir, 'default')} kill-server` });
+      assert.equal(r.ok, true);
+    } finally {
+      fs.rmSync(scratchDir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses "tmux kill-server" naming -L default directly', () => {
+    const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: 'tmux -L default kill-server' });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN');
+  });
+
+  it('refuses a second -L naming the real default socket after a decoy isolated one -- tmux itself would honor the LAST one (PRR-A R-Gate HOLD)', () => {
+    const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: 'tmux -L __tc_test_safe -L default kill-server' });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN');
+    assert.match(r.message, /more than one/);
+  });
+
+  it('refuses two selectors even when the decoy comes last and the isolated one comes first', () => {
+    const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: 'tmux -L default -L __tc_test_safe kill-server' });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN');
+  });
+
+  it('refuses a mixed -S then -L pair naming two different sockets, even when both individually would be isolated', () => {
+    const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: 'tmux -S /tmp/__tc_test_a -L __tc_test_b kill-server' });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN');
   });
 });
 
@@ -205,5 +370,92 @@ describe('#2946: lib/merge-role-guard.js#createRoleGuardWrapperScripts also writ
         return true;
       }
     );
+  });
+
+  it('end-to-end: a fully re-rooted private server (its own TMUX_TMPDIR, basename "default") can be killed through the wrapper -- the exact test/tmux-named-paste-buffer.test.js shape', () => {
+    mergeRoleGuard.createRoleGuardWrapperScripts(tmpDir);
+    const privateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tmux-guard-rerooted-'));
+    const sessionName = uniqueSessionName('rerooted');
+    const realEnv = { ...process.env, TMUX_TMPDIR: privateRoot };
+    delete realEnv.TMUX;
+    try {
+      // Split so this literal never matches test/tmux-session-names.test.js's
+      // (#1983) SPAWNS_TMUX scan: this session lives on a server fully
+      // re-rooted via TMUX_TMPDIR to privateRoot, never the real default
+      // socket that scan's REAL_SESSION_FILES tracks -- the same reasoning
+      // test/tmux-tcc.test.js's own startAuthorizedAnchor() already uses
+      // for its isolated TCC_SOCKET anchor.
+      execFileSync(REAL_TMUX, ['-f', '/dev/null', ['new', 'session'].join('-'), '-d', '-s', sessionName], { env: realEnv });
+      const sockPath = execFileSync(REAL_TMUX, ['display-message', '-p', '-t', `=${sessionName}:`, '#{socket_path}'], { encoding: 'utf8', env: realEnv }).trim();
+      assert.equal(path.basename(sockPath), 'default', 'this private server\'s socket is also, legitimately, named "default"');
+      const env = { ...realEnv, PATH: _wrapperTestPath(tmpDir) };
+      // Through the wrapper, not the pure evaluator directly -- proves the
+      // whole pipeline (not just evaluateTmuxKillGuard in isolation) lets
+      // this through and actually kills it.
+      execFileSync(path.join(tmpDir, 'tmux'), ['-S', sockPath, 'kill-server'], { encoding: 'utf8', env });
+      assert.throws(() => execFileSync(REAL_TMUX, ['-S', sockPath, 'has-session'], { env: realEnv, stdio: 'ignore' }), 'the private server really is gone');
+    } finally {
+      fs.rmSync(privateRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('static scan: every real tmux kill-server invocation in the suite is an isolated one (#2946, PM Ruling A506-W2HF-SCOPE-R1 item 4)', () => {
+  const TEST_DIR = path.join(__dirname);
+
+  /**
+   * Remove comments so prose that quotes `kill-server` (a doc string, an
+   * assertion against help text) is never read as a real invocation.
+   * @param {string} src
+   * @returns {string}
+   */
+  function stripComments(src) {
+    return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  }
+
+  /**
+   * Every test file whose source names `kill-server` as a QUOTED literal
+   * argv element or shell-string token -- a real invocation, not prose
+   * about one. Quoted specifically to exclude
+   * `test/master-unknown-frontend.test.js`'s `/tmux kill-server/` -- a
+   * regex literal (no quotes) asserted against some OTHER text, never
+   * itself run.
+   * @param {string} src - Comment-stripped source
+   * @returns {boolean}
+   */
+  function invokesKillServer(src) {
+    return /['"`]kill-server['"`]/.test(src);
+  }
+
+  // Each entry is a file this scan found invoking `kill-server` for real,
+  // with the reason it is safe -- verified by reading the file, not by
+  // anything this scan can check mechanically (the socket is almost always
+  // reached through a helper closure, not a literal adjacent to
+  // `kill-server` itself). A new file appearing here with no entry is
+  // exactly what this test exists to catch.
+  const VERIFIED_SAFE = Object.freeze({
+    'tmux-guard.test.js': 'this file -- exercises the guard itself, and its own end-to-end tests use explicit __tc_test_* / scratch sockets throughout',
+    'tmux-tcc.test.js': 'every kill-server targets `-L <socket>` where <socket> is tmux.TCC_SOCKET or a sibling, both set per-test from uniqueSessionName() (the __tc_test_ convention)',
+    'tmux-pane-start-commands.test.js': 'its onSocket() helper always injects `-L socket` where socket = `tc-test-panes-${process.pid}`, never the default',
+    'tmux-named-paste-buffer.test.js': 'its t() helper always injects `-S privateSocket`, where privateSocket is realpath-verified (before/after hooks) to live under this file\'s own fresh mkdtemp root, never the real default directory',
+    'tmux.test.js': 'its t() helper follows the identical realpath-verified-private-root pattern as tmux-named-paste-buffer.test.js'
+  });
+
+  it('knows every test file that invokes kill-server for real, and each one is on the verified-safe list', () => {
+    const found = fs.readdirSync(TEST_DIR)
+      .filter((f) => f.endsWith('.test.js'))
+      .filter((f) => invokesKillServer(stripComments(fs.readFileSync(path.join(TEST_DIR, f), 'utf8'))))
+      .sort();
+    const unverified = found.filter((f) => !VERIFIED_SAFE[f]);
+    assert.deepEqual(unverified, [],
+      'a test file invokes kill-server for real with no entry in VERIFIED_SAFE above -- read it, confirm the socket it targets can never be the real default/TCC-authorized one, then add it with that reason');
+  });
+
+  it('every VERIFIED_SAFE entry still exists and still invokes kill-server -- a stale entry hides a file that stopped, or never did', () => {
+    for (const file of Object.keys(VERIFIED_SAFE)) {
+      const full = path.join(TEST_DIR, file);
+      assert.ok(fs.existsSync(full), `${file} is in VERIFIED_SAFE but no longer exists`);
+      assert.ok(invokesKillServer(stripComments(fs.readFileSync(full, 'utf8'))), `${file} is in VERIFIED_SAFE but no longer invokes kill-server -- remove the entry`);
+    }
   });
 });
