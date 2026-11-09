@@ -722,15 +722,26 @@ function applyPlanAndReload({ plan, config, priorCaddyfile, deps = {} }) {
   Object.assign(config, plan.configPatch);
   configStore.save(config);
 
+  /**
+   * Put the Caddyfile, every unit/plist file, and config back on disk.
+   * @returns {{summary: string, errors: string[]}} `summary` is a
+   *   semicolon-joined note per thing (always, success or failure);
+   *   `errors` (round 6, PRR-B R-Gate R5) holds just the failures — a
+   *   restore that could not actually write a file is itself a reason
+   *   main() must not claim "ingress untouched", same as a live-service
+   *   reconciliation failure, and round 5 never surfaced it as one.
+   */
   const restorePriorState = () => {
     const notes = [];
+    const errors = [];
+    const fail = (msg) => { notes.push(msg); errors.push(msg); };
     if (plan.caddyfile) {
       try {
         if (priorCaddyfile === null) fsImpl.unlinkSync(plan.caddyfile.path);
         else fsImpl.writeFileSync(plan.caddyfile.path, priorCaddyfile, { mode: 0o600 });
         notes.push('Caddyfile restored');
       } catch (err) {
-        notes.push(`Caddyfile COULD NOT be restored (${err.message})`);
+        fail(`Caddyfile COULD NOT be restored (${err.message})`);
       }
     }
     for (const p of priorPlists) {
@@ -739,7 +750,7 @@ function applyPlanAndReload({ plan, config, priorCaddyfile, deps = {} }) {
         else fsImpl.unlinkSync(p.path);
         notes.push(`${p.path} restored`);
       } catch (err) {
-        notes.push(`${p.path} COULD NOT be restored (${err.message})`);
+        fail(`${p.path} COULD NOT be restored (${err.message})`);
       }
     }
     try {
@@ -750,38 +761,43 @@ function applyPlanAndReload({ plan, config, priorCaddyfile, deps = {} }) {
       configStore.save(config);
       notes.push('config restored');
     } catch (err) {
-      notes.push(`config COULD NOT be restored (${err.message})`);
+      fail(`config COULD NOT be restored (${err.message})`);
     }
-    return notes.join('; ');
+    return { summary: notes.join('; '), errors };
   };
 
   /**
-   * Put every Linux service unit this run touched back to its TRUE
-   * pre-apply liveness (round 5, Integrator R-Gate R4). Restoring the
+   * Put every Linux service unit this run attempted back to its TRUE
+   * pre-apply liveness (round 5/6, Integrator R-Gate R4/R5). Restoring the
    * FILES above is not restoring the LIVE state, in either direction:
-   * - A completed step (one that threw no error) already changed that
-   *   unit's live state, which the file restore never undoes.
-   * - The FAILED step itself can ALSO have changed live state even though
-   *   it threw: `systemctl restart` is stop-then-start, so a restart whose
-   *   start half fails still leaves the unit stopped, not merely
-   *   "untouched" — round 4 skipped reconciling it for exactly that wrong
-   *   assumption.
+   * - A step that threw can still have changed live state before it did —
+   *   `systemctl restart` is stop-then-start, so a restart whose start half
+   *   fails leaves the unit stopped; an OPTIONAL step (e.g. `stop`) can
+   *   likewise stop the real process and still exit non-zero for an
+   *   unrelated reason (round 6: round 5 only tracked steps that returned
+   *   success, silently dropping an optional step that threw even though it
+   *   may have already acted).
+   * - A step that succeeded already changed that unit's live state, which
+   *   the file restore never undoes either.
    * `daemon-reload` runs first, so systemd sees the just-restored unit
-   * files; then every touched unit (the failed one, then every completed
-   * one, in reverse order) is set back to whatever `priorLiveState` says it
-   * actually was — `restart` if it was active before this run, `stop` if
-   * it was not. Never inferred from the step's own verb or from file
-   * existence, which can both disagree with the unit's real state.
-   * @param {(string|null)} failedUnit - The unit the failing step named, or
-   *   null when the failing step was `kind: 'system'` (daemon-reload has no
-   *   unit of its own to reconcile).
-   * @param {string[]} completedUnits - Units whose step already succeeded,
-   *   in the order they ran.
+   * files; then every ATTEMPTED unit — success or throw, optional or
+   * required, most-recently-attempted first, each at most once — is set
+   * back to whatever `priorLiveState` says it actually was: `restart` if it
+   * was active before this run, `stop` if it was not. Never inferred from
+   * the step's own verb, its outcome, or file existence, any of which can
+   * disagree with the unit's real state.
+   * @param {string[]} touchedUnits - Every real service unit a step
+   *   attempted, in the order those attempts happened (one entry per
+   *   attempt, success or throw).
    * @returns {string[]} One message per reconciling command that itself
    *   failed; empty means every touched unit is back where it started.
    */
-  const reconcileLiveState = (failedUnit, completedUnits) => {
-    const units = [...(failedUnit ? [failedUnit] : []), ...completedUnits.slice().reverse()];
+  const reconcileLiveState = (touchedUnits) => {
+    const seen = new Set();
+    const units = [];
+    for (const unit of touchedUnits.slice().reverse()) {
+      if (!seen.has(unit)) { seen.add(unit); units.push(unit); }
+    }
     if (units.length === 0) return [];
     const errors = [];
     try {
@@ -804,19 +820,25 @@ function applyPlanAndReload({ plan, config, priorCaddyfile, deps = {} }) {
   // macOS, systemctl --user/systemd-unit steps on Linux — planCutover
   // already resolved which, per step. A step marked `optional` may
   // legitimately fail (e.g. macOS's `unload`/Linux's `stop` of a job that
-  // was never loaded) — tolerate those.
-  const completedUnits = [];
+  // was never loaded) — tolerate those, but still record the unit as
+  // touched (round 6): "failed" and "had no live effect" are not the same
+  // fact, and only the live-state snapshot above can tell them apart.
+  const touchedUnits = [];
   for (const step of plan.launchctl) {
+    const unit = step.cmd === 'systemctl' && step.kind !== 'system' ? step.args[step.args.length - 1] : null;
     try {
       execFile(step.cmd, step.args, { stdio: ['ignore', 'ignore', 'pipe'] });
-      if (step.cmd === 'systemctl' && step.kind !== 'system') completedUnits.push(step.args[step.args.length - 1]);
+      if (unit) touchedUnits.push(unit);
     } catch (err) {
+      if (unit) touchedUnits.push(unit);
       if (step.optional) continue;
       if (step.cmd === 'systemctl') {
-        const restored = restorePriorState();
-        const failedUnit = step.kind !== 'system' ? step.args[step.args.length - 1] : null;
-        const rollbackErrors = reconcileLiveState(failedUnit, completedUnits);
-        return { ok: false, error: `${step.cmd} ${step.args.join(' ')} failed: ${err.message}`, restored, rollbackErrors };
+        const { summary: restored, errors: restoreErrors } = restorePriorState();
+        const liveErrors = reconcileLiveState(touchedUnits);
+        return {
+          ok: false, error: `${step.cmd} ${step.args.join(' ')} failed: ${err.message}`,
+          restored, rollbackErrors: [...restoreErrors, ...liveErrors]
+        };
       }
       process.stderr.write(`WARNING: ${step.cmd} ${step.args.join(' ')} failed: ${err.message}\n`);
     }

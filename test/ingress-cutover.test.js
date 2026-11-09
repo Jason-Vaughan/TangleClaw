@@ -1057,7 +1057,7 @@ describe('ingress-cutover.serverRestartCommand — the one launchctl step with a
     // an EXECUTED test (see the describe block below), not just this one.
     assert.match(
       CUTOVER_SRC,
-      /for \(const step of plan\.launchctl\) \{\s*\n\s*try \{\s*\n\s*execFile\(step\.cmd, step\.args,/,
+      /for \(const step of plan\.launchctl\) \{[\s\S]{0,200}?execFile\(step\.cmd, step\.args,/,
       'the execution loop must run step.cmd/step.args, not a hardcoded launchctl binary'
     );
     assert.match(
@@ -1363,6 +1363,80 @@ describe('applyPlanAndReload (#2933 round 3, PRR-B R-Gate R2)', () => {
       'systemctl --user stop tangleclaw-caddy.service',
       'systemctl --user stop tangleclaw-ttyd.service'
     ], 'neither unit was ever active, so both reconcile to stopped rather than being restarted onto a deleted file');
+  });
+
+  // Round 6 (PRR-B R-Gate R5): two more gaps round 5 left.
+
+  it('an optional step that itself THROWS is still reconciled if a later required step fails — it may have had a real live effect', () => {
+    // Round 5 only tracked steps that returned success (`completedUnits`),
+    // so an optional step that threw was silently dropped from the list
+    // entirely — even though `systemctl stop` can genuinely stop the
+    // process and still exit non-zero for an unrelated reason.
+    const h = harness({ [TTYD_UNIT]: 'OLD TTYD UNIT\n' });
+    h.deps.isActive = () => true; // both were genuinely active before this run
+    const attempts = {};
+    h.deps.execFile = (cmd, args) => {
+      h.calls.push(`${cmd} ${args.join(' ')}`);
+      const unit = args[args.length - 1];
+      attempts[unit] = (attempts[unit] || 0) + 1;
+      if (unit === 'tangleclaw-caddy.service' && args.includes('stop') && attempts[unit] === 1) {
+        throw new Error('Stop failed: timed out waiting for ExecStopPost');
+      }
+      if (unit === 'tangleclaw-ttyd.service' && args.includes('restart') && attempts[unit] === 1) {
+        throw new Error('ttyd did not come back listening');
+      }
+    };
+    const config = { ingressMode: 'caddy' };
+    const plan = {
+      caddyfile: null,
+      plists: [{ path: TTYD_UNIT, content: 'NEW TTYD UNIT\n' }],
+      configPatch: { ingressMode: 'direct' },
+      launchctl: [
+        { cmd: 'systemctl', args: ['--user', 'daemon-reload'], optional: false, kind: 'system' },
+        { cmd: 'systemctl', args: ['--user', 'stop', 'tangleclaw-caddy.service'], optional: true, kind: 'caddy' },
+        { cmd: 'systemctl', args: ['--user', 'restart', 'tangleclaw-ttyd.service'], optional: false, kind: 'ttyd' },
+        { cmd: 'systemctl', args: ['--user', 'restart', 'tangleclaw.service'], optional: false, kind: 'server' }
+      ]
+    };
+    const result = cutover.applyPlanAndReload({ plan, config, priorCaddyfile: null, deps: h.deps });
+
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.rollbackErrors, [], 'every reconciling command succeeds on its retry in this harness');
+    assert.deepEqual(h.calls, [
+      'systemctl --user daemon-reload',
+      'systemctl --user stop tangleclaw-caddy.service', // throws, but may already have stopped caddy live
+      'systemctl --user restart tangleclaw-ttyd.service', // throws
+      'systemctl --user daemon-reload', // reconcile
+      'systemctl --user restart tangleclaw-ttyd.service', // reconcile the failed required unit
+      // Caddy's STOP step threw, but it is still reconciled — round 5 would
+      // have dropped it from completedUnits entirely and left it unreconciled.
+      'systemctl --user restart tangleclaw-caddy.service'
+    ], 'a throwing optional step must still be reconciled, not silently dropped');
+  });
+
+  it('surfaces a failed disk/config restore into rollbackErrors too, not only a failed live reconciliation', () => {
+    const h = harness({ [TTYD_UNIT]: 'OLD TTYD UNIT\n', [CADDY_UNIT]: 'OLD CADDY UNIT\n', [CADDYFILE]: 'OLD CADDYFILE\n' });
+    h.deps.isActive = () => false;
+    const realWriteFileSync = h.deps.fs.writeFileSync;
+    h.deps.fs.writeFileSync = (p, c) => {
+      if (p === CADDYFILE) throw new Error('EACCES: permission denied');
+      realWriteFileSync(p, c);
+    };
+    h.deps.execFile = (cmd, args) => {
+      h.calls.push(`${cmd} ${args.join(' ')}`);
+      if (args.includes('restart') && args.includes('tangleclaw-caddy.service')) throw new Error('caddy did not start');
+    };
+    const config = { ingressMode: 'direct' };
+    const result = cutover.applyPlanAndReload({
+      plan: linuxPlan(), config, priorCaddyfile: 'OLD CADDYFILE\n', deps: h.deps
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.restored, /Caddyfile COULD NOT be restored/);
+    assert.ok(
+      result.rollbackErrors.some((e) => e.includes('Caddyfile COULD NOT be restored')),
+      `a failed disk restore must be surfaced in rollbackErrors, not just in the restored summary; got: ${JSON.stringify(result.rollbackErrors)}`
+    );
   });
 });
 
