@@ -177,6 +177,9 @@ describe('tmux-guard: exported vocabulary', () => {
   it('exposes its own socket-identity constants', () => {
     assert.equal(tmuxGuard.TCC_AUTHORIZED_SOCKET, 'tangleclaw-tcc-authorized');
     assert.equal(tmuxGuard.DEFAULT_SOCKET_BASENAME, 'default');
+    assert.equal(tmuxGuard.ISOLATED_NAME_PREFIXES.some((re) => re.test('__tc_test_foo')), true);
+    assert.equal(tmuxGuard.ISOLATED_NAME_PREFIXES.some((re) => re.test('tc-test-panes-123')), true);
+    assert.equal(tmuxGuard.ISOLATED_NAME_PREFIXES.some((re) => re.test('some-other-real-socket')), false);
   });
 });
 
@@ -210,12 +213,12 @@ describe('tmux-guard: evaluateTmuxKillGuard (#2946)', () => {
     assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN');
   });
 
-  it('allows "tmux kill-server" against ANY explicitly-named socket that is not the default or TCC-authorized one -- naming it is itself the safety mechanism', () => {
+  it('allows "tmux kill-server" against the two real, verified test-fixture naming conventions this suite actually uses', () => {
     for (const cmd of [
-      'tmux -L some-other-real-socket kill-server',
       'tmux -L __tc_test_tcc_sock_123_abcdef_1__ kill-server',
       'tmux -L tc-test-panes-12345 kill-server',
-      'tmux -L tc-probe-2205 kill-server'
+      'tmux -S /some/dir/__tc_test_scratch_sock kill-server',
+      'tmux -S /private/tmp/tmux-501/tc-test-panes-99999 kill-server'
     ]) {
       const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: cmd });
       assert.equal(r.ok, true, cmd);
@@ -223,14 +226,20 @@ describe('tmux-guard: evaluateTmuxKillGuard (#2946)', () => {
     }
   });
 
-  it('allows "tmux kill-server" against a -S path whose basename is any name other than default/TCC-authorized, wherever the path lives', () => {
+  // PRR-A R-Gate HOLD Round 3: the PREVIOUS version of this guard allowed
+  // ANY explicitly-named socket that wasn't literally default/TCC-authorized
+  // -- these two exact commands passed it. An allowlist of verified-safe
+  // naming conventions, not a denylist of the two known-bad names, is what
+  // #2946's own issue text specified in the first place.
+  it('refuses "tmux kill-server" against an arbitrary named socket this guard does not recognize as a verified test-fixture convention (PRR-A R-Gate HOLD, Round 3)', () => {
     for (const cmd of [
-      'tmux -S /some/dir/__tc_test_scratch_sock kill-server',
-      'tmux -S /Users/someone/.tmux-prod-socket kill-server',
-      'tmux -S /private/tmp/tmux-501/tc-test-panes-99999 kill-server'
+      'tmux -L some-other-real-socket kill-server',
+      'tmux -L tc-probe-2205 kill-server',
+      'tmux -S /Users/someone/.tmux-prod-socket kill-server'
     ]) {
       const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: cmd });
-      assert.equal(r.ok, true, cmd);
+      assert.equal(r.ok, false, cmd);
+      assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN', cmd);
     }
   });
 
