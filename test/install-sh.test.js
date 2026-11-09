@@ -469,15 +469,18 @@ describe('deploy/install.sh', () => {
       }
     }
 
-    it('refuses to run on a non-Darwin platform instead of bootstrapping Homebrew (#614)', () => {
+    it('refuses to run on neither Darwin nor Linux, before any bootstrap (#614, #2932)', () => {
       // Without the guard the script plows past the platform check into a
-      // Linuxbrew bootstrap and on toward launchd steps that cannot work,
-      // handing a Linux user a partial install instead of the honest refusal
-      // the README already documents.
+      // bootstrap built for a platform it cannot run on, handing an
+      // unsupported-OS user a partial install instead of the honest refusal
+      // the README documents. #2932 widened the supported set to Darwin AND
+      // Linux (see test/install-sh-platform-guard.test.js for Linux's own
+      // dispatch coverage) — this test now exercises the THIRD case, an OS
+      // that is neither.
 
       // Safety interlock (see the describe comment): the guard must exist and
       // precede every shell-out, or we do not run the script at all.
-      const guardAt = script.search(/if \[ "\$\(uname -s\)" != "Darwin" \]/);
+      const guardAt = script.search(/if \[ "\$OS" != "Darwin" \] && \[ "\$OS" != "Linux" \]/);
       assert.notEqual(guardAt, -1, 'the platform guard must exist');
       const firstShellOut = Math.min(
         ...[/\bcurl\b/, /ensure_homebrew\b/, /\bbrew\b/]
@@ -488,13 +491,13 @@ describe('deploy/install.sh', () => {
         'the platform guard must come before anything that shells out, or a regression would run the real Homebrew');
 
       const box = sandbox({
-        uname: 'echo Linux',
+        uname: 'echo SunOS',
         curl: 'echo "STUB CURL SHOULD NOT RUN" >&2; exit 99'
       });
       const { code, output } = runInstall(box);
 
-      assert.equal(code, 1, 'must exit non-zero on a non-macOS platform');
-      assert.match(output, /requires macOS/i, 'must say plainly that macOS is required');
+      assert.equal(code, 1, 'must exit non-zero on an unsupported platform');
+      assert.match(output, /supports macOS and Linux only/i, 'must say plainly which platforms are supported');
       assert.doesNotMatch(output, /Homebrew|brew\.sh/i,
         'must refuse BEFORE any Homebrew bootstrap — the refusal is the whole point');
       assert.doesNotMatch(output, /STUB CURL SHOULD NOT RUN/,

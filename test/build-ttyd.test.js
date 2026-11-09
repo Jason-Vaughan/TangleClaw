@@ -131,12 +131,40 @@ describe('scripts/build-ttyd.js (#1245, ADR 0018)', () => {
   });
 
   describe('cleanEnv and parseArgs', () => {
+    /**
+     * Run `fn` with `process.platform` overridden, restoring it afterward
+     * even if `fn` throws.
+     * @param {string} value
+     * @param {Function} fn
+     * @returns {*}
+     */
+    function withPlatform(value, fn) {
+      const original = Object.getOwnPropertyDescriptor(process, 'platform');
+      Object.defineProperty(process, 'platform', { value, configurable: true });
+      try {
+        return fn();
+      } finally {
+        Object.defineProperty(process, 'platform', original);
+      }
+    }
+
     it('builds with no Homebrew, MacPorts or /usr/local on PATH, and no inherited compiler hints', () => {
       const env = build.cleanEnv('/w/venv/bin', '14.0');
       assert.doesNotMatch(env.PATH, /homebrew|\/usr\/local|\/opt\/local/);
       assert.equal(env.PATH.split(':')[0], '/w/venv/bin');
       for (const k of ['CFLAGS', 'LDFLAGS', 'CPPFLAGS', 'PKG_CONFIG_PATH', 'LIBRARY_PATH', 'CPATH']) assert.equal(env[k], undefined, k);
-      assert.equal(env.MACOSX_DEPLOYMENT_TARGET, '14.0');
+    });
+
+    it('sets MACOSX_DEPLOYMENT_TARGET on darwin only (#2932 — meaningless to a Linux build)', () => {
+      withPlatform('darwin', () => assert.equal(build.cleanEnv('/w/venv/bin', '14.0').MACOSX_DEPLOYMENT_TARGET, '14.0'));
+      withPlatform('linux', () => assert.equal(build.cleanEnv('/w/venv/bin', '14.0').MACOSX_DEPLOYMENT_TARGET, undefined));
+    });
+
+    it('omits a null venvBin from PATH rather than prefixing "null:" (#2932 — Linux has no cmake venv)', () => {
+      withPlatform('linux', () => {
+        const env = build.cleanEnv(null, '14.0');
+        assert.equal(env.PATH, '/usr/bin:/bin:/usr/sbin:/sbin');
+      });
     });
 
     it('parses its options and refuses an unknown one or a missing value', () => {
@@ -145,6 +173,65 @@ describe('scripts/build-ttyd.js (#1245, ADR 0018)', () => {
       assert.equal(o.offline, true);
       assert.throws(() => build.parseArgs(['--wrok', 'x']), /unknown argument/);
       assert.throws(() => build.parseArgs(['--out']), /needs a value/);
+    });
+  });
+
+  // #2932: scripts/build-ttyd.js's own cmake venv uses a macOS-tagged pinned
+  // wheel (deploy/ttyd/inputs.json's cmake.wheel), so Linux resolves a
+  // python3 for other callers without needing a second platform's wheel
+  // pinned in that file.
+  describe('resolvePython3', () => {
+    it('returns an absolute, existing path', () => {
+      const p = build.resolvePython3();
+      assert.ok(path.isAbsolute(p), p);
+      assert.ok(fs.existsSync(p), p);
+    });
+  });
+
+  // #2932: Linux has no Mach-O closure check to run, so build() records an
+  // `ldd` report in the manifest instead — informational, never a gate.
+  // linuxLddReport is tested directly here since build() itself needs a real
+  // compiler and network access this test suite deliberately avoids.
+  describe('linuxLddReport', () => {
+    it('reports ok:false with the ldd failure, rather than throwing, when the binary cannot be read', () => {
+      const result = build.linuxLddReport('/nonexistent/not-a-real-binary');
+      assert.equal(result.tool, 'ldd');
+      assert.equal(result.ok, false);
+      assert.ok(result.error, 'must record why ldd failed');
+    });
+
+    it('parses a real ldd-shaped run against this host\'s own node binary when ldd exists here', (t) => {
+      const { execFileSync } = require('node:child_process');
+      try {
+        execFileSync('ldd', ['--version'], { stdio: 'ignore' });
+      } catch {
+        t.skip('ldd is not available on this host (expected on macOS)');
+        return;
+      }
+      const result = build.linuxLddReport(process.execPath);
+      assert.equal(result.tool, 'ldd');
+      assert.equal(result.ok, true);
+      assert.ok(Array.isArray(result.entries) && result.entries.length > 0, 'must report at least one dependency');
+      for (const e of result.entries) assert.ok(typeof e.name === 'string' && e.name.length > 0, JSON.stringify(e));
+    });
+  });
+
+  describe('build() — platform guard', () => {
+    /** @param {string} value @param {Function} fn @returns {*} */
+    function withPlatform(value, fn) {
+      const original = Object.getOwnPropertyDescriptor(process, 'platform');
+      Object.defineProperty(process, 'platform', { value, configurable: true });
+      try {
+        return fn();
+      } finally {
+        Object.defineProperty(process, 'platform', original);
+      }
+    }
+
+    it('refuses on a platform that is neither darwin nor linux, before touching the filesystem', () => {
+      withPlatform('win32', () => {
+        assert.throws(() => build.build({}), /macOS or Linux only/);
+      });
     });
   });
 });
