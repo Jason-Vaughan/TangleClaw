@@ -607,6 +607,46 @@ describe('medusa-drift (#2956)', () => {
       assert.equal(second.restarted, false, 'nothing pending any more, so this click is a true no-op');
     });
 
+    it('a restart-unverified result is reflected immediately, in its own returned snapshot AND in the cache a non-force getDrift() reads next (#2956 R-Gate R4)', async () => {
+      drift._internal.pathExists = () => true;
+      const { impl, calls } = gitStub({ commitsBehind: 1, dirty: false });
+      drift._internal.execFileAsync = async (cmd, args) => {
+        if (cmd !== 'git') calls.push('restart-marker');
+        return impl(cmd, args);
+      };
+      drift._internal.fetchImpl = async () => ({ ok: true, json: async () => ({}) }); // reachable, gitSha unknown throughout
+      drift._internal.restartHubCommand = () => ({ cmd: 'true', args: [] });
+
+      const out = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
+      assert.equal(out.code, 'restart-unverified');
+      assert.equal(out.snapshot.hubRestartNeeded, true, 'the RETURNED snapshot must not still read false');
+
+      // No force:true, no explicit TTL expiry -- exactly what the
+      // dashboard's own periodic/polling read uses, and exactly the stale
+      // read the bug let through for up to TTL_MS.
+      const polled = await drift.getDrift({ checkoutPath: '/fake/Medusa-PM' });
+      assert.equal(polled.hubRestartNeeded, true, 'a plain, non-force poll right after must see it too, not a stale cached false');
+    });
+
+    it('a restart-failed result (the command itself threw) is also reflected immediately in its own snapshot and the cache (#2956 R-Gate R4)', async () => {
+      drift._internal.pathExists = () => true;
+      const { impl } = gitStub({ commitsBehind: 1, dirty: false });
+      drift._internal.execFileAsync = async (cmd, args) => {
+        if (cmd !== 'git') throw new Error('No such process');
+        return impl(cmd, args);
+      };
+      drift._internal.fetchImpl = async () => ({ ok: true, json: async () => ({ gitSha: LOCAL_SHA }) });
+      drift._internal.restartHubCommand = () => ({ cmd: 'launchctl', args: ['kickstart', '-k', 'gui/501/com.medusa.hub'] });
+
+      const out = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
+      assert.equal(out.code, 'restart-failed');
+      assert.ok(out.snapshot, 'restart-failed now carries a snapshot too, not just an error string');
+      assert.equal(out.snapshot.hubRestartNeeded, true);
+
+      const polled = await drift.getDrift({ checkoutPath: '/fake/Medusa-PM' });
+      assert.equal(polled.hubRestartNeeded, true, 'a plain, non-force poll right after must see it too, not a stale cached false');
+    });
+
     it('exposes its retry bound and delay as named constants, not a magic number buried in the loop', () => {
       assert.equal(typeof drift.HUB_RESTART_VERIFY_ATTEMPTS, 'number');
       assert.ok(drift.HUB_RESTART_VERIFY_ATTEMPTS >= 1);
