@@ -193,6 +193,24 @@ describe('provisionFleet', () => {
     await assert.rejects(fp.provisionFleet(pm.id, [{ name: 'Zig-Arc' }]), { code: 'OUT_OF_NAMESPACE' });
   });
 
+  it('refuses a path-traversal name before any clone — zero directories created (PRR-A R-Gate HOLD d02ed20a)', async () => {
+    const pm = makePmProject('Ariadne-PM');
+    makeCoordinator(pm);
+    const before = fs.readdirSync(projectsDir);
+    for (const bad of [
+      'Ariadne-../../../tmp/outside',
+      'Ariadne-..',
+      'Ariadne-a/b',
+      'Ariadne-a\\b',
+      'Ariadne- space',
+      'Ariadne-.hidden'
+    ]) {
+      await assert.rejects(fp.provisionFleet(pm.id, [{ name: bad }]), { code: 'OUT_OF_NAMESPACE' }, bad);
+    }
+    assert.deepEqual(fs.readdirSync(projectsDir), before, 'no directory was created by any rejected name');
+    assert.equal(fs.existsSync(path.join(tmpDir, 'tmp', 'outside')), false);
+  });
+
   it('refuses an unrelated pre-existing project of the same name', async () => {
     const pm = makePmProject('Ariadne-PM');
     makeCoordinator(pm);
@@ -297,6 +315,9 @@ describe('provisionFleet', () => {
     assert.equal(fs.existsSync(path.join(existingDir, '.git')), false, 'reuse must never clone over the existing directory');
     const config = store.projectConfig.load(existingDir);
     assert.equal(config.medusaEnabled, true, 'reuse still merges this fleet\'s config');
+    // PRR-A R-Gate HOLD `d02ed20a`: an already-bound reuse must not also be
+    // reported as still needing a bind.
+    assert.deepEqual(result.pendingControlBinds, []);
   });
 
   it('refuses when the PM\'s own checkout has no origin remote', async () => {
