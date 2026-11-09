@@ -866,6 +866,8 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
   <script src="/history-drawer.js"></script>
   <script src="/governed-wrap-ui.js"></script>
   <script src="/chunk-boundary-ui.js"></script>
+  <!-- Loaded after ui.js: observes #settingsBody for its own disjoint toggle (#2937). -->
+  <script src="/fleet-coordinator-ui.js"></script>
   <!-- Loaded before setup.js: wizardGenerateCerts/_renderHttpsMkcertBody call
        tcRenderRemoteCaPlanSteps, guarded (#2886). -->
   <script src="/remote-ca-assist.js"></script>

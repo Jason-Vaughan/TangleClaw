@@ -150,14 +150,16 @@ describe('lib/ecosystem-primer (#1122)', () => {
       assert.ok(verbsFor('pane', { switches: ['bridge-candidates'] }).some((v) => v.id === 'candidate'));
       // What is left unprimed with the switch on has no switch at all:
       // `queue` belongs to one project's group, and none of it, `check`,
-      // `decision`, `merge-gate`, `roadmap`, `usage`, `model` or `help`
-      // (#2599/#2598/#2037/#2070/#2878/#2877 — kept out of the
+      // `fleet`, `decision`, `merge-gate`, `roadmap`, `usage`, `model` or
+      // `help` (#2599/#2598/#2937/#2037/#2070/#2878/#2877 — kept out of the
       // budget-constrained primed list every pane carries) is in the list
-      // every pane carries. `capture` (#1774) joins them: a coordinator's
+      // every pane carries. `fleet` (#2937) is narrow for the same reason
+      // `decision` and `merge-gate` are: most panes run no Fleet Coordinator.
+      // `capture` (#1774) joins them: a coordinator's
       // own diagnostic tool, not something every session needs primed.
       assert.deepEqual(
         verbsFor('unprimed', { switches: ['bridge-candidates'] }).map((v) => v.id),
-        ['help', 'queue', 'check', 'decision', 'merge-gate', 'roadmap', 'usage', 'model', 'capture']
+        ['help', 'queue', 'check', 'fleet', 'decision', 'merge-gate', 'roadmap', 'usage', 'model', 'capture']
       );
       assert.ok(!verbsFor('pane', { switches: ['bridge-candidates'] }).some((v) => v.id === 'queue'));
       // The line itself follows only the switches it is handed. With none it

@@ -96,6 +96,7 @@
         { "anchor": "durable-control-state", "heading": "Durable control state" },
         { "anchor": "launch-onboarding-and-re-entry", "heading": "Launch onboarding and re-entry" },
         { "anchor": "workload-receipts", "heading": "Workload receipts" },
+        { "anchor": "fleet-coordinator-decider", "heading": "Fleet Coordinator / Decider" },
         { "anchor": "durable-interactive-decisions", "heading": "Durable interactive decisions" },
         { "anchor": "managed-coordinator-rotation", "heading": "Managed coordinator rotation" },
         { "anchor": "session-retirement", "heading": "Session retirement" },

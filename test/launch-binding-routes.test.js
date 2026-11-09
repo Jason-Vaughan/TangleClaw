@@ -169,6 +169,11 @@ const SIGNED_IN_OPERATOR = Object.freeze([
   'POST /api/session-rules',
   'POST /api/session-rules/:id/restore',
   'POST /api/session-rules/promote',
+  // #2937: grants (or revokes) a project's "Fleet Coordinator / Decider"
+  // authority — a standing self-service delegation (coordinator_roles +
+  // the fleetCoordinator flag), reviewed the same way any other
+  // authority-granting route here is.
+  'POST /api/tc/fleet/coordinator',
   'PUT /api/launch/isolation-overrides/install',
   'PUT /api/launch/isolation-overrides/projects/:id',
   'PUT /api/learnings/:id/tier',
