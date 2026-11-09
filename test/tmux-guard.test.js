@@ -271,6 +271,52 @@ describe('tmux-guard: evaluateTmuxKillGuard (#2946)', () => {
     assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN');
   });
 
+  it('refuses "tmux kill-server" under a -S path with basename default/TCC-authorized inside an EXISTING non-temp directory (PRR-A R-Gate HOLD, Round 4)', () => {
+    // A real, existing directory that is neither the real default socket
+    // directory nor anywhere under a temp root -- _isRealDefaultSocketDir
+    // alone reports "not the real one" (true) here, which is NOT the same
+    // as "safe to kill": an arbitrary existing directory elsewhere on the
+    // filesystem could host a real, important, named server.
+    const nonTempDir = fs.mkdtempSync(path.join(os.homedir(), '.tc-guard-nontemp-'));
+    try {
+      for (const basename of ['default', 'tangleclaw-tcc-authorized']) {
+        const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: `tmux -S ${path.join(nonTempDir, basename)} kill-server` });
+        assert.equal(r.ok, false, basename);
+        assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN', basename);
+      }
+    } finally {
+      fs.rmSync(nonTempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses "tmux kill-server" under a -S path named tangleclaw-tcc-authorized even under a genuinely verified scratch/test directory -- unconditional, unlike "default" (Architect A-Gate R3 addendum)', () => {
+    // Same scratch-dir shape the "default" exception below legitimately
+    // allows -- proves the TCC-authorized refusal is NOT merely "this
+    // scratch dir doesn't look verified enough," but unconditional by name.
+    const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tmux-guard-tcc-scratch-'));
+    try {
+      const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: `tmux -S ${path.join(scratchDir, 'tangleclaw-tcc-authorized')} kill-server` });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN');
+    } finally {
+      fs.rmSync(scratchDir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses "tmux kill-server" under a -S path with a "default" basename under /tmp with no verified test-fixture ancestor segment (Architect A-Gate R3 addendum)', () => {
+    // Under /tmp (passes the old, broader temp-root-only check) but no
+    // path segment looks test-created -- /tmp is shared and world-writable,
+    // so this could be a real, unrelated server, not one of ours.
+    const unverifiedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'not-a-recognized-prefix-'));
+    try {
+      const r = tmuxGuard.evaluateTmuxKillGuard({ commandText: `tmux -S ${path.join(unverifiedDir, 'default')} kill-server` });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'TMUX_KILL_SERVER_FORBIDDEN');
+    } finally {
+      fs.rmSync(unverifiedDir, { recursive: true, force: true });
+    }
+  });
+
   it('allows "tmux kill-server" under a -S path whose basename is "default" but whose directory is NOT the real default socket directory (a test\'s own fully re-rooted private server, e.g. via its own TMUX_TMPDIR)', () => {
     // A real directory, not a real tmux socket in it -- _isRealDefaultSocketDir
     // resolves the CANDIDATE's directory by realpath, which needs it to
