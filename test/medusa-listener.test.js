@@ -1539,6 +1539,58 @@ describe('a silent Bridge missing heartbeat_ack is detected and reconnected (#13
   });
 });
 
+describe('MedusaListener — hub.version_updated (#2956)', () => {
+  const medusa = require('../lib/medusa');
+
+  it('fans a hub.version_updated frame out through lib/medusa.js#applyHubVersionUpdate, to every subscriber registered via onHubVersionUpdated', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-2956', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-2956' });
+    const seen = [];
+    const unsubscribe = medusa.onHubVersionUpdated((payload) => seen.push(payload));
+    try {
+      sockets[0]._message({ type: 'hub.version_updated', gitSha: 'deadbeef', version: '1.2.3' });
+      assert.equal(seen.length, 1);
+      assert.deepEqual(seen[0], { type: 'hub.version_updated', gitSha: 'deadbeef', version: '1.2.3' });
+    } finally {
+      unsubscribe();
+      l.stop();
+    }
+  });
+
+  it('a hub.version_updated frame with no subscribers registered is a no-op, never a throw', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-2956b', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-2956b' });
+    assert.doesNotThrow(() => sockets[0]._message({ type: 'hub.version_updated', gitSha: 'deadbeef' }));
+    assert.equal(l.lastErrorCode, null, 'read as a recognized frame, not a malformed one');
+    l.stop();
+  });
+
+  it('one throwing subscriber does not stop the others, and does not reach the listener as a failure', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-2956c', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-2956c' });
+    let secondCalled = false;
+    const un1 = medusa.onHubVersionUpdated(() => { throw new Error('boom'); });
+    const un2 = medusa.onHubVersionUpdated(() => { secondCalled = true; });
+    try {
+      assert.doesNotThrow(() => sockets[0]._message({ type: 'hub.version_updated', gitSha: 'deadbeef' }));
+      assert.equal(secondCalled, true);
+      assert.equal(l.lastErrorCode, null);
+    } finally {
+      un1(); un2();
+      l.stop();
+    }
+  });
+});
+
 describe('medusa-registry', () => {
   let tmpDir;
 
