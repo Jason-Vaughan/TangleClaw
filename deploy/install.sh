@@ -20,14 +20,14 @@ green() { printf '\033[0;32m%s\033[0m\n' "$1"; }
 yellow() { printf '\033[0;33m%s\033[0m\n' "$1"; }
 
 # ── Platform guard ──
-# Everything below assumes macOS: the services are launchd agents and the
-# dependency bootstrap is Homebrew. Without this check a Linux user gets a
-# Linuxbrew bootstrap followed by launchd steps that cannot work — a partial
-# install instead of the honest refusal the README already documents. Fail
-# here, before anything is written or downloaded.
-if [ "$(uname -s)" != "Darwin" ]; then
-  red "ERROR: TangleClaw requires macOS — it manages its services with launchd."
-  red "       Linux support is not yet available (see README → Prerequisites)."
+# macOS services are launchd agents with a Homebrew dependency bootstrap;
+# Linux services are systemd --user units with a native package-manager
+# bootstrap (#2932). Everything below dispatches on $OS rather than re-
+# checking uname — one clean refusal here for anything else, before
+# anything is written or downloaded.
+OS="$(uname -s)"
+if [ "$OS" != "Darwin" ] && [ "$OS" != "Linux" ]; then
+  red "ERROR: TangleClaw supports macOS and Linux only (found: $OS)."
   exit 1
 fi
 
@@ -68,27 +68,108 @@ ensure_homebrew() {
   green "  Homebrew ready ($BREW)"
 }
 
-# Ensure <command> is available, installing its Homebrew <formula> if missing.
+# ── Linux package-manager bootstrap ──
+# Linux has no single universal package manager the way macOS has Homebrew,
+# so detect one of the three this issue (#2932) targets and remember it —
+# ensure_dep below picks the right package name per manager, same spirit as
+# ensure_homebrew above resolving $BREW once.
+PKG_MGR=""
+detect_pkg_mgr() {
+  if [ -n "$PKG_MGR" ]; then return 0; fi
+  if command -v apt-get &>/dev/null; then PKG_MGR="apt-get";
+  elif command -v dnf &>/dev/null; then PKG_MGR="dnf";
+  elif command -v pacman &>/dev/null; then PKG_MGR="pacman";
+  else
+    red "ERROR: no supported package manager found (looked for apt-get, dnf, pacman)."
+    red "       Install dependencies manually and re-run, or open an issue naming your distro."
+    exit 1
+  fi
+  green "  Package manager: $PKG_MGR"
+}
+
+# Install one or more already-resolved Linux package names via the detected
+# manager. Idempotent — re-installing an already-installed package is a
+# normal no-op for all three managers, so callers never need to check first.
+linux_pkg_install() {
+  case "$PKG_MGR" in
+    apt-get)
+      sudo apt-get update -qq || true
+      sudo apt-get install -y "$@"
+      ;;
+    dnf)    sudo dnf install -y "$@" ;;
+    pacman) sudo pacman -Sy --noconfirm "$@" ;;
+  esac
+}
+
+# Ensure <command> is available, installing it via the platform's package
+# manager if missing: Homebrew's <formula> on macOS, or the matching
+# apt/dnf/pacman package name on Linux (defaulting to <formula> itself where
+# a tool's package name is the same everywhere — true for most of these).
 ensure_dep() {
-  local cmd="$1" formula="$2"
+  local cmd="$1" formula="$2" apt_pkg="${3:-$2}" dnf_pkg="${4:-$2}" pacman_pkg="${5:-$2}"
   if command -v "$cmd" &>/dev/null; then green "  $cmd ($(command -v "$cmd"))"; return 0; fi
-  yellow "  $cmd not found — installing via Homebrew ($formula)…"
-  ensure_homebrew
-  "$BREW" install "$formula" || { red "ERROR: 'brew install $formula' failed."; exit 1; }
+  if [ "$OS" = "Darwin" ]; then
+    yellow "  $cmd not found — installing via Homebrew ($formula)…"
+    ensure_homebrew
+    "$BREW" install "$formula" || { red "ERROR: 'brew install $formula' failed."; exit 1; }
+  else
+    detect_pkg_mgr
+    local pkg
+    case "$PKG_MGR" in
+      apt-get) pkg="$apt_pkg" ;;
+      dnf)     pkg="$dnf_pkg" ;;
+      pacman)  pkg="$pacman_pkg" ;;
+    esac
+    yellow "  $cmd not found — installing via $PKG_MGR ($pkg)…"
+    linux_pkg_install "$pkg" || {
+      red "ERROR: installing '$pkg' via $PKG_MGR failed."
+      red "       Install '$cmd' manually for your distro and re-run."
+      exit 1
+    }
+  fi
   command -v "$cmd" &>/dev/null || { red "ERROR: $formula installed but '$cmd' is not on PATH."; exit 1; }
   green "  $cmd installed ($(command -v "$cmd"))"
+}
+
+# ttyd's build (scripts/build-ttyd.js) compiles libuv/json-c/libwebsockets/
+# ttyd from the SAME pinned sources on every platform (deploy/ttyd/
+# inputs.json) — Linux just needs its own system HEADERS present for that
+# compile to find zlib/OpenSSL, the way Xcode's SDK already provides them on
+# macOS with nothing to install. These are header/library packages, not
+# commands ensure_dep's `command -v` check can see, so they get their own
+# unconditional (idempotent) install rather than a presence check.
+ensure_linux_ttyd_build_prereqs() {
+  [ "$OS" = "Linux" ] || return 0
+  detect_pkg_mgr
+  yellow "  Ensuring ttyd build prerequisites (cmake, compiler, dev headers)…"
+  case "$PKG_MGR" in
+    apt-get) linux_pkg_install build-essential cmake python3 python3-venv libwebsockets-dev libjson-c-dev zlib1g-dev libssl-dev ;;
+    dnf)     linux_pkg_install gcc gcc-c++ make cmake python3 libwebsockets-devel json-c-devel zlib-devel openssl-devel ;;
+    pacman)  linux_pkg_install base-devel cmake python libwebsockets json-c zlib openssl ;;
+  esac
+  green "  ttyd build prerequisites present"
 }
 
 # ── Prerequisites ──
 
 echo "Checking prerequisites..."
 
-# Node.js 22+
+# Node.js 22+. Not in #2932's Linux package list — distro Node packages lag
+# far enough behind (18.x/20.x on current LTS apt/dnf) that auto-installing
+# one here would often "succeed" into a version this script immediately
+# rejects below, so Linux gets a clear pointer instead of a silent downgrade.
 if ! command -v node &>/dev/null; then
-  yellow "  Node.js not found — installing via Homebrew (node)…"
-  ensure_homebrew
-  "$BREW" install node || { red "ERROR: 'brew install node' failed."; exit 1; }
-  command -v node &>/dev/null || { red "ERROR: Node.js still not found after install."; exit 1; }
+  if [ "$OS" = "Darwin" ]; then
+    yellow "  Node.js not found — installing via Homebrew (node)…"
+    ensure_homebrew
+    "$BREW" install node || { red "ERROR: 'brew install node' failed."; exit 1; }
+    command -v node &>/dev/null || { red "ERROR: Node.js still not found after install."; exit 1; }
+  else
+    red "ERROR: Node.js 22+ is required and was not found on PATH."
+    red "       Install it via NodeSource (https://github.com/nodesource/distributions), nvm"
+    red "       (https://github.com/nvm-sh/nvm), or your distro's package if it is 22+, then re-run."
+    exit 1
+  fi
 fi
 
 NODE_PATH="$(which node)"
@@ -124,6 +205,19 @@ if [ "$INGRESS_MODE" = "unreadable" ]; then
   red "       caddy-mode dashboard, so it refuses rather than guess. Nothing was changed."
   red "       Fix or restore that file (the server cannot start with it either), then re-run."
   exit 1
+fi
+# scripts/ingress-cutover.js (the caddy-mode preflight/cutover below) manages
+# launchd plists directly — it has no systemd analogue yet (#2932 is install.sh
+# + build-ttyd.js only). Forcing direct mode here, before the preflight block
+# below ever checks $INGRESS_MODE, keeps a caddy-configured Linux host on a
+# working install (server + ttyd via systemd, no ingress) instead of running a
+# cutover built for a different service manager.
+if [ "$OS" = "Linux" ] && [ "$INGRESS_MODE" = "caddy" ]; then
+  yellow "  NOTE: config.json requests caddy-mode ingress, but install.sh's Linux path"
+  yellow "  does not yet support the caddy-mode cutover (no systemd equivalent of"
+  yellow "  scripts/ingress-cutover.js's launchd plist management). Installing in"
+  yellow "  direct mode instead — TangleClaw and ttyd will run, with no reverse proxy."
+  INGRESS_MODE="direct"
 fi
 
 # ── Caddy-mode preflight (#1901) ──
@@ -219,6 +313,18 @@ fi
 # with the repair. The Homebrew ttyd stays installed as the explicit rollback
 # target (TANGLECLAW_TTYD_RUNTIME=homebrew, which skips the build), never as a
 # silent fallback.
+# git, curl, jq — general-purpose tooling #2932 names explicitly for Linux.
+# Not added on macOS: Xcode's Command Line Tools already ship git and curl
+# there, jq was never a prerequisite before this car, and adding unconditional
+# ensure_dep calls here would shift the Darwin dependency-install ORDER that
+# existing tests (test/install-sh.test.js) pin byte-for-byte.
+if [ "$OS" = "Linux" ]; then
+  ensure_dep jq jq
+  ensure_dep git git
+  ensure_dep curl curl
+fi
+
+ensure_linux_ttyd_build_prereqs
 ensure_dep ttyd ttyd
 # --base-dir: the same ~/.tangleclaw this script writes everything else under,
 # so a TANGLECLAW_HOME in the shell cannot point the plist somewhere else.
@@ -234,6 +340,13 @@ TMUX_PATH="$(command -v tmux)"
 
 # mkcert — local TLS certs for HTTPS (direct mode + the first-run wizard).
 ensure_dep mkcert mkcert
+# certutil (Firefox's NSS trust store tool) — mkcert's own docs: without it,
+# `mkcert -install` cannot add the local CA to Firefox's trust store on Linux.
+# macOS has no NSS trust store to manage (mkcert talks to the system Keychain
+# directly there), so this is Linux-only.
+if [ "$OS" = "Linux" ]; then
+  ensure_dep certutil nss libnss3-tools nss-tools nss
+fi
 # Trust the local CA NOW, while we have an interactive terminal. This is the
 # PRIVILEGED step (it shells out to sudo / `security add-trusted-cert`), so doing
 # it here means the headless launchd server never has to: the wizard then only
@@ -247,8 +360,10 @@ else
 fi
 
 # caddy — reverse-proxy ingress for AUTH-1 'caddy' mode. Installed up front so the
-# ingress cutover (scripts/ingress-cutover.js) works out of the box; direct mode
-# (the default) does not use it.
+# ingress cutover (scripts/ingress-cutover.js) works out of the box on macOS;
+# direct mode (the default, and Linux's only supported mode today, #2932) does
+# not use it. Still ensured on Linux too: operators run `caddy` by hand, and a
+# distro's apt/dnf/pacman package is the natural source for it there.
 ensure_dep caddy caddy
 
 # Build PATH for launchd plists — start from the user's current PATH so that
@@ -385,6 +500,26 @@ if [ "$(uname)" = "Darwin" ]; then
   fi
 fi
 
+# ttyd attach script — install OUTSIDE the repo (#500). ttyd opens this file per
+# client-connect and ttyd is denied Full Disk Access, so a repo-resident copy
+# under ~/Documents freezes ttyd in open() (all sessions black-screen after a
+# ttyd restart). ~/.tangleclaw is not TCC-protected. The server also re-syncs
+# this at boot (lib/ttyd-attach.js) so an update that bumps the repo script
+# refreshes the copy; installing it here means the FIRST ttyd start is already
+# safe. Keep this path in lockstep with attachScriptPath() in lib/ttyd-attach.js.
+# Unconditional on both platforms — ~/.tangleclaw's non-TCC rationale is
+# macOS-specific, but there is no reason for Linux's systemd unit (which
+# resolves this same path, lib/ttyd-attach.js#attachScriptPath) to see a
+# different install step for the identical file.
+readonly TTYD_ATTACH_DIR="$HOME/.tangleclaw/deploy"
+readonly TTYD_ATTACH="${TTYD_ATTACH_DIR}/ttyd-attach.sh"
+mkdir -p "$TTYD_ATTACH_DIR"
+cp "${SCRIPT_DIR}/ttyd-attach.sh" "$TTYD_ATTACH"
+chmod 0755 "$TTYD_ATTACH"
+green "  ${TTYD_ATTACH}"
+
+if [ "$OS" = "Darwin" ]; then
+
 # ── Generate plists ──
 
 echo "Generating launchd plists..."
@@ -400,20 +535,6 @@ sed \
   "${SCRIPT_DIR}/${SERVER_PLIST}" > "${LAUNCH_AGENTS_DIR}/${SERVER_PLIST}"
 
 green "  ${LAUNCH_AGENTS_DIR}/${SERVER_PLIST}"
-
-# ttyd attach script — install OUTSIDE the repo (#500). ttyd opens this file per
-# client-connect and ttyd is denied Full Disk Access, so a repo-resident copy
-# under ~/Documents freezes ttyd in open() (all sessions black-screen after a
-# ttyd restart). ~/.tangleclaw is not TCC-protected. The server also re-syncs
-# this at boot (lib/ttyd-attach.js) so an update that bumps the repo script
-# refreshes the copy; installing it here means the FIRST ttyd start is already
-# safe. Keep this path in lockstep with attachScriptPath() in lib/ttyd-attach.js.
-readonly TTYD_ATTACH_DIR="$HOME/.tangleclaw/deploy"
-readonly TTYD_ATTACH="${TTYD_ATTACH_DIR}/ttyd-attach.sh"
-mkdir -p "$TTYD_ATTACH_DIR"
-cp "${SCRIPT_DIR}/ttyd-attach.sh" "$TTYD_ATTACH"
-chmod 0755 "$TTYD_ATTACH"
-green "  ${TTYD_ATTACH}"
 
 # ttyd plist — install.sh always installs the DIRECT-mode bind, pinned to
 # loopback (#710). ttyd serves a --writable terminal that execs `tmux
@@ -445,6 +566,10 @@ green "  ttyd and Caddy plists: re-applied by the ingress cutover below (caddy m
 fi
 
 echo ""
+
+fi # Darwin: launchd plist generation. Linux's systemd units are written by
+   # scripts/linux-systemd-install.js itself, during "Load services" below —
+   # there is no separate "generate, then install" step the way plists have.
 
 # ── Install tmux.conf ──
 
@@ -505,7 +630,30 @@ tcc_hint() {
   yellow "  Server stderr: tail -f ~/.tangleclaw/logs/server.err.log"
 }
 
-if [ "$INGRESS_MODE" = "direct" ]; then
+if [ "$OS" = "Linux" ]; then
+  # Direct mode only (#2932 — caddy-mode ingress was already forced to direct
+  # above, before any Linux-specific step ran). Delegates to
+  # scripts/linux-systemd-install.js (#2931/#2932) rather than reimplementing
+  # unit-file writing/enabling/starting here — that script already does
+  # generate-verify-write-enable-start per unit, the same as this section's
+  # launchctl load does for a plist.
+  LINUX_SYSTEMD_INSTALL="${REPO_DIR}/scripts/linux-systemd-install.js"
+  node "$LINUX_SYSTEMD_INSTALL" install --unit server \
+    --repo-dir "$REPO_DIR" --node-bin "$NODE_PATH" || {
+    red "ERROR: installing the tangleclaw.service systemd unit failed (see above)."
+    exit 1
+  }
+  green "  Installed and started tangleclaw.service"
+
+  node "$LINUX_SYSTEMD_INSTALL" install --unit ttyd \
+    --ttyd-path "$TTYD_PATH" --ttyd-attach-script "$TTYD_ATTACH" --ttyd-port 3100 || {
+    red "ERROR: installing the tangleclaw-ttyd.service systemd unit failed (see above)."
+    exit 1
+  }
+  green "  Installed and started tangleclaw-ttyd.service"
+
+  echo ""
+elif [ "$INGRESS_MODE" = "direct" ]; then
   # Unload existing (idempotent — ignore errors if not loaded)
   launchctl unload "${LAUNCH_AGENTS_DIR}/${SERVER_PLIST}" 2>/dev/null || true
   launchctl unload "${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}" 2>/dev/null || true
@@ -688,7 +836,12 @@ else
 fi
 echo ""
 echo "  Logs:           tail -f ~/.tangleclaw/logs/tangleclaw.log"
-echo "  Uninstall:      launchctl unload ~/Library/LaunchAgents/com.tangleclaw.*.plist"
+if [ "$OS" = "Linux" ]; then
+  echo "  Uninstall:      node scripts/linux-systemd-install.js uninstall --unit server"
+  echo "                  node scripts/linux-systemd-install.js uninstall --unit ttyd"
+else
+  echo "  Uninstall:      launchctl unload ~/Library/LaunchAgents/com.tangleclaw.*.plist"
+fi
 echo ""
 
 # AUTH-1 (#395) / #710: the password-gated Caddy ingress is the DEFAULT outcome of
@@ -696,6 +849,16 @@ echo ""
 # that default state, and plainly that the cutover alone does not create a
 # login. A caddy-mode run is already there, and has reported which gate is in force.
 if [ "$INGRESS_MODE" = "caddy" ]; then
+  exit 0
+fi
+if [ "$OS" = "Linux" ]; then
+  # scripts/ingress-cutover.js manages launchd plists directly and has no
+  # systemd analogue yet (#2932 is install.sh + build-ttyd.js only) — so
+  # unlike macOS, there is no password-gated ingress to suggest here today.
+  yellow "  NOTE: the password-gated Caddy ingress (AUTH-1, #395/#710) is not yet"
+  yellow "  available on Linux through install.sh — TangleClaw and ttyd are reachable"
+  yellow "  on localhost with no login gate in front of them."
+  echo ""
   exit 0
 fi
 # Deliberately NOT "optional", and deliberately two commands. The cutover on
