@@ -670,3 +670,85 @@ describe('stillWide — whether a refusal left an open shell behind', () => {
     assert.equal(r.stillWide, true, 'the restored job is the wide one');
   });
 });
+
+describe('planReconcileSystemd against a REAL generateTtydUnitFile unit (Architect Ruling A507-W1C-AGATE-R1)', () => {
+  // lib/linux-systemd.js#generateTtydUnitFile (#2931, merged after this file's
+  // own fixtures were written) single-quotes EVERY argv token:
+  // ExecStart=/bin/bash -c '...' 'ttyd-launch' '/path/to/ttyd' '--writable'
+  // '--interface' '0.0.0.0' '--port' '3100' … — a plain whitespace split
+  // would see the literal tokens "'--writable'"/"'--interface'", matching
+  // neither describeInstalledBind's own checks nor the --writable/--url-arg
+  // shape planReconcileSystemd looks for, and refuse every such unit as
+  // unrecognized. This drives the REAL generator, not a hand-built fixture,
+  // so a regression in either module's own quoting convention fails here
+  // first.
+  const linuxSystemd = require('../lib/linux-systemd');
+
+  function realUnit(bindVal = '0.0.0.0') {
+    return linuxSystemd.generateTtydUnitFile({
+      ttydPath: '/usr/bin/ttyd',
+      attachScriptPath: '/home/x/.tangleclaw/deploy/ttyd-attach.sh',
+      bindVal,
+      socketPath: ''
+    });
+  }
+
+  it('recognizes a real generated unit as ours, not "unrecognized-job"', () => {
+    const plan = planReconcileSystemd(realUnit(), { ingressMode: 'direct' });
+    assert.notEqual(plan.reason, undefined);
+    assert.doesNotMatch(plan.reason, /unrecognized-job/,
+      'the quoted --writable/--url-arg tokens must still be recognized once unquoted');
+  });
+
+  it('reads the quoted --interface value correctly, wide or not', () => {
+    assert.equal(describeInstalledBind(parseExecStartArgs(realUnit('0.0.0.0')).args).wide, true);
+    assert.equal(describeInstalledBind(parseExecStartArgs(realUnit('127.0.0.1')).args).wide, false);
+  });
+
+  it('rewrites a widened real unit back to loopback, and the result still passes the generator\'s OWN contract check', () => {
+    const plan = planReconcileSystemd(realUnit('0.0.0.0'), { ingressMode: 'direct' });
+    assert.equal(plan.action, 'rewrite');
+    assert.equal(plan.to, '127.0.0.1');
+    assert.deepEqual(linuxSystemd.verifyTtydUnitFileContract(plan.unitText), [],
+      'a rewrite must never produce a unit the generator\'s own verifier would reject');
+    assert.equal(describeInstalledBind(parseExecStartArgs(plan.unitText).args).iface, '127.0.0.1');
+  });
+
+  it('is a no-op once a real unit is already pinned to loopback', () => {
+    const plan = planReconcileSystemd(realUnit('127.0.0.1'), { ingressMode: 'direct' });
+    assert.equal(plan.action, 'none');
+    assert.equal(plan.reason, 'already-correct');
+  });
+
+  it('still refuses a real unit that is socket-bound while config claims direct mode', () => {
+    const plan = planReconcileSystemd(realUnit('/home/x/.tangleclaw/run/ttyd.sock'), { ingressMode: 'direct' });
+    assert.equal(plan.action, 'refuse');
+    assert.match(plan.reason, /socket-bound/);
+  });
+
+  it('round-trips a full reconcileInstalledJob apply against a real unit, reversibly', () => {
+    const HOME = '/home/x';
+    const UNIT = linuxSystemd.unitFilePath(HOME, TTYD_SYSTEMD_UNIT);
+    const files = { [UNIT]: realUnit('0.0.0.0') };
+    const calls = [];
+    const deps = {
+      fs: {
+        existsSync: (p) => Object.prototype.hasOwnProperty.call(files, p),
+        readFileSync: (p) => files[p],
+        writeFileSync: (p, c) => { files[p] = c; },
+        copyFileSync: (a, b) => { files[b] = files[a]; },
+        renameSync: (a, b) => { files[b] = files[a]; delete files[a]; },
+        rmSync: (p) => { delete files[p]; }
+      },
+      path: { join: (...parts) => parts.join('/') },
+      execFileSync: (cmd, args) => { calls.push(`${cmd} ${args.join(' ')}`); },
+      log: { info() {}, warn() {}, error() {} },
+      probe: () => true
+    };
+    const r = reconcileInstalledJob({ home: HOME, config: { ingressMode: 'direct' }, deps, platform: 'linux' });
+    assert.equal(r.action, 'rewrite');
+    assert.equal(r.stillWide, false);
+    assert.deepEqual(linuxSystemd.verifyTtydUnitFileContract(files[UNIT]), []);
+    assert.equal(describeInstalledBind(parseExecStartArgs(files[UNIT]).args).iface, '127.0.0.1');
+  });
+});

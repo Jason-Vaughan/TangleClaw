@@ -46,7 +46,12 @@ function makeCtx(overrides = {}) {
     // #863 — resolved by main() from os.hostname() once a cert covers it. Named
     // here so a test can override it; left undefined the forwarding below could
     // be deleted and every test would still pass.
-    lanHost: overrides.lanHost === undefined ? null : overrides.lanHost
+    lanHost: overrides.lanHost === undefined ? null : overrides.lanHost,
+    // Pinned to darwin (#2933): every fixture above (env.caddyPath, the plist
+    // templates, launchAgentsDir) is launchd-shaped, and planCutover's default
+    // must not silently follow whatever OS actually runs the test — this
+    // repo's own pre-push pool runs it inside a Linux container.
+    platform: overrides.platform === undefined ? 'darwin' : overrides.platform
   };
 }
 
@@ -406,7 +411,7 @@ describe('ingress-cutover', () => {
     });
     it('patches ingressMode to caddy and restarts the server', () => {
       assert.deepEqual(plan.configPatch, { ingressMode: 'caddy' });
-      assert.ok(plan.launchctl.some((c) => c[0] === 'kickstart' && c[2] === 'gui/501/com.tangleclaw.server'));
+      assert.ok(plan.launchctl.some((s) => s.kind === 'server' && s.args.includes('gui/501/com.tangleclaw.server')));
     });
     it('health-checks via the caddy HTTPS port', () => {
       assert.equal(plan.healthUrl, 'https://localhost:8443/api/health');
@@ -603,7 +608,7 @@ describe('ingress-cutover', () => {
     });
     it('unloads caddy and patches ingressMode to direct', () => {
       assert.deepEqual(plan.configPatch, { ingressMode: 'direct' });
-      assert.ok(plan.launchctl.some((c) => c[0] === 'unload' && c[1].endsWith('com.tangleclaw.caddy.plist')));
+      assert.ok(plan.launchctl.some((s) => s.kind === 'caddy' && s.optional && s.args.some((a) => a.endsWith('com.tangleclaw.caddy.plist'))));
     });
     it('health-checks direct on the upstream port with the configured protocol', () => {
       assert.equal(plan.healthUrl, 'https://localhost:3102/api/health');
@@ -611,6 +616,91 @@ describe('ingress-cutover', () => {
     it('uses http in the health URL when HTTPS is not fully configured', () => {
       const p = cutover.planCutover('direct', makeCtx({ config: { httpsCertPath: null, httpsKeyPath: null } }));
       assert.equal(p.healthUrl, 'http://localhost:3102/api/health');
+    });
+  });
+
+  describe('planCutover → caddy on linux (#2933)', () => {
+    const linuxSystemd = require('../lib/linux-systemd');
+    const linuxEnv = {
+      caddyPath: '/usr/bin/caddy', ttydPath: '/usr/bin/ttyd', home: '/home/test'
+    };
+    const plan = cutover.planCutover('caddy', makeCtx({ platform: 'linux', env: linuxEnv }));
+
+    it('writes the same Caddyfile a darwin run would — the generator itself is platform-agnostic', () => {
+      assert.ok(plan.caddyfile);
+      assert.match(plan.caddyfile.content, /reverse_proxy 127\.0\.0\.1:3102/);
+    });
+
+    it('writes a ttyd systemd unit, bound to the socket, at ~/.config/systemd/user/tangleclaw-ttyd.service', () => {
+      const ttyd = plan.plists.find((f) => f.path === linuxSystemd.unitFilePath('/home/test', linuxSystemd.TTYD_SERVICE_NAME));
+      assert.ok(ttyd, 'the ttyd unit must be written at the real systemd user-unit path');
+      assert.match(ttyd.content, /ExecStart=\/bin\/bash -c/);
+      assert.doesNotMatch(ttyd.content, /0\.0\.0\.0/, 'must never bind every interface');
+      // ctx.socketPath (from caddy.getTtydSocketPath(), unrelated to env.home)
+      // is the fixed '/Users/test/...' value makeCtx() always uses.
+      assert.match(ttyd.content, /'\/Users\/test\/\.tangleclaw\/run\/ttyd\.sock'/);
+    });
+
+    it('writes a caddy systemd unit pointing at the real caddy binary and Caddyfile', () => {
+      const cad = plan.plists.find((f) => f.path === linuxSystemd.unitFilePath('/home/test', linuxSystemd.CADDY_SERVICE_NAME));
+      assert.ok(cad, 'the caddy unit must be written at the real systemd user-unit path');
+      assert.match(cad.content, /ExecStart=\/usr\/bin\/caddy run --config \/Users\/test\/\.tangleclaw\/Caddyfile --adapter caddyfile/);
+    });
+
+    it('writes no launchd plist at all', () => {
+      assert.ok(!plan.plists.some((f) => f.path.endsWith('.plist')));
+    });
+
+    it('runs daemon-reload, then restarts ttyd and caddy, then the server — all via systemctl --user, never launchctl', () => {
+      assert.deepEqual(
+        plan.launchctl.map((s) => `${s.cmd} ${s.args.join(' ')}`),
+        [
+          'systemctl --user daemon-reload',
+          `systemctl --user restart ${linuxSystemd.TTYD_SERVICE_NAME}`,
+          `systemctl --user restart ${linuxSystemd.CADDY_SERVICE_NAME}`,
+          `systemctl --user restart ${linuxSystemd.SERVICE_NAME}`
+        ]
+      );
+      assert.ok(plan.launchctl.every((s) => s.cmd === 'systemctl'), 'not one step may fall back to launchctl');
+      assert.ok(!plan.launchctl.some((s) => s.optional), 'every linux caddy-mode step must succeed — none is a tolerated unload');
+    });
+
+    it('tags each step with the kind the tailnet rollback keys on', () => {
+      assert.deepEqual(plan.launchctl.map((s) => s.kind), ['system', 'ttyd', 'caddy', 'server']);
+    });
+  });
+
+  describe('planCutover → direct on linux (#2933)', () => {
+    const linuxSystemd = require('../lib/linux-systemd');
+    const linuxEnv = {
+      caddyPath: '/usr/bin/caddy', ttydPath: '/usr/bin/ttyd', home: '/home/test'
+    };
+    const plan = cutover.planCutover('direct', makeCtx({ platform: 'linux', env: linuxEnv }));
+
+    it('writes no Caddyfile and no caddy unit', () => {
+      assert.equal(plan.caddyfile, null);
+      assert.ok(!plan.plists.some((f) => f.path === linuxSystemd.unitFilePath('/home/test', linuxSystemd.CADDY_SERVICE_NAME)));
+    });
+
+    it('writes a ttyd unit pinned to loopback TCP, not the socket', () => {
+      const ttyd = plan.plists.find((f) => f.path === linuxSystemd.unitFilePath('/home/test', linuxSystemd.TTYD_SERVICE_NAME));
+      assert.ok(ttyd);
+      assert.match(ttyd.content, /'--interface' '127\.0\.0\.1'/);
+      assert.match(ttyd.content, /Environment=TTYD_SOCKET=\s*$/m, 'direct mode leaves the self-heal unlink a no-op');
+    });
+
+    it('runs daemon-reload, stops caddy (tolerated), restarts ttyd, then the server — all via systemctl --user', () => {
+      assert.deepEqual(
+        plan.launchctl.map((s) => `${s.cmd} ${s.args.join(' ')}`),
+        [
+          'systemctl --user daemon-reload',
+          `systemctl --user stop ${linuxSystemd.CADDY_SERVICE_NAME}`,
+          `systemctl --user restart ${linuxSystemd.TTYD_SERVICE_NAME}`,
+          `systemctl --user restart ${linuxSystemd.SERVICE_NAME}`
+        ]
+      );
+      const caddyStep = plan.launchctl.find((s) => s.kind === 'caddy');
+      assert.equal(caddyStep.optional, true, 'stopping a caddy unit that may never have been installed must be tolerated');
     });
   });
 
@@ -947,50 +1037,66 @@ describe('ingress-cutover.serverRestartCommand — the one launchctl step with a
     assert.equal(cmd.cmd, process.platform === 'linux' ? 'systemctl' : 'launchctl');
   });
 
-  it('is wired into the main() launchctl-sequence closure rather than a hardcoded launchctl call (source-pinned — see the CUTOVER_SRC note above)', () => {
+  it('is wired into planCutover, not deferred to execution time (source-pinned — see the CUTOVER_SRC note above)', () => {
+    // planCutover resolves the platform-appropriate command ONCE, at plan-build
+    // time, into each step's own {cmd, args} — main()'s execution loop and the
+    // dry-run preview below just run/print whatever the plan says, with no
+    // per-call platform dispatch of their own (that was round 1's design;
+    // PRR-B round 2 found it left every OTHER step — ttyd/caddy — still
+    // hardcoded to launchctl, since only the server-restart step dispatched).
     assert.match(
       CUTOVER_SRC,
-      /sub === 'kickstart'[\s\S]{0,40}\? serverRestartCommand\(rest\[rest\.length - 1\]\)/,
-      'the server-restart step of the launchctl sequence must dispatch through serverRestartCommand'
+      /const serverStep = \{ \.\.\.serverRestartCommand\(serverTarget, platform\), optional: false, kind: 'server' \};/,
+      'planCutover must be the one place that calls serverRestartCommand'
     );
   });
 
-  it('is wired into the dry-run preview the same way, so the preview never shows a command on Linux it will not actually run', () => {
+  it('main() and the dry-run preview execute/print whatever the plan says, never a hardcoded "launchctl" (source-pinned)', () => {
     assert.match(
       CUTOVER_SRC,
-      /if \(sub === 'kickstart'\) \{\s*\n\s*const \{ cmd, args \} = serverRestartCommand/,
-      'the dry-run listing must print the dispatched command, not a hardcoded "launchctl kickstart" line'
+      /for \(const step of plan\.launchctl\) \{\s*\n\s*try \{\s*\n\s*execFileSync\(step\.cmd, step\.args,/,
+      'the execution loop must run step.cmd/step.args, not a hardcoded launchctl binary'
+    );
+    assert.match(
+      CUTOVER_SRC,
+      /for \(const step of plan\.launchctl\) \{\s*\n\s*process\.stdout\.write\(`  \$\{step\.cmd\} \$\{step\.args\.join\(' '\)\}/,
+      'the dry-run listing must print step.cmd/step.args, never a hardcoded "launchctl" line — it would otherwise ' +
+        'show a macOS command on Linux it will not actually run'
     );
   });
 });
 
-describe('ingress-cutover — a failed tailnet move rolls the server back on linux too (#2933)', () => {
+describe('ingress-cutover — a failed tailnet move rolls the server back, whichever platform built the plan (#2933)', () => {
   let dir;
-  let caddyfilePath;
 
   before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cutover-tailnet-linux-')); });
   after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
-  function makePlan() {
-    caddyfilePath = path.join(dir, 'Caddyfile');
+  // The plan is where #2933 round 2 moved platform dispatch TO: every step
+  // already carries its own resolved {cmd, args, kind, optional} by the time
+  // runTailnetVerification sees it — this function has no platform seam of
+  // its own and must not need one, proven by handing it a plan shaped either
+  // way and checking it just runs what each one says.
+  function makePlan(launchctl) {
+    const caddyfilePath = path.join(dir, `Caddyfile-${Math.random().toString(36).slice(2)}`);
     fs.writeFileSync(caddyfilePath, 'prior-caddyfile-content\n', { mode: 0o600 });
     return {
       caddyfile: { path: caddyfilePath, content: 'new-caddyfile-content\n' },
-      // No caddy plist in this plan — isolates the assertion to the server-restart
-      // step, which is the one #2933 actually changes here.
+      // No caddy step in this plan — isolates the assertion to the
+      // server-restart step, which is the one #2933 actually changes here.
       plists: [],
-      launchctl: [['kickstart', '-k', 'gui/501/com.tangleclaw.server']],
+      launchctl,
       healthUrl: 'https://localhost:8443/api/health'
     };
   }
 
-  it('restarts the server via systemctl --user, never launchctl, when deps.platform is linux', async () => {
+  it('restarts the server via systemctl --user when the plan is Linux-shaped', async () => {
     const execCalls = [];
     const configState = { caddyTailnetHost: 'old-host.example.ts.net' };
     let finished = null;
 
     await cutover.runTailnetVerification({
-      plan: makePlan(),
+      plan: makePlan([{ cmd: 'systemctl', args: ['--user', 'restart', 'tangleclaw.service'], optional: false, kind: 'server' }]),
       ctx: { tailnetHost: 'new-host.example.ts.net', priorTailnetHost: 'old-host.example.ts.net' },
       localCheck: { label: 'local', url: 'https://localhost:8443/api/health' },
       siteCheck: { label: 'new-host.example.ts.net', url: 'https://127.0.0.1:8443/api/health', servername: 'new-host.example.ts.net' },
@@ -1001,8 +1107,7 @@ describe('ingress-cutover — a failed tailnet move rolls the server back on lin
         // Force the rollback path — the moved site never answers healthy.
         verify: async () => ({ ok: false, last: [] }),
         execFile: (cmd, args) => { execCalls.push({ cmd, args }); },
-        configStore: { load: () => ({ ...configState }), save: (cfg) => { Object.assign(configState, cfg); } },
-        platform: 'linux'
+        configStore: { load: () => ({ ...configState }), save: (cfg) => { Object.assign(configState, cfg); } }
       }
     });
 
@@ -1013,16 +1118,16 @@ describe('ingress-cutover — a failed tailnet move rolls the server back on lin
     );
     assert.ok(
       !execCalls.some((c) => c.cmd === 'launchctl'),
-      `must not fall back to launchctl on linux; got: ${JSON.stringify(execCalls)}`
+      `must not fall back to launchctl for a Linux-shaped plan; got: ${JSON.stringify(execCalls)}`
     );
   });
 
-  it('still restarts the server via launchctl kickstart when no platform is injected (darwin default)', async () => {
+  it('restarts the server via launchctl kickstart when the plan is darwin-shaped', async () => {
     const execCalls = [];
     const configState = { caddyTailnetHost: 'old-host.example.ts.net' };
 
     await cutover.runTailnetVerification({
-      plan: makePlan(),
+      plan: makePlan([{ cmd: 'launchctl', args: ['kickstart', '-k', 'gui/501/com.tangleclaw.server'], optional: false, kind: 'server' }]),
       ctx: { tailnetHost: 'new-host.example.ts.net', priorTailnetHost: 'old-host.example.ts.net' },
       localCheck: { label: 'local', url: 'https://localhost:8443/api/health' },
       siteCheck: { label: 'new-host.example.ts.net', url: 'https://127.0.0.1:8443/api/health', servername: 'new-host.example.ts.net' },
@@ -1033,17 +1138,16 @@ describe('ingress-cutover — a failed tailnet move rolls the server back on lin
         verify: async () => ({ ok: false, last: [] }),
         execFile: (cmd, args) => { execCalls.push({ cmd, args }); },
         configStore: { load: () => ({ ...configState }), save: (cfg) => { Object.assign(configState, cfg); } }
-        // No `platform` override — exercises the real process.platform default.
       }
     });
 
-    if (process.platform === 'linux') {
-      assert.ok(execCalls.some((c) => c.cmd === 'systemctl'));
-    } else {
-      assert.ok(
-        execCalls.some((c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'),
-        `expected a launchctl kickstart call on ${process.platform}; got: ${JSON.stringify(execCalls)}`
-      );
-    }
+    assert.ok(
+      execCalls.some((c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'),
+      `expected a launchctl kickstart call; got: ${JSON.stringify(execCalls)}`
+    );
+    assert.ok(
+      !execCalls.some((c) => c.cmd === 'systemctl'),
+      `must not run systemctl for a darwin-shaped plan; got: ${JSON.stringify(execCalls)}`
+    );
   });
 });

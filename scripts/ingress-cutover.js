@@ -18,8 +18,9 @@
 //                                                          caller that is not reading stdout
 //
 // Fail-closed: in caddy mode the Caddyfile is `caddy validate`d BEFORE any
-// launchd reload, so a bad config can never take the ingress down. The flip
-// restarts the TC server so its listener re-binds for the new mode.
+// service reload (launchd on macOS, systemd --user on Linux, #2933), so a bad
+// config can never take the ingress down. The flip restarts the TC server so
+// its listener re-binds for the new mode.
 //
 // #397 production-durability fixes: (1) the cert is STAGED into the non-TCC store
 // dir so the launchd caddy (no Full Disk Access) can read it; (2) ttyd's launchd
@@ -139,17 +140,35 @@ function fillTemplate(tpl, subs) {
  * @param {string} [ctx.tailnetHost] - A validated `--tailnet-host` name (#1905). Set,
  *   the Caddyfile's tailnet site uses it and `configPatch` carries it, so the site
  *   and `caddyTailnetHost` move in the same transaction. Absent, config decides.
- * @returns {{ target, caddyfile: {path,content}|null, plists: Array<{path,content}>, configPatch: object, launchctl: Array<string[]>, healthUrl: string, rollbackHint: string, bindNote: string|null, gateNote: string|null }}
+ * @param {string} [ctx.platform] - Defaults to `process.platform`; injectable for
+ *   tests (#2933). On Linux, `plists` holds systemd unit files instead of launchd
+ *   plists (`lib/linux-systemd.js`'s generators) and `launchctl` holds `systemctl
+ *   --user` steps instead of `launchctl` ones — same field names, so the executor
+ *   and the tailnet-rollback reload stay platform-agnostic; every step this
+ *   function builds decides its own `{cmd, args}` up front.
+ * @returns {{ target, caddyfile: {path,content}|null, plists: Array<{path,content}>, configPatch: object,
+ *   launchctl: Array<{cmd: string, args: string[], optional: boolean, kind: ('ttyd'|'caddy'|'server'|'system')}>,
+ *   healthUrl: string, rollbackHint: string, bindNote: string|null, gateNote: string|null }}
  *   `gateNote` is set on a move to caddy mode: whether the written Caddyfile
  *   carries `basic_auth`, and the gate state that decided it.
  *   `bindNote` is set on a move to direct mode: what the saved
  *   `bindAllInterfaces` will do there, which caddy mode had hidden (#1055).
+ *   Each `launchctl` step's `optional` is true when its failure is tolerated
+ *   (the macOS `unload`/Linux `stop` of a job that may never have been
+ *   running) and false when it must succeed; `kind` is how a caller (the
+ *   tailnet rollback) finds "the caddy step" or "the server step" without
+ *   caring which platform built the plan.
  */
 function planCutover(target, ctx) {
   const { config, env, upstreamPort } = ctx;
+  const platform = ctx.platform || process.platform;
+  const isLinux = platform === 'linux';
   const ttydPlistPath = path.join(env.launchAgentsDir, `${TTYD_LABEL}.plist`);
   const caddyPlistPath = path.join(env.launchAgentsDir, `${CADDY_LABEL}.plist`);
+  const ttydServicePath = isLinux ? linuxSystemd.unitFilePath(env.home, linuxSystemd.TTYD_SERVICE_NAME) : ttydPlistPath;
+  const caddyServicePath = isLinux ? linuxSystemd.unitFilePath(env.home, linuxSystemd.CADDY_SERVICE_NAME) : caddyPlistPath;
   const serverTarget = `gui/${env.uid}/${SERVER_LABEL}`;
+  const serverStep = { ...serverRestartCommand(serverTarget, platform), optional: false, kind: 'server' };
 
   if (target === 'caddy') {
     const httpsPort = config.caddyHttpsPort || 8443;
@@ -213,43 +232,74 @@ function planCutover(target, ctx) {
       // the name.
       lanHost: ctx.lanHost
     });
-    const ttydPlist = fillTemplate(ctx.ttydTemplate, {
-      TTYD_PATH: env.ttydPath, HOME: env.home,
-      // #500: the attach script lives outside the repo (non-TCC); main() syncs
-      // the copy before applying the plan.
-      TTYD_ATTACH: ttydAttach.attachScriptPath(env.baseDir),
-      LAUNCHD_PATH: env.launchdPath,
-      TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ctx.socketPath,
-      // Ignored by ttyd when the interface is a unix socket (verified: no TCP
-      // listener is opened), but the template slot must still be filled or the
-      // literal placeholder would reach argv.
-      TTYD_PORT: String(config.ttydPort || 3100),
-      // #397 bug 2: tell the inline launcher which socket to unlink before bind.
-      TTYD_SOCKET: ctx.socketPath
-    });
-    const caddyPlist = fillTemplate(ctx.caddyTemplate, {
-      CADDY_PATH: env.caddyPath, CADDYFILE: ctx.caddyfilePath,
-      HOME: env.home, LAUNCHD_PATH: env.launchdPath
-    });
+    let ttydService;
+    let caddyService;
+    if (isLinux) {
+      ttydService = linuxSystemd.generateTtydUnitFile({
+        ttydPath: env.ttydPath,
+        // #500: the attach script lives outside the repo (non-TCC); main() syncs
+        // the copy before applying the plan.
+        attachScriptPath: ttydAttach.attachScriptPath(env.baseDir),
+        bindKey: '--interface', bindVal: ctx.socketPath,
+        port: config.ttydPort || 3100,
+        // #397 bug 2: tell the inline self-heal which socket to unlink before bind.
+        socketPath: ctx.socketPath
+      });
+      const ttydViolations = linuxSystemd.verifyTtydUnitFileContract(ttydService);
+      if (ttydViolations.length > 0) {
+        throw new Error(`generated ttyd unit file fails its own contract: ${ttydViolations.join('; ')}`);
+      }
+      caddyService = linuxSystemd.generateCaddyUnitFile({
+        caddyPath: env.caddyPath, caddyfilePath: ctx.caddyfilePath, homeDir: env.home
+      });
+      const caddyViolations = linuxSystemd.verifyCaddyUnitFileContract(caddyService);
+      if (caddyViolations.length > 0) {
+        throw new Error(`generated caddy unit file fails its own contract: ${caddyViolations.join('; ')}`);
+      }
+    } else {
+      ttydService = fillTemplate(ctx.ttydTemplate, {
+        TTYD_PATH: env.ttydPath, HOME: env.home,
+        TTYD_ATTACH: ttydAttach.attachScriptPath(env.baseDir),
+        LAUNCHD_PATH: env.launchdPath,
+        TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ctx.socketPath,
+        // Ignored by ttyd when the interface is a unix socket (verified: no TCP
+        // listener is opened), but the template slot must still be filled or the
+        // literal placeholder would reach argv.
+        TTYD_PORT: String(config.ttydPort || 3100),
+        TTYD_SOCKET: ctx.socketPath
+      });
+      caddyService = fillTemplate(ctx.caddyTemplate, {
+        CADDY_PATH: env.caddyPath, CADDYFILE: ctx.caddyfilePath,
+        HOME: env.home, LAUNCHD_PATH: env.launchdPath
+      });
+    }
     return {
       target,
       caddyfile: { path: ctx.caddyfilePath, content: caddyfile },
       plists: [
-        { path: ttydPlistPath, content: ttydPlist },
-        { path: caddyPlistPath, content: caddyPlist }
+        { path: ttydServicePath, content: ttydService },
+        { path: caddyServicePath, content: caddyService }
       ],
       configPatch: ctx.tailnetHost !== undefined
         ? { ingressMode: 'caddy', caddyTailnetHost: ctx.tailnetHost }
         : { ingressMode: 'caddy' },
       // Reload ttyd onto the socket, bring Caddy up, restart the server so it
-      // re-binds localhost plain-HTTP. unload-before-load is idempotent.
-      launchctl: [
-        ['unload', ttydPlistPath],
-        ['load', ttydPlistPath],
-        ['unload', caddyPlistPath],
-        ['load', caddyPlistPath],
-        ['kickstart', '-k', serverTarget]
-      ],
+      // re-binds localhost plain-HTTP. unload-before-load is idempotent; a
+      // Linux unit's content never changes without a daemon-reload picking it up.
+      launchctl: isLinux
+        ? [
+            { cmd: 'systemctl', args: ['--user', 'daemon-reload'], optional: false, kind: 'system' },
+            { cmd: 'systemctl', args: ['--user', 'restart', linuxSystemd.TTYD_SERVICE_NAME], optional: false, kind: 'ttyd' },
+            { cmd: 'systemctl', args: ['--user', 'restart', linuxSystemd.CADDY_SERVICE_NAME], optional: false, kind: 'caddy' },
+            serverStep
+          ]
+        : [
+            { cmd: 'launchctl', args: ['unload', ttydServicePath], optional: true, kind: 'ttyd' },
+            { cmd: 'launchctl', args: ['load', ttydServicePath], optional: false, kind: 'ttyd' },
+            { cmd: 'launchctl', args: ['unload', caddyServicePath], optional: true, kind: 'caddy' },
+            { cmd: 'launchctl', args: ['load', caddyServicePath], optional: false, kind: 'caddy' },
+            serverStep
+          ],
       healthUrl: `https://localhost:${httpsPort}/api/health`,
       rollbackHint: 'node scripts/ingress-cutover.js --to direct',
       bindNote: null,
@@ -268,28 +318,51 @@ function planCutover(target, ctx) {
   // about reaching the DASHBOARD remotely, and nothing addresses ttyd directly
   // since TC proxies to it. See lib/ttyd-bind.js#desiredBind.
   const ttydBindAddress = '127.0.0.1';
-  const ttydPlist = fillTemplate(ctx.ttydTemplate, {
-    TTYD_PATH: env.ttydPath, HOME: env.home,
-    // #500: attach script installed outside the repo (non-TCC).
-    TTYD_ATTACH: ttydAttach.attachScriptPath(env.baseDir),
-    LAUNCHD_PATH: env.launchdPath,
-    TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ttydBindAddress,
-    TTYD_PORT: String(config.ttydPort || 3100),
-    // Direct mode binds TCP — no socket to unlink; leave TTYD_SOCKET empty.
-    TTYD_SOCKET: ''
-  });
+  let ttydService;
+  if (isLinux) {
+    ttydService = linuxSystemd.generateTtydUnitFile({
+      ttydPath: env.ttydPath,
+      // #500: attach script installed outside the repo (non-TCC).
+      attachScriptPath: ttydAttach.attachScriptPath(env.baseDir),
+      bindKey: '--interface', bindVal: ttydBindAddress,
+      port: config.ttydPort || 3100,
+      // Direct mode binds TCP — no socket to unlink; leave socketPath empty.
+      socketPath: ''
+    });
+    const violations = linuxSystemd.verifyTtydUnitFileContract(ttydService);
+    if (violations.length > 0) {
+      throw new Error(`generated ttyd unit file fails its own contract: ${violations.join('; ')}`);
+    }
+  } else {
+    ttydService = fillTemplate(ctx.ttydTemplate, {
+      TTYD_PATH: env.ttydPath, HOME: env.home,
+      TTYD_ATTACH: ttydAttach.attachScriptPath(env.baseDir),
+      LAUNCHD_PATH: env.launchdPath,
+      TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ttydBindAddress,
+      TTYD_PORT: String(config.ttydPort || 3100),
+      // Direct mode binds TCP — no socket to unlink; leave TTYD_SOCKET empty.
+      TTYD_SOCKET: ''
+    });
+  }
   const protocol = (config.httpsEnabled && config.httpsCertPath && config.httpsKeyPath) ? 'https' : 'http';
   return {
     target,
     caddyfile: null,
-    plists: [{ path: ttydPlistPath, content: ttydPlist }],
+    plists: [{ path: ttydServicePath, content: ttydService }],
     configPatch: { ingressMode: 'direct' },
-    launchctl: [
-      ['unload', caddyPlistPath],
-      ['unload', ttydPlistPath],
-      ['load', ttydPlistPath],
-      ['kickstart', '-k', serverTarget]
-    ],
+    launchctl: isLinux
+      ? [
+          { cmd: 'systemctl', args: ['--user', 'daemon-reload'], optional: false, kind: 'system' },
+          { cmd: 'systemctl', args: ['--user', 'stop', linuxSystemd.CADDY_SERVICE_NAME], optional: true, kind: 'caddy' },
+          { cmd: 'systemctl', args: ['--user', 'restart', linuxSystemd.TTYD_SERVICE_NAME], optional: false, kind: 'ttyd' },
+          serverStep
+        ]
+      : [
+          { cmd: 'launchctl', args: ['unload', caddyServicePath], optional: true, kind: 'caddy' },
+          { cmd: 'launchctl', args: ['unload', ttydServicePath], optional: true, kind: 'ttyd' },
+          { cmd: 'launchctl', args: ['load', ttydServicePath], optional: false, kind: 'ttyd' },
+          serverStep
+        ],
     healthUrl: `${protocol}://localhost:${upstreamPort}/api/health`,
     rollbackHint: 'node scripts/ingress-cutover.js --to caddy',
     bindNote: describeDirectBind(config, ctx.gateState),
@@ -965,13 +1038,8 @@ function main() {
     }
     for (const f of plan.plists) process.stdout.write(`  write plist:     ${f.path}\n`);
     process.stdout.write(`  config patch:    ${JSON.stringify(plan.configPatch)}\n`);
-    for (const [sub, ...rest] of plan.launchctl) {
-      if (sub === 'kickstart') {
-        const { cmd, args } = serverRestartCommand(rest[rest.length - 1]);
-        process.stdout.write(`  ${cmd} ${args.join(' ')}\n`);
-      } else {
-        process.stdout.write(`  launchctl ${[sub, ...rest].join(' ')}\n`);
-      }
+    for (const step of plan.launchctl) {
+      process.stdout.write(`  ${step.cmd} ${step.args.join(' ')}\n`);
     }
     process.stdout.write(`  ttyd runtime:    ${describeTtydRuntime(ttydRuntime)}\n`);
     process.stdout.write(`  health check:    ${plan.healthUrl}\n`);
@@ -1086,19 +1154,17 @@ function main() {
   Object.assign(config, plan.configPatch);
   store.config.save(config);
 
-  // 5. launchctl sequence. unload may legitimately fail (job not loaded) — tolerate.
-  // The 'kickstart' step restarts the TangleClaw server itself (#2933: systemd
-  // --user restart on Linux); every other step is Caddy/ttyd plist management,
-  // which stays launchd-only.
-  for (const [sub, ...rest] of plan.launchctl) {
-    const { cmd, args } = sub === 'kickstart'
-      ? serverRestartCommand(rest[rest.length - 1])
-      : { cmd: 'launchctl', args: [sub, ...rest] };
+  // 5. The platform-appropriate reload sequence (#2933: launchctl/plist steps
+  // on macOS, systemctl --user/systemd-unit steps on Linux — planCutover
+  // already resolved which, per step). A step marked `optional` may
+  // legitimately fail (e.g. macOS's `unload`/Linux's `stop` of a job that was
+  // never loaded) — tolerate those; nothing else.
+  for (const step of plan.launchctl) {
     try {
-      execFileSync(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      execFileSync(step.cmd, step.args, { stdio: ['ignore', 'ignore', 'pipe'] });
     } catch (err) {
-      if (sub !== 'unload') {
-        process.stderr.write(`WARNING: ${cmd} ${args.join(' ')} failed: ${err.message}\n`);
+      if (!step.optional) {
+        process.stderr.write(`WARNING: ${step.cmd} ${step.args.join(' ')} failed: ${err.message}\n`);
       }
     }
   }
@@ -1167,8 +1233,9 @@ function main() {
  * @param {string|null} args.tailnetBackup - Where those bytes were copied.
  * @param {Function} args.finish - The run's `finish(code, error, extra)`.
  * @param {object} [args.deps] - Seams for tests: `verify` (verifyTailnetApply),
- *   `execFile` (execFileSync for launchctl/systemctl), `configStore` (the
- *   store's config API) and `platform` (defaults to `process.platform`; #2933).
+ *   `execFile` (execFileSync for launchctl/systemctl), and `configStore` (the
+ *   store's config API). No platform seam is needed here (#2933): `plan`
+ *   already carries platform-resolved `{cmd, args}` steps from planCutover.
  * @returns {Promise<void>}
  */
 async function runTailnetVerification({
@@ -1177,7 +1244,6 @@ async function runTailnetVerification({
   const verify = deps.verify || tailnetCutover.verifyTailnetApply;
   const execFile = deps.execFile || execFileSync;
   const configStore = deps.configStore || store.config;
-  const platform = deps.platform || process.platform;
   // The backup holds the prior file, which can carry a basic_auth hash. It is
   // kept only while a recovery might need it.
   const dropBackup = () => {
@@ -1193,8 +1259,8 @@ async function runTailnetVerification({
   const cause = tailnetCutover.describeChecks(applied.last);
   process.stderr.write(`ERROR: the moved tailnet site is not healthy (${cause}) — rolling back\n`);
 
-  const caddyPlist = plan.plists.find((f) => /caddy/i.test(path.basename(f.path)));
-  const serverKick = plan.launchctl.find(([sub]) => sub === 'kickstart');
+  const caddySteps = plan.launchctl.filter((s) => s.kind === 'caddy');
+  const serverStep = plan.launchctl.find((s) => s.kind === 'server');
   const rollback = await tailnetCutover.rollbackTailnetApply({
     caddyfilePath: plan.caddyfile.path,
     priorCaddyfile,
@@ -1214,16 +1280,18 @@ async function runTailnetVerification({
       readTailnetHost: () => configStore.load().caddyTailnetHost || null,
       reload: () => {
         // Caddy re-reads the restored file; the server re-reads the restored
-        // config. Unload may fail harmlessly (job not loaded); load and the
-        // kickstart may not.
-        if (caddyPlist) {
-          try { execFile('launchctl', ['unload', caddyPlist.path], { stdio: ['ignore', 'ignore', 'pipe'] }); } catch { /* not loaded */ }
-          execFile('launchctl', ['load', caddyPlist.path], { stdio: ['ignore', 'ignore', 'pipe'] });
+        // config. An optional step (macOS's `unload`) may fail harmlessly
+        // (job not loaded); every other step must succeed. Both the macOS
+        // unload+load pair and Linux's single systemctl restart are tagged
+        // `kind: 'caddy'` by planCutover, so this needs no platform check.
+        for (const step of caddySteps) {
+          if (step.optional) {
+            try { execFile(step.cmd, step.args, { stdio: ['ignore', 'ignore', 'pipe'] }); } catch { /* not loaded */ }
+          } else {
+            execFile(step.cmd, step.args, { stdio: ['ignore', 'ignore', 'pipe'] });
+          }
         }
-        if (serverKick) {
-          const restart = serverRestartCommand(serverKick[serverKick.length - 1], platform);
-          execFile(restart.cmd, restart.args, { stdio: ['ignore', 'ignore', 'pipe'] });
-        }
+        if (serverStep) execFile(serverStep.cmd, serverStep.args, { stdio: ['ignore', 'ignore', 'pipe'] });
       },
       verifyLocal: () => verify([localCheck])
     }
