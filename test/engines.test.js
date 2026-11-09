@@ -986,6 +986,13 @@ describe('engines', () => {
         assert.deepEqual(aider.launchModes.default.args, []);
       });
 
+      it('aider does not claim it can execute the acknowledged tc launch sequence (#2961)', () => {
+        const aider = engines.listWithAvailability().find(e => e.id === 'aider');
+        assert.equal(aider.capabilities.launchSequence.supported, false);
+        assert.match(aider.capabilities.launchSequence.reason, /no native shell tool/);
+        assert.match(aider.capabilities.launchSequence.reason, /must not require or auto-attest/);
+      });
+
       it('codex exposes fullAuto (sandboxed) and bypass (not sandboxed)', () => {
         // This test previously asserted `--full-auto`, which codex-cli has
         // since removed — `codex --full-auto` exits 2 with "unexpected
@@ -1766,6 +1773,12 @@ describe('engines', () => {
       const content = engines._generateAiderConf({ id: project.id });
       assert.doesNotMatch(content, /# Session Rules:/);
       assert.doesNotMatch(content, /Aider must not see this/);
+    });
+
+    it('.aider.conf.yml disables URL detection before a startup prime can trigger Playwright (#2961)', () => {
+      const content = engines._generateAiderConf({ id: project.id });
+      assert.match(content, /^detect-urls: false$/m);
+      assert.equal((content.match(/^detect-urls:/gm) || []).length, 1);
     });
 
     it('renders NOTHING when there are no active session rules', () => {

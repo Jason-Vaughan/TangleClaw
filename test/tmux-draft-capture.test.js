@@ -136,7 +136,7 @@ describe('reading the draft through the engine\'s composer profile', () => {
   it('says why when it cannot tell, and never guesses', () => {
     paneIs(['whatever'], cursorAtEnd('whatever'));
     assert.match(tmux._readDraft('s', null).reason, /engine is unknown/);
-    assert.match(tmux._readDraft('s', 'aider').reason, /engine "aider" declares no composer profile/);
+    assert.match(tmux._readDraft('s', 'openclaw').reason, /engine "openclaw" declares no composer profile/);
     paneIs(['whatever'], null);
     assert.match(tmux._readDraft('s', 'claude').reason, /cursor position was unavailable/);
     tmux._draftSeams.cursorInfo = () => { throw new Error('no such pane'); };
@@ -438,9 +438,9 @@ describe('the clear: records what it read, and still clears when it could not re
   it('an engine with no composer profile: still cleared (#812), and the log says no draft was captured', () => {
     try {
       paneWithDraft('echo UNPROFILEDDRAFT');
-      const out = logged(() => tmux._clearPromptLine(session, 'aider', ATTEMPT));
+      const out = logged(() => tmux._clearPromptLine(session, 'openclaw', ATTEMPT));
       assert.match(out, /draft not captured: composer not located/);
-      assert.match(out, /reason=engine "aider" declares no composer profile/);
+      assert.match(out, /reason=engine "openclaw" declares no composer profile/);
       assert.doesNotMatch(out, /kept in the draft store|promptBeforeClear/);
       assert.deepEqual(draftStore.readDrafts(ATTEMPT).filter((d) => d.text.includes('UNPROFILEDDRAFT')), []);
       assert.doesNotMatch(promptRow(), /UNPROFILEDDRAFT/, 'cleared anyway: an appended paste would submit it');

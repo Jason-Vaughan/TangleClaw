@@ -57,6 +57,58 @@ describe('aider-task-contract', () => {
         /no '\.\.' segment/);
     });
 
+    it('rejects control characters and Python line separators before they can become aiderignore directives', () => {
+      for (const control of ['\0', '\r', '\n', '\t', '\x1b', '\x7f', '\x85', '\u2028', '\u2029']) {
+        assert.throws(
+          () => contract.buildTaskContract({ repoPath, editableFiles: [`safe.js${control}!/*`], message: 'x' }),
+          /editableFiles\[0\].*(?:control characters|line separators)/
+        );
+      }
+    });
+
+    it('blocks Python splitlines injection, with an installed-Aider pathspec cross-check when available', (t) => {
+      for (const separator of ['\n', '\x85', '\u2028', '\u2029']) {
+        assert.throws(
+          () => contract.buildTaskContract({ repoPath, editableFiles: [`safe.js${separator}!/*`], message: 'x' }),
+          /control characters|line separators/,
+          'the contract must reject the payload before any aiderignore is generated'
+        );
+      }
+
+      const which = realSpawnSync('which', ['aider'], { encoding: 'utf8' });
+      if (!which || which.status !== 0 || !String(which.stdout || '').trim()) {
+        t.diagnostic('installed Aider unavailable; primary rejection regression still ran');
+        return;
+      }
+
+      const aiderPath = fs.realpathSync(String(which.stdout).trim());
+      const shebang = fs.readFileSync(aiderPath, 'utf8').split('\n', 1)[0];
+      const match = shebang.match(/^#!\s*(.+)$/);
+      if (!match) {
+        t.diagnostic('installed Aider launcher does not expose its Python interpreter');
+        return;
+      }
+
+      const probe = realSpawnSync(match[1], ['-c', [
+        'import json',
+        'from pathspec import PathSpec',
+        "separators = ['\\n', '\\u0085', '\\u2028', '\\u2029']",
+        "results = {f'U+{ord(sep):04X}': PathSpec.from_lines('gitwildmatch', ('/*\\n!/safe.js' + sep + '!/*\\n').splitlines()).match_file('other.js') for sep in separators}",
+        'print(json.dumps(results, sort_keys=True))'
+      ].join('; ')], { encoding: 'utf8' });
+      if (!probe || probe.status !== 0) {
+        t.diagnostic('installed Aider environment does not expose pathspec');
+        return;
+      }
+
+      assert.deepEqual(JSON.parse(probe.stdout), {
+        'U+000A': false,
+        'U+0085': false,
+        'U+2028': false,
+        'U+2029': false
+      }, 'each injected !/* directive makes pathspec treat unrelated other.js as not ignored');
+    });
+
     it('rejects an empty message', () => {
       assert.throws(() => contract.buildTaskContract({ repoPath, editableFiles: ['a.js'], message: '   ' }),
         /non-empty string/);
@@ -86,6 +138,45 @@ describe('aider-task-contract', () => {
         return { status: 0, signal: null, stdout: message, stderr: '' };
       };
     }
+
+    it('passes a temporary aiderignore that exposes only the explicit --file envelope (#2961)', () => {
+      const c = contract.buildTaskContract({
+        repoPath,
+        editableFiles: ['a.js', 'nested/b.js'],
+        message: 'edit only the assigned files'
+      });
+      let invocation;
+      const fake = (cmd, args, opts) => {
+        if (cmd !== 'aider') return realSpawnSync(cmd, args, opts);
+        const ignoreFile = args[args.indexOf('--aiderignore') + 1];
+        const messageFile = args[args.indexOf('--message-file') + 1];
+        invocation = {
+          args: [...args],
+          ignoreFile,
+          messageFile,
+          ignoreText: fs.readFileSync(ignoreFile, 'utf8'),
+          messageText: fs.readFileSync(messageFile, 'utf8')
+        };
+        return { status: 0, signal: null, stdout: 'No change needed.', stderr: '' };
+      };
+
+      const receipt = contract.runTask(c, { spawnSync: fake });
+
+      assert.equal(receipt.outcome, 'no-op');
+      assert.equal(invocation.messageText, 'edit only the assigned files');
+      assert.match(invocation.ignoreText, /^\/\*$/m, 'everything starts ignored');
+      assert.match(invocation.ignoreText, /^!\/a\.js$/m);
+      assert.match(invocation.ignoreText, /^!\/nested\/$/m);
+      assert.match(invocation.ignoreText, /^\/nested\/\*$/m);
+      assert.match(invocation.ignoreText, /^!\/nested\/b\.js$/m);
+      assert.deepEqual(
+        invocation.args.filter((arg, index, args) => args[index - 1] === '--file'),
+        ['a.js', 'nested/b.js'],
+        'the supported ignore boundary supplements, rather than replaces, repeated --file arguments'
+      );
+      assert.equal(fs.existsSync(invocation.ignoreFile), false, 'temporary ignore file is removed');
+      assert.equal(fs.existsSync(invocation.messageFile), false, 'temporary message file is removed');
+    });
 
     it('reports success when a real edit lands inside scope and the test command passes', () => {
       const c = contract.buildTaskContract({ repoPath, editableFiles: ['a.js'], message: 'edit a.js', testCommand: process.execPath + ' -e "process.exit(0)"' });

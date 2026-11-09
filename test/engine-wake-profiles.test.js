@@ -109,16 +109,16 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
     // glyph, pad, placeholder SGR, busy marker and idle marker were each read
     // off a running codex pane from OUTSIDE it (a session cannot measure its
     // own markers; its reasoning about them lands in its own capture), with
-    // the idle marker separated over 50 samples. aider and openclaw still have
-    // no capture, so they are still absent.
+    // the idle marker separated over 50 samples. Aider joined in #2961 from
+    // live fleet sessions #1621/#1627; openclaw still has no pane capture.
     const declaring = bundled().filter((b) => b.profile.capabilities && b.profile.capabilities.wake)
       .map((b) => b.profile.id).sort();
     // These two literals are deliberate and must NOT become declaringIds():
     // this case exists to NOTICE the set changing, and deriving both sides
     // would make it compare a value with itself and pass forever. Every
     // other loop in this file derives; this one is the guard.
-    assert.deepEqual(declaring, ['antigravity', 'claude', 'codex']);
-    assert.deepEqual(Object.keys(wake.ENGINE_WAKE_PROFILES).sort(), ['antigravity', 'claude', 'codex'],
+    assert.deepEqual(declaring, ['aider', 'antigravity', 'claude', 'codex']);
+    assert.deepEqual(Object.keys(wake.ENGINE_WAKE_PROFILES).sort(), ['aider', 'antigravity', 'claude', 'codex'],
       'the derived table is the declaring set — no engine gained or lost a profile in the move');
   });
 

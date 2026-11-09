@@ -32,6 +32,7 @@ const wake = require('../lib/medusa-wake');
 /** The live-probed detection profiles the engine profiles declare (#560). */
 const CLAUDE = wake.ENGINE_WAKE_PROFILES.claude;
 const ANTIGRAVITY = wake.ENGINE_WAKE_PROFILES.antigravity;
+const AIDER = wake.ENGINE_WAKE_PROFILES.aider;
 
 // Pane fixtures from the live spike captures, shared with the profile guard
 // so the two cannot drift on the exact bytes (`test/_wake-fixtures.js`).
@@ -336,6 +337,31 @@ describe('medusa-wake — placeholder styling is declared per engine (#1105)', (
       'SGR 2 is not antigravity\'s placeholder marker');
     assert.deepEqual(CLAUDE.placeholderSgr, [2]);
     assert.deepEqual(AG.placeholderSgr, [90]);
+  });
+});
+
+describe('medusa-wake — Aider 0.86.2 measured pane profile (#2961)', () => {
+  it('loads the bundled profile with its measured prompt and busy marker', () => {
+    assert.ok(AIDER, 'Aider must no longer be skipped as no-wake-profile');
+    assert.equal(AIDER.busyMarker, 'Waiting for ');
+    assert.equal(AIDER.promptGlyph, '>');
+    assert.equal(AIDER.idleMarker, null);
+  });
+
+  it('accepts only the bare prompt as idle', () => {
+    assert.deepEqual(wake._assessPane(['Aider v0.86.2', '> '], AIDER), { idle: true, reason: 'at-prompt' });
+    assert.deepEqual(wake._assessPane(['Aider v0.86.2', '> tc message read'], AIDER), { idle: false, reason: 'no-prompt' });
+  });
+
+  it('never reads a measured model wait or confirmation dialog as idle', () => {
+    assert.deepEqual(
+      wake._assessPane(['Waiting for ollama_chat/gpt-oss:120b', '> '], AIDER),
+      { idle: false, reason: 'turn-in-flight' }
+    );
+    assert.deepEqual(
+      wake._assessPane(['Add file to the chat?', '(Y)es/(N)o'], AIDER),
+      { idle: false, reason: 'no-prompt' }
+    );
   });
 });
 

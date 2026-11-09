@@ -37,7 +37,7 @@ before(() => {
   // the one `getSessionStatus` resolves here.
   const unprofiledDir = path.join(tmpDir, 'projects', 'chime-payload-unprofiled');
   fs.mkdirSync(unprofiledDir, { recursive: true });
-  unprofiledProjectId = store.projects.create({ name: 'chime-payload-unprofiled', path: unprofiledDir, engine: 'aider' }).id;
+  unprofiledProjectId = store.projects.create({ name: 'chime-payload-unprofiled', path: unprofiledDir, engine: 'openclaw' }).id;
 });
 
 after(() => {
@@ -83,11 +83,11 @@ describe('#1180 the status payload carries which gate answered', () => {
   it('names the FALLBACK on an engine with no wake profile', () => {
     // This is the case that would otherwise re-report #1180 against code that
     // never ran for them.
-    // aider: codex gained a measured wake profile in #1344, so it is no longer
-    // an engine with no wake profile.
-    withPane(['transcript', '', '> '], 'aider', () => {
+    // openclaw is the registered engine with no pane wake profile. Codex and
+    // Aider both have measured profiles now (#1344, #2961).
+    withPane(['transcript', '', '> '], 'openclaw', () => {
       const status = sessions.getSessionStatus('chime-payload-unprofiled');
-      assert.match(status.idleReason, /^staleness:no-wake-profile:aider$/);
+      assert.match(status.idleReason, /^staleness:no-wake-profile:openclaw$/);
     }, unprofiledProjectId);
   });
 });
