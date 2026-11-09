@@ -35,7 +35,10 @@
   "defaultLaunchMode": "default",
   "persistent": null,
   "capabilities": {
-    "launchSequence": { "supported": true },
+    "launchSequence": {
+      "supported": false,
+      "reason": "Aider 0.86.2 has no native shell tool, and --yes-always deliberately refuses LLM-suggested shell commands that require explicit confirmation. The pasted prime and read-only conventions carrier still deliver startup context, but TangleClaw must not require or auto-attest tc start steps the session cannot execute."
+    },
     "supportsSlashCommands": true,
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
@@ -51,7 +54,41 @@
       "module": "lib/aider-task-contract.js",
       "entryPoint": "lib/engines.js#runAiderTask",
       "invocation": "cli-one-shot",
-      "note": "Bounded one-shot Aider Builder task (#1644) via Aider's own `--message-file` CLI invocation, not the interactive chat loop. No live wake idle/busy signature is configured for Aider yet (lib/medusa-wake.js) — this entry point does not depend on one."
+      "note": "Bounded one-shot Aider Builder task (#1644) via Aider's own `--message-file` CLI invocation, not the interactive chat loop. The runner supplies repeated `--file` arguments plus a temporary task-scoped `--aiderignore`, so `--yes-always` cannot expand the envelope when prose mentions another repo file (#2961). This entry point does not depend on the interactive wake profile."
+    },
+    "wake": {
+      "busyMarker": "Waiting for ",
+      "promptPattern": "^> ?$",
+      "promptGlyph": ">",
+      "promptPad": " ",
+      "placeholderSgr": [],
+      "idleMarker": null,
+      "evidence": {
+        "busyMarker": {
+          "verifiedOn": "2026-11-09",
+          "source": "Aider 0.86.2 live fleet sessions #1621/#1627 recorded in TangleClaw #2961: an in-flight model request renders `Waiting for <model>`, while the marker is absent at the input prompt."
+        },
+        "promptPattern": {
+          "verifiedOn": "2026-11-09",
+          "source": "Aider 0.86.2 live fleet sessions #1621/#1627 recorded in TangleClaw #2961: the at-rest interactive input row is a bare `>` with an optional following space."
+        },
+        "promptGlyph": {
+          "verifiedOn": "2026-11-09",
+          "source": "Aider 0.86.2 live fleet sessions #1621/#1627 recorded in TangleClaw #2961: `>` is the interactive composer glyph."
+        },
+        "promptPad": {
+          "verifiedOn": "2026-11-09",
+          "source": "Aider 0.86.2 live fleet sessions #1621/#1627 recorded in TangleClaw #2961: the empty composer renders one ordinary space after `>`; the prompt regex also accepts the captured no-pad form."
+        },
+        "placeholderSgr": {
+          "verifiedOn": "2026-11-09",
+          "source": "Aider 0.86.2 live fleet sessions #1621/#1627 recorded in TangleClaw #2961: the bare prompt carries no placeholder text to discount."
+        },
+        "idleMarker": {
+          "verifiedOn": "2026-11-09",
+          "source": "Aider 0.86.2 live fleet sessions #1621/#1627 recorded in TangleClaw #2961: no separate positive at-rest marker was observed; the prompt disappears during the measured `Waiting for <model>` state, so the bare-prompt requirement remains the positive idle signal."
+        }
+      }
     }
   },
   "statusPage": null

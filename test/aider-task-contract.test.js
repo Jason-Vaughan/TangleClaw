@@ -87,6 +87,45 @@ describe('aider-task-contract', () => {
       };
     }
 
+    it('passes a temporary aiderignore that exposes only the explicit --file envelope (#2961)', () => {
+      const c = contract.buildTaskContract({
+        repoPath,
+        editableFiles: ['a.js', 'nested/b.js'],
+        message: 'edit only the assigned files'
+      });
+      let invocation;
+      const fake = (cmd, args, opts) => {
+        if (cmd !== 'aider') return realSpawnSync(cmd, args, opts);
+        const ignoreFile = args[args.indexOf('--aiderignore') + 1];
+        const messageFile = args[args.indexOf('--message-file') + 1];
+        invocation = {
+          args: [...args],
+          ignoreFile,
+          messageFile,
+          ignoreText: fs.readFileSync(ignoreFile, 'utf8'),
+          messageText: fs.readFileSync(messageFile, 'utf8')
+        };
+        return { status: 0, signal: null, stdout: 'No change needed.', stderr: '' };
+      };
+
+      const receipt = contract.runTask(c, { spawnSync: fake });
+
+      assert.equal(receipt.outcome, 'no-op');
+      assert.equal(invocation.messageText, 'edit only the assigned files');
+      assert.match(invocation.ignoreText, /^\/\*$/m, 'everything starts ignored');
+      assert.match(invocation.ignoreText, /^!\/a\.js$/m);
+      assert.match(invocation.ignoreText, /^!\/nested\/$/m);
+      assert.match(invocation.ignoreText, /^\/nested\/\*$/m);
+      assert.match(invocation.ignoreText, /^!\/nested\/b\.js$/m);
+      assert.deepEqual(
+        invocation.args.filter((arg, index, args) => args[index - 1] === '--file'),
+        ['a.js', 'nested/b.js'],
+        'the supported ignore boundary supplements, rather than replaces, repeated --file arguments'
+      );
+      assert.equal(fs.existsSync(invocation.ignoreFile), false, 'temporary ignore file is removed');
+      assert.equal(fs.existsSync(invocation.messageFile), false, 'temporary message file is removed');
+    });
+
     it('reports success when a real edit lands inside scope and the test command passes', () => {
       const c = contract.buildTaskContract({ repoPath, editableFiles: ['a.js'], message: 'edit a.js', testCommand: process.execPath + ' -e "process.exit(0)"' });
       const receipt = contract.runTask(c, { spawnSync: makeFakeAiderEdit() });
