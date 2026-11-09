@@ -1122,6 +1122,30 @@ describe('API endpoints', () => {
         assert.equal(data.config.master.launchMode, 'default', 'the response\'s config is what was stored');
       });
 
+      it('preserves the token and lifecycle audit grant through an engine-only PATCH that resets the mode (#2950, PRR-A R-Gate Round 3 834c9a89)', async () => {
+        given({
+          ...BYPASS_ON_CLAUDE,
+          accessLevel: 'write', apiTokenEnabled: true, apiToken: 'tc_master_preexisting',
+          lifecycleGeneration: 3, lifecycleUpdatedAt: '2026-01-01T00:00:00.000Z', lifecycleUpdatedBy: 'operator'
+        }, 'claude');
+        const { status, data } = await request(server, 'PATCH', '/api/config', { master: { engine: 'codex' } });
+        assert.equal(status, 200);
+        const stored = store.config.load().master;
+        // The mode-reset itself still fires as before.
+        assert.equal(stored.engine, 'codex');
+        assert.equal(stored.launchMode, 'default');
+        assert.equal(stored.launchModeEngine, null);
+        assert.equal(data.warnings.length, 1);
+        // The authority state this PATCH never touched must survive the
+        // wholesale config.master replacement the mode reset performs.
+        assert.equal(stored.accessLevel, 'write');
+        assert.equal(stored.apiTokenEnabled, true);
+        assert.equal(stored.apiToken, 'tc_master_preexisting');
+        assert.equal(stored.lifecycleGeneration, 3);
+        assert.equal(stored.lifecycleUpdatedAt, '2026-01-01T00:00:00.000Z');
+        assert.equal(stored.lifecycleUpdatedBy, 'operator');
+      });
+
       it('keeps a mode the same save chooses for the new engine, and reports nothing', async () => {
         given(BYPASS_ON_CLAUDE);
         const { status, data } = await request(server, 'PATCH', '/api/config', {
