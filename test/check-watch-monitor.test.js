@@ -68,7 +68,7 @@ let answers = new Map();
  * @returns {object}
  */
 function counts(over = {}) {
-  return { open: 0, read: 0, resolved: 0, readFailed: 0, expired: 0, deferred: 0, sent: 0, secondAttempts: 0, undeliverable: 0, closed: 0, errors: 0, ...over };
+  return { open: 0, read: 0, resolved: 0, readFailed: 0, expired: 0, deferred: 0, sent: 0, reconciled: 0, undeliverable: 0, closed: 0, errors: 0, ...over };
 }
 
 /**
@@ -126,16 +126,25 @@ function installHub() {
       hub.handled.push(...ids);
       hub.inbox = hub.inbox.filter((m) => !ids.includes(m.id));
     },
-    sendMessage: async ({ sessionId, to, message, beforeHub }) => {
+    sendMessage: async ({ sessionId, to, message, idempotencyKey, beforeHub }) => {
       const listener = hub.listeners.get(String(sessionId));
       if (!listener) throw Object.assign(new Error('not listening'), { httpStatus: 409, code: 'NOT_LISTENING' });
       const from = listener.workspaceId;
       if (typeof beforeHub === 'function') beforeHub({ from });
+      // A reused key with different text is what the real Hub refuses with
+      // 409 IDEMPOTENCY_KEY_CONFLICT (#2347) -- checked before `hub.behave`
+      // so a test cannot accidentally bypass it by also setting `behave`.
+      if (idempotencyKey) {
+        const priorKey = [...hub.sent, ...hub.held].find((c) => c.idempotencyKey === idempotencyKey);
+        if (priorKey && priorKey.message !== message.trim()) {
+          throw Object.assign(new Error('idempotencyKey was already used for a different message'), { httpStatus: 409, code: 'IDEMPOTENCY_KEY_CONFLICT', hubOutcome: 'conflict' });
+        }
+      }
       const how = hub.behave({ to, message });
       if (how === 'refuse') throw failure('refused');
       if (how === 'lost') throw failure('unknown');
       if (how === 'hang') return new Promise(() => {});
-      const copy = { id: `hub-${++hub.issued}`, from, to, message: message.trim() };
+      const copy = { id: `hub-${++hub.issued}`, from, to, message: message.trim(), idempotencyKey };
       hub.sent.push(copy);
       if (how === 'held' || how === 'hang-held') {
         hub.held.push(copy);
@@ -144,6 +153,20 @@ function installHub() {
       }
       if (how === 'deliver') arrive(copy);
       return { status: 'received', id: copy.id, to };
+    },
+    // The Hub's receipt-lookup endpoint (#2347, Jason-Vaughan/Medusa#67/#69):
+    // found when SOME send this stand-in Hub genuinely has (sent or held,
+    // whether delivered yet or not) carries this idempotencyKey -- a 'lost'
+    // or 'hang' outcome never reaches `hub.sent`/`hub.held` at all, so it
+    // correctly reads as not-found here too.
+    getMessageReceipt: async ({ idempotencyKey }) => {
+      if (hub.receiptBehave) {
+        const forced = hub.receiptBehave(idempotencyKey);
+        if (forced === 'unreachable') throw Object.assign(new Error('bridge unreachable'), { httpStatus: 502, code: 'BRIDGE_UNREACHABLE' });
+        if (forced === 'not-found') return { found: false };
+      }
+      const copy = [...hub.sent, ...hub.held].find((c) => c.idempotencyKey === idempotencyKey);
+      return copy ? { found: true, id: copy.id, status: 'received', to: copy.to } : { found: false };
     }
   });
 }
@@ -978,7 +1001,7 @@ describe('check-watch monitor: binding an arrival by its marker (#2323)', () => 
   });
 });
 
-describe('check-watch monitor: the one second attempt (#2323)', () => {
+describe('check-watch monitor: reconciliation by idempotency key (#2347)', () => {
   /**
    * Resolve a watch for a live project while the Hub behaves a given way.
    * @param {string} how - What the Hub does with the first send
@@ -998,7 +1021,7 @@ describe('check-watch monitor: the one second attempt (#2323)', () => {
     return { a, id };
   }
 
-  it('an unknown outcome the Hub did take: the marked arrival binds it and nothing is sent again', async () => {
+  it('an unknown outcome the Hub did take: the marked arrival binds it and nothing is reconciled', async () => {
     const { a, id } = await firstSend('held');
     assert.equal(watches.listFacts(id).find((f) => f.kind === 'woke').code, 'uncertain');
     await pass(MINUTE);
@@ -1007,30 +1030,42 @@ describe('check-watch monitor: the one second attempt (#2323)', () => {
     assert.equal(exchangeOf(id, 'wake').hub_id, 'hub-1');
     for (let i = 0; i < 5; i++) assert.deepEqual(await pass(MINUTE), counts());
     assert.equal(hub.sent.length, 1);
-    assert.equal(exchangeOf(id, 'wake', 2), null);
   });
 
-  it('an unknown outcome the Hub did not take: one second attempt after two unbroken connected minutes, and never a third', async () => {
+  it('an unknown outcome the Hub never took: reconciliation finds no receipt and resends under the SAME key, onto the SAME exchange', async () => {
     const { a, id } = await firstSend('lost');
     assert.equal(hub.sent.length, 0);
-    assert.equal((await pass(monitor.SECOND_ATTEMPT_AFTER_MS - 1)).secondAttempts, 0);
-    assert.equal(exchangeOf(id, 'wake', 2), null);
-    assert.deepEqual(await pass(1), counts({ secondAttempts: 1 }));
+    assert.equal((await pass(monitor.RECONCILE_AFTER_MS - 1)).reconciled, 0);
+    assert.deepEqual(await pass(1), counts({ reconciled: 1 }));
 
     assert.equal(hub.sent.length, 1);
     const [copy] = hub.sent;
     assert.equal(copy.to, a.workspaceId);
-    assert.equal(copy.message.split('\n').at(-1), `ref: check-watch:wake:${id}:2`);
-    assert.match(copy.message, /second attempt for the same watch and result/);
-    assert.match(copy.message, new RegExp(`commit ${sha(1)} finished: success`), 'the same result');
-    const second = exchangeOf(id, 'wake', 2);
-    assert.equal(second.hub_id, copy.id);
-    assert.equal(exchanges.systemOwnerOf(second), monitor.LISTENER_KEY);
-    assert.equal(exchangeOf(id, 'wake').hub_id, null, 'the first stays unproven');
+    assert.equal(copy.idempotencyKey, `check-watch:wake:${id}`);
+    assert.equal(copy.message.split('\n').at(-1), `ref: check-watch:wake:${id}`);
+    assert.doesNotMatch(copy.message, /second attempt/, 'no attempt-number language left: the text is the same whichever attempt sends it');
+    assert.match(copy.message, new RegExp(`commit ${sha(1)} finished: success`));
+    const exchange = exchangeOf(id, 'wake');
+    assert.equal(exchange.hub_id, copy.id, 'the SAME exchange is now bound -- no second exchange was ever created');
+    assert.equal(exchanges.systemOwnerOf(exchange), monitor.LISTENER_KEY);
 
     for (let i = 0; i < 10; i++) assert.deepEqual(await pass(MINUTE), counts());
     assert.equal(hub.sent.length, 1);
     assert.equal(watches.listFacts(id).filter((f) => f.kind === 'woke').length, 1);
+  });
+
+  it('an unknown outcome the Hub DID take after all (the receipt lookup finds it): bound by reconciliation, resending nothing', async () => {
+    // Unlike 'held' (the Hub answers 'unknown' but the message IS in
+    // hub.sent/held, so the stand-in's getMessageReceipt finds it too) --
+    // this is the case the receipt lookup exists for: the send's own
+    // ANSWER was lost, but the message really did land.
+    const { a, id } = await firstSend('held');
+    assert.equal(hub.sent.length, 1, 'the stand-in Hub really does have it, same as a real Hub would');
+    assert.equal((await pass(monitor.RECONCILE_AFTER_MS - 1)).reconciled, 0);
+    assert.deepEqual(await pass(1), counts({ reconciled: 1 }));
+    assert.equal(exchangeOf(id, 'wake').hub_id, hub.sent[0].id);
+    assert.equal(hub.sent.length, 1, 'reconciliation found the existing receipt; nothing was resent');
+    void a;
   });
 
   it('a listener connected long before the send still waits two minutes from when the outcome was lost', async () => {
@@ -1042,8 +1077,8 @@ describe('check-watch monitor: the one second attempt (#2323)', () => {
     await pass(MINUTE);
     hub.behave = () => 'deliver';
     assert.equal(exchangeOf(id, 'wake').state, 'send_unknown');
-    assert.equal((await pass(monitor.SECOND_ATTEMPT_AFTER_MS - 1)).secondAttempts, 0);
-    assert.equal((await pass(1)).secondAttempts, 1);
+    assert.equal((await pass(monitor.RECONCILE_AFTER_MS - 1)).reconciled, 0);
+    assert.equal((await pass(1)).reconciled, 1);
   });
 
   it('a listener that drops at ninety seconds starts the two minutes again', async () => {
@@ -1053,31 +1088,30 @@ describe('check-watch monitor: the one second attempt (#2323)', () => {
     await pass(SECOND);
     connection(a, 'listening');
     // Two minutes after the send's outcome was lost, but only seconds since the listener came back.
-    assert.equal((await pass(40 * SECOND)).secondAttempts, 0);
-    assert.equal((await pass(monitor.SECOND_ATTEMPT_AFTER_MS - 41 * SECOND)).secondAttempts, 0);
-    assert.equal((await pass(SECOND)).secondAttempts, 1);
-    assert.equal(exchangeOf(id, 'wake', 2).hub_id, 'hub-1');
+    assert.equal((await pass(40 * SECOND)).reconciled, 0);
+    assert.equal((await pass(monitor.RECONCILE_AFTER_MS - 41 * SECOND)).reconciled, 0);
+    assert.equal((await pass(SECOND)).reconciled, 1);
+    assert.equal(exchangeOf(id, 'wake').hub_id, 'hub-1');
   });
 
-  it('a recipient that is not connected for the two minutes is not sent to again, however long it takes', async () => {
+  it('a recipient that is not connected for the two minutes is not reconciled, however long it takes', async () => {
     const { a, id } = await firstSend('lost');
     connection(a, 'connecting');
-    for (let i = 0; i < 6; i++) assert.equal((await pass(MINUTE)).secondAttempts, 0);
-    assert.equal(exchangeOf(id, 'wake', 2), null);
+    for (let i = 0; i < 6; i++) assert.equal((await pass(MINUTE)).reconciled, 0);
     connection(a, 'listening');
-    assert.equal((await pass(monitor.SECOND_ATTEMPT_AFTER_MS - 1)).secondAttempts, 0);
-    assert.equal((await pass(1)).secondAttempts, 1);
+    assert.equal((await pass(monitor.RECONCILE_AFTER_MS - 1)).reconciled, 0);
+    assert.equal((await pass(1)).reconciled, 1);
   });
 
-  it('a recipient whose session is gone gets no second attempt, and the monitor stops listening for it', async () => {
+  it('a recipient whose session is gone is never reconciled, and the monitor stops listening for it', async () => {
     const { a, id } = await firstSend('lost');
     hub.listeners.delete(String(a.sessionId));
     await pass(10 * MINUTE);
-    assert.equal(exchangeOf(id, 'wake', 2), null);
+    assert.equal(exchangeOf(id, 'wake').hub_id, null);
     assert.equal(hub.listeners.has(monitor.LISTENER_KEY), false);
   });
 
-  it('the crash window with the Hub holding the message: it arrives after the restart, is bound, and nothing is sent again', async () => {
+  it('the crash window with the Hub holding the message: it arrives after the restart, is bound, and nothing is reconciled', async () => {
     const { a, id } = await firstSend('hang-held');
     // The server stopped with the intent written and no answer: nothing but the store carries over.
     assert.equal(exchangeOf(id, 'wake').state, 'send_pending');
@@ -1086,27 +1120,30 @@ describe('check-watch monitor: the one second attempt (#2323)', () => {
     clock += 5 * MINUTE;
     connection(a, 'listening');
     assert.equal(exchangeOf(id, 'wake').hub_id, 'hub-1', 'bound by its marker before the monitor has made a pass or has a listener');
-    for (let i = 0; i < 5; i++) assert.equal((await pass(MINUTE)).secondAttempts, 0);
+    for (let i = 0; i < 5; i++) assert.equal((await pass(MINUTE)).reconciled, 0);
     assert.equal(hub.sent.length, 1);
-    assert.equal(exchangeOf(id, 'wake', 2), null);
     assert.deepEqual(history(id), ['registered', 'resolved', 'woke']);
   });
 
-  it('the crash window with nothing on the Hub: exactly one second attempt after the restart', async () => {
+  it('the crash window with nothing on the Hub: exactly one reconciliation resend after the restart, under the SAME key', async () => {
     const { a, id } = await firstSend('hang');
     monitor.stop();
     connection(a, 'connecting');
     clock += 5 * MINUTE;
     connection(a, 'listening');
-    assert.equal((await pass(monitor.SECOND_ATTEMPT_AFTER_MS - 1)).secondAttempts, 0);
-    assert.equal((await pass(MINUTE)).secondAttempts, 1);
-    for (let i = 0; i < 5; i++) assert.equal((await pass(MINUTE)).secondAttempts, 0);
+    assert.equal((await pass(monitor.RECONCILE_AFTER_MS - 1)).reconciled, 0);
+    assert.equal((await pass(MINUTE)).reconciled, 1);
+    for (let i = 0; i < 5; i++) assert.equal((await pass(MINUTE)).reconciled, 0);
     assert.equal(hub.sent.length, 1);
-    assert.equal(hub.sent[0].message.split('\n').at(-1), `ref: check-watch:wake:${id}:2`);
+    assert.equal(hub.sent[0].idempotencyKey, `check-watch:wake:${id}`);
+    assert.equal(hub.sent[0].message.split('\n').at(-1), `ref: check-watch:wake:${id}`);
   });
 
-  it('the message arrived and the server stopped before the bind, and the Hub does not deliver it again: one second attempt, a duplicate', async () => {
+  it('the message arrived and the server stopped before the bind: reconciliation finds the Hub\'s receipt and resends nothing, even across the restart', async () => {
     const { a, id } = await firstSend('hang-held');
+    // 'hang-held' already put it in both hub.sent and hub.held when it was
+    // first sent; splicing held (not sent) matches what actually happened --
+    // the Hub has it, and it arrived, but nothing here ever re-sends it.
     const [copy] = hub.held.splice(0);
     // What the stopped server had got as far as: the arrival recorded, the bind not made.
     exchanges.recordArrival({
@@ -1118,23 +1155,40 @@ describe('check-watch monitor: the one second attempt (#2323)', () => {
     assert.equal(exchangeOf(id, 'wake').hub_id, null);
     assert.deepEqual(receipts(store.medusaExchanges.getByHubId(copy.id, 'arrival')), ['arrived', 'read']);
 
-    assert.equal((await pass(monitor.SECOND_ATTEMPT_AFTER_MS - 1)).secondAttempts, 0);
-    assert.equal((await pass(1)).secondAttempts, 1);
-    for (let i = 0; i < 5; i++) assert.equal((await pass(MINUTE)).secondAttempts, 0);
-    assert.equal(hub.sent.length, 2, 'the project has the message twice');
-    assert.equal(exchangeOf(id, 'wake').hub_id, null, 'and the first is never falsely receipted');
-    assert.equal(exchangeOf(id, 'wake', 2).hub_id, 'hub-2');
+    assert.equal((await pass(monitor.RECONCILE_AFTER_MS - 1)).reconciled, 0);
+    assert.equal((await pass(1)).reconciled, 1);
+    for (let i = 0; i < 5; i++) assert.equal((await pass(MINUTE)).reconciled, 0);
+    assert.equal(hub.sent.length, 1, 'the literal one-wake contract: reconciliation found the existing receipt, so nothing was resent, never a duplicate');
+    assert.equal(exchangeOf(id, 'wake').hub_id, copy.id);
   });
 
-  it('both attempts unproven: nothing more is ever sent', async () => {
+  it('a receipt lookup the Hub itself cannot answer leaves the exchange pending, never falling back to a resend', async () => {
     const { id } = await firstSend('lost');
-    hub.behave = () => 'lost';
-    assert.equal((await pass(monitor.SECOND_ATTEMPT_AFTER_MS)).secondAttempts, 1);
-    hub.behave = () => 'deliver';
-    for (let i = 0; i < 10; i++) assert.deepEqual(await pass(MINUTE), counts());
-    assert.equal(hub.sent.length, 0);
+    hub.receiptBehave = () => 'unreachable';
+    for (let i = 0; i < 5; i++) assert.equal((await pass(MINUTE)).reconciled, 0);
+    assert.equal(hub.sent.length, 0, 'never resent while the Hub cannot even be asked whether it already has it');
     assert.equal(exchangeOf(id, 'wake').state, 'send_unknown');
-    assert.equal(exchangeOf(id, 'wake', 2).state, 'send_unknown');
+    hub.receiptBehave = null;
+    assert.equal((await pass(1)).reconciled, 1);
+    assert.equal(hub.sent.length, 1);
+  });
+
+  it('a reconciliation resend the Hub refuses with IDEMPOTENCY_KEY_CONFLICT is a final refusal, never retried again', async () => {
+    const { a, id } = await firstSend('lost');
+    // Force a conflict: something else already used this exact key with
+    // different text (cannot happen in real operation -- this module's own
+    // text for a watch+kind never varies -- but the Hub's answer is still
+    // honored rather than assumed impossible). Forced not-found on the
+    // receipt lookup too: a real Hub's receipt record would just report the
+    // collision's own id/status, not "this differs from what you meant" --
+    // the generic send-path check below is what actually detects a conflict.
+    hub.held.push({ id: 'hub-collision', from: MONITOR_WS, to: a.workspaceId, message: 'a different message entirely', idempotencyKey: `check-watch:wake:${id}` });
+    hub.receiptBehave = (key) => (key === `check-watch:wake:${id}` ? 'not-found' : undefined);
+    assert.equal((await pass(monitor.RECONCILE_AFTER_MS)).reconciled, 1);
+    assert.equal(exchangeOf(id, 'wake').state, 'undeliverable');
+    assert.equal(exchangeOf(id, 'wake').terminal_code, 'idempotency-key-conflict');
+    for (let i = 0; i < 5; i++) assert.deepEqual(await pass(MINUTE), counts());
+    assert.equal(hub.sent.length, 0, 'never retried after a conflict refusal');
   });
 
   it('a pass does not wait for ever on a Hub that never answers, and the reads go on', async () => {
@@ -1144,11 +1198,26 @@ describe('check-watch monitor: the one second attempt (#2323)', () => {
     assert.equal((await pass(MINUTE)).read, 1);
   });
 
-  it('a cancelled watch gets no second attempt', async () => {
+  it('a cancelled watch is never reconciled', async () => {
     const { a, id } = await firstSend('lost');
     assert.equal(watches.cancelWatch(id, { projectId: a.project.id, launchId: a.launchId }).ok, true);
-    assert.equal((await pass(10 * MINUTE)).secondAttempts, 0);
-    assert.equal(exchangeOf(id, 'wake', 2), null);
+    assert.equal((await pass(10 * MINUTE)).reconciled, 0);
+    assert.equal(exchangeOf(id, 'wake').hub_id, null);
+  });
+
+  it('a waiting session cleared/relaunched before delivery: the new session\'s listener reconciles the old exchange by the SAME watch-derived key', async () => {
+    const { a, id } = await firstSend('lost');
+    // "Cleared and relaunched" as this harness can express it: the SAME
+    // project gets a NEW live session (a new listener, a new workspace id)
+    // before the old one's reconciliation window elapses -- the watch's
+    // recipient resolution (`_recipient`) always looks up the project's
+    // CURRENT live session, never the one a stale exchange row remembers.
+    hub.listeners.delete(String(a.sessionId));
+    const relaunched = another(a.project);
+    assert.equal((await pass(monitor.RECONCILE_AFTER_MS)).reconciled, 1);
+    assert.equal(hub.sent.length, 1);
+    assert.equal(hub.sent[0].to, relaunched.workspaceId, 'reconciliation (not having found a receipt) resent to the project\'s current session');
+    assert.equal(exchangeOf(id, 'wake').hub_id, hub.sent[0].id);
   });
 });
 
@@ -1201,7 +1270,7 @@ describe('check-watch monitor: the alarm (#2323)', () => {
     assert.equal((await pass()).sent, 1);
     const alarm = hub.sent[0].message;
     assert.match(alarm, new RegExp(`had no result at its due time, ${at(HOUR).replace(/\./g, '\\.')}\\.`));
-    assert.match(alarm, new RegExp(`This alarm is late\\. It was due at ${at(HOUR).replace(/\./g, '\\.')} and is sent at ${new Date(clock).toISOString().replace(/\./g, '\\.')}`));
+    assert.match(alarm, new RegExp(`This alarm is late\\. It was due at ${at(HOUR).replace(/\./g, '\\.')} and was first sent at ${new Date(clock).toISOString().replace(/\./g, '\\.')}`));
     assert.match(alarm, new RegExp(`expired at ${expiredAt.replace(/\./g, '\\.')} with no result and is not read again`));
     assert.ok(!/still read until/.test(alarm));
     for (let i = 0; i < 3; i++) assert.equal((await pass(MINUTE)).sent, 0);
@@ -1209,27 +1278,27 @@ describe('check-watch monitor: the alarm (#2323)', () => {
     assert.deepEqual(history(id), ['registered', 'expired', 'alarm-undeliverable', 'alarmed']);
   });
 
-  it('an alarm whose outcome was never learned gets the same one second attempt', async () => {
+  it('an alarm whose outcome was never learned gets reconciled under the SAME key, never a second exchange', async () => {
     const a = live('alpha');
     const id = watchFor(a, 1);
     hub.behave = () => 'lost';
     await pass(HOUR);
     hub.behave = () => 'deliver';
-    assert.equal((await pass(monitor.SECOND_ATTEMPT_AFTER_MS)).secondAttempts, 1);
-    assert.equal(hub.sent[0].message.split('\n').at(-1), `ref: check-watch:alarm:${id}:2`);
-    assert.match(hub.sent[0].message, /second attempt for the same watch and result/);
-    for (let i = 0; i < 5; i++) assert.equal((await pass(MINUTE)).secondAttempts, 0);
+    assert.equal((await pass(monitor.RECONCILE_AFTER_MS)).reconciled, 1);
+    assert.equal(hub.sent[0].idempotencyKey, `check-watch:alarm:${id}`);
+    assert.equal(hub.sent[0].message.split('\n').at(-1), `ref: check-watch:alarm:${id}`);
+    for (let i = 0; i < 5; i++) assert.equal((await pass(MINUTE)).reconciled, 0);
   });
 
-  it('a second attempt of an alarm that was on time is not called late, and one that was late says when it was first sent', async () => {
+  it('a reconciliation resend of an alarm carries byte-identical text to the first attempt: not called late when the first attempt was on time, and naming when it was first sent when it was not', async () => {
     const a = live('alpha');
     watchFor(a, 1);
     hub.behave = () => 'lost';
     await pass(HOUR);
     hub.behave = () => 'deliver';
-    assert.equal((await pass(10 * MINUTE)).secondAttempts, 1);
-    assert.match(hub.sent[0].message, /second attempt for the same watch and result/);
-    assert.ok(!/This alarm is late/.test(hub.sent[0].message), 'ten minutes after a first send that was on time');
+    assert.equal((await pass(monitor.RECONCILE_AFTER_MS)).reconciled, 1);
+    assert.ok(!/second attempt/.test(hub.sent[0].message));
+    assert.ok(!/This alarm is late/.test(hub.sent[0].message), 'reconciled after a first attempt that was itself on time');
 
     const project = store.projects.create({ name: 'quiet', path: path.join(tmpDir, 'quiet') });
     const late = watch(2, { projectId: project.id });
@@ -1239,11 +1308,11 @@ describe('check-watch monitor: the alarm (#2323)', () => {
     await pass(MINUTE);
     const firstSent = exchangeOf(late, 'alarm').created_at;
     hub.behave = () => 'deliver';
-    assert.equal((await pass(10 * MINUTE)).secondAttempts, 1);
+    assert.equal((await pass(monitor.RECONCILE_AFTER_MS)).reconciled, 1);
     const again = hub.sent.at(-1).message;
-    assert.equal(again.split('\n').at(-1), `ref: check-watch:alarm:${late}:2`);
+    assert.equal(again.split('\n').at(-1), `ref: check-watch:alarm:${late}`);
     assert.ok(again.includes(`was first sent at ${firstSent}: until then it could not be sent`), again);
-    assert.ok(!/is sent at/.test(again));
+    assert.ok(!/second attempt/.test(again));
   });
 
   it('an alarm whose watch has its result by then gets no second attempt: the wake says what the check did', async () => {
@@ -1254,7 +1323,7 @@ describe('check-watch monitor: the alarm (#2323)', () => {
     hub.behave = () => 'deliver';
     answers.set(sha(1), concluded());
     assert.deepEqual(await pass(MINUTE), counts({ open: 1, read: 1, resolved: 1, sent: 1 }));
-    for (let i = 0; i < 5; i++) assert.equal((await pass(MINUTE)).secondAttempts, 0);
+    for (let i = 0; i < 5; i++) assert.equal((await pass(MINUTE)).reconciled, 0);
     assert.deepEqual(hub.sent.map((copy) => copy.message.split('\n').at(-1)), [`ref: check-watch:wake:${id}`]);
     assert.equal(exchangeOf(id, 'alarm', 2), null);
   });
@@ -1402,10 +1471,9 @@ describe('check-watch monitor: closing what nobody acknowledged (#2323)', () => 
     answers.set(sha(2), concluded());
     hub.behave = () => 'lost';
     await pass(MINUTE);
-    await pass(monitor.SECOND_ATTEMPT_AFTER_MS);
+    await pass(monitor.RECONCILE_AFTER_MS);
     assert.equal((await pass(2 * DAY)).closed, 0);
     assert.equal(exchangeOf(unproven, 'wake').terminal_at, null);
-    assert.equal(exchangeOf(unproven, 'wake', 2).terminal_at, null);
   });
 });
 
