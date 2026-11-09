@@ -5964,6 +5964,7 @@
     projectMapEnabled: false,
     generatedConfig: false,
     medusaWake: false,
+    subagentParallelizationEnabled: false,
     // Placeholder — mirrors the server's `startupRules.shippedDefault`
     // (#1269). No stored value answers this row; see `tcSettingDisposition`.
     startupRules: true
@@ -6363,6 +6364,16 @@
           + 'from a resting one here and will never nudge this project\'s sessions. Typing into a '
           + 'pane on a guessed signature is the one thing the wake monitor refuses to do.';
         evidence = 'capabilities.wake is not declared, or is declared malformed';
+      }
+    } else if (setting === 'subagentParallelizationEnabled') {
+      // The engine's own declared capability, read off the profile the
+      // engines API already ships. Mirrors the server
+      // (`lib/subagent-parallelization.js#supportsSubagentDispatch`).
+      applies = Boolean(engine && engine.capabilities
+        && engine.capabilities.supportsSubagentDispatch === true);
+      if (!applies) {
+        reason = name + ' does not support sub-agent dispatch, so this setting has no effect on this project.';
+        evidence = 'capabilities.supportsSubagentDispatch is not true';
       }
     } else if (setting === 'startupRules') {
       // Mirrors the server: whichever channel can carry startup rules here —

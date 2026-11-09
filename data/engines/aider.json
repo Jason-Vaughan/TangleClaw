@@ -40,6 +40,7 @@
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
     "supportsCoAuthor": true,
+    "supportsSubagentDispatch": false,
     "conventionsCarrier": {
       "mechanism": "read-file",
       "path": ".tangleclaw/aider-conventions.md",

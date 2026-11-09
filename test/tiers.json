@@ -761,6 +761,7 @@
     "test/stranded-configs.test.js",
     "test/stranded-wraps-gate.test.js",
     "test/strip-ai-coauthors-script.test.js",
+    "test/subagent-parallelization.test.js",
     "test/system-health.test.js",
     "test/system.test.js",
     "test/tangleclaw-home.test.js",

@@ -186,6 +186,7 @@ cache, so an engine you have just installed is never refused.
 | `supportsConfigFile` | **read** | Engine reads a config file from the project root |
 | `supportsCoAuthor` | declared only | Engine supports git co-author attribution (with its `coAuthorFormat` payload) |
 | `supportsSilentPrime` | **read** | Engine can receive the prime as hidden context at startup, rather than as typed input |
+| `supportsSubagentDispatch` | **read** | Whether a Builder session on this engine may fan out chunk work to native sub-agents (#1257) |
 | `supportsRemote` | declared only | Engine drives a machine other than this one |
 | `supportsModes` | declared only | The connection modes an engine offers |
 | `startupInjection.maxChars` | **read** | How many characters this engine's startup channel can carry before *it* truncates — see below |

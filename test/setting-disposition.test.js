@@ -142,6 +142,10 @@ const PROBES = {
   // Off is what ships — a wake spends a real turn — so a stored `true` is the
   // operator's choice, and it cannot apply on an engine declaring no signature.
   medusaWake: { shipped: false, chosen: true, inapplicable: true, extras: [] },
+  // Off is what ships — fanning out spends real sub-agent turns and shares
+  // this session's git state — so a stored `true` is the operator's choice,
+  // and it cannot apply on an engine declaring no support (#1257).
+  subagentParallelizationEnabled: { shipped: false, chosen: true, inapplicable: true, extras: [] },
   // No stored config value answers this row at all (#1269) — `applies` reads
   // only the profile's capabilities, never the project config — so every
   // probe value here is an arbitrary placeholder that exercises the same

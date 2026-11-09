@@ -2099,6 +2099,12 @@ function openSettings(name, options) {
   // through an engine with no idle signature — claude -> codex -> claude would
   // silently drop a tick the operator had just made.
   let medusaWakeNow = initialMedusaWakeChecked;
+  // Authorization toggle: Allow sub-agent parallelization (#1257) — engine-gated
+  // on the engine's declared `supportsSubagentDispatch`; default OFF (the
+  // toggle grants a Builder session the authorization to fan out, it does not
+  // decide per task on its own).
+  const initialSubagentParallelizationChecked = !!project.subagentParallelizationEnabled;
+  let subagentParallelizationNow = initialSubagentParallelizationChecked;
   // Provenance line (#1885) — engine-agnostic control, off by default. What
   // each engine's files carry is said in the hint, since the answer is per
   // file rather than per engine.
@@ -2150,6 +2156,7 @@ function openSettings(name, options) {
         <div class="form-hint">Auto-start this project's sessions on the Medusa switchboard so inbound messages badge in the banner without a manual toggle. Off by default; the banner control is always available as a per-session override.</div>
       </div>
       <div id="settingsMedusaWakeContainer"></div>
+      <div id="settingsSubagentParallelizationContainer"></div>
       <div class="form-group">
         <label class="gs-toggle-label">
           <span>Keep the session running after a wrap</span>
@@ -2232,6 +2239,8 @@ function openSettings(name, options) {
   renderGeneratedConfigNotice(project.engine ? project.engine.id : '', project.engine || null);
   renderMedusaWakeToggle(project.engine ? project.engine.id : '', initialMedusaWakeChecked,
     project.engine || null);
+  renderSubagentParallelizationToggle(project.engine ? project.engine.id : '',
+    initialSubagentParallelizationChecked, project.engine || null);
   renderLaunchModeSettings(
     project.engine ? project.engine.id : '',
     project.defaultLaunchMode || 'default',
@@ -2275,6 +2284,11 @@ function openSettings(name, options) {
     const wakeEl = document.getElementById('settingsMedusaWake');
     if (wakeEl) medusaWakeNow = wakeEl.checked;
     renderMedusaWakeToggle(e.target.value, medusaWakeNow, project.engine || null);
+    // Sub-agent parallelization authorization (#1257) is gated the same way:
+    // read while deciding, not after a save that silently dropped it.
+    const subagentEl = document.getElementById('settingsSubagentParallelization');
+    if (subagentEl) subagentParallelizationNow = subagentEl.checked;
+    renderSubagentParallelizationToggle(e.target.value, subagentParallelizationNow, project.engine || null);
     const auditEl = document.getElementById('settingsEvalAudit');
     renderEvalAuditToggle(e.target.value,
       auditEl ? auditEl.checked : initialEvalAuditChecked,
@@ -4842,6 +4856,14 @@ async function doSaveSettings(launchAfter = false) {
   const medusaWakeEl = document.getElementById('settingsMedusaWake');
   if (medusaWakeEl) {
     body.medusaWake = medusaWakeEl.checked;
+  }
+  // Sub-agent parallelization authorization (#1257). The inert branch renders
+  // no `#settingsSubagentParallelization` element, so an engine that does not
+  // declare `supportsSubagentDispatch` attaches no value and cannot post a
+  // stale checkbox — the pattern `renderMedusaWakeToggle` establishes.
+  const subagentParallelizationEl = document.getElementById('settingsSubagentParallelization');
+  if (subagentParallelizationEl) {
+    body.subagentParallelizationEnabled = subagentParallelizationEl.checked;
   }
   // Provenance line (#1885) — only the half the operator changed, so an
   // unrelated save never writes it (`tcProvenancePatch`).

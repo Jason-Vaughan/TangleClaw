@@ -29,6 +29,7 @@
     "supportsPrimePrompt": false,
     "supportsConfigFile": false,
     "supportsCoAuthor": false,
+    "supportsSubagentDispatch": false,
     "supportsRemote": true,
     "supportsModes": ["ssh", "webui"],
     "awareness": {

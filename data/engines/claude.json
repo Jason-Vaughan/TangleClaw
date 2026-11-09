@@ -108,6 +108,7 @@
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
     "supportsCoAuthor": true,
+    "supportsSubagentDispatch": true,
     "supportsSilentPrime": true,
     "startupInjection": {
       "maxChars": 10000,

@@ -77,6 +77,13 @@ const STATIC_ASSETS = [
   '/session-history-ui.js',
   '/governed-wrap-ui.js',
   '/chunk-boundary-ui.js',
+  // subagent-parallelization-ui.js (#1257) is a plain `<script src>` on
+  // index.html, loaded before ui.js so its renderSubagentParallelizationToggle
+  // is defined when openProjectSettings calls it. Dual-listed the same way as
+  // the three above: precached here for offline coherence of '/',
+  // network-first below so the Settings modal never draws against a stale
+  // copy behind an active worker.
+  '/subagent-parallelization-ui.js',
   // bridge-step-up.js and bridge-settings-ui.js (#2842, #2843) are now
   // mounted into the Global Settings modal (#2884) -- precached here for
   // offline coherence of '/' and session.html, network-first below (where
@@ -252,7 +259,10 @@ const NETWORK_FIRST_PATHS = new Set([
   // #2881 copy forever.
   '/session-history-ui.js',
   '/governed-wrap-ui.js',
-  '/chunk-boundary-ui.js'
+  '/chunk-boundary-ui.js',
+  // subagent-parallelization-ui.js -- see the matching comment in
+  // STATIC_ASSETS above.
+  '/subagent-parallelization-ui.js'
 ]);
 
 self.addEventListener('install', (event) => {

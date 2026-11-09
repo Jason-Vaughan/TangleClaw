@@ -243,7 +243,8 @@
         "lib/model-status.js",
         "lib/routes/engines-canary.js",
         "lib/routes/engine-health-routes.js",
-        "lib/aider-task-contract.js"
+        "lib/aider-task-contract.js",
+        "lib/subagent-parallelization.js"
       ]
     },
     "shared-docs": {
