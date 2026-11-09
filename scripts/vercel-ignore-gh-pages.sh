@@ -4,8 +4,10 @@
 # The decision itself lives in lib/roadmap-vercel-guard.js, which this just
 # calls into so the logic stays unit-testable without a shell harness.
 #
-# Wiring this in is the Operator's: Vercel dashboard -> project "tangle-claw"
-# -> Settings -> Git -> Ignored Build Step -> this script's path.
+# Root-level vercel.json wires this script for repository-root evaluation. The
+# website-root config carries the equivalent branch check in-place. Because
+# gh-pages has no website directory or config file, the Operator must also set
+# the project-level branch exclusion described in the #2258 cutover runbook.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
