@@ -20,6 +20,7 @@ const store = require('../lib/store');
 const logger = require('../lib/logger');
 const controlApi = require('../lib/control-api');
 const gateFallback = require('../lib/gate-fallback');
+const medusaDrift = require('../lib/medusa-drift');
 const { createServer, _routePatterns, _sharedDocWatchers, _sharedDocDebounceTimers } = require('../server');
 const { operatorHeaders, bindProject, sendAs, signInOperator } = require('./_shared-docs-callers');
 
@@ -93,6 +94,13 @@ describe('operator routes that grant authority need a signed-in operator (#2378)
   const rid = () => { n += 1; return `w4b2-req-${n}`; };
   const origSend = controlApi._internal.sendSystemMessage;
   const origWs = controlApi._internal.workspaceIdFor;
+  // POST /api/system/medusa-drift/apply (#2956) is a class A route too, but
+  // its handler reaches a real git checkout, a real Hub HTTP endpoint, and a
+  // real launchctl/systemctl restart -- none of which this file's generic
+  // classA() loops may touch for real on whatever host runs the suite.
+  // Neutralized for the whole describe block; the route's own behavior is
+  // covered by test/medusa-drift.test.js, not here.
+  const origMedusaDriftInternal = { ...medusaDrift._internal };
 
   const mkProject = (name) => {
     const dir = path.join(home, name);
@@ -142,7 +150,12 @@ describe('operator routes that grant authority need a signed-in operator (#2378)
       // #2937: grants Fleet Coordinator authority (coordinatorRoles + the
       // fleetCoordinator flag) — must leave zero trace when refused, same as
       // every other authority grant in this list.
-      r('POST', '/api/tc/fleet/coordinator', '/api/tc/fleet/coordinator', { projectId: alpha.id, enabled: true })
+      r('POST', '/api/tc/fleet/coordinator', '/api/tc/fleet/coordinator', { projectId: alpha.id, enabled: true }),
+      // #2956: fast-forwards the local Medusa checkout and/or restarts
+      // com.medusa.hub. Its real git/HTTP/exec calls are neutralized for
+      // this whole file (see origMedusaDriftInternal above); its own
+      // behavior is covered by test/medusa-drift.test.js, not here.
+      r('POST', '/api/system/medusa-drift/apply', '/api/system/medusa-drift/apply', {})
     ];
   }
 
@@ -165,6 +178,10 @@ describe('operator routes that grant authority need a signed-in operator (#2378)
     controlApi._internal.workspaceIdFor = () => 'ws-w4b2';
     controlApi._internal.sendSystemMessage = async () => ({ status: 'received' });
     logger.setConsoleStream({ write: () => true });
+    medusaDrift._internal.pathExists = () => false; // "not installed": updateAvailable is always false
+    medusaDrift._internal.fetchImpl = async () => { throw new Error('unreachable in test'); }; // never a real Hub call
+    medusaDrift._internal.execFileAsync = async () => { throw new Error('refused in test'); }; // never a real git/launchctl/systemctl call
+    medusaDrift.stop(); // drop any cached snapshot/_restartPending a prior test file's module load could have left
 
     // A session's own proposal: what the operator would approve.
     const proposed = await sendAs(server, 'POST', '/api/session-rules',
@@ -194,6 +211,8 @@ describe('operator routes that grant authority need a signed-in operator (#2378)
   after(async () => {
     controlApi._internal.sendSystemMessage = origSend;
     controlApi._internal.workspaceIdFor = origWs;
+    Object.assign(medusaDrift._internal, origMedusaDriftInternal);
+    medusaDrift.stop();
     logger.setConsoleStream(null);
     store.globalRules._resetBundledGlobalRulesPath();
     // A shared document's registration change starts a file watcher, which
@@ -212,7 +231,7 @@ describe('operator routes that grant authority need a signed-in operator (#2378)
       .sort();
     const tested = classA().map((r) => `${r.method} ${r.pattern}`).filter((k) => k !== 'PATCH /api/projects/:name').sort();
     assert.deepEqual(tested, registered);
-    assert.equal(classA().length, 23);
+    assert.equal(classA().length, 24);
   });
 
   describe('with no login in force (open)', () => {

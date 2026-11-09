@@ -135,6 +135,7 @@ files = [
   "test/master-settings-mount.test.js",
   "test/master-unknown-frontend.test.js",
   "test/medusa-control.test.js",
+  "test/medusa-drift.test.js",
   "test/medusa-escalation-watchdog.test.js",
   "test/medusa-listener.test.js",
   "test/merge-inbox-gate.test.js",

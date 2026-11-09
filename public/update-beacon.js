@@ -696,7 +696,133 @@
     return { render, reopen, apply: applyUpdateAndRestart };
   }
 
+  /**
+   * Render a Medusa drift notice (#2956) into a warning chip — the same
+   * shape as the auth/bind-notice chips elsewhere on this page (amber,
+   * hidden until there is something to say, no dismiss control and no
+   * timer: the notice clears itself the next time the poll behind it reads
+   * clean, exactly like `renderBindNotice`).
+   *
+   * The chip is itself the one-click Operator action's button — see
+   * {@link tcWireMedusaDriftAction}, which wires its click to
+   * `POST /api/system/medusa-drift/apply` and re-renders from the fresh
+   * snapshot that call returns. This function only ever draws the current
+   * state; it never disables or re-labels the chip mid-click, which is
+   * `tcWireMedusaDriftAction`'s own job while a request is in flight.
+   *
+   * @param {Document} doc - The page document.
+   * @param {string} elementId - Id of the warning chip element.
+   * @param {object|null} data - A `GET /api/system/medusa-drift` payload, or
+   *   null when the request itself did not complete (leaves the chip as it was).
+   * @returns {void}
+   */
+  function tcRenderMedusaDriftNotice(doc, elementId, data) {
+    const el = doc.getElementById(elementId);
+    if (!el) return;
+    if (!data) return; // a failed poll says nothing about drift; leave the chip as it was
+    if (!data.updateAvailable && !data.hubRestartNeeded) {
+      el.textContent = '';
+      el.title = '';
+      el.classList.add('hidden');
+      return;
+    }
+    const reasons = [];
+    if (data.hubRestartNeeded) {
+      reasons.push('the running Medusa Hub has not restarted onto the checkout already on disk');
+    }
+    if (data.updateAvailable) {
+      const behind = data.local && typeof data.local.commitsBehind === 'number' ? data.local.commitsBehind : null;
+      reasons.push(behind !== null
+        ? `the local Medusa checkout is ${behind} commit${behind === 1 ? '' : 's'} behind origin/main`
+        : 'the local Medusa checkout is behind origin/main');
+    }
+    // The Hub's own reported capabilities (#2956, paired with
+    // Jason-Vaughan/Medusa#70) -- named here only when the Hub exposes
+    // them at all, never guessed at for one that predates that handshake.
+    if (data.hub && Array.isArray(data.hub.capabilities) && data.hub.capabilities.length > 0) {
+      reasons.push(`the Hub currently reports: ${data.hub.capabilities.join(', ')}`);
+    }
+    el.textContent = `⚠ ${data.hubRestartNeeded ? 'Medusa Hub restart needed' : 'Medusa update available'}`;
+    el.title = `${reasons.join('; ')}. Click to fast-forward/restart now.`;
+    el.classList.remove('hidden');
+  }
+
+  /**
+   * Wire the Medusa drift chip's click to the one-click Operator action
+   * (#2956): confirm, then `POST /api/system/medusa-drift/apply`, which
+   * fast-forwards the local Medusa checkout and/or restarts
+   * `com.medusa.hub` server-side (`lib/medusa-drift.js#applyDriftAction`).
+   * Re-renders from the fresh snapshot the apply call itself returns,
+   * through {@link tcRenderMedusaDriftNotice} — never from a second poll,
+   * so the chip reflects exactly what the action it just ran observed.
+   *
+   * Idempotent: a second call replaces the click handler rather than
+   * stacking a duplicate, the same posture `tcCreateUpdateBeacon`'s own
+   * `setDot` takes for its dot's click listener.
+   *
+   * @param {Document} doc - The page document.
+   * @param {string} elementId - Id of the warning chip element (a button).
+   * @param {{apiMutate: Function, api?: object, confirm?: Function, alert?: Function}} deps -
+   *   `apiMutate(url, method, body)` is the page's own, same contract as
+   *   `tcCreateApiMutate` produces -- it returns the parsed body on success,
+   *   but **null** on any non-2xx response (R-Gate R2, #2956): the refusal
+   *   body then arrives only through `deps.api`'s `lastBody`/`lastErrorCode`
+   *   side channel, same as `applyUpdateAndRestart`'s own `STRUCTURED_REFUSALS`
+   *   above. `confirm`/`alert` are injectable for tests; production defaults
+   *   to the real `window.confirm`/`window.alert`.
+   * @returns {void}
+   */
+  function tcWireMedusaDriftAction(doc, elementId, deps) {
+    const el = doc.getElementById(elementId);
+    if (!el) return;
+    // Nested, not module-scope: this function is lifted standalone by its
+    // own test file (test/helpers/lift.js), which can only see free
+    // variables it is explicitly given -- same reasoning as
+    // STRUCTURED_REFUSALS staying reachable only through the full
+    // tcCreateUpdateBeacon closure above.
+    const MEDUSA_DRIFT_REFUSAL_CODES = new Set(['git-error', 'dirty-tree', 'not-fast-forwardable', 'restart-failed', 'restart-unverified']);
+    const confirmFn = deps.confirm || ((msg) => global.confirm(msg));
+    const alertFn = deps.alert || ((msg) => global.alert(msg));
+    if (el._tcMedusaDriftHandler) el.removeEventListener('click', el._tcMedusaDriftHandler);
+    const handler = async () => {
+      if (el.classList.contains('hidden') || el.disabled) return;
+      if (!confirmFn('Fast-forward the local Medusa checkout and/or restart com.medusa.hub now?')) return;
+      const wasText = el.textContent;
+      el.disabled = true;
+      el.textContent = '⚠ Applying…';
+      let result = null;
+      let thrown = null;
+      try {
+        result = await deps.apiMutate('/api/system/medusa-drift/apply', 'POST', {});
+      } catch (err) {
+        thrown = err;
+      } finally {
+        el.disabled = false;
+      }
+      if (thrown || !result || !result.ok) {
+        // Thrown: the request never completed, so there is no response at
+        // all -- the thrown error's own message is all there is. Otherwise
+        // apiMutate returned null for a real non-2xx refusal, so the reason
+        // (dirty-tree's detail, restart-failed's) lives only in
+        // deps.api.lastBody, never in `result` itself.
+        el.textContent = wasText;
+        const api = deps.api;
+        const refusal = !thrown && api && MEDUSA_DRIFT_REFUSAL_CODES.has(api.lastErrorCode) ? api.lastBody : null;
+        const message = thrown
+          ? (thrown.message || 'request did not complete')
+          : ((refusal && refusal.error) || (api && api.lastError) || 'request did not complete');
+        alertFn(`Medusa drift action failed: ${message}`);
+        return;
+      }
+      tcRenderMedusaDriftNotice(doc, elementId, result.snapshot);
+    };
+    el._tcMedusaDriftHandler = handler;
+    el.addEventListener('click', handler);
+  }
+
   global.tcCreateUpdateBeacon = tcCreateUpdateBeacon;
   global.tcIsUpdateAnswer = tcIsUpdateAnswer;
   global.tcUpdateAnswerState = tcUpdateAnswerState;
+  global.tcRenderMedusaDriftNotice = tcRenderMedusaDriftNotice;
+  global.tcWireMedusaDriftAction = tcWireMedusaDriftAction;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1539,6 +1539,123 @@ describe('a silent Bridge missing heartbeat_ack is detected and reconnected (#13
   });
 });
 
+describe('MedusaListener — hub.version_updated (#2956)', () => {
+  const medusa = require('../lib/medusa');
+
+  it('fans a hub.version_updated frame out through lib/medusa.js#applyHubVersionUpdate, to every subscriber registered via onHubVersionUpdated', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-2956', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-2956' });
+    const seen = [];
+    const unsubscribe = medusa.onHubVersionUpdated((payload) => seen.push(payload));
+    try {
+      sockets[0]._message({ type: 'hub.version_updated', gitSha: 'deadbeef', version: '1.2.3' });
+      assert.equal(seen.length, 1);
+      assert.deepEqual(seen[0], { type: 'hub.version_updated', gitSha: 'deadbeef', version: '1.2.3' });
+    } finally {
+      unsubscribe();
+      l.stop();
+    }
+  });
+
+  it('a hub.version_updated frame with no subscribers registered is a no-op, never a throw', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-2956b', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-2956b' });
+    assert.doesNotThrow(() => sockets[0]._message({ type: 'hub.version_updated', gitSha: 'deadbeef' }));
+    assert.equal(l.lastErrorCode, null, 'read as a recognized frame, not a malformed one');
+    l.stop();
+  });
+
+  it('one throwing subscriber does not stop the others, and does not reach the listener as a failure', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-2956c', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-2956c' });
+    let secondCalled = false;
+    const un1 = medusa.onHubVersionUpdated(() => { throw new Error('boom'); });
+    const un2 = medusa.onHubVersionUpdated(() => { secondCalled = true; });
+    try {
+      assert.doesNotThrow(() => sockets[0]._message({ type: 'hub.version_updated', gitSha: 'deadbeef' }));
+      assert.equal(secondCalled, true);
+      assert.equal(l.lastErrorCode, null);
+    } finally {
+      un1(); un2();
+      l.stop();
+    }
+  });
+});
+
+describe('MedusaListener — the registered handshake can also carry version/gitSha/capabilities (#2956)', () => {
+  const medusa = require('../lib/medusa');
+
+  it('forwards the registered frame through applyHubVersionUpdate when it carries gitSha', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-2956d', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    const seen = [];
+    const unsubscribe = medusa.onHubVersionUpdated((payload) => seen.push(payload));
+    try {
+      sockets[0]._message({ type: 'registered', workspaceId: 'ws-2956d', gitSha: 'cafef00d', version: '2.0.0', capabilities: ['idempotency'] });
+      assert.equal(seen.length, 1);
+      assert.deepEqual(seen[0], { type: 'registered', workspaceId: 'ws-2956d', gitSha: 'cafef00d', version: '2.0.0', capabilities: ['idempotency'] });
+    } finally {
+      unsubscribe();
+      l.stop();
+    }
+  });
+
+  it('forwards when the frame carries ONLY capabilities (no version/gitSha)', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-2956e', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    const seen = [];
+    const unsubscribe = medusa.onHubVersionUpdated((payload) => seen.push(payload));
+    try {
+      sockets[0]._message({ type: 'registered', workspaceId: 'ws-2956e', capabilities: ['idempotency'] });
+      assert.equal(seen.length, 1);
+    } finally {
+      unsubscribe();
+      l.stop();
+    }
+  });
+
+  it('a plain registered frame with none of the three fields forwards nothing (the ordinary case, every reconnect)', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-2956f', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    const seen = [];
+    const unsubscribe = medusa.onHubVersionUpdated((payload) => seen.push(payload));
+    try {
+      sockets[0]._message({ type: 'registered', workspaceId: 'ws-2956f' });
+      assert.equal(seen.length, 0);
+    } finally {
+      unsubscribe();
+      l.stop();
+    }
+  });
+
+  it('still enters listening/clears backoff/starts the heartbeat as before, whether or not the frame carries version info', (t) => {
+    t.mock.timers.enable({ apis: ['setInterval'] });
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-2956g', wsFactory: factory, heartbeatMs: 10 });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-2956g', gitSha: 'cafef00d' });
+    assert.equal(l.state, 'listening');
+    assert.equal(l._backoffAttempt, 0);
+    l.stop();
+  });
+});
+
 describe('medusa-registry', () => {
   let tmpDir;
 

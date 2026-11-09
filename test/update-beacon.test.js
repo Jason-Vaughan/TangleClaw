@@ -25,6 +25,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { makeDocument } = require('./_mini-dom');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const BEACON_SRC = fs.readFileSync(path.join(PUB, 'update-beacon.js'), 'utf8');
@@ -1058,5 +1059,279 @@ describe('#994 the beacon never promises a version the applier did not commit to
       const window = lines.slice(i, i + 4).join('\n');
       assert.match(window, /or newer/, `unqualified version in ${f}: ${lines[i].trim()}`);
     }
+  });
+});
+
+describe('tcRenderMedusaDriftNotice (#2956)', () => {
+  // A smaller, pure function (document, elementId, data) -> DOM mutation,
+  // with no fetch/timer/dialog surface of its own -- lifted and run alone
+  // rather than wired through the full loadBeacon() sandbox above, which
+  // exists for tcCreateUpdateBeacon's much larger apply/restart flow.
+
+  /**
+   * A fake warning-chip element, as the function touches it: textContent,
+   * title, and a classList with add/remove/contains('hidden').
+   * @returns {object}
+   */
+  function fakeChip() {
+    const classes = new Set(['dash-auth-warning', 'hidden']);
+    return {
+      textContent: '',
+      title: '',
+      classList: {
+        add: (c) => classes.add(c),
+        remove: (c) => classes.delete(c),
+        contains: (c) => classes.has(c)
+      },
+      _classes: classes
+    };
+  }
+
+  /**
+   * Run the real function in a fresh vm context against one fake chip.
+   * @param {object|null} data - The payload to render
+   * @param {{missingElement?: boolean}} [opts]
+   * @returns {object} The fake chip
+   */
+  function render(data, opts = {}) {
+    const chip = fakeChip();
+    const ctx = {
+      document: { getElementById: (id) => (opts.missingElement ? null : (id === 'medusaDriftNotice' ? chip : null)) }
+    };
+    vm.createContext(ctx);
+    vm.runInContext(liftDeclaration(BEACON_SRC, 'function tcRenderMedusaDriftNotice('), ctx);
+    ctx.tcRenderMedusaDriftNotice(ctx.document, 'medusaDriftNotice', data);
+    return chip;
+  }
+
+  it('hides the chip and clears its text/title for a clean payload', () => {
+    const chip = render({ updateAvailable: false, hubRestartNeeded: false });
+    assert.equal(chip.textContent, '');
+    assert.equal(chip.title, '');
+    assert.equal(chip._classes.has('hidden'), true);
+  });
+
+  it('shows "Medusa update available" when only updateAvailable is true, naming commitsBehind', () => {
+    const chip = render({ updateAvailable: true, hubRestartNeeded: false, local: { commitsBehind: 3 } });
+    assert.equal(chip.textContent, '⚠ Medusa update available');
+    assert.match(chip.title, /3 commits behind origin\/main/);
+    assert.equal(chip._classes.has('hidden'), false);
+  });
+
+  it('says "1 commit" (singular) for exactly one', () => {
+    const chip = render({ updateAvailable: true, hubRestartNeeded: false, local: { commitsBehind: 1 } });
+    assert.match(chip.title, /1 commit behind origin\/main/);
+    assert.ok(!/1 commits/.test(chip.title));
+  });
+
+  it('still names the condition when commitsBehind is not a number (unknown)', () => {
+    const chip = render({ updateAvailable: true, hubRestartNeeded: false, local: { commitsBehind: null } });
+    assert.match(chip.title, /the local Medusa checkout is behind origin\/main/);
+  });
+
+  it('shows "Medusa Hub restart needed" and takes priority in the headline when both are true, but names both reasons', () => {
+    const chip = render({ updateAvailable: true, hubRestartNeeded: true, local: { commitsBehind: 2 } });
+    assert.equal(chip.textContent, '⚠ Medusa Hub restart needed');
+    assert.match(chip.title, /has not restarted onto the checkout already on disk/);
+    assert.match(chip.title, /2 commits behind origin\/main/);
+  });
+
+  it('shows "Medusa Hub restart needed" when only hubRestartNeeded is true', () => {
+    const chip = render({ updateAvailable: false, hubRestartNeeded: true });
+    assert.equal(chip.textContent, '⚠ Medusa Hub restart needed');
+    assert.ok(!/behind origin\/main/.test(chip.title));
+  });
+
+  it('a null payload (a failed poll) leaves the chip exactly as it was, never forced hidden or shown', () => {
+    const chip = fakeChip();
+    chip.textContent = '⚠ Medusa update available';
+    chip.title = 'stale but still true';
+    chip._classes.delete('hidden');
+    const ctx = { document: { getElementById: () => chip } };
+    vm.createContext(ctx);
+    vm.runInContext(liftDeclaration(BEACON_SRC, 'function tcRenderMedusaDriftNotice('), ctx);
+    ctx.tcRenderMedusaDriftNotice(ctx.document, 'medusaDriftNotice', null);
+    assert.equal(chip.textContent, '⚠ Medusa update available');
+    assert.equal(chip._classes.has('hidden'), false);
+  });
+
+  it('a missing element (renamed/removed chip) is a quiet no-op, never a throw', () => {
+    assert.doesNotThrow(() => render({ updateAvailable: true, hubRestartNeeded: false }, { missingElement: true }));
+  });
+
+  it('names the Hub\'s own reported capabilities in the title when present', () => {
+    const chip = render({ updateAvailable: true, hubRestartNeeded: false, local: { commitsBehind: 1 }, hub: { capabilities: ['idempotency', 'drift-report'] } });
+    assert.match(chip.title, /the Hub currently reports: idempotency, drift-report/);
+  });
+
+  it('says nothing about capabilities for a Hub that predates the handshake (none reported)', () => {
+    const chip = render({ updateAvailable: true, hubRestartNeeded: false, local: { commitsBehind: 1 }, hub: { capabilities: null } });
+    assert.ok(!/currently reports/.test(chip.title));
+  });
+
+  it('ends with the click hint', () => {
+    const chip = render({ updateAvailable: true, hubRestartNeeded: false, local: { commitsBehind: 1 } });
+    assert.match(chip.title, /Click to fast-forward\/restart now\.$/);
+  });
+});
+
+describe('tcWireMedusaDriftAction (#2956)', () => {
+  /**
+   * A fake interactive chip: everything `fakeChip()` above has, plus
+   * addEventListener/removeEventListener/disabled -- enough for
+   * tcWireMedusaDriftAction's own click handler, and for
+   * tcRenderMedusaDriftNotice (which the handler calls on success) to
+   * still work against the same object.
+   * @returns {object}
+   */
+  function fakeButton() {
+    const classes = new Set(['dash-auth-warning', 'hidden']);
+    const listeners = {};
+    return {
+      textContent: '',
+      title: '',
+      disabled: false,
+      classList: {
+        add: (c) => classes.add(c),
+        remove: (c) => classes.delete(c),
+        contains: (c) => classes.has(c)
+      },
+      addEventListener: (type, fn) => { listeners[type] = fn; },
+      removeEventListener: (type, fn) => { if (listeners[type] === fn) delete listeners[type]; },
+      click: async () => { if (listeners.click) await listeners.click(); },
+      _classes: classes,
+      _listeners: listeners
+    };
+  }
+
+  /**
+   * Wire the real function (and the real tcRenderMedusaDriftNotice it
+   * calls on success) in a fresh vm context against one fake button.
+   * @param {object} deps - Same contract tcWireMedusaDriftAction takes
+   * @returns {{btn: object, ctx: object}}
+   */
+  function wire(deps) {
+    const btn = fakeButton();
+    btn._classes.delete('hidden'); // the button is only ever wired while shown
+    const ctx = { document: { getElementById: () => btn } };
+    vm.createContext(ctx);
+    vm.runInContext(liftDeclaration(BEACON_SRC, 'function tcRenderMedusaDriftNotice('), ctx);
+    vm.runInContext(liftDeclaration(BEACON_SRC, 'function tcWireMedusaDriftAction('), ctx);
+    ctx.tcWireMedusaDriftAction(ctx.document, 'medusaDriftNotice', deps);
+    return { btn, ctx };
+  }
+
+  it('a click while hidden is a no-op: no confirm, no apiMutate', async () => {
+    const btn = fakeButton(); // starts hidden
+    const ctx = { document: { getElementById: () => btn } };
+    vm.createContext(ctx);
+    vm.runInContext(liftDeclaration(BEACON_SRC, 'function tcRenderMedusaDriftNotice('), ctx);
+    vm.runInContext(liftDeclaration(BEACON_SRC, 'function tcWireMedusaDriftAction('), ctx);
+    let confirmCalled = false;
+    ctx.tcWireMedusaDriftAction(ctx.document, 'medusaDriftNotice', { apiMutate: async () => { throw new Error('must not be called'); }, confirm: () => { confirmCalled = true; return true; } });
+    await btn.click();
+    assert.equal(confirmCalled, false);
+  });
+
+  it('a declined confirm never calls apiMutate, and leaves the button untouched', async () => {
+    const { btn } = wire({ apiMutate: async () => { throw new Error('must not be called'); }, confirm: () => false });
+    btn.textContent = '⚠ Medusa update available';
+    await btn.click();
+    assert.equal(btn.textContent, '⚠ Medusa update available');
+    assert.equal(btn.disabled, false);
+  });
+
+  it('a confirmed click POSTs to /api/system/medusa-drift/apply, disables the button while in flight, and re-renders from the returned snapshot on success', async () => {
+    const calls = [];
+    let resolveApply;
+    const { btn } = wire({
+      confirm: () => true,
+      apiMutate: async (url, method, body) => {
+        calls.push([url, method, body]);
+        return new Promise((resolve) => { resolveApply = resolve; });
+      }
+    });
+    btn.textContent = '⚠ Medusa Hub restart needed';
+    const clickPromise = btn.click();
+    // Still in flight: disabled and showing progress.
+    await new Promise((r) => setImmediate(r));
+    assert.equal(btn.disabled, true);
+    assert.equal(btn.textContent, '⚠ Applying…');
+    resolveApply({ ok: true, fastForwarded: true, restarted: true, snapshot: { updateAvailable: false, hubRestartNeeded: false } });
+    await clickPromise;
+    // Not a blanket deepEqual on the whole tuple: the body object was built
+    // inside the vm context, so it has that realm's Object.prototype, not
+    // this file's -- structurally identical, but assert/strict's
+    // deepEqual (deepStrictEqual) treats the two prototypes as unequal.
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], '/api/system/medusa-drift/apply');
+    assert.equal(calls[0][1], 'POST');
+    assert.deepEqual({ ...calls[0][2] }, {});
+    assert.equal(btn.disabled, false);
+    // Re-rendered from the snapshot: no more drift, so hidden and cleared --
+    // tcRenderMedusaDriftNotice's own behavior, proving the handler called it.
+    assert.equal(btn.textContent, '');
+    assert.equal(btn._classes.has('hidden'), true);
+  });
+
+  it('a refused/failed apply (apiMutate returns null, same as the real api() on a non-2xx) restores the prior text and alerts with the reason read from api.lastBody, never silently', async () => {
+    const alerts = [];
+    // The real `api()`/`apiMutate()` returns null on any non-2xx response
+    // (confirmed against public/api-helper.js#tcCreateApi) -- the refusal
+    // body only ever arrives through the side channel, same as
+    // applyUpdateAndRestart's own STRUCTURED_REFUSALS contract.
+    const fakeApi = { lastErrorCode: 'dirty-tree', lastBody: { ok: false, code: 'dirty-tree', error: 'the local Medusa checkout has uncommitted changes' }, lastError: 'HTTP 409' };
+    const { btn } = wire({
+      confirm: () => true,
+      alert: (msg) => alerts.push(msg),
+      api: fakeApi,
+      apiMutate: async () => null
+    });
+    btn.textContent = '⚠ Medusa update available';
+    await btn.click();
+    assert.equal(btn.textContent, '⚠ Medusa update available', 'restored, not left on "Applying…"');
+    assert.equal(btn.disabled, false);
+    assert.equal(alerts.length, 1);
+    assert.match(alerts[0], /uncommitted changes/);
+  });
+
+  it('a refusal whose code is not in the known structured set falls back to api.lastError, never a stale lastBody', async () => {
+    const alerts = [];
+    const fakeApi = { lastErrorCode: null, lastBody: { ok: false, code: 'dirty-tree', error: 'stale body from an earlier, unrelated call' }, lastError: 'Connection lost.' };
+    const { btn } = wire({ confirm: () => true, alert: (msg) => alerts.push(msg), api: fakeApi, apiMutate: async () => null });
+    await btn.click();
+    assert.equal(alerts.length, 1);
+    assert.match(alerts[0], /Connection lost/);
+    assert.doesNotMatch(alerts[0], /stale body/);
+  });
+
+  it('a request that never completes (apiMutate throws) re-enables the button, restores its text, and alerts with the thrown message', async () => {
+    const alerts = [];
+    const { btn } = wire({
+      confirm: () => true,
+      alert: (msg) => alerts.push(msg),
+      apiMutate: async () => { throw new Error('ECONNREFUSED'); }
+    });
+    btn.textContent = '⚠ Medusa update available';
+    await btn.click();
+    assert.equal(btn.disabled, false, 'the finally re-enables it even though the call threw past the handler');
+    assert.equal(btn.textContent, '⚠ Medusa update available', 'restored, not left on "Applying…" after a thrown apiMutate');
+    assert.equal(alerts.length, 1);
+    assert.match(alerts[0], /ECONNREFUSED/);
+  });
+
+  it('wiring twice replaces the handler rather than stacking a second one (one confirm, one apiMutate call per click)', async () => {
+    const confirms = [];
+    const { btn, ctx } = wire({ confirm: () => { confirms.push(1); return true; }, apiMutate: async () => ({ ok: true, snapshot: { updateAvailable: false, hubRestartNeeded: false } }) });
+    ctx.tcWireMedusaDriftAction(ctx.document, 'medusaDriftNotice', { confirm: () => { confirms.push(1); return true; }, apiMutate: async () => ({ ok: true, snapshot: { updateAvailable: false, hubRestartNeeded: false } }) });
+    await btn.click();
+    assert.equal(confirms.length, 1, 'only the SECOND wiring\'s handler fired, not both');
+  });
+
+  it('a missing element is a quiet no-op, never a throw', () => {
+    const ctx = { document: { getElementById: () => null } };
+    vm.createContext(ctx);
+    vm.runInContext(liftDeclaration(BEACON_SRC, 'function tcWireMedusaDriftAction('), ctx);
+    assert.doesNotThrow(() => ctx.tcWireMedusaDriftAction(ctx.document, 'medusaDriftNotice', { apiMutate: async () => ({ ok: true }) }));
   });
 });
