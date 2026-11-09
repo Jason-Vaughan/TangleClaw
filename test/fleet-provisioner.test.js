@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { initRepo: _tcInitRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -46,7 +47,11 @@ const GIT_ENV = {
  */
 function _initRepo(dir) {
   fs.mkdirSync(dir, { recursive: true });
-  execFileSync('git', ['init', '--quiet', '-b', 'main', dir], { env: GIT_ENV, stdio: 'pipe' });
+  // `test/temp-repo.test.js` (#831) requires every `git init`/`clone` in
+  // `test/` to go through this helper — a bare call inherits the running
+  // machine's global git template dir, which TangleClaw itself rewrites
+  // mid-suite.
+  _tcInitRepo(dir, ['-b', 'main'], { env: GIT_ENV });
   fs.writeFileSync(path.join(dir, 'README.md'), 'seed\n');
   execFileSync('git', ['-C', dir, 'add', '.'], { env: GIT_ENV, stdio: 'pipe' });
   execFileSync('git', ['-C', dir, 'commit', '--quiet', '-m', 'seed'], { env: GIT_ENV, stdio: 'pipe' });

@@ -64,7 +64,7 @@
    */
   async function _resolveProjectId(name) {
     try {
-      const res = await fetch(`/api/projects/${encodeURIComponent(name)}`);
+      const res = await tcFetch(`/api/projects/${encodeURIComponent(name)}`);
       if (!res.ok) return null;
       const project = await res.json();
       return Number.isInteger(project.id) ? project.id : null;
@@ -95,7 +95,7 @@
     }
     checkbox.dataset.projectId = String(projectId);
     try {
-      const res = await fetch(`/api/tc/fleet/coordinator?projectId=${encodeURIComponent(projectId)}`);
+      const res = await tcFetch(`/api/tc/fleet/coordinator?projectId=${encodeURIComponent(projectId)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       checkbox.checked = !!data.fleetCoordinator;
@@ -124,7 +124,7 @@
     checkbox.disabled = true;
     status.textContent = 'Saving…';
     try {
-      const res = await fetch('/api/tc/fleet/coordinator', {
+      const res = await tcFetch('/api/tc/fleet/coordinator', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId, enabled })

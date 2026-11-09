@@ -138,7 +138,11 @@ describe('operator routes that grant authority need a signed-in operator (#2378)
       r('PUT', '/api/startup-prompt', '/api/startup-prompt', { text: 'A startup prompt.', firerProjectIds: [], expectedRevision: 0 }),
       r('PUT', '/api/shared-docs/:id', `/api/shared-docs/${doc.id}`, { description: 'Changed registration.' }),
       r('POST', '/api/groups/:id/members', `/api/groups/${group.id}/members`, { projectId: beta.id }),
-      r('PATCH', '/api/projects/:name', `/api/projects/${alpha.name}`, { launchSequence: { recoveryMode: 'advisory' } })
+      r('PATCH', '/api/projects/:name', `/api/projects/${alpha.name}`, { launchSequence: { recoveryMode: 'advisory' } }),
+      // #2937: grants Fleet Coordinator authority (coordinatorRoles + the
+      // fleetCoordinator flag) — must leave zero trace when refused, same as
+      // every other authority grant in this list.
+      r('POST', '/api/tc/fleet/coordinator', '/api/tc/fleet/coordinator', { projectId: alpha.id, enabled: true })
     ];
   }
 
@@ -208,7 +212,7 @@ describe('operator routes that grant authority need a signed-in operator (#2378)
       .sort();
     const tested = classA().map((r) => `${r.method} ${r.pattern}`).filter((k) => k !== 'PATCH /api/projects/:name').sort();
     assert.deepEqual(tested, registered);
-    assert.equal(classA().length, 22);
+    assert.equal(classA().length, 23);
   });
 
   describe('with no login in force (open)', () => {
