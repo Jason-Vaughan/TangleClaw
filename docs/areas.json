@@ -394,6 +394,13 @@
         "lib/merge-inbox-gate.js"
       ]
     },
+    "adversarial": {
+      "label": "area:adversarial",
+      "why": "The Adversarial Agent primitive (#108): a TC-level mechanism any methodology can call to get structured, adversarial/red-team findings against a code surface. TC owns only prompt-building, invoking a caller-injected subagent-spawn function, schema validation/filtering, and disposition audit logging — never the LLM call itself, and never policy for when to invoke it. Owned by no other family.",
+      "paths": [
+        "lib/adversarial.js"
+      ]
+    },
     "roadmap": {
       "label": "area:roadmap",
       "why": "Roadmap train dependency admission and incremental GitHub roadmap-sync state (#1894, #2259) — logic for the separate, Builder-read-only roadmap-board repository (ADR 0024) to adopt, not a replacement for it. Owned by no other family. Named explicitly, not by glob: `lib/roadmap-*.js` also matched `lib/roadmap-vercel-guard.js` once #2258 added it under `tooling`.",
