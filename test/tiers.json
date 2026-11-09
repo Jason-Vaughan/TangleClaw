@@ -736,6 +736,7 @@
     "test/session-rules-channel.test.js",
     "test/session-rules-refresh.test.js",
     "test/session-status-unknown.test.js",
+    "test/sessions-switch-model.test.js",
     "test/sessions-webui.test.js",
     "test/sessions.test.js",
     "test/sessionstart-prime-claude-hook.test.js",
