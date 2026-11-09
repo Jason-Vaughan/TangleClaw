@@ -9,7 +9,7 @@
 // binary, so the rest of the bootstrap (the real session on the TCC-authorized server, the
 // attach proxy on the default server) runs against real tmux.
 
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -18,7 +18,29 @@ const { execFileSync } = require('node:child_process');
 const tmux = require('../lib/tmux');
 const { uniqueSessionName } = require('./_tmux-session-names');
 
-const REAL_TMUX = execFileSync('which', ['tmux'], { encoding: 'utf8' }).trim();
+// On a machine that has already launched a real TangleClaw pane (this one
+// included), `~/.tangleclaw/merge-role-guard-wrapper` -- a `tmux` PATH
+// wrapper lib/merge-role-guard.js#createRoleGuardWrapperScripts writes,
+// #2946 -- can already be ahead of the real tmux binary on `process.env.PATH`.
+// A bare `which tmux` would then resolve THIS CONSTANT to the wrapper, not
+// the real binary -- and every shim this file installs on PATH for its own
+// tests (`withSelectivelySlowTmux`) ends its fake run with `exec
+// ${REAL_TMUX} "$@"`, so a wrapper-resolved REAL_TMUX makes that exec
+// re-enter the wrapper instead of the real tmux, which then re-resolves
+// PATH and finds the SAME shim again -- an infinite ping-pong between the
+// two, confirmed for real on this exact machine. Filtering the wrapper
+// directory out before resolving `which` is enough: nothing else is ever
+// prepended to PATH at module-load time (a test's own shim dir is only
+// ever added later, inside a single test, long after this line runs).
+const REAL_TMUX = execFileSync('which', ['tmux'], {
+  encoding: 'utf8',
+  env: {
+    ...process.env,
+    PATH: (process.env.PATH || '').split(path.delimiter)
+      .filter((p) => path.basename(p) !== 'merge-role-guard-wrapper')
+      .join(path.delimiter)
+  }
+}).trim();
 
 /** Session names + fake-home dirs this file's tests created, cleaned up in `afterEach`. */
 let createdDefault = [];
@@ -36,6 +58,34 @@ const REAL_TCC_SOCKET = tmux.TCC_SOCKET;
 // Terminal.app launch to wait on, and the real 2s wait would just slow every
 // test in this file down for nothing.
 tmux._tccSeams.settle = () => {};
+
+// #2945 — a real session on the DEFAULT server, held for this whole file's
+// run. `beforeEach` below stubs `defaultServerRunning` to `true` so a test
+// that doesn't care about the default server's state never races an empty
+// one into the TCC/`osascript` bootstrap path (see that stub's own comment)
+// — but `probeTccReadable` itself still runs a REAL `tmux run-shell` against
+// the default socket regardless of that stub, and `run-shell`, unlike
+// `new-session`, never implicitly starts an absent server: on a fresh
+// runner with no default server yet (or one whose last session a prior
+// test's `afterEach` just killed, letting it `exit-empty`), that real probe
+// fails with "no such file or directory" — a false "not readable" — and
+// routes straight into the real bootstrap, which shells out to `osascript`
+// and fails off macOS. Keeping one real session alive on the default server
+// for the whole file closes the gap the stub alone didn't.
+const DEFAULT_ANCHOR_SESSION = uniqueSessionName('tcc_default_anchor');
+
+before(() => {
+  // `createSessionWithTccBootstrap`, not `tmux.createSession` directly, so
+  // this stays off `test/tmux-session-names.test.js`'s (#1983) `CALLS_LIB`
+  // scan the same way every other real-default-server session in this file
+  // already does — `os.tmpdir()` is unprotected, so it delegates straight
+  // through to the real `createSession` underneath regardless.
+  tmux.createSessionWithTccBootstrap(DEFAULT_ANCHOR_SESSION, { cwd: os.tmpdir() });
+});
+
+after(() => {
+  try { tmux.killSession(DEFAULT_ANCHOR_SESSION); } catch { /* already gone */ }
+});
 
 // Every test gets its OWN isolated TCC socket name, never the real
 // production one (PRR-B Round 7, #2625): on a host where #2625 is already
