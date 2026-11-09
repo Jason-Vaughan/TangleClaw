@@ -23,6 +23,7 @@ const models = require('../lib/engine-models');
 const engines = require('../lib/engines');
 const sessions = require('../lib/sessions');
 const store = require('../lib/store');
+const profileReconciler = require('../lib/profile-reconciler');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -307,6 +308,49 @@ describe('#2188 engine-model-picker — _buildLaunchCommand effort application',
   });
 });
 
+describe('#2188 engine-model-picker — effort preserved through post-launch verification (PRR-A R1 catch on PR #2974)', () => {
+  beforeEach(() => { profileReconciler._resetForTests(); });
+
+  /** A fake `readTrustedActiveProfile` seam answering a fixed `{engine, model}` observation, never carrying `effort`/`mode` — exactly what the real Claude/Codex readers do today. */
+  function fakeObserved(profile) {
+    return async () => profile;
+  }
+
+  it('setDesiredProfile at launch, then at verification, both carry effort — the second call must not wipe the first', async () => {
+    const resourceId = 'session:9500';
+    profileReconciler.setDesiredProfile(resourceId, { engine: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
+    await sessions._verifyModelAfterLaunch('tmux-c4-1', 9500, 1, 'codex', 'gpt-5.6-sol', {
+      stillValid: () => true, readTrustedActiveProfile: fakeObserved({ engine: 'codex', model: 'gpt-5.6-sol' })
+    }, 'high');
+    assert.equal(profileReconciler.getDesiredProfile(resourceId).effort, 'high',
+      'the verification call replaced the whole record (setDesiredProfile does not merge) — effort must be re-stated, not omitted');
+  });
+
+  it('reaches verified (never held) when the model matches but effort cannot be observed at all', async () => {
+    const result = await sessions._verifyModelAfterLaunch('tmux-c4-2', 9501, 1, 'codex', 'gpt-5.6-sol', {
+      stillValid: () => true, readTrustedActiveProfile: fakeObserved({ engine: 'codex', model: 'gpt-5.6-sol' })
+    }, 'high');
+    assert.equal(result.ok, true);
+    assert.equal(result.state, 'verified');
+  });
+
+  it('a genuine MODEL mismatch still holds, even with an effort selection in play — the fix narrows the match, it does not disable it', async () => {
+    const result = await sessions._verifyModelAfterLaunch('tmux-c4-3', 9502, 1, 'codex', 'gpt-5.6-sol', {
+      stillValid: () => true, readTrustedActiveProfile: fakeObserved({ engine: 'codex', model: 'gpt-6-luna' })
+    }, 'high');
+    assert.equal(result.ok, false);
+  });
+
+  it('_matches itself: an unobserved effort/mode field is not a mismatch; an observed-and-wrong one still is', () => {
+    assert.equal(profileReconciler._matches(
+      { engine: 'codex', model: 'gpt-5.6-sol' }, { engine: 'codex', model: 'gpt-5.6-sol', effort: 'high' }
+    ), true);
+    assert.equal(profileReconciler._matches(
+      { engine: 'codex', model: 'gpt-5.6-sol', effort: 'low' }, { engine: 'codex', model: 'gpt-5.6-sol', effort: 'high' }
+    ), false);
+  });
+});
+
 describe('#2188 engine-model-picker — lib/projects.js wiring (effort persistence)', () => {
   const projects = require('../lib/projects');
   let tmpDir;
@@ -329,12 +373,24 @@ describe('#2188 engine-model-picker — lib/projects.js wiring (effort persisten
   });
 
   let realCheckEffortSelection;
-  beforeEach(() => { realCheckEffortSelection = models.checkEffortSelection; });
-  afterEach(() => { models.checkEffortSelection = realCheckEffortSelection; });
+  let realCheckSelection;
+  beforeEach(() => {
+    realCheckEffortSelection = models.checkEffortSelection;
+    realCheckSelection = models.checkSelection;
+  });
+  afterEach(() => {
+    models.checkEffortSelection = realCheckEffortSelection;
+    models.checkSelection = realCheckSelection;
+  });
 
   /** Stub `checkEffortSelection` to accept or refuse every call, deterministically. */
   function stubCheckEffortSelection(ok, reason = 'stubbed refusal') {
     models.checkEffortSelection = () => (ok ? { ok: true } : { ok: false, code: 'STUBBED', reason });
+  }
+
+  /** Stub `checkSelection` (the model axis) the same way, for a test that also sets/clears model. */
+  function stubCheckSelection(ok, reason = 'stubbed refusal') {
+    models.checkSelection = () => (ok ? { ok: true } : { ok: false, code: 'STUBBED', reason });
   }
 
   it('updateProject persists a valid effort and enrichment reports it available', async () => {
@@ -375,5 +431,55 @@ describe('#2188 engine-model-picker — lib/projects.js wiring (effort persisten
     const result = await projects.updateProject('effort-engine-reset', { engine: 'claude' });
     assert.deepEqual(result.errors, []);
     assert.equal(result.project.effort, null);
+  });
+
+  describe('B2 (Architect A509-PR2974-R1-HOLD): clearing or changing model on a perModel engine does not strand effort', () => {
+    it('clearing the model on Codex clears the stored effort too, with a warning, and persists both', async () => {
+      stubCheckEffortSelection(true);
+      stubCheckSelection(true);
+      projects.createProject({ name: 'effort-model-clear', engine: 'codex', model: 'gpt-5.6-sol' });
+      await projects.updateProject('effort-model-clear', { effort: 'ultra' });
+      const result = await projects.updateProject('effort-model-clear', { model: null });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.model, null);
+      assert.equal(result.project.effort, null, 'the stale effort must not survive the model it was chosen for being cleared');
+      assert.ok(result.warnings.some((w) => w.includes('does not apply without a model')));
+      const cfg = store.projectConfig.load(store.projects.getByName('effort-model-clear').path);
+      assert.equal(cfg.effort, null, 'the clear must be WRITTEN, not just reflected in the response');
+    });
+
+    it('changing the model to one that still supports the stored effort keeps it, unvalidated-but-safe path exercised', async () => {
+      stubCheckEffortSelection(true);
+      stubCheckSelection(true);
+      projects.createProject({ name: 'effort-model-change-ok', engine: 'codex', model: 'gpt-5.6-sol' });
+      await projects.updateProject('effort-model-change-ok', { effort: 'high' });
+      const result = await projects.updateProject('effort-model-change-ok', { model: 'gpt-6-luna' });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.model, 'gpt-6-luna');
+      assert.equal(result.project.effort, 'high', 'nothing about THIS case asked for a clear — checkEffortSelection is stubbed to accept, so the stale value is validated and kept');
+    });
+
+    it('changing the model to one checkEffortSelection refuses the stored effort for refuses the whole update', async () => {
+      stubCheckSelection(true);
+      stubCheckEffortSelection(true);
+      projects.createProject({ name: 'effort-model-change-bad', engine: 'codex', model: 'gpt-5.6-sol' });
+      await projects.updateProject('effort-model-change-bad', { effort: 'ultra' });
+      stubCheckEffortSelection(false, 'is not an effort level offered for gpt-6-luna');
+      const result = await projects.updateProject('effort-model-change-bad', { model: 'gpt-6-luna' });
+      assert.equal(result.project, null);
+      assert.ok(result.errors[0].includes('not an effort level offered'));
+      const cfg = store.projectConfig.load(store.projects.getByName('effort-model-change-bad').path);
+      assert.equal(cfg.model, 'gpt-5.6-sol', 'the refused update must not have changed the stored model either');
+    });
+
+    it('a static (non-perModel) engine like Claude is unaffected — clearing its model (if it had one) never touches effort', async () => {
+      stubCheckEffortSelection(true);
+      stubCheckSelection(true);
+      projects.createProject({ name: 'effort-claude-unaffected', engine: 'claude' });
+      await projects.updateProject('effort-claude-unaffected', { effort: 'high' });
+      const result = await projects.updateProject('effort-claude-unaffected', { model: null });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.effort, 'high');
+    });
   });
 });

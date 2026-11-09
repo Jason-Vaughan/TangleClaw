@@ -2418,10 +2418,17 @@ const ENGINES_API_BASE = '/api/engines';
  * @param {string} engineId - The engine dropdown's current value.
  * @param {string|null} [selectedModel] - Preselect, normally the project's stored model.
  * @param {string|null} [selectedEffort] - Preselect, normally the project's stored effort.
+ * @param {object} [ids] - Element ids, so the same picker can render into
+ *   either the Settings modal (the defaults) or the Launch modal's own
+ *   one-launch-override copy without a DOM id collision between the two —
+ *   `containerId`, `effortContainerId`, `modelSelectId`, `effortSelectId`.
  * @returns {Promise<void>}
  */
-async function renderModelEffortPicker(engineId, selectedModel = null, selectedEffort = null) {
-  const container = document.getElementById('settingsModelEffortContainer');
+async function renderModelEffortPicker(engineId, selectedModel = null, selectedEffort = null, ids = {}) {
+  const containerId = ids.containerId || 'settingsModelEffortContainer';
+  const effortContainerId = ids.effortContainerId || 'settingsEffortContainer';
+  const modelSelectId = ids.modelSelectId || 'settingsModel';
+  const container = document.getElementById(containerId);
   if (!container) return;
   if (!engineId) { container.innerHTML = ''; return; }
   const modelsResp = await api(`${ENGINES_API_BASE}/${encodeURIComponent(engineId)}/models`);
@@ -2447,21 +2454,27 @@ async function renderModelEffortPicker(engineId, selectedModel = null, selectedE
   };
 
   if (modelsData.models.length === 0) {
-    container.innerHTML = '';
+    // No model axis for this engine (Claude today — its profile declares no
+    // `models` block) does not mean no EFFORT axis: the two are independent
+    // (#2188). Still render the effort half, with no model selector above
+    // it and no model id to pass — Claude's effort block is static,
+    // engine-wide, and does not need one.
+    container.innerHTML = `<div id="${esc(effortContainerId)}"></div>`;
+    await renderEffortPicker(engineId, null, selectedEffort, ids);
     return;
   }
   container.innerHTML = `
     <div class="form-group">
-      <label class="form-label" for="settingsModel">Model</label>
-      <select class="form-select" id="settingsModel">${optionsHtml(modelsData.models, selectedModel)}</select>
+      <label class="form-label" for="${esc(modelSelectId)}">Model</label>
+      <select class="form-select" id="${esc(modelSelectId)}">${optionsHtml(modelsData.models, selectedModel)}</select>
       <div class="form-hint">Applies to the next launch; a running session is unaffected.</div>
     </div>
-    <div id="settingsEffortContainer"></div>`;
+    <div id="${esc(effortContainerId)}"></div>`;
 
-  const modelEl = document.getElementById('settingsModel');
-  await renderEffortPicker(engineId, modelEl.value || null, selectedEffort);
+  const modelEl = document.getElementById(modelSelectId);
+  await renderEffortPicker(engineId, modelEl.value || null, selectedEffort, ids);
   modelEl.addEventListener('change', (e) => {
-    renderEffortPicker(engineId, e.target.value || null, null);
+    renderEffortPicker(engineId, e.target.value || null, null, ids);
   });
 }
 
@@ -2472,10 +2485,13 @@ async function renderModelEffortPicker(engineId, selectedModel = null, selectedE
  * @param {string} engineId - The engine dropdown's current value.
  * @param {string|null} modelId - The model select's current value, for a `perModel` engine.
  * @param {string|null} selectedEffort - Preselect, normally the project's stored effort.
+ * @param {object} [ids] - See `renderModelEffortPicker`'s own doc — `effortContainerId`, `effortSelectId`.
  * @returns {Promise<void>}
  */
-async function renderEffortPicker(engineId, modelId, selectedEffort) {
-  const container = document.getElementById('settingsEffortContainer');
+async function renderEffortPicker(engineId, modelId, selectedEffort, ids = {}) {
+  const effortContainerId = ids.effortContainerId || 'settingsEffortContainer';
+  const effortSelectId = ids.effortSelectId || 'settingsEffort';
+  const container = document.getElementById(effortContainerId);
   if (!container) return;
   const query = modelId ? `?model=${encodeURIComponent(modelId)}` : '';
   const effortResp = await api(`${ENGINES_API_BASE}/${encodeURIComponent(engineId)}/effort${query}`);
@@ -2497,8 +2513,8 @@ async function renderEffortPicker(engineId, modelId, selectedEffort) {
   }
   container.innerHTML = `
     <div class="form-group">
-      <label class="form-label" for="settingsEffort">Reasoning effort</label>
-      <select class="form-select" id="settingsEffort">${opts.join('')}</select>
+      <label class="form-label" for="${esc(effortSelectId)}">Reasoning effort</label>
+      <select class="form-select" id="${esc(effortSelectId)}">${opts.join('')}</select>
       <div class="form-hint">Applies to the next launch; a running session is unaffected.</div>
     </div>`;
 }

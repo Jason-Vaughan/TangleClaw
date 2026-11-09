@@ -2467,7 +2467,7 @@ async function launchProject(name) {
  * @param {Array<object>} [acknowledgeStranded] - Stranded wraps the operator
  *   acknowledged in the stranded-wraps dialog, sent with this launch (#1539)
  */
-async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStranded) {
+async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStranded, modelOverride, effortOverride) {
   // The CSSOM `CSS.escape` algorithm, nested here rather than a top-level
   // helper or the global: an "unregistered" project (discovered off the
   // filesystem, never through `validateName`) can have a name with a quote
@@ -2535,6 +2535,14 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
   if (Array.isArray(acknowledgeStranded) && acknowledgeStranded.length > 0) {
     body.acknowledgeStranded = acknowledgeStranded;
   }
+  // (#2188) A one-launch model/effort override from the Launch Mode modal's
+  // own picker. `undefined` (every OTHER call site below, which passes
+  // neither argument) omits the key entirely, so an ordinary launch keeps
+  // using whatever the project's settings already hold — only
+  // `confirmLaunchMode`, which always reads its picker's current value
+  // (including an explicit "None" as `null`), sends either key at all.
+  if (modelOverride !== undefined) body.model = modelOverride;
+  if (effortOverride !== undefined) body.effort = effortOverride;
 
   try {
     const res = await tcFetch(`/api/sessions/${encodeURIComponent(name)}`, {
@@ -2776,6 +2784,22 @@ function openLaunchModeModal(name, engine, continuityMode = null, project = null
   }
   list.innerHTML = html;
   updateLaunchModeWarning();
+  // (#2188) A one-launch model/effort override, the same shape as the
+  // launch-mode picker itself: seeded from the project's STORED selection
+  // (so leaving it untouched launches exactly as settings already says),
+  // explicitly overridable for just this one launch, and never written
+  // back to project config — `confirmLaunchMode` below sends whatever this
+  // renders as this request's own `model`/`effort`, independent of
+  // whatever Settings holds. `typeof`-guarded, the same pattern
+  // `renderProjects`' own `openPeekProject` check uses and for the
+  // identical reason: an isolated-lift test harness evaluates this
+  // function's declaration text alone, with no `public/ui.js` (where
+  // `renderModelEffortPicker` lives) loaded into its sandbox.
+  if (typeof renderModelEffortPicker === 'function') {
+    renderModelEffortPicker(engine ? engine.id : '', project ? (project.model || null) : null,
+      project ? (project.effort || null) : null,
+      { containerId: 'launchModelEffortContainer', effortContainerId: 'launchEffortContainer', modelSelectId: 'launchModel', effortSelectId: 'launchEffort' });
+  }
   document.getElementById('launchModeModal').classList.add('open');
 }
 
@@ -2803,8 +2827,19 @@ async function confirmLaunchMode() {
   if (!launchModeTarget) return;
   const name = launchModeTarget;
   const mode = selectedLaunchMode;
+  // (#2188) Read the picker's current value BEFORE closing the modal —
+  // `closeLaunchModeModal` only hides it (removes the `open` class) and
+  // resets `launchModeTarget`/`selectedLaunchMode`, never the markup, but
+  // reading first keeps this correct even if a future change starts
+  // clearing it. Absent (no `#launchModel`/`#launchEffort` at all) means
+  // this engine offers neither axis — `undefined`, so `doLaunchProject`
+  // omits the key rather than sending a meaningless override.
+  const modelEl = document.getElementById('launchModel');
+  const effortEl = document.getElementById('launchEffort');
+  const modelOverride = modelEl ? (modelEl.value || null) : undefined;
+  const effortOverride = effortEl ? (effortEl.value || null) : undefined;
   closeLaunchModeModal();
-  await doLaunchProject(name, mode, pendingContinuityMode);
+  await doLaunchProject(name, mode, pendingContinuityMode, undefined, modelOverride, effortOverride);
 }
 
 function wrapProject(name) {
