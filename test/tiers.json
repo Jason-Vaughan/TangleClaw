@@ -421,6 +421,7 @@
     "test/reset-admin-store.test.js",
     "test/resource-leases.test.js",
     "test/route-reachability.test.js",
+    "test/secure-clipboard.test.js",
     "test/self-improvement-loop.test.js",
     "test/session-rule-lifecycle.test.js",
     "test/session-rules-selfimprove.test.js",

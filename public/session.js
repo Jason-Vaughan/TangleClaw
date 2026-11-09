@@ -1760,6 +1760,15 @@ const engineFailoverModal = window.tcCreateEngineFailoverModal({
   isDeleteProtected: () => !!(sessionState.config && sessionState.config.deleteProtected)
 });
 
+// Secure clipboard modal (#1032) — opened explicitly by its own banner
+// button, never polled; `mount()` below wires the trigger.
+const secureClipboardModal = window.tcCreateSecureClipboardModal({
+  doc: document,
+  api,
+  apiMutate,
+  projectName
+});
+
 /**
  * Poll this project's pending permission requests (#2352) on the same
  * cadence as `pollStatus` — no new timer, same convention as `pollMedusa`.
@@ -7779,6 +7788,11 @@ function bindEvents() {
   // not part of the Escape/outside-click cluster above, since it must never
   // auto-dismiss.
   engineFailoverModal.mount();
+  // Secure clipboard modal (#1032) — opened explicitly by its own banner
+  // button; binds its own Cancel/Save/Paste buttons and backdrop click.
+  secureClipboardModal.mount();
+  const secureClipboardBtn = $('secureClipboardBtn');
+  if (secureClipboardBtn) secureClipboardBtn.addEventListener('click', () => secureClipboardModal.open());
   // #2352 — the badge chip opens/closes the pending-permissions panel; its
   // row controls are delegated since the panel's content re-renders every poll.
   const permissionRequestsChip = $('permissionRequestsChip');

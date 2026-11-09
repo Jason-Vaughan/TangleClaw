@@ -8490,6 +8490,10 @@ require('./lib/routes/engines-canary').register();
 // launch-recovery, audit, and engines-canary above.
 require('./lib/routes/engine-health-routes').register();
 
+// The secure clipboard / secret uploader routes (#1032) likewise take no
+// deps — same no-deps convention as engines-canary and engine-health above.
+require('./lib/routes/secure-clipboard').register();
+
 // ── Server Creation ──
 
 /**

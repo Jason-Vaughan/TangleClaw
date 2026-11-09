@@ -137,7 +137,7 @@
     },
     "sessions": {
       "label": "area:sessions",
-      "why": "Session lifecycle in tmux and ttyd, the Project Master, transcripts, continuity, workload receipts, engine error watching, and host-level causes of an apparently-idle session (#1112: a blocking macOS GUI dialog no pane capture can see).",
+      "why": "Session lifecycle in tmux and ttyd, the Project Master, transcripts, continuity, workload receipts, engine error watching, host-level causes of an apparently-idle session (#1112: a blocking macOS GUI dialog no pane capture can see), and the secure clipboard / secret uploader (#1032): a project's private `.tangleclaw/secrets/` store and the tmux-paste delivery path, alongside its `lib/uploads*.js` sibling (the ordinary, unprotected uploads folder).",
       "paths": [
         "lib/routes/sessions.js",
         "lib/sessions.js",
@@ -166,6 +166,8 @@
         "lib/activity-observer.js",
         "lib/condition-log.js",
         "lib/uploads*.js",
+        "lib/secure-clipboard.js",
+        "lib/routes/secure-clipboard.js",
         "lib/macho-closure.js",
         "lib/shell-word.js",
         "lib/exec*.js",
