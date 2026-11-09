@@ -69,11 +69,20 @@ describe('deploy/install.sh — Linux platform dispatch (#2932)', () => {
     assert.match(script, /"\$LINUX_SYSTEMD_INSTALL" install --unit ttyd/);
   });
 
-  it('forces direct-mode ingress on Linux when config.json requests caddy mode, before the caddy preflight', () => {
-    const forceAt = script.search(/if \[ "\$OS" = "Linux" \] && \[ "\$INGRESS_MODE" = "caddy" \]/);
+  it('refuses a caddy-configured Linux install, before the caddy preflight (PRR-B R-Gate, PR #2968)', () => {
+    // An earlier version of this guard only overrode this run's OWN shell
+    // $INGRESS_MODE to "direct", never the PERSISTED config.json — so the
+    // file would still say "caddy" after an install that actually ran
+    // direct-mode units, a mismatch the server/dashboard has no way to
+    // detect on its own. Refusing instead leaves config.json and every
+    // service untouched; the operator decides.
+    const refuseAt = script.search(/if \[ "\$OS" = "Linux" \] && \[ "\$INGRESS_MODE" = "caddy" \]/);
     const preflightAt = script.search(/# ── Caddy-mode preflight/);
-    assert.notEqual(forceAt, -1, 'must force direct mode on Linux when caddy is requested');
-    assert.ok(forceAt < preflightAt, 'the force-direct override must run before the caddy preflight ever checks $INGRESS_MODE');
+    assert.notEqual(refuseAt, -1, 'must refuse on Linux when caddy is requested');
+    assert.ok(refuseAt < preflightAt, 'the refusal must run before the caddy preflight ever checks $INGRESS_MODE');
+    const block = script.slice(refuseAt, preflightAt);
+    assert.match(block, /exit 1/, 'must actually exit, not just warn');
+    assert.doesNotMatch(block, /INGRESS_MODE="direct"/, 'must not silently rewrite the in-memory mode either — refuse, not convert');
   });
 
   it('points the uninstall and ingress-mode guidance at systemd, not launchd, on Linux', () => {
@@ -209,5 +218,62 @@ describe('deploy/install.sh — Linux platform dispatch (#2932)', () => {
       const calls = stubCalls(box);
       assert.match(calls, /^apt-get install -y libnss3-tools$/m, `expected libnss3-tools via apt-get; got:\n${calls}`);
     });
+  });
+
+  // PRR-B R-Gate on PR #2968: an earlier version of the caddy-mode guard
+  // above only overrode this run's own $INGRESS_MODE variable, never the
+  // PERSISTED config.json — an install would leave the file still claiming
+  // "caddy" while direct-mode units actually ran. These run the real script
+  // and snapshot HOME byte-for-byte, the same technique
+  // test/install-sh.test.js's ingress-mode guard uses for the analogous
+  // Darwin refusal (#1900).
+  describe('caddy-mode refusal on Linux (executed, PRR-B R-Gate)', () => {
+    /** @param {string} dir @returns {Record<string, string>} */
+    function snapshot(dir) {
+      const out = {};
+      for (const entry of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+        const full = path.join(entry.parentPath || entry.path, entry.name);
+        out[path.relative(dir, full)] = entry.isFile() ? fs.readFileSync(full, 'utf8') : '<dir>';
+      }
+      return out;
+    }
+
+    it('refuses a Linux host whose config.json requests caddy mode, with the file left byte-identical', () => {
+      const box = sandbox(() => ({ uname: 'echo Linux' }));
+      fs.mkdirSync(path.join(box.home, '.tangleclaw'), { recursive: true });
+      const configBody = JSON.stringify({ ingressMode: 'caddy' });
+      fs.writeFileSync(path.join(box.home, '.tangleclaw', 'config.json'), configBody);
+      const before = snapshot(box.home);
+
+      const { code, output } = runInstall(box);
+
+      assert.equal(code, 1, 'must refuse rather than silently install in direct mode');
+      assert.deepEqual(snapshot(box.home), before, 'config.json (and everything else under HOME) must be byte-identical after the refusal');
+      assert.match(output, /requests caddy-mode ingress/);
+      assert.match(output, /Nothing was changed/);
+      assert.doesNotMatch(output, /no supported package manager found/,
+        'the refusal must fire before ever reaching the Linux dependency bootstrap');
+    });
+
+    for (const [label, configBody] of [
+      ['a persisted direct mode', JSON.stringify({ ingressMode: 'direct' })],
+      ['a config without ingressMode', JSON.stringify({ httpsEnabled: false })],
+      ['no config (first install)', null]
+    ]) {
+      it(`lets ${label} through to the Linux dependency bootstrap`, () => {
+        const box = sandbox(() => ({ uname: 'echo Linux' }));
+        if (configBody !== null) {
+          fs.mkdirSync(path.join(box.home, '.tangleclaw'), { recursive: true });
+          fs.writeFileSync(path.join(box.home, '.tangleclaw', 'config.json'), configBody);
+        }
+        const { code, output } = runInstall(box);
+        assert.doesNotMatch(output, /requests caddy-mode ingress/, 'must not refuse a direct-mode (or unset) host');
+        // No package-manager stub exists in this sandbox, so a Linux host
+        // that got PAST the caddy guard proves it by reaching, and failing
+        // at, detect_pkg_mgr next.
+        assert.match(output, /no supported package manager found/i);
+        assert.equal(code, 1);
+      });
+    }
   });
 });

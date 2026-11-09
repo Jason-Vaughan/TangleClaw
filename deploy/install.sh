@@ -208,16 +208,23 @@ if [ "$INGRESS_MODE" = "unreadable" ]; then
 fi
 # scripts/ingress-cutover.js (the caddy-mode preflight/cutover below) manages
 # launchd plists directly — it has no systemd analogue yet (#2932 is install.sh
-# + build-ttyd.js only). Forcing direct mode here, before the preflight block
-# below ever checks $INGRESS_MODE, keeps a caddy-configured Linux host on a
-# working install (server + ttyd via systemd, no ingress) instead of running a
-# cutover built for a different service manager.
+# + build-ttyd.js only). REFUSE here, before the preflight block below ever
+# checks $INGRESS_MODE, rather than silently running in direct mode: an
+# earlier version of this override only changed this run's OWN $INGRESS_MODE
+# variable, never the PERSISTED config.json — so the file would still say
+# "caddy" after an install that actually ran direct-mode units, a real
+# mismatch the server/dashboard has no way to detect on its own (PRR-B
+# R-Gate, PR #2968). A refusal leaves config.json and every service
+# untouched; the operator decides (set ingressMode to "direct" themselves,
+# or wait for Linux caddy-mode support) rather than this script guessing.
 if [ "$OS" = "Linux" ] && [ "$INGRESS_MODE" = "caddy" ]; then
-  yellow "  NOTE: config.json requests caddy-mode ingress, but install.sh's Linux path"
-  yellow "  does not yet support the caddy-mode cutover (no systemd equivalent of"
-  yellow "  scripts/ingress-cutover.js's launchd plist management). Installing in"
-  yellow "  direct mode instead — TangleClaw and ttyd will run, with no reverse proxy."
-  INGRESS_MODE="direct"
+  red "ERROR: ${CONFIG_FILE} requests caddy-mode ingress, but install.sh's Linux path"
+  red "       does not yet support the caddy-mode cutover (no systemd equivalent of"
+  red "       scripts/ingress-cutover.js's launchd plist management)."
+  red "       Nothing was changed. To install in direct mode instead (TangleClaw and"
+  red "       ttyd reachable on localhost, no reverse proxy), set \"ingressMode\": \"direct\""
+  red "       in ${CONFIG_FILE} yourself, then re-run."
+  exit 1
 fi
 
 # ── Caddy-mode preflight (#1901) ──
