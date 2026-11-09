@@ -1269,6 +1269,76 @@ describe('API endpoints', () => {
         }
       });
 
+      it('repairs an already-write config missing its token, on a resave that does not change accessLevel at all (#2950, Architect A-Gate HOLD c1af29b8)', async () => {
+        // The exact gap the Architect found: a record already correctly at
+        // `write` (fully audit-stamped, `toggleState` genuinely 'read-write')
+        // has no token — predating this feature, or hand-edited. Nothing
+        // about THIS patch's own accessLevel "changes" (it resends the same
+        // value), so the OLD code's `newMasterAccessLevel !== oldMasterAccessLevel`
+        // trigger would have skipped reconciliation entirely.
+        given({
+          accessLevel: 'write', lifecycleGeneration: 2,
+          lifecycleUpdatedAt: '2026-01-01T00:00:00.000Z', lifecycleUpdatedBy: 'operator'
+        }, 'claude');
+        const realApply = master.applyMasterAccessLevel;
+        master.applyMasterAccessLevel = () => ({ applied: true, home: '/stub' });
+        try {
+          const { status } = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } });
+          assert.equal(status, 200);
+          const stored = store.config.load().master;
+          assert.equal(stored.apiTokenEnabled, true);
+          assert.match(stored.apiToken, /^tc_master_/);
+          // Pure token repair, not a fresh transition: the generation this
+          // config already had must not advance for a value that never
+          // changed.
+          assert.equal(stored.lifecycleGeneration, 2);
+          assert.equal(stored.lifecycleUpdatedAt, '2026-01-01T00:00:00.000Z');
+        } finally {
+          master.applyMasterAccessLevel = realApply;
+        }
+      });
+
+      it('honors an explicit apiTokenEnabled: false opt-out on the same PATCH, minting nothing (#2950, PRR-A Round 2 2734a8f0)', async () => {
+        given({}, 'claude');
+        const realApply = master.applyMasterAccessLevel;
+        master.applyMasterAccessLevel = () => ({ applied: true, home: '/stub' });
+        try {
+          const { status } = await request(server, 'PATCH', '/api/config',
+            { master: { accessLevel: 'write', apiTokenEnabled: false } });
+          assert.equal(status, 200);
+          const stored = store.config.load().master;
+          assert.equal(stored.accessLevel, 'write');
+          assert.equal(stored.apiTokenEnabled, false);
+          assert.equal(stored.apiToken, undefined);
+        } finally {
+          master.applyMasterAccessLevel = realApply;
+        }
+      });
+
+      it('allows a later PATCH to flip apiTokenEnabled back on and mint a token, with no accessLevel change in that request', async () => {
+        given({ accessLevel: 'write', apiTokenEnabled: false }, 'claude');
+        const realApply = master.applyMasterAccessLevel;
+        master.applyMasterAccessLevel = () => ({ applied: true, home: '/stub' });
+        try {
+          const { status } = await request(server, 'PATCH', '/api/config', { master: { apiTokenEnabled: true } });
+          assert.equal(status, 200);
+          const stored = store.config.load().master;
+          assert.equal(stored.apiTokenEnabled, true);
+          assert.match(stored.apiToken, /^tc_master_/);
+        } finally {
+          master.applyMasterAccessLevel = realApply;
+        }
+      });
+
+      it('rejects a non-boolean apiTokenEnabled with 400 and no mutation', async () => {
+        given({ accessLevel: 'write' }, 'claude');
+        const before = store.config.load().master;
+        const { status, data } = await request(server, 'PATCH', '/api/config', { master: { apiTokenEnabled: 'yes' } });
+        assert.equal(status, 400);
+        assert.match(data.error, /master\.apiTokenEnabled must be a boolean/);
+        assert.deepEqual(store.config.load().master, before);
+      });
+
       describe('an accessLevel transition requires real operator proof (PRR-A BLOCKING, rounds 2 and 2-HOLD)', () => {
         let project;
         let bound;

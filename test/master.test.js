@@ -390,6 +390,20 @@ describe('ensureMasterSession', () => {
       master.ensureMasterSession({ refreshFleet: NO_FLEET, home: home2, tmuxLib: t2, enginesLib: availableEngines });
       assert.equal(t2.calls[0].opts.env.TANGLECLAW_MASTER_API_TOKEN, undefined);
     });
+
+    it('omits the token even when apiTokenEnabled/apiToken are retained, once downgraded to read-only (PRR-A WARNING `2734a8f0`)', () => {
+      const home3 = path.join(tmpDir, `master-home-downgraded-${Date.now()}`);
+      const downgraded = store.config.load();
+      // The exact state a `write -> read-only` transition leaves behind:
+      // nothing revokes the token (by design — #2950 never asked for
+      // auto-revoke), but accessLevel is no longer 'write'.
+      downgraded.master = { accessLevel: 'read-only', apiTokenEnabled: true, apiToken: 'tc_master_retained' };
+      store.config.save(downgraded);
+      const t3 = fakeTmux({ alive: false });
+      master.ensureMasterSession({ refreshFleet: NO_FLEET, home: home3, tmuxLib: t3, enginesLib: availableEngines });
+      assert.equal(t3.calls[0].opts.env.TANGLECLAW_MASTER_API_TOKEN, undefined,
+        'a read-only Master pane must never carry a lifecycle bearer token, retained or not');
+    });
   });
 
   it('the Master\'s pane gets the engine\'s private temp root, like a project pane (#1904)', () => {
