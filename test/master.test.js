@@ -201,6 +201,19 @@ describe('buildMasterClaudeMd', () => {
     assert.match(md, /lsof -nP -iTCP:3102 -sTCP:LISTEN/, 'the real port, not a placeholder');
   });
 
+  it('names the systemd check instead of launchctl on Linux (#2934)', () => {
+    const original = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    try {
+      const md = master.buildMasterClaudeMd({ serverPort: 3102 });
+      assert.match(md, /systemctl --user status tangleclaw\.service/);
+      assert.doesNotMatch(md, /launchctl print/);
+      assert.match(md, /lsof -nP -iTCP:3102 -sTCP:LISTEN/, 'the real port, not a placeholder');
+    } finally {
+      Object.defineProperty(process, 'platform', original);
+    }
+  });
+
   it('renders the API base URL from config port and the SERVED protocol (ENG-5R2W)', () => {
     // https only with the full willServeHttps conjunction (flag + both cert paths).
     const md = master.buildMasterClaudeMd({

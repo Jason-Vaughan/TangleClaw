@@ -93,15 +93,77 @@ describe('lib/system-health (#345)', () => {
   afterEach(() => systemHealth._reset());
 
   describe('detectTtydLeak', () => {
-    it('is clear (not applicable) off macOS without measuring anything', async () => {
+    it('is clear (not applicable) off macOS and off Linux without measuring anything', async () => {
       let measured = false;
-      systemHealth._setProbes({ platform: () => 'linux', measureLeak: async () => { measured = true; return healthyLeak(); } });
+      systemHealth._setProbes({ platform: () => 'win32', measureLeak: async () => { measured = true; return healthyLeak(); } });
       const c = systemHealth.detectTtydLeak();
       await systemHealth._settleTtyd();
       assert.equal(c.state, 'clear');
-      assert.match(c.detail, /not applicable on linux/);
+      assert.match(c.detail, /not applicable on win32/);
       assert.equal(c.applicable, false, 'said as a value, so certification can refuse without reading detail');
       assert.equal(measured, false, 'no launchctl/ps on a platform that has neither');
+    });
+
+    describe('on Linux (#2934)', () => {
+      it('fires when the kernel-wide PTY pool crosses the 85% threshold', () => {
+        systemHealth._setProbes({
+          platform: () => 'linux',
+          readLinuxPtyNr: () => '870\n',
+          readLinuxPtyMax: () => '1000\n'
+        });
+        const c = systemHealth.detectTtydLeak();
+        assert.equal(c.state, 'fired');
+        assert.match(c.detail, /PTY pool 870\/1000 slots in use \(threshold 85%\)/);
+        assert.equal(c.remediation, 'systemctl --user restart tangleclaw.service');
+        assert.deepEqual(c.reading.pool, { used: 870, cap: 1000, exhausted: true });
+      });
+
+      it('is clear under the threshold', () => {
+        systemHealth._setProbes({
+          platform: () => 'linux',
+          readLinuxPtyNr: () => '12',
+          readLinuxPtyMax: () => '4096'
+        });
+        const c = systemHealth.detectTtydLeak();
+        assert.equal(c.state, 'clear');
+        assert.match(c.detail, /PTY pool 12\/4096 slots in use/);
+        assert.deepEqual(c.reading.pool, { used: 12, cap: 4096, exhausted: false });
+      });
+
+      it('is unknown, not clear, when /proc cannot be read', () => {
+        systemHealth._setProbes({
+          platform: () => 'linux',
+          readLinuxPtyNr: () => { throw new Error('ENOENT'); },
+          readLinuxPtyMax: () => '4096'
+        });
+        const c = systemHealth.detectTtydLeak();
+        assert.equal(c.state, 'unknown');
+        assert.match(c.detail, /could not read \/proc\/sys\/kernel\/pty\/nr/);
+      });
+
+      it('is unknown, not clear, when /proc content does not parse as a number', () => {
+        systemHealth._setProbes({
+          platform: () => 'linux',
+          readLinuxPtyNr: () => 'not-a-number',
+          readLinuxPtyMax: () => '4096'
+        });
+        const c = systemHealth.detectTtydLeak();
+        assert.equal(c.state, 'unknown');
+        assert.match(c.detail, /did not parse as numbers/);
+      });
+
+      it('never touches the macOS measureLeak probe', async () => {
+        let measured = false;
+        systemHealth._setProbes({
+          platform: () => 'linux',
+          measureLeak: async () => { measured = true; return healthyLeak(); },
+          readLinuxPtyNr: () => '1',
+          readLinuxPtyMax: () => '4096'
+        });
+        systemHealth.detectTtydLeak();
+        await systemHealth._settleTtyd();
+        assert.equal(measured, false);
+      });
     });
 
     it('is unknown, not clear, before the first measurement has landed', () => {
