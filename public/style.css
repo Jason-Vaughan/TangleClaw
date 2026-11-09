@@ -3825,13 +3825,13 @@ body.setup-active { overflow: hidden; }
   width: min(82vw, 860px);
   height: min(82vw, 860px);
   object-fit: contain;
-  opacity: var(--tc-watermark-opacity, 0.10);
+  opacity: var(--tc-watermark-opacity, 0.16);
   filter: drop-shadow(0 0 48px rgba(86, 211, 100, 0.18));
   user-select: none;
   -webkit-user-drag: none;
   transition: opacity 0.14s ease-out;
 }
 html[data-theme="light"] .tc-bg-watermark img {
-  opacity: var(--tc-watermark-opacity, 0.08);
+  opacity: var(--tc-watermark-opacity, 0.16);
   filter: saturate(1.1) contrast(1.05);
 }
