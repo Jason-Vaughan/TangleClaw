@@ -8017,7 +8017,7 @@ async function loadMedusaDrift() {
 // tcWireMedusaDriftAction (public/update-beacon.js) — not re-wired on
 // every poll, since that would stack confirm dialogs behind a stale click.
 if (typeof window.tcWireMedusaDriftAction === 'function') {
-  window.tcWireMedusaDriftAction(document, 'medusaDriftNotice', { apiMutate });
+  window.tcWireMedusaDriftAction(document, 'medusaDriftNotice', { apiMutate, api });
 }
 
 loadMedusaDrift();

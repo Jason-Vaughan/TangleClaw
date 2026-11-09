@@ -762,15 +762,25 @@
    *
    * @param {Document} doc - The page document.
    * @param {string} elementId - Id of the warning chip element (a button).
-   * @param {{apiMutate: Function, confirm?: Function, alert?: Function}} deps -
+   * @param {{apiMutate: Function, api?: object, confirm?: Function, alert?: Function}} deps -
    *   `apiMutate(url, method, body)` is the page's own, same contract as
-   *   `tcCreateApiMutate` produces. `confirm`/`alert` are injectable for
-   *   tests; production defaults to the real `window.confirm`/`window.alert`.
+   *   `tcCreateApiMutate` produces -- it returns the parsed body on success,
+   *   but **null** on any non-2xx response (R-Gate R2, #2956): the refusal
+   *   body then arrives only through `deps.api`'s `lastBody`/`lastErrorCode`
+   *   side channel, same as `applyUpdateAndRestart`'s own `STRUCTURED_REFUSALS`
+   *   above. `confirm`/`alert` are injectable for tests; production defaults
+   *   to the real `window.confirm`/`window.alert`.
    * @returns {void}
    */
   function tcWireMedusaDriftAction(doc, elementId, deps) {
     const el = doc.getElementById(elementId);
     if (!el) return;
+    // Nested, not module-scope: this function is lifted standalone by its
+    // own test file (test/helpers/lift.js), which can only see free
+    // variables it is explicitly given -- same reasoning as
+    // STRUCTURED_REFUSALS staying reachable only through the full
+    // tcCreateUpdateBeacon closure above.
+    const MEDUSA_DRIFT_REFUSAL_CODES = new Set(['git-error', 'dirty-tree', 'not-fast-forwardable', 'restart-failed', 'restart-unverified']);
     const confirmFn = deps.confirm || ((msg) => global.confirm(msg));
     const alertFn = deps.alert || ((msg) => global.alert(msg));
     if (el._tcMedusaDriftHandler) el.removeEventListener('click', el._tcMedusaDriftHandler);
@@ -780,15 +790,28 @@
       const wasText = el.textContent;
       el.disabled = true;
       el.textContent = '⚠ Applying…';
-      let result;
+      let result = null;
+      let thrown = null;
       try {
         result = await deps.apiMutate('/api/system/medusa-drift/apply', 'POST', {});
+      } catch (err) {
+        thrown = err;
       } finally {
         el.disabled = false;
       }
-      if (!result || !result.ok) {
+      if (thrown || !result || !result.ok) {
+        // Thrown: the request never completed, so there is no response at
+        // all -- the thrown error's own message is all there is. Otherwise
+        // apiMutate returned null for a real non-2xx refusal, so the reason
+        // (dirty-tree's detail, restart-failed's) lives only in
+        // deps.api.lastBody, never in `result` itself.
         el.textContent = wasText;
-        alertFn(`Medusa drift action failed: ${(result && result.error) || 'request did not complete'}`);
+        const api = deps.api;
+        const refusal = !thrown && api && MEDUSA_DRIFT_REFUSAL_CODES.has(api.lastErrorCode) ? api.lastBody : null;
+        const message = thrown
+          ? (thrown.message || 'request did not complete')
+          : ((refusal && refusal.error) || (api && api.lastError) || 'request did not complete');
+        alertFn(`Medusa drift action failed: ${message}`);
         return;
       }
       tcRenderMedusaDriftNotice(doc, elementId, result.snapshot);

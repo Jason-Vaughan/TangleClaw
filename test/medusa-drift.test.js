@@ -349,6 +349,30 @@ describe('medusa-drift (#2956)', () => {
       return { impl, calls };
     }
 
+    /**
+     * A hub stub whose reported `gitSha` only becomes `LOCAL_SHA` (matching
+     * the checkout) once the restart command recorded in `calls` has
+     * actually run — so a test can tell "restart attempted and verified"
+     * apart from "restart attempted but the Hub never actually came up",
+     * same distinction #2956 R-Gate R2's own finding turns on.
+     * @param {object} [opts]
+     * @param {string[]} calls - The same array `gitStub`'s impl pushes to
+     * @returns {Function} `fetchImpl`
+     */
+    function hubStub(opts, calls) {
+      return async () => {
+        if (opts.neverReachable) throw new Error('ECONNREFUSED');
+        const restarted = calls.some((c) => c === 'restart-marker');
+        if (opts.reachableOnlyAfterRestart && !restarted) throw new Error('ECONNREFUSED');
+        const sha = restarted ? LOCAL_SHA : (opts.staleSha || LOCAL_SHA);
+        return { ok: true, json: async () => ({ gitSha: sha }) };
+      };
+    }
+
+    beforeEach(() => {
+      drift._internal.sleep = async () => {}; // never actually wait in tests
+    });
+
     it('a clean checkout, current, Hub matching: a no-op success, nothing run but the read', async () => {
       drift._internal.pathExists = () => true;
       const { impl, calls } = gitStub({ commitsBehind: 0 });
@@ -362,17 +386,21 @@ describe('medusa-drift (#2956)', () => {
       assert.ok(!calls.some((c) => c.includes('merge')), 'nothing to fast-forward');
     });
 
-    it('updateAvailable + clean tree: fast-forwards via git merge --ff-only origin/main, then restarts the now-stale Hub', async () => {
+    it('updateAvailable + clean tree: fast-forwards via git merge --ff-only origin/main, restarts the now-stale Hub, and verifies it comes back reporting the new HEAD', async () => {
       drift._internal.pathExists = () => true;
       const { impl, calls } = gitStub({ commitsBehind: 3, dirty: false });
-      drift._internal.execFileAsync = impl;
-      drift._internal.fetchImpl = async () => ({ ok: true, json: async () => ({ gitSha: LOCAL_SHA }) });
+      drift._internal.execFileAsync = async (cmd, args) => {
+        if (cmd !== 'git') calls.push('restart-marker');
+        return impl(cmd, args);
+      };
+      drift._internal.fetchImpl = hubStub({ staleSha: UPSTREAM_SHA }, calls);
       let restartCalled = false;
       drift._internal.restartHubCommand = () => { restartCalled = true; return { cmd: 'true', args: [] }; };
       const out = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
       assert.equal(out.ok, true);
       assert.equal(out.fastForwarded, true);
       assert.equal(out.restarted, true, 'the checkout just moved, so the reachable Hub is restarted even though it matched the OLD HEAD');
+      assert.equal(out.snapshot.hubRestartNeeded, false, 'verified: the Hub now reports the new HEAD, not just that a command ran');
       assert.ok(calls.some((c) => c === 'merge --ff-only origin/main'));
       assert.equal(restartCalled, true);
     });
@@ -406,11 +434,14 @@ describe('medusa-drift (#2956)', () => {
       assert.equal(restartCalled, false);
     });
 
-    it('hubRestartNeeded alone (checkout already current): restarts, never merges', async () => {
+    it('hubRestartNeeded alone (checkout already current): restarts, never merges, and verifies the new sha', async () => {
       drift._internal.pathExists = () => true;
       const { impl, calls } = gitStub({ commitsBehind: 0 });
-      drift._internal.execFileAsync = impl;
-      drift._internal.fetchImpl = async () => ({ ok: true, json: async () => ({ gitSha: UPSTREAM_SHA }) }); // disagrees with LOCAL_SHA
+      drift._internal.execFileAsync = async (cmd, args) => {
+        if (cmd !== 'git') calls.push('restart-marker');
+        return impl(cmd, args);
+      };
+      drift._internal.fetchImpl = hubStub({ staleSha: UPSTREAM_SHA }, calls); // disagrees with LOCAL_SHA until "restarted"
       let restartCalled = false;
       drift._internal.restartHubCommand = () => { restartCalled = true; return { cmd: 'true', args: [] }; };
       const out = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
@@ -420,19 +451,66 @@ describe('medusa-drift (#2956)', () => {
       assert.ok(!calls.some((c) => c.includes('merge')));
     });
 
-    it('an unreachable Hub: still fast-forwards when behind, but never attempts a restart', async () => {
+    it('a Hub that was unreachable before this action is still restarted after a fast-forward, not skipped (#2956 R-Gate R2)', async () => {
       drift._internal.pathExists = () => true;
       const { impl, calls } = gitStub({ commitsBehind: 2, dirty: false });
-      drift._internal.execFileAsync = impl;
-      drift._internal.fetchImpl = async () => { throw new Error('ECONNREFUSED'); };
+      drift._internal.execFileAsync = async (cmd, args) => {
+        if (cmd !== 'git') calls.push('restart-marker');
+        return impl(cmd, args);
+      };
+      // Unreachable until the restart command actually runs -- a Hub that
+      // was simply down, which `launchctl kickstart`/`systemctl restart`
+      // both START, not merely restart.
+      drift._internal.fetchImpl = hubStub({ reachableOnlyAfterRestart: true }, calls);
       let restartCalled = false;
       drift._internal.restartHubCommand = () => { restartCalled = true; return { cmd: 'true', args: [] }; };
       const out = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
       assert.equal(out.ok, true);
       assert.equal(out.fastForwarded, true);
-      assert.equal(out.restarted, false, 'nothing reachable to restart');
+      assert.equal(out.restarted, true, 'attempted even though the Hub read unreachable beforehand');
+      assert.equal(out.snapshot.hub.reachable, true, 'verified: the Hub actually came back up');
       assert.ok(calls.some((c) => c === 'merge --ff-only origin/main'));
-      assert.equal(restartCalled, false);
+      assert.equal(restartCalled, true);
+    });
+
+    it('restarted, but the Hub never actually comes back up: reported as a failure, never a false ok:true', async () => {
+      drift._internal.pathExists = () => true;
+      const { impl, calls } = gitStub({ commitsBehind: 2, dirty: false });
+      drift._internal.execFileAsync = async (cmd, args) => {
+        if (cmd !== 'git') calls.push('restart-marker');
+        return impl(cmd, args);
+      };
+      // Permanently unreachable: the restart command "succeeds" (no throw)
+      // but the Hub process itself never actually comes back.
+      drift._internal.fetchImpl = hubStub({ neverReachable: true }, calls);
+      let restartCalled = false;
+      drift._internal.restartHubCommand = () => { restartCalled = true; return { cmd: 'true', args: [] }; };
+      const out = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
+      assert.equal(out.ok, false);
+      assert.equal(out.code, 'restart-unverified');
+      assert.equal(out.fastForwarded, true, 'the fast-forward itself still succeeded');
+      assert.equal(out.restarted, true, 'the restart command itself still ran without throwing');
+      assert.match(out.error, /not answering/);
+      assert.equal(restartCalled, true);
+    });
+
+    it('restarted and reachable, but still reporting the OLD sha after every retry: reported as a failure', async () => {
+      drift._internal.pathExists = () => true;
+      const { impl, calls } = gitStub({ commitsBehind: 2, dirty: false });
+      drift._internal.execFileAsync = async (cmd, args) => {
+        if (cmd !== 'git') calls.push('restart-marker');
+        return impl(cmd, args);
+      };
+      // Always reachable, but the stubbed "restart" never actually changes
+      // what the Hub reports -- simulates a Hub that restarted onto the
+      // SAME stale build (e.g. a launchd job pinned to an old binary).
+      drift._internal.fetchImpl = async () => ({ ok: true, json: async () => ({ gitSha: UPSTREAM_SHA }) });
+      drift._internal.restartHubCommand = () => ({ cmd: 'true', args: [] });
+      const out = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
+      assert.equal(out.ok, false);
+      assert.equal(out.code, 'restart-unverified');
+      assert.equal(out.restarted, true);
+      assert.match(out.error, /does not match/);
     });
 
     it('a failed restart command is reported, with the fast-forward (if any) still reflected', async () => {
@@ -449,6 +527,12 @@ describe('medusa-drift (#2956)', () => {
       assert.equal(out.code, 'restart-failed');
       assert.equal(out.fastForwarded, true, 'the fast-forward itself already succeeded before the restart failed');
       assert.match(out.error, /No such process/);
+    });
+
+    it('exposes its retry bound and delay as named constants, not a magic number buried in the loop', () => {
+      assert.equal(typeof drift.HUB_RESTART_VERIFY_ATTEMPTS, 'number');
+      assert.ok(drift.HUB_RESTART_VERIFY_ATTEMPTS >= 1);
+      assert.equal(typeof drift.HUB_RESTART_VERIFY_DELAY_MS, 'number');
     });
   });
 

@@ -1274,12 +1274,18 @@ describe('tcWireMedusaDriftAction (#2956)', () => {
     assert.equal(btn._classes.has('hidden'), true);
   });
 
-  it('a refused/failed apply restores the prior text and alerts with the error, never silently', async () => {
+  it('a refused/failed apply (apiMutate returns null, same as the real api() on a non-2xx) restores the prior text and alerts with the reason read from api.lastBody, never silently', async () => {
     const alerts = [];
+    // The real `api()`/`apiMutate()` returns null on any non-2xx response
+    // (confirmed against public/api-helper.js#tcCreateApi) -- the refusal
+    // body only ever arrives through the side channel, same as
+    // applyUpdateAndRestart's own STRUCTURED_REFUSALS contract.
+    const fakeApi = { lastErrorCode: 'dirty-tree', lastBody: { ok: false, code: 'dirty-tree', error: 'the local Medusa checkout has uncommitted changes' }, lastError: 'HTTP 409' };
     const { btn } = wire({
       confirm: () => true,
       alert: (msg) => alerts.push(msg),
-      apiMutate: async () => ({ ok: false, code: 'dirty-tree', error: 'the local Medusa checkout has uncommitted changes' })
+      api: fakeApi,
+      apiMutate: async () => null
     });
     btn.textContent = '⚠ Medusa update available';
     await btn.click();
@@ -1289,7 +1295,17 @@ describe('tcWireMedusaDriftAction (#2956)', () => {
     assert.match(alerts[0], /uncommitted changes/);
   });
 
-  it('a request that never completes (apiMutate throws) still re-enables the button and restores its text', async () => {
+  it('a refusal whose code is not in the known structured set falls back to api.lastError, never a stale lastBody', async () => {
+    const alerts = [];
+    const fakeApi = { lastErrorCode: null, lastBody: { ok: false, code: 'dirty-tree', error: 'stale body from an earlier, unrelated call' }, lastError: 'Connection lost.' };
+    const { btn } = wire({ confirm: () => true, alert: (msg) => alerts.push(msg), api: fakeApi, apiMutate: async () => null });
+    await btn.click();
+    assert.equal(alerts.length, 1);
+    assert.match(alerts[0], /Connection lost/);
+    assert.doesNotMatch(alerts[0], /stale body/);
+  });
+
+  it('a request that never completes (apiMutate throws) re-enables the button, restores its text, and alerts with the thrown message', async () => {
     const alerts = [];
     const { btn } = wire({
       confirm: () => true,
@@ -1297,8 +1313,11 @@ describe('tcWireMedusaDriftAction (#2956)', () => {
       apiMutate: async () => { throw new Error('ECONNREFUSED'); }
     });
     btn.textContent = '⚠ Medusa update available';
-    await assert.rejects(() => btn.click());
+    await btn.click();
     assert.equal(btn.disabled, false, 'the finally re-enables it even though the call threw past the handler');
+    assert.equal(btn.textContent, '⚠ Medusa update available', 'restored, not left on "Applying…" after a thrown apiMutate');
+    assert.equal(alerts.length, 1);
+    assert.match(alerts[0], /ECONNREFUSED/);
   });
 
   it('wiring twice replaces the handler rather than stacking a second one (one confirm, one apiMutate call per click)', async () => {
