@@ -75,7 +75,7 @@ const AGY_VERIFYING = ['Verifying your account...', '', ''];
 
 describe('_awaitPaneReady (#999) — two signals, honest degradation', () => {
   it('is not gated for an engine with no wake profile, and says so', async () => {
-    const res = await sessions._awaitPaneReady('t', 'aider');
+    const res = await sessions._awaitPaneReady('t', 'openclaw');
     assert.equal(res.gated, false);
     assert.match(res.reason, /no wake profile/);
   });

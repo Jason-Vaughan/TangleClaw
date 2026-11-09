@@ -224,7 +224,7 @@ test('not-accepted — attributable to THIS send', async (t) => {
 
 test('unknown — every silence names itself', async (t) => {
   await t.test('an engine with no declared wake vocabulary', async () => {
-    for (const engine of ['aider', 'openclaw']) {
+    for (const engine of ['openclaw']) {
       const r = await receipt.verifySubmission('s', engine, 'NONCE-x', {
         capturePane: () => { throw new Error('must not be read'); },
         cursorInfo: () => { throw new Error('must not be read'); }

@@ -1318,13 +1318,14 @@ describe('the wake nudge says where it cannot reach (#1255)', () => {
     }
     assert.ok(client('claude').capabilities.wake,
       'the browser must receive the wake block, or its predicate is answering about nothing');
-    // aider: codex declares a measured block since #1344.
-    assert.equal(client('aider').capabilities.wake, undefined);
+    assert.ok(client('aider').capabilities.wake,
+      'Aider joined the measured engines in #2961 and its wake block must reach the browser');
+    assert.equal(client('openclaw').capabilities.wake, undefined);
   });
 
   it('losing a wake the operator switched on warns; losing the default records', () => {
-    // An engine with no measured signature — aider, since codex gained one in #1344.
-    const unprofiled = bundledProfiles().find((p) => p.id === 'aider');
+    // OpenClaw is the registered engine with no pane wake signature.
+    const unprofiled = bundledProfiles().find((p) => p.id === 'openclaw');
     const chosen = engines.settingDisposition('medusaWake', { medusaWake: true }, unprofiled);
     assert.equal(chosen.chosen, true);
     assert.equal(chosen.level, 'warn');
@@ -1390,9 +1391,8 @@ describe('the wake nudge says where it cannot reach (#1255)', () => {
     });
 
     it('renders the reason, and no checkbox, on an engine with no signature', () => {
-      // aider: codex declares a measured signature since #1344.
-      const unprofiled = client('aider');
-      const html = render({ engineId: 'aider', projectEngine: unprofiled, engines: [unprofiled], checked: true });
+      const unprofiled = client('openclaw');
+      const html = render({ engineId: 'openclaw', projectEngine: unprofiled, engines: [unprofiled], checked: true });
       assert.match(html, /has no measured idle signature/);
       // The pin the plan asks for: no `#settingsMedusaWake` element at all, so
       // `doSaveSettings` attaches no value and cannot post a stale checkbox.
