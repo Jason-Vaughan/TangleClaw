@@ -1219,6 +1219,66 @@ describe('check-watch monitor: reconciliation by idempotency key (#2347)', () =>
     assert.equal(hub.sent[0].to, relaunched.workspaceId, 'reconciliation (not having found a receipt) resent to the project\'s current session');
     assert.equal(exchangeOf(id, 'wake').hub_id, hub.sent[0].id);
   });
+
+  it('an alarm\'s own "first sent at" text matches the exchange\'s real created_at exactly, even when this item sends well after the pass\'s own stale clock reading (#2347 R1)', async () => {
+    const a = live('alpha');
+    const id = watchFor(a, 1);
+    clock += HOUR; // at due time
+    let calls = 0;
+    const realMonitorNow = monitor._internal.now;
+    monitor._internal.now = () => {
+      calls += 1;
+      // The pass's own scheduling call (#1) reads the clock as it is now;
+      // a later call from inside _sendFirst (#2) simulates real time having
+      // moved on while this pass was busy with earlier items before
+      // reaching this one -- exactly the gap a stale, pass-start `now`
+      // used to leave between the text it rendered and the `created_at`
+      // the exchange actually got.
+      if (calls > 1) clock += 3 * monitor.DEFAULT_INTERVAL_MS;
+      return clock;
+    };
+    try {
+      assert.deepEqual(await pass(), counts({ open: 1, read: 1, sent: 1 }));
+    } finally {
+      monitor._internal.now = realMonitorNow;
+    }
+    const stored = exchangeOf(id, 'alarm').created_at;
+    const alarm = hub.sent[0].message;
+    assert.match(alarm, new RegExp(`was first sent at ${stored.replace(/\./g, '\\.')}:`),
+      'the text\'s own claimed send time is the exchange\'s real created_at, not a stale pass-start reading');
+  });
+
+  it('a reconciliation resend of an alarm renders byte-identical text to the first attempt even if the watch expired in the meantime (#2347 R1)', async () => {
+    const a = live('alpha');
+    const id = watchFor(a, 1);
+    hub.behave = () => 'lost';
+    // The first (uncertain) attempt, right at due time -- not late, and the
+    // watch has not expired yet.
+    assert.deepEqual(await pass(HOUR), counts({ open: 1, read: 1, sent: 1 }));
+    assert.equal(exchangeOf(id, 'alarm').state, 'send_unknown');
+
+    // Disconnect through expiry: reconciliation's own two-minute gate never
+    // closes while disconnected, so this exchange sits "awaiting
+    // reconciliation" through the watch's own expiry, which runs on an
+    // entirely separate read-driven clock.
+    connection(a, 'connecting');
+    clock += state.EXPIRE_AFTER_DUE_MS + HOUR;
+    assert.equal((await pass()).expired, 1);
+    assert.ok(watches.getWatch(id).expired, 'the watch has genuinely expired by now, live');
+
+    // Reconnect: only now does reconciliation's gate close, well after expiry.
+    hub.behave = () => 'deliver';
+    connection(a, 'listening');
+    assert.equal((await pass(monitor.RECONCILE_AFTER_MS)).reconciled, 1);
+    const resent = hub.sent[0].message;
+    assert.equal(hub.sent[0].idempotencyKey, `check-watch:alarm:${id}`);
+    // Reflects the watch as it was AT the exchange's own created_at (not yet
+    // expired), never the watch's current, now-expired live state --
+    // otherwise this resend's text would differ from what the first
+    // attempt actually transmitted, under the SAME idempotency key.
+    assert.ok(!/expired/.test(resent), 'still reads as not-yet-expired, matching the original attempt\'s own moment');
+    assert.match(resent, /still read until/);
+  });
 });
 
 describe('check-watch monitor: the alarm (#2323)', () => {
