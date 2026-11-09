@@ -14,7 +14,7 @@
  * mapping), not to re-prove tmux delivery.
  */
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -314,16 +314,28 @@ describe('secure-clipboard-routes — HTTP surface (#1032)', () => {
     });
   });
 
-  describe('POST /api/sessions/:project/secure-clipboard — mode: paste', () => {
-    it('404s ("No active session") when the project has none', async () => {
-      makeProject('sc-paste-none');
-      const { status, data } = await request('POST', '/api/sessions/sc-paste-none/secure-clipboard',
+  describe('POST /api/sessions/:project/secure-clipboard — mode: paste (PRR-B R-Gate finding 2, round 1: never the raw secret in the pane)', () => {
+    it('400s with no filename (now required for both modes)', async () => {
+      makeProject('sc-paste-nofile');
+      const { status, data } = await request('POST', '/api/sessions/sc-paste-nofile/secure-clipboard',
         { text: 'secret', mode: 'paste' }, opHeaders);
-      assert.equal(status, 404);
-      assert.ok(data.error.includes('No active'));
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
     });
 
-    it('pastes into the session\'s pane with enter:false, and reports bytes/secret-shape without the value', async () => {
+    it('writes the secret file even with no active session, then 404s ("No active session") only on the notify step', async () => {
+      const project = makeProject('sc-paste-none');
+      const { status, data } = await request('POST', '/api/sessions/sc-paste-none/secure-clipboard',
+        { text: 'secret', mode: 'paste', filename: 'orphan.txt' }, opHeaders);
+      assert.equal(status, 404);
+      assert.ok(data.error.includes('No active'));
+      // The write happens BEFORE the notify attempt, so it is not undone by
+      // a notify that then fails — the secret is safely stored regardless.
+      const file = path.join(secureClipboard.secretsDir(project), 'orphan.txt');
+      assert.equal(fs.readFileSync(file, 'utf8'), 'secret');
+    });
+
+    it('writes the secret to disk, notifies the pane with a content-free pointer (enter:false), and never sends the secret value to the pane or the HTTP response', async () => {
       const tmux = require('../lib/tmux');
       const real = { hasSession: tmux.hasSession, sendKeys: tmux.sendKeys };
       let sentSession = null;
@@ -339,21 +351,119 @@ describe('secure-clipboard-routes — HTTP surface (#1032)', () => {
       try {
         const secretText = 'AKIAABCDEFGHIJKLMNOP';
         const { status, data } = await request('POST', '/api/sessions/sc-paste-ok/secure-clipboard',
-          { text: secretText, mode: 'paste' }, opHeaders);
+          { text: secretText, mode: 'paste', filename: 'aws.txt' }, opHeaders);
         assert.equal(status, 200);
         assert.equal(data.ok, true);
         assert.equal(data.mode, 'paste');
+        assert.equal(data.notified, true);
         assert.equal(data.bytes, secretText.length);
         assert.deepEqual(data.secretTypesDetected, ['aws-access-key']);
         assert.ok(!JSON.stringify(data).includes(secretText), 'the response must never carry the secret value');
 
+        // The file landed on disk, same as mode: file.
+        const file = path.join(secureClipboard.secretsDir(project), 'aws.txt');
+        assert.equal(fs.readFileSync(file, 'utf8'), secretText);
+
+        // The PANE never receives the secret — only a pointer to the file.
         assert.equal(sentSession, 'sc-paste-pane');
-        assert.equal(sentText, secretText);
-        assert.equal(sentOptions.enter, false, 'a pasted secret must never be auto-submitted');
+        assert.ok(!sentText.includes(secretText), 'the pane text must never contain the secret value itself');
+        assert.match(sentText, /aws\.txt/, 'the pane text should name the file the secret was saved to');
+        assert.equal(sentOptions.enter, false, 'the notice must never be auto-submitted');
       } finally {
         Object.assign(tmux, real);
         store.sessions.kill(session.id, 'test cleanup');
       }
     });
+  });
+});
+
+describe('secure-clipboard-routes — open-install (no-login) gate (PRR-B R-Gate finding 1, round 1)', () => {
+  // A SEPARATE store/server left at the default `open` gate (no `authEnabled`),
+  // proving the fix independently of the ARMED-gate suite above: this feature's
+  // write AND read must both succeed carrying only the same-origin shape plus
+  // the open-install anti-forgery token — the exact headers
+  // `tcOperatorProofHeaders` (public/api-helper.js) now builds for this
+  // module's frontend, in place of the old `apiMutate()` call that sent
+  // neither.
+  let tmpDir;
+  let store;
+  let server;
+  let openInstallToken;
+  let operatorHeaders;
+
+  function request(method, urlPath, body, headers = {}) {
+    return new Promise((resolve, reject) => {
+      const bodyStr = body !== undefined ? JSON.stringify(body) : null;
+      const reqHeaders = { 'Content-Type': 'application/json', ...headers };
+      if (bodyStr) reqHeaders['Content-Length'] = Buffer.byteLength(bodyStr);
+      const req = http.request({
+        hostname: '127.0.0.1', port: server.address().port, path: urlPath, method, headers: reqHeaders
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let data;
+          try { data = JSON.parse(raw); } catch { data = raw; }
+          resolve({ status: res.statusCode, data });
+        });
+      });
+      req.on('error', reject);
+      if (bodyStr) req.write(bodyStr);
+      req.end();
+    });
+  }
+
+  /** Same-origin + the open-install token — what `tcOperatorProofHeaders` sends. */
+  function openHeaders() {
+    return { ...operatorHeaders(server), 'X-TC-Open-Token': openInstallToken.mint() };
+  }
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-secure-clipboard-open-'));
+    store = require('../lib/store');
+    store._setBasePath(path.join(tmpDir, 'store'));
+    store.init();
+    ({ operatorHeaders } = require('./_shared-docs-callers'));
+    openInstallToken = require('../lib/open-install-token');
+    const serverModule = require('../server');
+    server = serverModule.createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeProject(name) {
+    const projPath = path.join(tmpDir, name);
+    fs.mkdirSync(projPath, { recursive: true });
+    return store.projects.create({ name, path: projPath, engine: 'claude' });
+  }
+
+  it('confirms the gate really is open (sanity check on the fixture)', async () => {
+    const me = await request('GET', '/api/auth/me');
+    assert.equal(me.data.gateState, 'open');
+  });
+
+  it('POST (mode: file) succeeds with the open-install token, and is refused without it', async () => {
+    makeProject('sc-open-write');
+    const withToken = await request('POST', '/api/sessions/sc-open-write/secure-clipboard',
+      { text: 'x', mode: 'file', filename: 'a.txt' }, openHeaders());
+    assert.equal(withToken.status, 200, JSON.stringify(withToken.data));
+
+    const withoutToken = await request('POST', '/api/sessions/sc-open-write/secure-clipboard',
+      { text: 'x', mode: 'file', filename: 'b.txt' }, operatorHeaders(server));
+    assert.equal(withoutToken.status, 403);
+    assert.equal(withoutToken.data.code, 'OPEN_INSTALL_TOKEN_INVALID');
+  });
+
+  it('GET succeeds with the open-install token — the exact case the old _requireOperatorRead-based route could never answer', async () => {
+    makeProject('sc-open-read');
+    const { status, data } = await request('GET', '/api/sessions/sc-open-read/secure-clipboard', undefined, openHeaders());
+    assert.equal(status, 200, JSON.stringify(data));
+    assert.deepEqual(data.files, []);
   });
 });

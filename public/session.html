@@ -475,9 +475,11 @@
 
   <!-- Secure Clipboard Modal (#1032). Distinct from the Upload modal above:
        Upload lands in the project's ordinary, visible uploads folder
-       (`/api/uploads`, flagged but not protected); this sends into either
-       the live terminal pane (never auto-submitted) or a private, 0600
-       `.tangleclaw/secrets/` file nothing else in the project surfaces. -->
+       (`/api/uploads`, flagged but not protected); this always saves to a
+       private, 0600 `.tangleclaw/secrets/` file nothing else in the project
+       surfaces, and "Paste into terminal" additionally drops a content-free
+       pointer to that file into the live pane — never the secret itself, so
+       a later Enter in the pane can expose only the filename, not the value. -->
   <div class="modal-backdrop" id="secureClipboardModal">
     <div class="modal-content" role="dialog" aria-label="Secure clipboard" aria-modal="true">
       <h3 class="modal-title">Secure Clipboard</h3>
@@ -486,8 +488,12 @@
         <textarea class="form-textarea" id="secureClipboardText" rows="4"
                   placeholder="Paste an API key, token, password or credential…"></textarea>
       </div>
+      <div class="form-group">
+        <label class="form-label" for="secureClipboardFile">…or choose a file</label>
+        <input type="file" class="upload-file-input" id="secureClipboardFile">
+      </div>
       <div class="form-group" id="secureClipboardFilenameGroup">
-        <label class="form-label" for="secureClipboardFilename">Filename (only used by "Save as file")</label>
+        <label class="form-label" for="secureClipboardFilename">Filename</label>
         <input type="text" class="form-input" id="secureClipboardFilename" placeholder="e.g. api-key.txt">
       </div>
       <div id="secureClipboardStatus" class="form-hint" role="status"></div>

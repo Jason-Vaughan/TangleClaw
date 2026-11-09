@@ -1765,7 +1765,6 @@ const engineFailoverModal = window.tcCreateEngineFailoverModal({
 const secureClipboardModal = window.tcCreateSecureClipboardModal({
   doc: document,
   api,
-  apiMutate,
   projectName
 });
 
