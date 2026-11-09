@@ -55,8 +55,8 @@
       <span id="ttydNotice" class="dash-auth-warning hidden" role="status"></span>
       <!-- Medusa upstream & local Hub drift (#2956): rendered by
            tcRenderMedusaDriftNotice and wired by tcWireMedusaDriftAction
-           (public/update-beacon.js), polled/wired once from public/ui.js.
-           A real button, not a styled span like the warning chips above:
+           (public/update-beacon.js), polled/wired once from the dashboard's
+           own ui.js. A real button, not a styled span like the warning chips above:
            this one is also the one-click Operator action (POST
            /api/system/medusa-drift/apply), so it needs to be reachable by
            keyboard and announced as actionable -- no `role="status"` here,
