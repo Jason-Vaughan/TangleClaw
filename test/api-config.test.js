@@ -1339,6 +1339,40 @@ describe('API endpoints', () => {
         assert.deepEqual(store.config.load().master, before);
       });
 
+      it('advances lifecycleGeneration on every accessLevel transition, write->read-only->write, not just the first (#2950 Round 3, PRR-A 47cdff7e / Architect A506-W3D-AGATE-R2-HOLD)', async () => {
+        // The exact regression this fix closes: the route used to pass
+        // `config.master` itself (already overwritten with the PATCHed
+        // value earlier in the handler) as `current` to
+        // reconcileMasterAccessConfigPatch, so `accessLevelChanged` compared
+        // the patched value to itself and was ALWAYS false — a genuine
+        // audited transition in EITHER direction silently kept the stale
+        // generation/timestamp/actor.
+        given({
+          accessLevel: 'write', apiTokenEnabled: true, apiToken: 'tc_master_preexisting',
+          lifecycleGeneration: 1, lifecycleUpdatedAt: '2026-01-01T00:00:00.000Z', lifecycleUpdatedBy: 'operator'
+        }, 'claude');
+        const realApply = master.applyMasterAccessLevel;
+        master.applyMasterAccessLevel = () => ({ applied: true, home: '/stub' });
+        try {
+          const toReadOnly = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
+          assert.equal(toReadOnly.status, 200);
+          const afterReadOnly = store.config.load().master;
+          assert.equal(afterReadOnly.accessLevel, 'read-only');
+          assert.equal(afterReadOnly.lifecycleGeneration, 2, 'write -> read-only must advance the generation');
+          assert.notEqual(afterReadOnly.lifecycleUpdatedAt, '2026-01-01T00:00:00.000Z');
+
+          const backToWrite = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } });
+          assert.equal(backToWrite.status, 200);
+          const afterWrite = store.config.load().master;
+          assert.equal(afterWrite.accessLevel, 'write');
+          assert.equal(afterWrite.lifecycleGeneration, 3, 'read-only -> write must advance the generation again');
+          assert.notEqual(afterWrite.lifecycleUpdatedAt, afterReadOnly.lifecycleUpdatedAt);
+          assert.match(afterWrite.apiToken, /^tc_master_/);
+        } finally {
+          master.applyMasterAccessLevel = realApply;
+        }
+      });
+
       describe('an accessLevel transition requires real operator proof (PRR-A BLOCKING, rounds 2 and 2-HOLD)', () => {
         let project;
         let bound;
