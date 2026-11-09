@@ -1082,7 +1082,11 @@ describe('applyPlanAndReload (#2933 round 3, PRR-B R-Gate R2)', () => {
         unlinkSync: (p) => { delete files[p]; }
       },
       execFile: (cmd, args) => { calls.push(`${cmd} ${args.join(' ')}`); },
-      configStore: { save: () => {} }
+      configStore: { save: () => {} },
+      // Default: nothing was live before this run. Round 5 (Integrator
+      // R-Gate R4) tests override this per scenario; every other test here
+      // never reaches the rollback path this feeds, so the default is inert.
+      isActive: () => false
     };
     return { files, calls, deps };
   }
@@ -1220,14 +1224,28 @@ describe('applyPlanAndReload (#2933 round 3, PRR-B R-Gate R2)', () => {
 
   // Round 4 (PRR-B R-Gate R3): restoring the FILES above is not restoring the
   // LIVE state. A step that already ran before the failing one changed a
-  // real running service — these three tests drive that exact shape.
+  // real running service.
+  //
+  // Round 5 (Integrator R-Gate R4) corrected two things round 4 got wrong:
+  // (1) the FAILED step itself can ALSO have changed live state —
+  // `systemctl restart` is stop-then-start, so a restart whose start half
+  // fails leaves the unit stopped, not merely "untouched" — and round 4
+  // never reconciled it; (2) whether to restart or stop a touched unit must
+  // come from its TRUE prior liveness (`systemctl --user is-active`), not
+  // from the step's own verb or from file existence, which can both
+  // disagree with whether the unit was actually running.
 
-  it('--to direct: restarts caddy back up when its earlier "stop" succeeded and the later ttyd restart then fails', () => {
+  it('--to direct: reconciles BOTH the failed ttyd restart and the already-completed caddy stop back to their true prior liveness', () => {
     const h = harness({ [TTYD_UNIT]: 'OLD TTYD UNIT\n' });
+    h.deps.isActive = () => true; // both were genuinely running before this run
+    let ttydRestarts = 0;
     h.deps.execFile = (cmd, args) => {
       h.calls.push(`${cmd} ${args.join(' ')}`);
       if (args.includes('restart') && args.includes('tangleclaw-ttyd.service')) {
-        throw new Error('ttyd did not come back listening');
+        ttydRestarts += 1;
+        // The FIRST restart (the plan's own step) fails; reconciliation's
+        // own retry, onto the just-restored unit, succeeds.
+        if (ttydRestarts === 1) throw new Error('ttyd did not come back listening');
       }
     };
     const config = { ingressMode: 'caddy' };
@@ -1245,19 +1263,21 @@ describe('applyPlanAndReload (#2933 round 3, PRR-B R-Gate R2)', () => {
     const result = cutover.applyPlanAndReload({ plan, config, priorCaddyfile: null, deps: h.deps });
 
     assert.equal(result.ok, false);
-    assert.deepEqual(result.rollbackErrors, [], 'every compensating command succeeded in this harness');
+    assert.deepEqual(result.rollbackErrors, [], 'every reconciling command succeeded in this harness');
     assert.equal(h.files[TTYD_UNIT], 'OLD TTYD UNIT\n', 'the ttyd unit file is restored');
     assert.deepEqual(h.calls, [
       'systemctl --user daemon-reload',
       'systemctl --user stop tangleclaw-caddy.service',
-      'systemctl --user restart tangleclaw-ttyd.service', // fails
-      'systemctl --user daemon-reload', // compensation: pick up the restored ttyd unit
-      'systemctl --user restart tangleclaw-caddy.service' // compensation: undo the stop that already ran
-    ], 'caddy, already stopped live, must be brought back up — the file restore alone never told it that');
+      'systemctl --user restart tangleclaw-ttyd.service', // fails — a failed restart can leave ttyd stopped too
+      'systemctl --user daemon-reload', // reconcile: pick up the restored ttyd unit
+      'systemctl --user restart tangleclaw-ttyd.service', // reconcile the FAILED unit itself — it was active before
+      'systemctl --user restart tangleclaw-caddy.service' // reconcile the completed stop — caddy was active before too
+    ], 'the failed step\'s own unit is reconciled too, not just the earlier completed one');
   });
 
-  it('--to caddy: restarts ttyd back onto its restored unit when the later caddy restart fails', () => {
+  it('--to caddy: reconciles the failed caddy restart to STOPPED (it was never active before) and ttyd back onto its restored unit', () => {
     const h = harness({ [TTYD_UNIT]: 'OLD TTYD UNIT\n', [CADDY_UNIT]: 'OLD CADDY UNIT\n', [CADDYFILE]: 'OLD CADDYFILE\n' });
+    h.deps.isActive = (unit) => unit === 'tangleclaw-ttyd.service'; // ttyd always runs; caddy was in direct mode, so inactive
     h.deps.execFile = (cmd, args) => {
       h.calls.push(`${cmd} ${args.join(' ')}`);
       if (args.includes('restart') && args.includes('tangleclaw-caddy.service')) throw new Error('caddy did not start');
@@ -1274,19 +1294,57 @@ describe('applyPlanAndReload (#2933 round 3, PRR-B R-Gate R2)', () => {
       'systemctl --user daemon-reload',
       'systemctl --user restart tangleclaw-ttyd.service', // succeeds, live on the NEW unit
       'systemctl --user restart tangleclaw-caddy.service', // fails
-      'systemctl --user daemon-reload', // compensation: pick up the restored ttyd unit
-      // ttyd's unit file existed before this run, so the compensation restarts
-      // it onto the just-restored (OLD) content rather than stopping it.
+      'systemctl --user daemon-reload', // reconcile: pick up the restored files
+      // caddy was NOT active before this run (direct mode), so the failed
+      // restart's own reconciliation leaves it stopped — never "restart",
+      // which would start a service that had no business running.
+      'systemctl --user stop tangleclaw-caddy.service',
+      // ttyd was active before, so it is restarted back onto the restored unit.
       'systemctl --user restart tangleclaw-ttyd.service'
-    ], 'ttyd, already restarted live onto the new unit, must be restarted again onto the restored one');
+    ], 'the failed unit goes back to its true prior state, not to "running" by default');
   });
 
-  it('stops (never restarts) a service whose unit file this run itself created, once rolled back', () => {
-    // The sibling branch of the test above: when the completed step's unit
-    // had NO file before this run (a first-ever caddy-mode apply), there is
-    // nothing to restart it onto after rollback deletes that file — the
-    // only correct compensation is to stop it.
+  it('a completed "stop" of a unit that was ALREADY inactive before this run must not get restarted back on', () => {
+    // The exact regression Integrator R-Gate R4 named: compensating a
+    // successful stop of an already-inactive Caddy by restarting it would
+    // start a service that had no business running in the first place.
+    const h = harness({ [TTYD_UNIT]: 'OLD TTYD UNIT\n' });
+    h.deps.isActive = (unit) => unit === 'tangleclaw-ttyd.service'; // caddy was already down before this run
+    h.deps.execFile = (cmd, args) => {
+      h.calls.push(`${cmd} ${args.join(' ')}`);
+      if (args.includes('restart') && args.includes('tangleclaw-ttyd.service')) throw new Error('ttyd did not come back');
+    };
+    const config = { ingressMode: 'caddy' };
+    const plan = {
+      caddyfile: null,
+      plists: [{ path: TTYD_UNIT, content: 'NEW TTYD UNIT\n' }],
+      configPatch: { ingressMode: 'direct' },
+      launchctl: [
+        { cmd: 'systemctl', args: ['--user', 'daemon-reload'], optional: false, kind: 'system' },
+        { cmd: 'systemctl', args: ['--user', 'stop', 'tangleclaw-caddy.service'], optional: true, kind: 'caddy' }, // a no-op: already down
+        { cmd: 'systemctl', args: ['--user', 'restart', 'tangleclaw-ttyd.service'], optional: false, kind: 'ttyd' },
+        { cmd: 'systemctl', args: ['--user', 'restart', 'tangleclaw.service'], optional: false, kind: 'server' }
+      ]
+    };
+    const result = cutover.applyPlanAndReload({ plan, config, priorCaddyfile: null, deps: h.deps });
+
+    assert.equal(result.ok, false);
+    assert.ok(
+      !h.calls.some((c, i) => i > 2 && c === 'systemctl --user restart tangleclaw-caddy.service'),
+      `an already-inactive caddy must never be restarted during reconciliation; calls: ${JSON.stringify(h.calls)}`
+    );
+    assert.ok(
+      h.calls.slice(3).includes('systemctl --user stop tangleclaw-caddy.service'),
+      'reconciliation must still explicitly leave caddy stopped, matching its true prior state'
+    );
+  });
+
+  it('stops (never restarts) a service whose unit never existed, and was never active, before this run', () => {
+    // The sibling branch: a first-ever caddy-mode apply, where both units
+    // are genuinely new — neither could have been "active" before, so both
+    // reconcile to stopped once the overall apply has failed and rolled back.
     const h = harness(); // nothing pre-existing — ttyd/caddy units did not exist before
+    h.deps.isActive = () => false;
     h.deps.execFile = (cmd, args) => {
       h.calls.push(`${cmd} ${args.join(' ')}`);
       if (args.includes('restart') && args.includes('tangleclaw-caddy.service')) throw new Error('caddy did not start');
@@ -1302,8 +1360,9 @@ describe('applyPlanAndReload (#2933 round 3, PRR-B R-Gate R2)', () => {
       'systemctl --user restart tangleclaw-ttyd.service',
       'systemctl --user restart tangleclaw-caddy.service',
       'systemctl --user daemon-reload',
+      'systemctl --user stop tangleclaw-caddy.service',
       'systemctl --user stop tangleclaw-ttyd.service'
-    ], 'ttyd never existed before this run, so the compensation stops it rather than restarting onto a deleted file');
+    ], 'neither unit was ever active, so both reconcile to stopped rather than being restarted onto a deleted file');
   });
 });
 

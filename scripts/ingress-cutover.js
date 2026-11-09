@@ -676,19 +676,27 @@ function which(bin) {
  *   existed. Used only when `plan.caddyfile` is non-null.
  * @param {object} [o.deps] - Seams for tests: `fs`, `execFile`
  *   (execFileSync for launchctl/systemctl), `configStore` (the store's
- *   config API).
+ *   config API), `isActive` (unit name -> boolean, defaults to
+ *   `systemctl --user is-active`; round 5, Integrator R-Gate R4).
  * @returns {{ok: true} | {ok: false, error: string, restored: string, rollbackErrors: string[]}}
  *   `restored` is a semicolon-joined note per on-disk thing rolled back.
- *   `rollbackErrors` (round 4, PRR-B R-Gate R3) names any LIVE-service
- *   compensation that itself failed — empty means the rollback is
- *   complete, non-empty means a service may still be running in the state
- *   an earlier, already-succeeded step in this same sequence left it in,
- *   and the caller must say so rather than claim "ingress untouched".
+ *   `rollbackErrors` names any LIVE-service reconciliation that itself
+ *   failed — empty means every service is back where it was before this
+ *   run, non-empty means one may still be running (or stopped) wrong, and
+ *   the caller must say so rather than claim "ingress untouched".
  */
 function applyPlanAndReload({ plan, config, priorCaddyfile, deps = {} }) {
   const fsImpl = deps.fs || fs;
   const execFile = deps.execFile || execFileSync;
   const configStore = deps.configStore || store.config;
+  const isActive = deps.isActive || ((unit) => {
+    try {
+      execFileSync('systemctl', ['--user', 'is-active', unit], { stdio: ['ignore', 'pipe', 'ignore'] });
+      return true;
+    } catch {
+      return false;
+    }
+  });
 
   const priorPlists = plan.plists.map((f) => {
     const existed = fsImpl.existsSync(f.path);
@@ -696,6 +704,19 @@ function applyPlanAndReload({ plan, config, priorCaddyfile, deps = {} }) {
   });
   const priorConfigKeys = Object.keys(config);
   const priorConfigSnapshot = { ...config };
+
+  // Snapshot each real service unit's ACTUAL liveness before touching
+  // anything (round 5, Integrator R-Gate R4) — this is a fact about the
+  // running daemon, not about whether its file exists. A unit's file can
+  // exist while it sits stopped (an operator disabled it by hand, or this
+  // very script's own `stop` step from a prior, unrelated run), so a
+  // reconciliation keyed on file existence can restart something that was
+  // correctly, deliberately down.
+  const serviceUnits = [...new Set(
+    plan.launchctl.filter((s) => s.cmd === 'systemctl' && s.kind !== 'system').map((s) => s.args[s.args.length - 1])
+  )];
+  const priorLiveState = {};
+  for (const unit of serviceUnits) priorLiveState[unit] = isActive(unit);
 
   for (const f of plan.plists) fsImpl.writeFileSync(f.path, f.content);
   Object.assign(config, plan.configPatch);
@@ -735,46 +756,45 @@ function applyPlanAndReload({ plan, config, priorCaddyfile, deps = {} }) {
   };
 
   /**
-   * Put each already-succeeded Linux service step back the way it would
-   * have been had this run never started (round 4, PRR-B R-Gate R3).
-   * Restoring the FILES above is not restoring the LIVE state: a `stop`
-   * that already ran left a service down; a `restart`/`reload-or-restart`
-   * that already ran left one running on the NEW unit content, which the
-   * file restore above just replaced on disk without telling the running
-   * daemon. `daemon-reload` first, so systemd sees the just-restored files;
-   * then every completed step, in REVERSE order, gets undone:
-   *   - a completed `stop <unit>` → `restart <unit>` (bring it back up)
-   *   - a completed `restart`/`reload-or-restart <unit>` → `restart <unit>`
-   *     if that unit's file existed before this run (so it now holds the
-   *     restored content), or `stop <unit>` if it did not (the file was
-   *     just unlinked above — there is nothing to restart it onto).
-   * @param {Array<{cmd: string, args: string[]}>} completedSystemctlSteps -
-   *   In the order they actually ran.
-   * @returns {string[]} One message per compensating command that itself
-   *   failed; empty means every live service is back where it started.
+   * Put every Linux service unit this run touched back to its TRUE
+   * pre-apply liveness (round 5, Integrator R-Gate R4). Restoring the
+   * FILES above is not restoring the LIVE state, in either direction:
+   * - A completed step (one that threw no error) already changed that
+   *   unit's live state, which the file restore never undoes.
+   * - The FAILED step itself can ALSO have changed live state even though
+   *   it threw: `systemctl restart` is stop-then-start, so a restart whose
+   *   start half fails still leaves the unit stopped, not merely
+   *   "untouched" — round 4 skipped reconciling it for exactly that wrong
+   *   assumption.
+   * `daemon-reload` runs first, so systemd sees the just-restored unit
+   * files; then every touched unit (the failed one, then every completed
+   * one, in reverse order) is set back to whatever `priorLiveState` says it
+   * actually was — `restart` if it was active before this run, `stop` if
+   * it was not. Never inferred from the step's own verb or from file
+   * existence, which can both disagree with the unit's real state.
+   * @param {(string|null)} failedUnit - The unit the failing step named, or
+   *   null when the failing step was `kind: 'system'` (daemon-reload has no
+   *   unit of its own to reconcile).
+   * @param {string[]} completedUnits - Units whose step already succeeded,
+   *   in the order they ran.
+   * @returns {string[]} One message per reconciling command that itself
+   *   failed; empty means every touched unit is back where it started.
    */
-  const compensateLiveServices = (completedSystemctlSteps) => {
-    if (completedSystemctlSteps.length === 0) return [];
+  const reconcileLiveState = (failedUnit, completedUnits) => {
+    const units = [...(failedUnit ? [failedUnit] : []), ...completedUnits.slice().reverse()];
+    if (units.length === 0) return [];
     const errors = [];
     try {
       execFile('systemctl', ['--user', 'daemon-reload'], { stdio: ['ignore', 'ignore', 'pipe'] });
     } catch (err) {
       errors.push(`daemon-reload failed: ${err.message}`);
     }
-    const unitExistedBefore = (unit) => {
-      const entry = priorPlists.find((p) => p.path.endsWith(unit));
-      return Boolean(entry && entry.existed);
-    };
-    for (const step of completedSystemctlSteps.slice().reverse()) {
-      const verb = step.args[1];
-      const unit = step.args[step.args.length - 1];
-      const compensating = verb === 'stop' || unitExistedBefore(unit)
-        ? { cmd: 'systemctl', args: ['--user', 'restart', unit] }
-        : { cmd: 'systemctl', args: ['--user', 'stop', unit] };
+    for (const unit of units) {
+      const verb = priorLiveState[unit] ? 'restart' : 'stop';
       try {
-        execFile(compensating.cmd, compensating.args, { stdio: ['ignore', 'ignore', 'pipe'] });
+        execFile('systemctl', ['--user', verb, unit], { stdio: ['ignore', 'ignore', 'pipe'] });
       } catch (err) {
-        errors.push(`${compensating.cmd} ${compensating.args.join(' ')} failed: ${err.message}`);
+        errors.push(`systemctl --user ${verb} ${unit} failed: ${err.message}`);
       }
     }
     return errors;
@@ -785,16 +805,17 @@ function applyPlanAndReload({ plan, config, priorCaddyfile, deps = {} }) {
   // already resolved which, per step. A step marked `optional` may
   // legitimately fail (e.g. macOS's `unload`/Linux's `stop` of a job that
   // was never loaded) — tolerate those.
-  const completedSystemctlSteps = [];
+  const completedUnits = [];
   for (const step of plan.launchctl) {
     try {
       execFile(step.cmd, step.args, { stdio: ['ignore', 'ignore', 'pipe'] });
-      if (step.cmd === 'systemctl' && step.kind !== 'system') completedSystemctlSteps.push(step);
+      if (step.cmd === 'systemctl' && step.kind !== 'system') completedUnits.push(step.args[step.args.length - 1]);
     } catch (err) {
       if (step.optional) continue;
       if (step.cmd === 'systemctl') {
         const restored = restorePriorState();
-        const rollbackErrors = compensateLiveServices(completedSystemctlSteps);
+        const failedUnit = step.kind !== 'system' ? step.args[step.args.length - 1] : null;
+        const rollbackErrors = reconcileLiveState(failedUnit, completedUnits);
         return { ok: false, error: `${step.cmd} ${step.args.join(' ')} failed: ${err.message}`, restored, rollbackErrors };
       }
       process.stderr.write(`WARNING: ${step.cmd} ${step.args.join(' ')} failed: ${err.message}\n`);
