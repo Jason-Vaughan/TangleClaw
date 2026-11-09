@@ -1,0 +1,16 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "ignoreCommand": "bash scripts/vercel-ignore-gh-pages.sh",
+  "git": {
+    "deploymentEnabled": {
+      "gh-pages": false
+    }
+  },
+  "redirects": [
+    {
+      "source": "/sprint-:version.html",
+      "destination": "/reports/:version/",
+      "permanent": true
+    }
+  ]
+}

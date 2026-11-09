@@ -18,6 +18,8 @@ const guard = require('../lib/roadmap-vercel-guard');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const SCRIPT = path.join(REPO_ROOT, 'scripts', 'vercel-ignore-gh-pages.sh');
+const ROOT_VERCEL_CONFIG = path.join(REPO_ROOT, 'vercel.json');
+const WEBSITE_VERCEL_CONFIG = path.join(REPO_ROOT, 'website', 'vercel.json');
 
 /**
  * A fresh temp directory, optionally with a `website` subdirectory.
@@ -89,6 +91,97 @@ describe('decide (#2258)', () => {
 
   it('skips when VERCEL_GIT_COMMIT_REF is unset and the checkout has no website', () => {
     assert.equal(guard.decide({}, tempRoot(false)), true);
+  });
+});
+
+describe('Vercel repository wiring (#2258)', () => {
+  function readConfig(file) {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  }
+
+  it('disables gh-pages deployments at both possible Vercel project roots', () => {
+    for (const file of [ROOT_VERCEL_CONFIG, WEBSITE_VERCEL_CONFIG]) {
+      const config = readConfig(file);
+      assert.equal(config.$schema, 'https://openapi.vercel.sh/vercel.json');
+      assert.equal(config.git.deploymentEnabled['gh-pages'], false);
+    }
+  });
+
+  it('runs the guard before a root build and keeps the website-root fallback self-contained', () => {
+    assert.equal(readConfig(ROOT_VERCEL_CONFIG).ignoreCommand, 'bash scripts/vercel-ignore-gh-pages.sh');
+    assert.equal(
+      readConfig(WEBSITE_VERCEL_CONFIG).ignoreCommand,
+      'test "$VERCEL_GIT_COMMIT_REF" = gh-pages'
+    );
+  });
+
+  it('preserves legacy flat sprint-report paths at either project root', () => {
+    for (const file of [ROOT_VERCEL_CONFIG, WEBSITE_VERCEL_CONFIG]) {
+      assert.deepEqual(readConfig(file).redirects, [{
+        source: '/sprint-:version.html',
+        destination: '/reports/:version/',
+        permanent: true
+      }]);
+    }
+  });
+});
+
+describe('static roadmap and report export contract (#2258)', () => {
+  it('names stable public routes below the Next.js public directory', () => {
+    assert.deepEqual(
+      guard.STATIC_EXPORT_TARGETS.map(({ relativePath, publicPath }) => ({ relativePath, publicPath })),
+      [
+        { relativePath: 'public/roadmap/index.html', publicPath: '/roadmap/' },
+        {
+          relativePath: 'public/roadmap/roadmap-sync-status.json',
+          publicPath: '/roadmap/roadmap-sync-status.json'
+        },
+        { relativePath: 'public/reports/index.html', publicPath: '/reports/' }
+      ]
+    );
+  });
+
+  it('reports a complete staged export, including requested release reports', (t) => {
+    const website = fs.mkdtempSync(path.join(os.tmpdir(), 'roadmap-vercel-export-'));
+    t.after(() => fs.rmSync(website, { recursive: true, force: true }));
+    const files = [
+      'public/roadmap/index.html',
+      'public/roadmap/roadmap-sync-status.json',
+      'public/reports/index.html',
+      'public/reports/v5.73.0/index.html'
+    ];
+    for (const file of files) {
+      const target = path.join(website, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, file.endsWith('.json') ? '{}' : '<!doctype html>');
+    }
+
+    const result = guard.inspectStaticExport(website, { reportVersions: ['v5.73.0'] });
+    assert.equal(result.ready, true);
+    assert.equal(result.missing.length, 0);
+    assert.equal(result.present.length, 4);
+    assert.equal(result.present.at(-1).publicPath, '/reports/v5.73.0/');
+  });
+
+  it('fails closed with the exact missing export targets', (t) => {
+    const website = fs.mkdtempSync(path.join(os.tmpdir(), 'roadmap-vercel-export-'));
+    t.after(() => fs.rmSync(website, { recursive: true, force: true }));
+    fs.mkdirSync(path.join(website, 'public', 'roadmap'), { recursive: true });
+    fs.writeFileSync(path.join(website, 'public', 'roadmap', 'index.html'), '<!doctype html>');
+
+    const result = guard.inspectStaticExport(website);
+    assert.equal(result.ready, false);
+    assert.deepEqual(
+      result.missing.map(({ relativePath }) => relativePath),
+      ['public/roadmap/roadmap-sync-status.json', 'public/reports/index.html']
+    );
+  });
+
+  it('rejects report versions that could escape the public reports directory', () => {
+    assert.throws(
+      () => guard.inspectStaticExport(path.join(REPO_ROOT, 'website'), { reportVersions: ['../secrets'] }),
+      /invalid report version/
+    );
   });
 });
 
