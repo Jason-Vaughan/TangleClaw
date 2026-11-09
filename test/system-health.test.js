@@ -114,7 +114,7 @@ describe('lib/system-health (#345)', () => {
         const c = systemHealth.detectTtydLeak();
         assert.equal(c.state, 'fired');
         assert.match(c.detail, /PTY pool 870\/1000 slots in use \(threshold 85%\)/);
-        assert.equal(c.remediation, 'systemctl --user restart tangleclaw.service');
+        assert.equal(c.remediation, 'systemctl --user restart tangleclaw-ttyd.service');
         assert.deepEqual(c.reading.pool, { used: 870, cap: 1000, exhausted: true });
       });
 
