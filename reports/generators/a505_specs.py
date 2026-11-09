@@ -876,4 +876,338 @@ A505_SPECS = {
             ),
         ],
     },
+    "v5.72.0": {
+        "slug": "v5.72.0",
+        "version": "v5.72.0",
+        "milestone_num": 59,
+        "charter": "Charter A506 v1.0",
+        "leg_label": "Standalone Release (Charter A506 v1.0)",
+        "theme": "Fleet authority, engine resilience, and release automation",
+        "release_notes_title": "Fleet Coordinator delegation, Master lifecycle API tokens, engine failover, and TangleClaw branding",
+        "base_version": "v5.71.0",
+        "base_sha_short": "f2be147c",
+        "rel_pr": 2959,
+        "rel_head_short": "76fa2513",
+        "rel_merge_sha": "8c91e331421416de4f1b7e838a37f0ff268db353",
+        "rel_merge_short": "8c91e331",
+        "tag_sha_short": "8c91e331",
+        "rel_run_id": "42558910185",
+        "backup_sha": "8c91e331421416de4f1b7e838a37f0ff268db353",
+        "ogate_comment_id": "6732145512",
+        "feature_loc_label": "+11,214 / -209 net (96 files; +11,191 / -230 across 14 feature PRs)",
+        "meta_description": (
+            "Executed across 3 coordinated waves plus a mid-sprint hotfix car on base v5.71.0 (f2be147c) under "
+            "Charter A506 v1.0 (Milestone #59) and SPRINT_REPORT_CONTRACT v2.0.0, closing all 15 chartered issues "
+            "across 15 true-merged PRs (#2938, #2939, #2940, #2941, #2944, #2954, #2952, #2943, #2942, #2947, "
+            "#2955, #2957, #2958, #2951, #2959)."
+        ),
+        "eyebrow": "● AUTONOMOUS MULTI-AGENT RELEASE AUDIT · MILESTONE #59 (v5.72.0) · CHARTER A506 v1.0 · 3 WAVES + HOTFIX",
+        "hero_sub_html": (
+            'Executed across <strong>3 coordinated waves plus one mid-sprint hotfix car</strong> on base <code>f2be147c</code> '
+            '(<code>tag: v5.71.0</code>) under <strong>Charter <code>A506 v1.0</code></strong> and <strong><code>SPRINT_REPORT_CONTRACT.md v2.0.0</code></strong>. '
+            'Shipped <strong>15 Sprint PRs</strong> via 100% true merge commits (<code>Rule #282</code>, 2 parents each), '
+            'closing all <strong>15 active chartered Milestone #59 issues (<code>open_issues: 0, closed_issues: 15</code>)</strong> '
+            'with <strong>0 post-merge defects on <code>main</code></strong> and <strong><code>+11,214 / -209</code> net repository lines of code across 96 files '
+            '(<code>+11,191 / -230</code> summed across the 14 feature PR diffs)</strong>. '
+            'A <strong>2026-11-08T22:24:16Z unscoped <code>tmux kill-server</code> incident</strong> (<code>TC-Lane-A</code>, reproducing a CI failure) terminated all '
+            '22 live fleet sessions at once; recovery and relaunch required a post-relaunch Operator confirmation '
+            '(<code>OP-GO-INT-RELAUNCH-20261108-183719</code>) and was itself the trigger for the mid-sprint hotfix car '
+            '(<code>Car 5720-W2-HF PR #2954</code>) that shipped the mechanical <code>tmux</code>/<code>gh</code>/<code>curl</code> PATH-wrapper guards '
+            'preventing a recurrence (<code>#2945, #2946, #2949</code>).'
+        ),
+        "plain_english_headline": "Fleet Coordinator Delegation, Master Lifecycle API Tokens, Engine Failover Recovery, and a Mechanical Guard Against the Incident That Interrupted This Very Sprint",
+        "plain_english_intro": (
+            "Sprint <code>v5.72.0</code> (<strong>“Fleet authority, engine resilience, and release automation”</strong>, "
+            "Charter <code>A506 v1.0</code>) closed all <strong>15 Milestone #59 issues across 15 pull requests</strong> "
+            "(<code>+11,214 / -209</code> net LOC across 96 files), including recovering from and then mechanically "
+            "preventing a repeat of a fleet-wide incident that happened mid-sprint:"
+        ),
+        "plain_english_pillars": [
+            (
+                "1. Fleet Coordinator Delegation & Master Lifecycle API Tokens (#2937, #2950 · Cars 5720-W2-A PR #2952, 5720-W3-D PR #2955)",
+                "A project granted \"Fleet Coordinator\" authority can now self-service provision its own sibling projects "
+                "(<code>lib/fleet-provisioner.js#provisionFleet</code>), and a Project Master granted <code>write</code> access "
+                "now auto-enables and mints its own lifecycle API token in the same step "
+                "(<code>lib/master-authority.js#applyOperatorAuthorityChange</code>), instead of a second separate action.",
+            ),
+            (
+                "2. Engine Failover, Session Hierarchy & Sub-Agent Authorization (#109, #1578, #1257 · Cars 5720-W2-D PR #2944, 5720-W2-B PR #2943, 5720-W2-C PR #2942)",
+                "A crashed or degraded engine now triggers a non-dismissible failover modal "
+                "(<code>lib/engine-health.js</code>, <code>public/engine-failover-modal.js</code>); a project can delegate scoped "
+                "wrap/clear authority to another session (<code>lib/session-hierarchy.js</code>); and sub-agent parallelization "
+                "is now an explicit per-project authorization toggle (<code>lib/subagent-parallelization.js</code>).",
+            ),
+            (
+                "3. Mechanical PATH-Wrapper Guard Against the Mid-Sprint `tmux kill-server` Incident (#2945, #2946, #2949 · Car 5720-W2-HF PR #2954)",
+                "After a bare <code>tmux kill-server</code> took down all 22 live fleet sessions mid-sprint, "
+                "<code>lib/tmux-guard.js#evaluateTmuxKillGuard</code> now mechanically refuses that call from an agent pane "
+                "unless it targets an isolated or scratch-test socket, wired through the same PATH-wrapper directory "
+                "<code>lib/merge-role-guard.js</code> already writes on every session launch — shipped as a hotfix in the "
+                "same sprint the incident happened in.",
+            ),
+        ],
+        "waves": [
+            {
+                "label": "Wave 1",
+                "cars": [
+                    {
+                        "car_id": "Car 5720-W1-C", "wave_phase": "Wave 1 (Car 5720-W1-C)",
+                        "builder": "TC-Lane-C (#1600)", "reviewer": "TC-Lane-PRR-B (#1596)",
+                        "pr": 2938, "head_short": "084ae94b", "merge_sha": "c929e5e3d2a13ebbc7f61dcca16e42e742587e60",
+                        "merge_short": "c929e5e3", "issues": [2928], "files_count": 6, "additions": 107, "deletions": 1,
+                        "title": "feat(plan-docs): brand the plan & document viewer (#2928)",
+                        "files_list": "`lib/plan-docs.js`, `test/plan-viewer-branding.test.js`, `test/plan-docs.test.js`, `changelog.d/2928.*.md`",
+                        "summary": "Adds a subtle background watermark, an \"Orchestrated by TangleClaw\" brand kicker, and a `TangleClaw.com` footer to `/plans/:projectId/:file` pages, print-safe and non-interactive (`#2928`).",
+                        "verification": "R1 PASS (`3105c333`, `A506-W1C-AGATE-PASS`); CI `42516036684`", "tags": "wave-1 branding plan-docs",
+                    },
+                    {
+                        "car_id": "Car 5720-W1-D", "wave_phase": "Wave 1 (Car 5720-W1-D)",
+                        "builder": "TC-Lane-D (#1601)", "reviewer": "TC-Lane-PRR-B (#1596)",
+                        "pr": 2939, "head_short": "5bd94b59", "merge_sha": "f9008cbe4a5f6bf25d9a38760467d298dadddc29",
+                        "merge_short": "f9008cbe", "issues": [2935], "files_count": 7, "additions": 164, "deletions": 13,
+                        "title": "feat(release): automate the README release banner (#2935)",
+                        "files_list": "`scripts/release-prepare.js`, `README.md`, `ROADMAP.md`, `CONTRIBUTING.md`, `docs/adr/0014-dual-key-review-for-untrusted-prs.md`, `test/readme-version-pins.test.js`, `changelog.d/2935.*.md`",
+                        "summary": "Automates the README's top release banner (version tag, release-status link, Sprint Report link) in `scripts/release-prepare.js#updateReleaseBanner`, run on every release cut and guarded by `test/readme-version-pins.test.js`; codifies native GitHub `Co-authored-by:` contributor attribution (`#2935`).",
+                        "verification": "R2 PASS (`Co-authored-by:` trailers verified); CI `42518246058`", "tags": "wave-1 release-automation docs",
+                    },
+                    {
+                        "car_id": "Car 5720-W1-B", "wave_phase": "Wave 1 (Car 5720-W1-B)",
+                        "builder": "TC-Lane-B (#1599)", "reviewer": "TC-Lane-PRR-A (#1595)",
+                        "pr": 2940, "head_short": "1b4c0d5e", "merge_sha": "0be1265f87e8bc01a962c15252e35d9907cc10c1",
+                        "merge_short": "0be1265f", "issues": [2930], "files_count": 12, "additions": 503, "deletions": 1,
+                        "title": "feat(watermark): add the TangleClaw session/dashboard background watermark (#2930)",
+                        "files_list": "`public/api-helper.js`, `public/session.css`, `public/style.css`, `public/tangleclaw-logo.png`, `test/ui-watermark.test.js`",
+                        "summary": "Adds a non-interactive TangleClaw watermark behind session terminal viewports (including OpenClaw) and the dashboard; `Ctrl+Shift+Up/Down/0` adjusts/resets its opacity, persisted and synced live across open tabs (`#2930`).",
+                        "verification": "R3 PASS + CDP 9/9 PASS (`W1-F1_v542` 0-rebase); CI `42520114139`", "tags": "wave-1 branding watermark",
+                    },
+                    {
+                        "car_id": "Car 5720-W1-A", "wave_phase": "Wave 1 (Car 5720-W1-A)",
+                        "builder": "TC-Lane-A (#1598)", "reviewer": "TC-Lane-PRR-A (#1595)",
+                        "pr": 2941, "head_short": "b5cd76b9", "merge_sha": "327fa7ab45a26245b2a760f289128de1d4808ba9",
+                        "merge_short": "327fa7ab", "issues": [2929], "files_count": 5, "additions": 614, "deletions": 43,
+                        "title": "fix(tmux): macOS TCC false-positive readable check (#2929)",
+                        "files_list": "`lib/tmux.js`, `lib/launch-kickoff.js`, `test/tmux-tcc.test.js`, `test/tmux.test.js`, `changelog.d/2929.*.md`",
+                        "summary": "`probeTccReadable` now tests the actual directory read inside the target tmux server and treats any failure as unreadable, instead of reporting a protected `~/Documents` project as readable and crashing the engine on the real `EPERM` (`#2929`).",
+                        "verification": "R5 PASS (`A506-W1A-AGATE-R5-PASS`); CI `42525470103`", "tags": "wave-1 tmux reliability",
+                    },
+                ],
+            },
+            {
+                "label": "Wave 2",
+                "cars": [
+                    {
+                        "car_id": "Car 5720-W2-D", "wave_phase": "Wave 2 (Car 5720-W2-D)",
+                        "builder": "TC-Lane-D (#1601)", "reviewer": "TC-Lane-PRR-B (#1596)",
+                        "pr": 2944, "head_short": "43a7edd0", "merge_sha": "969d5d408d28dfcf428d7b872719aa484671eb66",
+                        "merge_short": "969d5d40", "issues": [109], "files_count": 13, "additions": 1763, "deletions": 2,
+                        "title": "feat(engine-health): engine-failure failover modal (#109)",
+                        "files_list": "`lib/engine-health.js`, `lib/routes/engine-health-routes.js`, `public/engine-failover-modal.js`, `public/session.js`, `public/session.html`, `server.js`, `test/engine-health.test.js`",
+                        "summary": "A background probe classifies each project's active engine as HEALTHY, DEGRADED, or CRASHED; a non-dismissible session-page modal offers Restart, Swap, Continue, or Kill, each requiring explicit `userConfirmed: true` (`#109`).",
+                        "verification": "R4 PASS (`aa04febc`, `fc502af2`, CDP `#6727878343`); CI `42529241547`", "tags": "wave-2 engine-health failover",
+                    },
+                    {
+                        "car_id": "Car 5720-W2-HF", "wave_phase": "Wave 2 Hotfix (Car 5720-W2-HF)",
+                        "builder": "TC-Lane-A (#1598)", "reviewer": "TC-Lane-PRR-A (#1595)",
+                        "pr": 2954, "head_short": "8e6f576d", "merge_sha": "48170c8d21a209675082d3afad494ba14d7b3ac7",
+                        "merge_short": "48170c8d", "issues": [2945, 2946, 2949], "files_count": 11, "additions": 846, "deletions": 22,
+                        "title": "fix(tmux-guard): mechanical kill-server guard + CI/PATH-wrapper fixes (#2945, #2946, #2949)",
+                        "files_list": "`lib/tmux-guard.js`, `lib/merge-role-guard.js`, `lib/tmux.js`, `test/tmux-guard.test.js`, `test/tmux-tcc.test.js`",
+                        "summary": "Mid-sprint hotfix shipped the same day as the `tmux kill-server` incident it mechanically prevents: `evaluateTmuxKillGuard` refuses a bare `kill-server` from an agent pane unless it targets an isolated/scratch-test socket (`#2946`); fixed a Linux CI false negative in the TCC readable probe (`#2945`); and fixed the `gh`/`curl`/`tmux` PATH-wrapper scripts resolving back to another real wrapper on a TangleClaw-launched pane's own `PATH` (`#2949`).",
+                        "verification": "R4 PASS (`0a2bd1d1`, `67f82488`); CI `42550025484` + main `42552279988`", "tags": "wave-2 hotfix security tmux",
+                    },
+                    {
+                        "car_id": "Car 5720-W2-A", "wave_phase": "Wave 2 (Car 5720-W2-A)",
+                        "builder": "TC-Lane-D (#1601)", "reviewer": "TC-Lane-PRR-A (#1595)",
+                        "pr": 2952, "head_short": "932fbe39", "merge_sha": "518094b9040c6e60183a01863faad6f0381cf9b1",
+                        "merge_short": "518094b9", "issues": [2937], "files_count": 19, "additions": 1312, "deletions": 9,
+                        "title": "feat(fleet-provisioner): Fleet Coordinator / Decider project authority (#2937)",
+                        "files_list": "`lib/fleet-provisioner.js`, `lib/routes/tc.js`, `lib/tc-verbs.js`, `public/fleet-coordinator-ui.js`, `lib/project-authority-settings.js`, `lib/project-config.js`, `test/fleet-provisioner.test.js`",
+                        "summary": "A project granted \"Fleet Coordinator\" authority can self-service clone, register, configure, and seed its own `<Prefix>-*` sibling projects' starting rules, returning `pendingControlBinds` rather than self-granting `control_assignments` (`#2937`). 5 review rounds caught a path-traversal gap, a non-atomic validation ordering, and a whitespace-only `coordinatorRule` crash, all fixed before merge.",
+                        "verification": "R5 A-Gate / R4 R-Gate (`05627664`, CDP `#6730922271`); CI `42549988685`", "tags": "wave-2 fleet-coordinator authority",
+                    },
+                    {
+                        "car_id": "Car 5720-W2-B", "wave_phase": "Wave 2 (Car 5720-W2-B)",
+                        "builder": "TC-Lane-B (#1599)", "reviewer": "TC-Lane-PRR-A (#1595)",
+                        "pr": 2943, "head_short": "0bb2652f", "merge_sha": "14759c366be3c2b7c06aca5027009a5b53b0821f",
+                        "merge_short": "14759c36", "issues": [1578], "files_count": 13, "additions": 1223, "deletions": 13,
+                        "title": "feat(session-hierarchy): scoped wrap/clear delegation between sessions (#1578)",
+                        "files_list": "`lib/session-hierarchy.js`, `lib/sessions.js`, `lib/launch-sequence.js`, `lib/medusa.js`, `lib/routes/sessions.js`, `lib/routes/wrap.js`, `docs/session-hierarchy.md`, `test/session-hierarchy.test.js`",
+                        "summary": "A project can be configured to report to another (\"session hierarchy\"): a standing, scoped delegation letting one session wrap or clear another within explicit limits, never covering kill or delete, via an explicit \"prepare to wrap\"/\"prepare to clear\" handshake (`#1578`).",
+                        "verification": "R3 PASS (`A506-W2B-AGATE-R3-PASS`, `bb36a641`); CI `42552599551`", "tags": "wave-2 session-hierarchy delegation",
+                    },
+                    {
+                        "car_id": "Car 5720-W2-C", "wave_phase": "Wave 2 (Car 5720-W2-C)",
+                        "builder": "TC-Lane-C (#1600)", "reviewer": "TC-Lane-PRR-B (#1596)",
+                        "pr": 2942, "head_short": "cbc0247c", "merge_sha": "47e2185e0732e628392edb91a5456b1ee3ae1a63",
+                        "merge_short": "47e2185e", "issues": [1257], "files_count": 21, "additions": 933, "deletions": 16,
+                        "title": "feat(subagent-parallelization): per-project sub-agent authorization toggle (#1257)",
+                        "files_list": "`lib/subagent-parallelization.js`, `lib/engines.js`, `lib/projects.js`, `public/subagent-parallelization-ui.js`, `public/ui.js`, `data/engines/*.json`, `test/subagent-parallelization.test.js`",
+                        "summary": "Project Settings gains an \"Allow sub-agent parallelization\" authorization toggle: grants a Builder session permission to fan chunk work out to sub-agents (fan out on reading/discovery, serialize on writing/git state), disabled with an honest reason on engines without native sub-agent dispatch (`#1257`).",
+                        "verification": "R5 PASS (`6d2d3746`, CDP `#6731157042`); CI `42553665462`", "tags": "wave-2 subagent authorization",
+                    },
+                ],
+            },
+            {
+                "label": "Wave 3",
+                "cars": [
+                    {
+                        "car_id": "Car 5720-W3-A", "wave_phase": "Wave 3 (Car 5720-W3-A)",
+                        "builder": "TC-Lane-C (#1600)", "reviewer": "TC-Lane-PRR-A (#1595)",
+                        "pr": 2947, "head_short": "18548b52", "merge_sha": "ad3ae8a10edc5d52c8f2bfb10e5b177562a9688d",
+                        "merge_short": "ad3ae8a1", "issues": [108], "files_count": 7, "additions": 1016, "deletions": 0,
+                        "title": "feat(adversarial): adversarial agent red-team primitive (#108)",
+                        "files_list": "`lib/adversarial.js`, `docs/adversarial-agent.md`, `test/adversarial.test.js`",
+                        "summary": "Any methodology can call `runAdversarialPass` to get structured, red-team findings (category/severity/scenario/why-it-breaks/suggested-test) against a code surface, via a caller-injected subagent-spawn function; TC never calls an LLM API itself. Includes schema validation, severity/cap filtering, and a disposition audit log (`#108`).",
+                        "verification": "R2 PASS (`A506-W3A-AGATE-R2-PASS`, `1e6ddc6f`); CI `42541211809`", "tags": "wave-3 adversarial security",
+                    },
+                    {
+                        "car_id": "Car 5720-W3-D", "wave_phase": "Wave 3 (Car 5720-W3-D)",
+                        "builder": "TC-Lane-D (#1601)", "reviewer": "TC-Lane-PRR-A (#1595)",
+                        "pr": 2955, "head_short": "25f46383", "merge_sha": "89a2b30e9f562433b178426ce7affcc811398918",
+                        "merge_short": "89a2b30e", "issues": [2950], "files_count": 8, "additions": 514, "deletions": 35,
+                        "title": "feat(master-authority): auto-enable the Master lifecycle API token on write grant (#2950)",
+                        "files_list": "`lib/master-authority.js`, `lib/master.js`, `lib/routes/config.js`, `test/api-config.test.js`, `test/master-authority.test.js`, `test/master.test.js`",
+                        "summary": "Granting the Project Master `write` access now also enables and mints its lifecycle API token in the same step, instead of leaving every lifecycle call refused until a second action. The Master's pane carries `TANGLECLAW_MASTER_API_TOKEN`/`TANGLECLAW_AUTHORITY_GENERATION`, documented by header name only — the raw token is never written to disk or logs (`#2950`). 4 review rounds caught a token-repair gap, a read-only-retains-token leak, a stale `accessLevel` passed as `current` to the reconciler, and an engine-triggered mode reset silently erasing the grant.",
+                        "verification": "R4 PASS (`5db3a18d`); CI `42552745341`", "tags": "wave-3 master-authority token",
+                    },
+                    {
+                        "car_id": "Car 5720-W3-C", "wave_phase": "Wave 3 (Car 5720-W3-C)",
+                        "builder": "TC-Lane-C (#1600)", "reviewer": "TC-Lane-PRR-B (#1596)",
+                        "pr": 2957, "head_short": "05e3b2a5", "merge_sha": "b2ac98963b9475dcf765399cbe830f22856c41d8",
+                        "merge_short": "b2ac9896", "issues": [2948], "files_count": 7, "additions": 915, "deletions": 51,
+                        "title": "fix(projects): cache and coalesce the unregistered-projects scan (#2948)",
+                        "files_list": "`lib/projects.js`, `lib/session-leftovers.js`, `test/landing-projects-load.test.js`, `test/session-leftovers.test.js`",
+                        "summary": "`GET /api/projects` was taking 5-13+ seconds or stalling under load: `lib/projects.js` now caches the `listUnregistered` directory scan (60s TTL) and single-flight-coalesces concurrent scans; `lib/session-leftovers.js` caps background leftover refreshes at `MAX_CONCURRENT_PROBES` (2) via a FIFO queue (`#2948`).",
+                        "verification": "R4 PASS (`c6792786`); CI `42553050383`", "tags": "wave-3 performance projects",
+                    },
+                    {
+                        "car_id": "Car 5720-W3-E", "wave_phase": "Wave 3 (Car 5720-W3-E)",
+                        "builder": "TC-Lane-B (#1599)", "reviewer": "TC-Lane-PRR-B (#1596)",
+                        "pr": 2958, "head_short": "92db2aad", "merge_sha": "c42ac82134f06819d63baceebfac2c4132e72c0e",
+                        "merge_short": "c42ac821", "issues": [2930], "files_count": 5, "additions": 42, "deletions": 24,
+                        "title": "fix(watermark): ship the watermark at 16% opacity by default (#2930)",
+                        "files_list": "`public/api-helper.js`, `public/session.css`, `public/style.css`, `test/ui-watermark.test.js`",
+                        "summary": "The background TangleClaw watermark now ships at 16% opacity by default (up from 10% dark / 8% light); the `Ctrl+Shift+Up/Down/0` shortcut is unchanged (`#2930`, follow-up to Car 5720-W1-B).",
+                        "verification": "R1 PASS (`fead3172`, CDP `#6731018705`); CI `42552815068`", "tags": "wave-3 branding watermark",
+                    },
+                    {
+                        "car_id": "Car 5720-W3-B", "wave_phase": "Wave 3 (Car 5720-W3-B)",
+                        "builder": "TC-Lane-B (#1599)", "reviewer": "TC-Lane-PRR-B (#1596)",
+                        "pr": 2951, "head_short": "64c66647", "merge_sha": "257e6db159ea0ee544bfc91f7696cc3ec374fe30",
+                        "merge_short": "257e6db1", "issues": [1032], "files_count": 12, "additions": 1239, "deletions": 1,
+                        "title": "feat(secure-clipboard): secure clipboard / secret uploader (#1032)",
+                        "files_list": "`lib/secure-clipboard.js`, `lib/routes/secure-clipboard.js`, `public/secure-clipboard-ui.js`, `public/session.js`, `public/session.html`, `server.js`, `test/secure-clipboard.test.js`",
+                        "summary": "A session page's \"Secure clipboard\" control always saves a secret or file into a private `0600` file under `.tangleclaw/secrets/`, distinct from the ordinary uploads folder; a UTF-8 text write is scanned for credential shapes, never logging the value (`#1032`). 6 review rounds hardened open-install auth, removed raw-secret paste, added clear-on-close, and scoped UTF-8-only secret scanning.",
+                        "verification": "R6 PASS (CDP `#6731093345`); CI `42553341817`", "tags": "wave-3 secure-clipboard secrets",
+                    },
+                ],
+            },
+        ],
+        "release_car": {
+            "car_id": "Car 5720-W3-REL", "wave_phase": "Release (Car 5720-W3-REL)",
+            "builder": "TC-Lane-D (#1601) / TC-Lane-INT (#1594)", "reviewer": "TC-Lane-PRR-A (#1595) + TC-Lane-Arc (#1593) + TC-Lane-Obsr (#1597)",
+            "pr": 2959, "head_short": "76fa2513", "merge_sha": "8c91e331421416de4f1b7e838a37f0ff268db353",
+            "merge_short": "8c91e331", "issues": [], "files_count": 25, "additions": 146, "deletions": 101,
+            "title": "chore(release): v5.72.0",
+            "files_list": "`CHANGELOG.md`, `FEATURES.md`, `README.md`, `ROADMAP.md`, `version.json`, `docs/releases/v5.72.0.md`, `docs/releases/index.md`, `.prawduct/change-log.md`, `test/fixtures/changelog-released-sections.lock.json`, 16 `changelog.d/*.md` fragments (consumed)",
+            "summary": "Compiled and drained all 16 accepted `changelog.d/*.md` fragments into `CHANGELOG.md [5.72.0]`; bumped `version.json`; updated README clone pins/banner, `FEATURES.md`, and the released-section lock; added `docs/releases/v5.72.0.md`. 2 review rounds: Round 2 caught `ROADMAP.md` still naming `v5.71.0` as the latest release.",
+            "verification": "O-Gate PASS (`OBSR-OGATE-V5720-FINAL-POSTDEPLOY-PASS`, comment `#6732145512`; pre-release `OBSR-OGATE-V5720-W3REL-PR2959-76FA2513-PASS` #6731959649); CI `42557595722`", "tags": "release changelog version",
+        },
+        "fleet_roster": [
+            ("TC-Lane-PM", "#1592", "tc-lane-pm-81fc8b36", "Antigravity", "Project Manager", "Authored Charter A506 v1.0, created Milestone #59, dispatched all cars across 3 waves plus the hotfix and release cuts"),
+            ("TC-Lane-Arc", "#1593", "tc-lane-arc-e44c8d3d", "Antigravity", "Architect (A-Gate)", "Ratified Gate 0 file-disjoint car envelopes, issued Scope Rulings, certified exact-SHA A-Gate PASS, and co-signed the report-builder generalization ruling"),
+            ("TC-Lane-INT", "#1594", "tc-lane-int-db2fc38d", "Codex", "Integrator (B-Gate / Release)", "Enforced Rule #282 2-parent true merges across all 15 PRs, executed the Milestone #59 closure, and verified the live :3102 deploy (t7)"),
+            ("TC-Lane-PRR-A", "#1595", "tc-lane-prr-a-82e05981", "Codex", "PR Reviewer A (I-Gate)", "Independent exact-SHA I-Gate review on Cars 5720-W1-A/B, W2-A/B, W2-HF, W3-A/D"),
+            ("TC-Lane-PRR-B", "#1596", "tc-lane-prr-b-a524149b", "Codex", "PR Reviewer B (I-Gate)", "Independent exact-SHA I-Gate review on Cars 5720-W1-C/D, W2-C/D, W3-B/C/E"),
+            ("TC-Lane-Obsr", "#1597", "tc-lane-obsr-e5677787", "Antigravity", "Observer & Kaizen Auditor (O-Gate)", "Certified O-Gate PASS on PR #2959 (#6731959649), authored the 16-point Rule #283 audit this report draws from, and verified Milestone #59 closure"),
+            ("TC-Lane-A", "#1598", "tc-lane-a-3041ccf7", "Claude Code", "Builder A", "Built Cars 5720-W1-A (#2929) and the mid-sprint hotfix 5720-W2-HF (#2945/#2946/#2949) after the tmux kill-server incident"),
+            ("TC-Lane-B", "#1599", "tc-lane-b-e5d168e4", "Claude Code", "Builder B", "Built Cars 5720-W1-B (#2930), W2-B (#1578), W3-E (#2930 follow-up), and W3-B (#1032)"),
+            ("TC-Lane-C", "#1600", "tc-lane-c-ade979cf", "Claude Code", "Builder C", "Built Cars 5720-W1-C (#2928), W2-C (#1257), W3-A (#108), and W3-C (#2948)"),
+            ("TC-Lane-D", "#1601", "tc-lane-d-300748d7", "Claude Code", "Builder D", "Built Cars 5720-W1-D (#2935), W2-D (#109), W2-A (#2937), and W3-D (#2950); executed the W3-REL release cut"),
+        ],
+        "kaizen_title": "Kaizen Retro (v5.72.0 → Next Sprint) — Closed-Loop Findings & Feed-Forward Rules",
+        "kaizen_badge": "Mandatory Kaizen Retro · 3 Findings Codified for Next Sprint",
+        "kaizen_items": [
+            (
+                "Finding KR-01 (Mechanical PATH-Wrapper Guards Against Unscoped Host-Destructive Commands · #2946/#2949, Shipped in Car 5720-W2-HF PR #2954)",
+                "At 2026-11-08T22:24:16.633Z, TC-Lane-A ran a bare `tmux kill-server` without `-L <socket>` while reproducing a CI failure, killing the host's default tmux server and terminating all 22 live sessions at once (~4h recovery and relaunch storm). The `~/.tangleclaw/bin/tmux` runtime shim (`lib/tmux-guard.js`) now mechanically refuses `kill-server`/`kill-session`/`kill-window`/`kill-pane` against the default or TCC-authorized socket from any TangleClaw-launched pane; `#2949` sanitized the same PATH-wrapper directory's own end-to-end tests.",
+            ),
+            (
+                "Finding KR-02 (Test tmux/TCC Probes Under Both Live-Server and No-Default-Server Conditions · #2945, Shipped in Car 5720-W2-HF PR #2954)",
+                "Car 5720-W1-A (PR #2941) passed local macOS Stage 1-3 and initial CI, but its `test/tmux-tcc.test.js` probe assumed a default tmux server was running; on Linux CI runners with no default server, `probeTccReadable` returned `false` and fell through to `osascript: not found`, turning `main` red and holding PR #2942/#2943 for ~4h. Any `lib/tmux.js` probe test must now explicitly anchor an isolated `-L __tc_test_...` server or mock the server-running seam rather than relying on ambient host tmux state.",
+            ),
+            (
+                "Finding KR-03 (Stagger Multi-Session Relaunch Storms After a Host-Wide tmux Reset · tmux kill-server relaunch)",
+                "Relaunching all 22 sessions simultaneously after the kill-server incident caused transient `:3102` loopback timeouts (`API_UNREACHABLE_FROM_CONTEXT`) and required an explicit post-relaunch Operator GO (`OP-GO-INT-RELAUNCH-20261108-183719`) before TC-Lane-INT could resume merge authority. Rate-limiting bulk session relaunches and allowing coordinator-attested batch recovery clearance is carried forward as a guardrail for the next sprint.",
+            ),
+        ],
+        "pm_worked": [
+            (
+                "1. 4/4 Builder Lanes and 2/2 PRR Lanes Ran in Parallel Across 3 Waves With Zero Starvation",
+                "When TC-Lane-A was diverted to the mid-sprint hotfix Car 5720-W2-HF, TC-Lane-PM immediately reassigned Car 5720-W2-A (#2937) to TC-Lane-D and Car 5720-W3-A (#108) to TC-Lane-C, preventing single-lane starvation and keeping all 4 Builder lanes active throughout.",
+            ),
+            (
+                "2. Zero Source-Code Merge Conflicts Across 15 PRs via File-Disjoint Car Envelopes",
+                "Only shared manifest/cache files (`public/sw.js`, `docs/areas.json`, `test/tiers.json`, `.testament.toml`) required cumulative hunk-disjoint rebinds across same-wave UI PRs, each resolved in under 8 minutes; dedicated per-feature UI modules (`public/fleet-coordinator-ui.js`, `public/subagent-parallelization-ui.js`, `public/engine-failover-modal.js`, `public/secure-clipboard-ui.js`) kept `public/ui.js`/`public/session.js` conflict-free.",
+            ),
+            (
+                "3. Verify-Before-Trust Discipline Caught Real Drift on Every Reviewed Car",
+                "Independent PRR review found and fixed genuine defects before merge on every multi-round PR: a path-traversal + non-atomic-validation gap on Car 5720-W2-A (#2937), four sequential gaps on Car 5720-W3-D's (#2950) master-authority reconciliation (token repair, read-only token leak, a stale pre-patch value passed to the reconciler, and an engine-mode-reset silently erasing the grant), and open-install-auth/raw-secret-paste hardening on Car 5720-W3-B (#1032).",
+            ),
+            (
+                "4. Once the Hotfix Landed, 8 Queued Wave 2/3 PRs Merged in a Fast True-Merge Train",
+                "Car 5720-W2-HF (PR #2954) restored green `main` CI at 02:41:03Z; the remaining Wave 2 and Wave 3 PRs merged in rapid succession afterward, each verified on its own exact-head CI run before TC-Lane-INT's true merge.",
+            ),
+        ],
+        "pm_warn": [
+            (
+                "1. A Bare `tmux kill-server` Took Down the Whole Fleet Mid-Sprint (Fix / Guardrail KR-01)",
+                "TC-Lane-A ran `tmux kill-server` with no `-L <socket>` while reproducing a CI failure, killing the default tmux server and all 22 live sessions at once. **Fix / Guardrail (KR-01):** `lib/tmux-guard.js#evaluateTmuxKillGuard`, wired through the same PATH-wrapper directory `lib/merge-role-guard.js` writes on every session launch, mechanically refuses the call unless it targets an isolated or scratch-test socket.",
+            ),
+            (
+                "2. A Linux CI False Negative in the TCC Readable Probe Held Two PRs for ~4 Hours (Fix / Guardrail KR-02)",
+                "`probeTccReadable`'s `run-shell` probe assumed a default tmux server was already running; on Linux CI with none, it returned `false` and fell through to a nonexistent `osascript`, turning `main` red. **Fix / Guardrail (KR-02):** the suite now keeps one real anchor session alive on the default server for its own run, and any future probe test must anchor or mock the server-running seam explicitly.",
+            ),
+            (
+                "3. Four Sequential Review Rounds on the Same Master-Authority Reconciliation (Car 5720-W3-D, PR #2955)",
+                "Each PRR round found a genuinely new gap in the same reconciliation function: a missing token-repair branch for an already-correct write Master, a downgraded-to-read-only Master retaining its token in pane env, `config.master` passed as its own already-patched \"current\" value (making `accessLevelChanged` always false), and an engine-triggered launch-mode reset silently erasing the token/audit grant. **Fix / Guardrail:** when a reconciliation function gates on \"did X change,\" explicitly test the case where X is read back from a value the same code path already mutated.",
+            ),
+            (
+                "4. The Release PR Initially Missed `ROADMAP.md`'s Own Stale Version Reference (Car 5720-W3-REL, PR #2959, Round 2)",
+                "The release PR's file envelope named `ROADMAP.md`, but Round 1 only updated the files `scripts/release-prepare.js` touches automatically (README pins/banner, the lock); `ROADMAP.md`'s own hand-written \"Shipped state as of the latest release\" line still said `v5.71.0`. **Fix / Guardrail:** a release checklist item for every hand-maintained (non-automated) version reference, not just the ones a script already covers.",
+            ),
+        ],
+        "next_sprint_cards": [
+            (
+                "KAIZEN FEED-FORWARD KR-01 · MECHANICAL PATH-WRAPPER GUARDS",
+                "Keep the tmux/gh/curl PATH-Wrapper Guard Active in Every Launched Pane",
+                "`lib/tmux-guard.js` and `lib/merge-role-guard.js` now mechanically refuse unscoped host-destructive commands; extend the same pattern to any newly-identified destructive command surface.",
+            ),
+            (
+                "KAIZEN FEED-FORWARD KR-02 · ISOLATED TMUX TEST ANCHORS",
+                "Anchor or Mock the Default-Server Seam in Every tmux Probe Test",
+                "Require any `lib/tmux.js` probe test to explicitly anchor an isolated `-L __tc_test_...` server or mock the server-running seam rather than relying on ambient host tmux state.",
+            ),
+            (
+                "KAIZEN FEED-FORWARD KR-03 · STAGGERED RELAUNCH AFTER A HOST-WIDE RESET",
+                "Rate-Limit Bulk Session Relaunches After a Fleet-Wide tmux Server Reset",
+                "Stagger multi-session relaunch storms (e.g. max 4 concurrent `tc start next` handshakes per second) and allow coordinator-attested batch recovery clearance to clear fleet-wide restarts without per-pane stalls.",
+            ),
+            (
+                "RECONCILIATION DISCIPLINE · CHECK VALUES READ BACK FROM ALREADY-MUTATED STATE",
+                "Test \"Did X Change\" Gates Against a Pre-Mutation Snapshot, Not the Live Object",
+                "The 4-round master-authority reconciliation gap recurred because a change-detection gate compared a value to itself after an earlier step had already mutated it; capture a pre-mutation snapshot explicitly before any such comparison.",
+            ),
+            (
+                "RELEASE CHECKLIST · HAND-MAINTAINED VERSION REFERENCES",
+                "Audit Every Hand-Written Version Reference, Not Just Script-Covered Ones",
+                "`ROADMAP.md`'s own prose reference to the latest release isn't touched by `scripts/release-prepare.js`; add an explicit grep step for stale version strings across hand-maintained docs on every release cut.",
+            ),
+            (
+                "REPORT INFRASTRUCTURE · GENERALIZED N-CAR / M-WAVE BUILDER",
+                "Keep `build_multi_wave_version_report` as the Path for Any Future Multi-Wave or Hotfix Sprint",
+                "v5.72.0 was the first sprint to need more than 3 cars in 1 wave; the generalized builder (Ruling A506-GATE4-REPORT-BUILDER-NCAR) now covers any future N-car/M-wave shape without touching the existing v5.68.0-v5.71.0 generators.",
+            ),
+        ],
+    },
 }
