@@ -152,6 +152,7 @@
         "lib/master-authority.js",
         "lib/advisor.js",
         "lib/tmux.js",
+        "lib/tmux-guard.js",
         "lib/ttyd-*.js",
         "lib/pty-activity.js",
         "lib/transcript.js",
