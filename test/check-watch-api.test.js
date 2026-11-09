@@ -663,15 +663,19 @@ describe('/api/tc/check-watches (#2323)', () => {
       medusa.sendMessage = async ({ sessionId, to, message, idempotencyKey, beforeHub }) => {
         const from = medusa.getStatus(sessionId).workspaceId;
         if (!from) throw Object.assign(new Error('not listening'), { httpStatus: 409, code: 'NOT_LISTENING' });
-        if (typeof beforeHub === 'function') beforeHub({ from });
+        const intent = typeof beforeHub === 'function' ? beforeHub({ from }) : undefined;
+        // A FUNCTION message (#2347 R4) is resolved only now, against
+        // whatever `beforeHub` just returned -- mirroring the real
+        // `medusa.sendMessage`'s own order.
+        const text = (typeof message === 'function' ? message(intent) : message).trim();
         if (hubDoes !== 'deliver') {
           throw Object.assign(new Error(`hub ${hubDoes}`), { httpStatus: 502, code: 'SEND_REJECTED', hubOutcome: hubDoes === 'refuse' ? 'refused' : 'unknown' });
         }
         const id = `api-hub-${++issued}`;
-        sentCopies.push({ id, idempotencyKey, to, message: message.trim() });
+        sentCopies.push({ id, idempotencyKey, to, message: text });
         const recipient = [...wires.values()].find((wire) => wire.workspaceId === to);
         // The message is with the recipient before the Hub's answer is back.
-        recipient.socket.frame({ type: 'new_message', messageId: id, message: { id, from, to, message: message.trim() } });
+        recipient.socket.frame({ type: 'new_message', messageId: id, message: { id, from, to, message: text } });
         return { status: 'received', id, to };
       };
       // The Hub's receipt-lookup endpoint (#2347): found when this stand-in

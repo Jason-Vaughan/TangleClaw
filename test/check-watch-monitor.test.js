@@ -130,21 +130,27 @@ function installHub() {
       const listener = hub.listeners.get(String(sessionId));
       if (!listener) throw Object.assign(new Error('not listening'), { httpStatus: 409, code: 'NOT_LISTENING' });
       const from = listener.workspaceId;
-      if (typeof beforeHub === 'function') beforeHub({ from });
+      const intent = typeof beforeHub === 'function' ? beforeHub({ from }) : undefined;
+      // A FUNCTION message (#2347 R4) is resolved only now, against
+      // whatever `beforeHub` just returned -- mirroring the real
+      // `medusa.sendMessage`'s own order, so check-watch.js's lazy
+      // `(exchange) => ...` render sees the SAME intent here as it would
+      // for real.
+      const text = (typeof message === 'function' ? message(intent) : message).trim();
       // A reused key with different text is what the real Hub refuses with
       // 409 IDEMPOTENCY_KEY_CONFLICT (#2347) -- checked before `hub.behave`
       // so a test cannot accidentally bypass it by also setting `behave`.
       if (idempotencyKey) {
         const priorKey = [...hub.sent, ...hub.held].find((c) => c.idempotencyKey === idempotencyKey);
-        if (priorKey && priorKey.message !== message.trim()) {
+        if (priorKey && priorKey.message !== text) {
           throw Object.assign(new Error('idempotencyKey was already used for a different message'), { httpStatus: 409, code: 'IDEMPOTENCY_KEY_CONFLICT', hubOutcome: 'conflict' });
         }
       }
-      const how = hub.behave({ to, message });
+      const how = hub.behave({ to, message: text });
       if (how === 'refuse') throw failure('refused');
       if (how === 'lost') throw failure('unknown');
       if (how === 'hang') return new Promise(() => {});
-      const copy = { id: `hub-${++hub.issued}`, from, to, message: message.trim(), idempotencyKey };
+      const copy = { id: `hub-${++hub.issued}`, from, to, message: text, idempotencyKey };
       hub.sent.push(copy);
       if (how === 'held' || how === 'hang-held') {
         hub.held.push(copy);
@@ -1213,6 +1219,50 @@ describe('check-watch monitor: reconciliation by idempotency key (#2347)', () =>
     assert.equal(exchangeOf(id, 'wake').terminal_code, null);
   });
 
+  it('a crash between the Hub accepting a send and _recordSent ever running: a later pass completes the recording, reconstructed byte-identical to what the Hub actually received, even with a genuine clock skew at intent-creation time (#2347 R4)', async () => {
+    const a = live('alpha');
+    const id = watchFor(a, 1);
+    hub.behave = () => 'deliver';
+    clock += HOUR; // at due time
+    const realExchangesNow = exchanges._internal.now;
+    // The exact divergence #2347 R1/R2/R3 could only ever bound, never rule
+    // out: the exchange's OWN clock (medusa-exchanges.js's) reading well
+    // past the two-minute late threshold relative to this watch's due time
+    // by the moment the intent is actually created.
+    exchanges._internal.now = () => new Date(clock + 3 * monitor.DEFAULT_INTERVAL_MS);
+    const realRecordSent = watches.recordSent;
+    let threw = false;
+    watches.recordSent = (...args) => {
+      // The Hub takes the send (hub.behave runs to completion inside
+      // _sendFirst's own call to _send, before this ever runs), but the
+      // watch's own fact -- and the persisted text #2347 R2/R3 relies on --
+      // never gets written: the exact crash window this covers.
+      if (!threw) { threw = true; throw new Error('simulated crash before the fact could be written'); }
+      return realRecordSent(...args);
+    };
+    try {
+      await pass();
+    } finally {
+      watches.recordSent = realRecordSent;
+      exchanges._internal.now = realExchangesNow;
+    }
+    assert.equal(hub.sent.length, 1, 'the Hub really did get it before the crash');
+    const actuallySent = hub.sent[0].message;
+    assert.match(actuallySent, /This alarm is late/, 'the skewed created_at really did cross the late threshold for the text actually transmitted');
+    assert.equal(watches.listFacts(id).some((f) => f.kind === 'alarmed'), false, 'the watch\'s own fact was never written');
+
+    // A later pass's _settleOwed finds the existing exchange and finishes
+    // recording it -- reconstructing from the SAME exchange.created_at
+    // _sendFirst's own lazy render used the first time, never a second,
+    // independent reading (#2347 R4), so there is nothing left for a crash
+    // at exactly this point to still be able to lose, even though the two
+    // clocks genuinely disagreed.
+    await pass(MINUTE);
+    assert.equal(watches.listFacts(id).some((f) => f.kind === 'alarmed'), true);
+    assert.equal(watches.sentText(id, 'alarm'), actuallySent,
+      'reconstructed byte-identical to what the Hub actually received, not merely plausible');
+  });
+
   it('a pass does not wait for ever on a Hub that never answers, and the reads go on', async () => {
     const { id } = await firstSend('hang');
     assert.equal(exchangeOf(id, 'wake').state, 'send_pending');
@@ -1242,32 +1292,29 @@ describe('check-watch monitor: reconciliation by idempotency key (#2347)', () =>
     assert.equal(exchangeOf(id, 'wake').hub_id, hub.sent[0].id);
   });
 
-  it('an alarm\'s own "first sent at" text matches the exchange\'s real created_at exactly, even when this item sends well after the pass\'s own stale clock reading (#2347 R1)', async () => {
+  it('an alarm\'s rendered text always derives from the exchange\'s own created_at directly, never a separate clock reading, even when the two genuinely diverge (#2347 R4)', async () => {
     const a = live('alpha');
     const id = watchFor(a, 1);
     clock += HOUR; // at due time
-    let calls = 0;
-    const realMonitorNow = monitor._internal.now;
-    monitor._internal.now = () => {
-      calls += 1;
-      // The pass's own scheduling call (#1) reads the clock as it is now;
-      // a later call from inside _sendFirst (#2) simulates real time having
-      // moved on while this pass was busy with earlier items before
-      // reaching this one -- exactly the gap a stale, pass-start `now`
-      // used to leave between the text it rendered and the `created_at`
-      // the exchange actually got.
-      if (calls > 1) clock += 3 * monitor.DEFAULT_INTERVAL_MS;
-      return clock;
-    };
+    const realExchangesNow = exchanges._internal.now;
+    // The exchange's OWN clock (medusa-exchanges.js's, read inside
+    // createSendIntent when the exchange is actually made) reading well
+    // past the two-minute late threshold relative to check-watch.js's own
+    // `clock` -- the exact divergence R1/R2 could only ever bound between
+    // two independent reads, never rule out. R4 renders the text from the
+    // exchange itself, after the fact, so there is only ever ONE reading
+    // in play; this proves that by making the two clocks disagree on
+    // purpose and showing the text follows the exchange's, not the pass's.
+    exchanges._internal.now = () => new Date(clock + 3 * monitor.DEFAULT_INTERVAL_MS);
     try {
       assert.deepEqual(await pass(), counts({ open: 1, read: 1, sent: 1 }));
     } finally {
-      monitor._internal.now = realMonitorNow;
+      exchanges._internal.now = realExchangesNow;
     }
     const stored = exchangeOf(id, 'alarm').created_at;
     const alarm = hub.sent[0].message;
     assert.match(alarm, new RegExp(`was first sent at ${stored.replace(/\./g, '\\.')}:`),
-      'the text\'s own claimed send time is the exchange\'s real created_at, not a stale pass-start reading');
+      'the text\'s own claimed send time is the exchange\'s real created_at, derived from it directly rather than a separate reading');
   });
 
   it('a reconciliation resend of an alarm renders byte-identical text to the first attempt even if the watch expired in the meantime (#2347 R1)', async () => {
