@@ -84,6 +84,73 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
   afterEach(() => fs.rmSync(scratch, { recursive: true, force: true }));
   const P = () => runtime.runtimePaths(base);
 
+  // #2932: macho-closure.js parses Mach-O load graphs, meaningless on an ELF
+  // binary. Every OTHER test in this file injects its own `verifyClosure`
+  // stub (the `deps()` helper above), so none of them would have caught
+  // `defaultDeps()`'s own real verifyClosure unconditionally reaching
+  // require('./macho-closure').verifyClosureOnHost on every platform —
+  // exactly what install.sh's and scripts/linux-systemd-install.js's calls
+  // to resolveTtydPath/provisionRuntime use by default. These test the real,
+  // unstubbed dependency directly.
+  describe('defaultDeps().verifyClosure — OS dispatch (#2932)', () => {
+    /**
+     * Run `fn` with `process.platform` overridden, restoring it afterward
+     * even if `fn` throws — the same pattern test/ttyd-watcher.test.js uses.
+     * @param {string} value
+     * @param {Function} fn
+     * @returns {*}
+     */
+    function withPlatform(value, fn) {
+      const original = Object.getOwnPropertyDescriptor(process, 'platform');
+      Object.defineProperty(process, 'platform', { value, configurable: true });
+      try {
+        return fn();
+      } finally {
+        Object.defineProperty(process, 'platform', original);
+      }
+    }
+
+    it('actually invokes the real Mach-O closure check on darwin, rather than skipping', () => {
+      withPlatform('darwin', () => {
+        // verifyClosure() catches an unreadable image into a violation rather
+        // than throwing (lib/macho-closure.js), so the dispatch tell isn't an
+        // exception — it's that a non-Mach-O file is reported NOT ok (the
+        // real otool call failed to read it), unlike linux's clean skip below.
+        const result = runtime.defaultDeps().verifyClosure(__filename, path.dirname(__filename));
+        assert.equal(result.ok, false, 'darwin must dispatch to the real otool-based check, not skip it');
+      });
+    });
+
+    it('skips the Mach-O check cleanly on linux, never reaching otool', () => {
+      withPlatform('linux', () => {
+        const result = runtime.defaultDeps().verifyClosure(__filename, path.dirname(__filename));
+        assert.deepEqual(result, { ok: true, violations: [] });
+      });
+    });
+
+    it('resolveTtydPath succeeds end-to-end on a simulated Linux host with the REAL defaultDeps (not a test double)', () => {
+      withPlatform('linux', () => {
+        const binDir = path.join(base, 'bin');
+        fs.mkdirSync(binDir, { recursive: true });
+        const bin = path.join(binDir, 'ttyd');
+        fs.writeFileSync(bin, '#!/bin/sh\necho "1.7.7-unknown"\n', { mode: 0o755 });
+        const digest = sha(fs.readFileSync(bin));
+        fs.writeFileSync(path.join(binDir, 'ttyd.manifest.json'), JSON.stringify({
+          schema: 1, binary: { file: 'ttyd', sha256: digest, version: '1.7.7-unknown' }, inputs: BUILT_FROM
+        }));
+        // Only expectedInputs is stubbed (it otherwise reads the real repo's
+        // deploy/ttyd/inputs.json, unrelated to this fixture's digests) —
+        // verifyClosure, version and sha256 are the real, unstubbed deps.
+        const result = runtime.resolveTtydPath({
+          baseDir: base, env: {}, deps: { ...runtime.defaultDeps(), expectedInputs: () => EXPECTED }
+        });
+        assert.equal(result.path, bin);
+        assert.equal(result.managed, true);
+        assert.equal(result.warning, null);
+      });
+    });
+  });
+
   describe('resolveTtydPath — fail closed, never a silent fallback', () => {
     it('refuses when no managed runtime is installed, names the repair, and does NOT pick Homebrew', () => {
       assert.throws(

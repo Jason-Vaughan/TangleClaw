@@ -178,18 +178,67 @@ function fetchVerified(input, cacheDir, offline) {
 /**
  * The environment every build step runs in: no Homebrew/MacPorts on PATH, no
  * compiler or pkg-config hints that could pull in a foreign library.
+ * `MACOSX_DEPLOYMENT_TARGET` is meaningless outside Apple's toolchain, so
+ * Linux's env omits it rather than set a variable nothing reads (#2932).
  * @param {string} venvBin - The venv's bin directory (CMake).
- * @param {string} target - MACOSX_DEPLOYMENT_TARGET.
+ * @param {string} target - MACOSX_DEPLOYMENT_TARGET. Ignored on Linux.
  * @returns {object}
  */
 function cleanEnv(venvBin, target) {
-  return {
-    PATH: `${venvBin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+  const base = {
+    PATH: venvBin ? `${venvBin}:/usr/bin:/bin:/usr/sbin:/sbin` : '/usr/bin:/bin:/usr/sbin:/sbin',
     HOME: os.homedir(),
     TMPDIR: os.tmpdir(),
-    LANG: 'C',
-    MACOSX_DEPLOYMENT_TARGET: target
+    LANG: 'C'
   };
+  return process.platform === 'darwin' ? { ...base, MACOSX_DEPLOYMENT_TARGET: target } : base;
+}
+
+/**
+ * Resolve a `python3` to run CMake's venv install under. `/usr/bin/python3`
+ * covers macOS (Xcode CLT) and most Linux distros; a `which` fallback covers
+ * one that puts it elsewhere on PATH instead (#2932).
+ * @returns {string} Absolute path to a `python3` executable.
+ */
+function resolvePython3() {
+  const direct = '/usr/bin/python3';
+  if (fs.existsSync(direct)) return direct;
+  try {
+    const found = execFileSync('which', ['python3'], { encoding: 'utf8' }).trim();
+    if (found) return found;
+  } catch { /* fall through to the thrown error below */ }
+  throw new Error('python3 not found (checked /usr/bin/python3 and PATH)');
+}
+
+/**
+ * Report the staged binary's dynamic dependencies via `ldd` — Linux's
+ * analogue of `otool -L`, used here only as an informational manifest
+ * record, NEVER as a hermeticity gate the way {@link
+ * import('../lib/macho-closure').verifyClosureOnHost} is on macOS (#2932).
+ * There is no ELF closure-walking module in this repo to enforce a
+ * self-contained graph on Linux (recording this is `ldd`'s one-level
+ * report, not a recursive rpath/system-root walk) — tracked as a known gap,
+ * not pretended away under the same `closure` shape macOS's manifest uses.
+ * Never throws: a build this reports on has already produced a running
+ * binary ({@link build}'s `--version` check ran first), so a failure to
+ * RUN `ldd` itself is recorded, not fatal.
+ * @param {string} bin - Absolute path to the staged binary.
+ * @returns {{tool: string, ok: boolean, entries?: Array<{name: string, target: (string|null)}>, error?: string}}
+ */
+function linuxLddReport(bin) {
+  let text;
+  try {
+    text = run('ldd', [bin]);
+  } catch (err) {
+    return { tool: 'ldd', ok: false, error: err.message };
+  }
+  const entries = text.split('\n').map((l) => l.trim()).filter(Boolean).map((line) => {
+    const m = line.match(/^(\S+)\s*(?:=>\s*(.+?))?\s*(?:\(0x[0-9a-f]+\))?$/);
+    if (!m) return { name: line, target: null };
+    const target = m[2] ? m[2].trim() : null;
+    return { name: m[1], target: target === 'not found' ? null : target };
+  });
+  return { tool: 'ldd', ok: true, entries };
 }
 
 /**
@@ -198,7 +247,9 @@ function cleanEnv(venvBin, target) {
  * @returns {object} The provenance manifest.
  */
 function build(o) {
-  if (process.platform !== 'darwin') throw new Error('the owned ttyd runtime is built on macOS only');
+  if (process.platform !== 'darwin' && process.platform !== 'linux') {
+    throw new Error('the owned ttyd runtime is built on macOS or Linux only');
+  }
   // Read once: the manifest records the digest of exactly the bytes this build
   // used, even if inputs.json changes while it runs.
   const pinned = readPinnedInputs(path.join(INPUTS_DIR, 'inputs.json'));
@@ -214,16 +265,36 @@ function build(o) {
   for (const d of [work, prefix, srcRoot]) fs.mkdirSync(d, { recursive: true });
   const log = (msg) => console.log(`[build-ttyd] ${msg}`);
 
-  // 1. CMake from a pinned wheel, hash-checked by pip, into a venv inside work.
-  const venv = path.join(work, 'venv');
-  run('/usr/bin/python3', ['-m', 'venv', venv]);
-  const req = path.join(work, 'cmake-requirements.txt');
-  fs.writeFileSync(req, `cmake==${inputs.cmake.version} --hash=sha256:${inputs.cmake.sha256}\n`);
-  run(path.join(venv, 'bin', 'pip'), ['install', '--quiet', '--require-hashes', '--only-binary=:all:', '--no-deps', '-r', req]);
-  const cmake = path.join(venv, 'bin', 'cmake');
-  const cmakeVersion = run(cmake, ['--version']).split('\n')[0];
-  if (!cmakeVersion.includes(inputs.cmake.version)) throw new Error(`venv CMake reports "${cmakeVersion}"`);
-  const env = cleanEnv(path.join(venv, 'bin'), inputs.macosxDeploymentTarget);
+  // 1. CMake. macOS has no trustworthy system cmake, so inputs.json pins an
+  // exact PyPI wheel by hash, installed via pip --require-hashes into a venv
+  // (deploy/ttyd/inputs.json's cmake.wheel is a macosx-tagged wheel — a
+  // Linux build would need its own pinned wheel hash for a different file,
+  // which isn't recorded there). Linux instead uses the package manager's
+  // own cmake, which install.sh's ensure_linux_ttyd_build_prereqs() already
+  // installs as a build prerequisite (#2932) — no venv, no pip, no second
+  // wheel pin to maintain.
+  let cmake;
+  let cmakeVersion;
+  let venvBin = null;
+  if (process.platform === 'darwin') {
+    const venv = path.join(work, 'venv');
+    run(resolvePython3(), ['-m', 'venv', venv]);
+    const req = path.join(work, 'cmake-requirements.txt');
+    fs.writeFileSync(req, `cmake==${inputs.cmake.version} --hash=sha256:${inputs.cmake.sha256}\n`);
+    run(path.join(venv, 'bin', 'pip'), ['install', '--quiet', '--require-hashes', '--only-binary=:all:', '--no-deps', '-r', req]);
+    cmake = path.join(venv, 'bin', 'cmake');
+    cmakeVersion = run(cmake, ['--version']).split('\n')[0];
+    if (!cmakeVersion.includes(inputs.cmake.version)) throw new Error(`venv CMake reports "${cmakeVersion}"`);
+    venvBin = path.join(venv, 'bin');
+  } else {
+    cmake = 'cmake';
+    try {
+      cmakeVersion = run(cmake, ['--version']).split('\n')[0];
+    } catch (err) {
+      throw new Error(`cmake not found on PATH (${err.message}); install it via your package manager`);
+    }
+  }
+  const env = cleanEnv(venvBin, inputs.macosxDeploymentTarget);
   log(cmakeVersion);
 
   // 2. Every source, verified before extraction.
@@ -240,7 +311,9 @@ function build(o) {
   const ignore = inputs.build.ignorePrefixes.join(';');
   const common = [`-DCMAKE_BUILD_TYPE=Release`, `-DCMAKE_INSTALL_PREFIX=${prefix}`, `-DCMAKE_PREFIX_PATH=${prefix}`,
     `-DCMAKE_IGNORE_PREFIX_PATH=${ignore}`, `-DCMAKE_SYSTEM_IGNORE_PREFIX_PATH=${ignore}`,
-    `-DCMAKE_OSX_DEPLOYMENT_TARGET=${inputs.macosxDeploymentTarget}`];
+    // Meaningless outside Apple's toolchain (#2932) — omitted rather than set
+    // on a platform CMake would just ignore.
+    ...(process.platform === 'darwin' ? [`-DCMAKE_OSX_DEPLOYMENT_TARGET=${inputs.macosxDeploymentTarget}`] : [])];
   const cmakeBuild = (name, extra) => {
     const b = path.join(work, `build-${name}`);
     run(cmake, ['-S', path.join(srcRoot, name), '-B', b, ...common, ...extra], { env });
@@ -277,9 +350,19 @@ function build(o) {
   const staged = path.join(out, 'ttyd');
   fs.copyFileSync(built, staged);
   fs.chmodSync(staged, 0o755);
-  const closure = require('../lib/macho-closure').verifyClosureOnHost(staged, { bundleDir: out, systemRoots: inputs.closure.systemRoots });
-  if (!closure.ok) {
-    throw new Error(`the staged ttyd is not self-contained:\n  ${closure.violations.map((v) => `${v.image}: ${v.ref} (${v.reason})`).join('\n  ')}`);
+  // macho-closure.js walks a Mach-O load graph and ENFORCES it stays inside
+  // the bundle/system roots — a real hermeticity gate. There is no ELF
+  // equivalent in this repo (#2932): linuxLddReport is informational only,
+  // recorded in the manifest, never a reason to throw here.
+  let closureField;
+  if (process.platform === 'darwin') {
+    const closure = require('../lib/macho-closure').verifyClosureOnHost(staged, { bundleDir: out, systemRoots: inputs.closure.systemRoots });
+    if (!closure.ok) {
+      throw new Error(`the staged ttyd is not self-contained:\n  ${closure.violations.map((v) => `${v.image}: ${v.ref} (${v.reason})`).join('\n  ')}`);
+    }
+    closureField = { systemRoots: inputs.closure.systemRoots, graph: closure.graph };
+  } else {
+    closureField = { platform: 'linux', verified: false, note: 'informational ldd report only — no hermetic ELF closure check in this repo (#2932)', ...linuxLddReport(staged) };
   }
   const version = run(staged, ['--version']).trim();
   const manifest = {
@@ -287,14 +370,22 @@ function build(o) {
     builtAt: new Date().toISOString(),
     binary: { file: 'ttyd', sha256: sha256File(staged), version },
     inputs: manifestInputs(pinned),
-    toolchain: {
+    toolchain: process.platform === 'darwin' ? {
       compiler: run('xcrun', ['clang', '--version']).split('\n')[0],
       sdk: run('xcrun', ['--show-sdk-version']).trim(),
       cmake: cmakeVersion,
       deploymentTarget: inputs.macosxDeploymentTarget,
       host: `${os.type()} ${os.release()} ${os.arch()}`
+    } : {
+      // `cc` is the POSIX-standard name, but not every distro's compiler
+      // package sets up that alternative (#2932) — `gcc` is the fallback.
+      compiler: (() => {
+        try { return run('cc', ['--version']).split('\n')[0]; } catch { return run('gcc', ['--version']).split('\n')[0]; }
+      })(),
+      cmake: cmakeVersion,
+      host: `${os.type()} ${os.release()} ${os.arch()}`
     },
-    closure: { systemRoots: inputs.closure.systemRoots, graph: closure.graph }
+    closure: closureField
   };
   fs.writeFileSync(path.join(out, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
   log(`staged ${staged} (${manifest.binary.sha256})`);
@@ -323,4 +414,7 @@ if (require.main === module) {
   }
 }
 
-module.exports = { parseArgs, validateInputs, sha256File, curlArgs, fetchVerified, cleanEnv, manifestInputs, REQUIRED_SOURCES, CURL_MAX_TIME_S };
+module.exports = {
+  parseArgs, validateInputs, sha256File, curlArgs, fetchVerified, cleanEnv, manifestInputs,
+  REQUIRED_SOURCES, CURL_MAX_TIME_S, resolvePython3, linuxLddReport, build
+};

@@ -169,6 +169,11 @@ const SIGNED_IN_OPERATOR = Object.freeze([
   'POST /api/session-rules',
   'POST /api/session-rules/:id/restore',
   'POST /api/session-rules/promote',
+  // #2956: fast-forwards the local Medusa checkout and/or restarts
+  // com.medusa.hub — a mutation against a real git checkout and a real
+  // system service, reviewed the same way any other authority-granting
+  // route here is.
+  'POST /api/system/medusa-drift/apply',
   // #2937: grants (or revokes) a project's "Fleet Coordinator / Decider"
   // authority — a standing self-service delegation (coordinator_roles +
   // the fleetCoordinator flag), reviewed the same way any other

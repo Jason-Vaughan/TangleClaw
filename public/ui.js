@@ -7988,3 +7988,37 @@ $('filterClear').addEventListener('click', () => {
 });
 
 if (isMasterPopout) enterMasterPopoutMode(document, toggleMaster);
+
+// ── Medusa upstream & local Hub drift (#2956) ──
+// Independent of landing.js's own TangleClaw-update poll loop: this page's
+// update beacon (public/update-beacon.js) answers a different question
+// (is TangleClaw itself behind), so this is its own small poll against a
+// different route, rendering into its own chip via the same file's
+// `tcRenderMedusaDriftNotice`. Plain (no `?refresh=1`): the server's own
+// periodic background check (lib/medusa-drift.js) is what re-measures;
+// every poll from here just reads whatever it last cached, same as
+// landing.js's own plain `/api/update-status` read.
+const MEDUSA_DRIFT_POLL_MS = 5 * 60 * 1000;
+
+/**
+ * Fetch the Medusa drift snapshot and render it into its chip. Never throws
+ * past itself — a failed poll leaves the chip exactly as it was, the same
+ * posture `tcRenderMedusaDriftNotice` itself takes for a null payload.
+ * @returns {Promise<void>}
+ */
+async function loadMedusaDrift() {
+  if (typeof window.tcRenderMedusaDriftNotice !== 'function') return;
+  const data = await api('/api/system/medusa-drift'); // api() never throws; null on any failure
+  window.tcRenderMedusaDriftNotice(document, 'medusaDriftNotice', data);
+}
+
+// Wired once: the chip itself is the one-click Operator action's button
+// (POST /api/system/medusa-drift/apply), confirmed and applied through
+// tcWireMedusaDriftAction (public/update-beacon.js) — not re-wired on
+// every poll, since that would stack confirm dialogs behind a stale click.
+if (typeof window.tcWireMedusaDriftAction === 'function') {
+  window.tcWireMedusaDriftAction(document, 'medusaDriftNotice', { apiMutate, api });
+}
+
+loadMedusaDrift();
+setInterval(loadMedusaDrift, MEDUSA_DRIFT_POLL_MS);

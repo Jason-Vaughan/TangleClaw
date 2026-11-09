@@ -183,6 +183,7 @@ const strandedWraps = require('./lib/stranded-wraps');
 const strandedCheck = require('./lib/stranded-check');
 const serviceToken = require('./lib/service-token');
 const medusa = require('./lib/medusa');
+const medusaDrift = require('./lib/medusa-drift');
 const controlState = require('./lib/control-state');
 const controlApi = require('./lib/control-api');
 const controlGate = require('./lib/control-gate');
@@ -3981,6 +3982,32 @@ route('GET', '/api/system/health', async (_req, res) => {
   const health = await systemHealth.getHealth();
   jsonResponse(res, 200, health);
 });
+
+// GET /api/system/medusa-drift — whether the local Jason-Vaughan/Medusa
+// checkout is behind its own origin/main, and whether the running Hub's
+// in-memory build disagrees with what's on disk (#2956). `?refresh=1` forces
+// a fresh check (fetching origin/main first) rather than reading the cache.
+route('GET', '/api/system/medusa-drift', async (req, res) => {
+  const refresh = new URL(req.url, 'http://localhost').searchParams.get('refresh') === '1';
+  const drift = refresh ? await medusaDrift.refreshDrift() : await medusaDrift.getDrift();
+  jsonResponse(res, 200, drift);
+});
+
+// POST /api/system/medusa-drift/apply — the one-click Operator action
+// #2956's own proposal asked for: fast-forward the local Medusa checkout
+// onto origin/main when behind, restart com.medusa.hub when it needs one
+// (or was just fast-forwarded), then answer with the fresh snapshot.
+// Refuses rather than discarding on a dirty checkout -- see
+// lib/medusa-drift.js#applyDriftAction's own doc for why that differs from
+// lib/update-applier.js's discardDirty option for TangleClaw's own update.
+route('POST', '/api/system/medusa-drift/apply', async (_req, res) => {
+  const result = await medusaDrift.applyDriftAction();
+  if (result.ok) {
+    jsonResponse(res, 200, result);
+    return;
+  }
+  jsonResponse(res, result.code === 'git-error' || result.code === 'restart-failed' ? 500 : 409, result);
+}, { signedInOperator: { action: 'fast-forward the local Medusa checkout and/or restart com.medusa.hub' } });
 
 // GET /api/system/pty-activity — terminal attaches and detaches through the
 // `/terminal` proxy since this process started (#1949). Release-candidate
@@ -8834,6 +8861,11 @@ if (require.main === module) {
   }
   updateChecker.startChecker(checkInterval.intervalMs);
 
+  // Start the Medusa upstream & local Hub drift check (#2956): same
+  // "background check, cached, operator can refresh on demand" shape as
+  // the TangleClaw update checker just above.
+  medusaDrift.start();
+
   // Start eval audit heartbeat watchdog
   evalAudit.startWatchdog((level, sessionId, project, message) => {
     log.warn('Eval audit watchdog alert', { level, sessionId, project, message });
@@ -9281,6 +9313,7 @@ if (require.main === module) {
     porthub.stopExpirationTimer();
     modelStatus.stopMonitor();
     updateChecker.stopChecker();
+    medusaDrift.stop();
     evalAudit.stopWatchdog();
     sidecar.stopAllPolling();
     ttydWatcher.stop();
