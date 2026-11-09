@@ -144,6 +144,7 @@
         "lib/host-gui-dialog-probe.js",
         "lib/store/sessions.js",
         "lib/session-finalize.js",
+        "lib/session-hierarchy.js",
         "lib/lifecycle-handoff.js",
         "lib/lifecycle-handoff-daemon.js",
         "lib/session-leftovers.js",
