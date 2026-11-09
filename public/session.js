@@ -1681,15 +1681,21 @@ function renderModelEffortDivergence(project) {
   if (!session || !session.active) return;
   const describe = (value) => value || '(engine default)';
   const parts = [];
+  // (PRR-A R2) "launched with", never "running" or "verified": `launchedModel`/
+  // `launchedEffort` are what this session was REQUESTED with at launch
+  // (`profileReconciler.getDesiredProfile`), not a live-confirmed fact —
+  // model gets an actual post-launch verification pass (`_verifyModelAfterLaunch`),
+  // but effort never does (no adapter observes it at all), so neither word
+  // claims more certainty than the data backs.
   const nextModel = project.model || null;
   const runningModel = session.launchedModel || null;
   if (nextModel !== runningModel) {
-    parts.push(`model running ${describe(runningModel)}, next launch ${describe(nextModel)}`);
+    parts.push(`model launched with ${describe(runningModel)}, next launch ${describe(nextModel)}`);
   }
   const nextEffort = project.effort || null;
   const runningEffort = session.launchedEffort || null;
   if (nextEffort !== runningEffort) {
-    parts.push(`effort running ${describe(runningEffort)}, next launch ${describe(nextEffort)}`);
+    parts.push(`effort launched with ${describe(runningEffort)} (unverified), next launch ${describe(nextEffort)}`);
   }
   if (parts.length === 0) return;
   const existing = engineEl.getAttribute('data-pill-detail') || '';

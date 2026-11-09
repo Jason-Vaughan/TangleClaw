@@ -371,6 +371,47 @@ describe('#2188 engine-model-picker — effort preserved through post-launch ver
       { engine: 'codex', model: 'gpt-5.6-sol', effort: 'low' }, { engine: 'codex', model: 'gpt-5.6-sol', effort: 'high' }
     ), false);
   });
+
+  it('_matches stays STRICT on model (PRR-A R2 C4): an unobserved model is still a mismatch, never skipped like effort/mode', () => {
+    assert.equal(profileReconciler._matches(
+      { engine: 'codex' }, { engine: 'codex', model: 'gpt-5.6-sol' }
+    ), false, 'a model the engine has not reported at all must not read as confirmed');
+    assert.equal(profileReconciler._matches(
+      { engine: 'codex', model: 'gpt-6-luna' }, { engine: 'codex', model: 'gpt-5.6-sol' }
+    ), false, 'the wrong observed model is still a mismatch');
+  });
+});
+
+describe('#2188 engine-model-picker — effort-only launch does not permanently block model admission (Architect A509-PR2974-R2-HOLD B4)', () => {
+  const store = require('../lib/store');
+  let tmpDir;
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-effort-only-admission-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+  beforeEach(() => { profileReconciler._resetForTests(); });
+
+  it('an effort-only launch (model null) never blocks model admission — the fix itself, exercised through _modelAdmissionBlock directly', () => {
+    // `_modelAdmissionBlock` needs only a session id to key its in-memory
+    // and durable activity-log reads by — no real project/session row is
+    // read through it, so none is created here.
+    const sessionId = 90001;
+    // Mirrors launchSession's own gate exactly: `if (requestedModel || requestedEffort)` sets
+    // the desired profile, but the activity-log write (and the reconciliation schedule) are
+    // gated on `requestedModel` ALONE — this is the fix itself, exercised directly rather than
+    // through a full `launchSession` (which needs a real tmux pane).
+    profileReconciler.setDesiredProfile(`session:${sessionId}`, { engine: 'claude', model: null, effort: 'high' });
+    // No `session.model-launch-requested` row written — the fix. Before it,
+    // this test would have needed one written unconditionally, and
+    // `_modelAdmissionBlock` would have returned 'model-verification-pending' forever.
+    assert.equal(sessions._modelAdmissionBlock(sessionId), null,
+      'an effort-only launch must never read as a pending (and therefore eternally-unverifiable) model admission');
+  });
 });
 
 describe('#2188 engine-model-picker — lib/projects.js wiring (effort persistence)', () => {
