@@ -8829,11 +8829,19 @@ function _v6RequireProjectSession(res, params) {
  */
 const V6_SECRET_PATTERNS = Object.freeze([
   /Bearer\s+[A-Za-z0-9._\-+/=]+/gi,
+  // PRR-A/PRR-B R2 HOLD (Ruling A585-PR3016-R2-HOLD-RECONCILED): Basic
+  // auth credentials, same shape as Bearer above.
+  /\bBasic\s+[A-Za-z0-9+/=]{8,}\b/gi,
   /\bsk-[A-Za-z0-9_-]{8,}\b/gi,
   /\bgh[pousr]_[A-Za-z0-9_]{8,}\b/gi,
   /\bxox[baprs]-[A-Za-z0-9-]{8,}\b/gi,
   /\bAKIA[0-9A-Z]{16}\b/g,
-  /(?:password|secret|token|api[_-]?key)\s*[:=]\s*[^\s,"']+/gi
+  // PRR-A/PRR-B R2 HOLD: the value alternation tries a double-quoted,
+  // then single-quoted, then bare-unquoted form in that order — the
+  // original excluded `"`/`'` from the bare form's first character, so
+  // `password="supersecret"` and `api_key: "sensitive-value"` matched
+  // nothing at all and passed through unscrubbed.
+  /(?:password|passwd|pwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?key)\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,"'}\]]+)/gi
 ]);
 
 /**
@@ -9500,7 +9508,7 @@ route('DELETE', '/api/v6/projects/:id/sessions/:sessionId/conversation/events/:e
     'SELECT id FROM conversation_events WHERE id = ? AND project_id = ? AND session_id = ? AND deleted_at IS NULL'
   ).get(Number(params.eventId), Number(params.id), Number(params.sessionId));
   if (!eventRow) return errorResponse(res, 404, 'Event not found', 'NOT_FOUND_OR_ALREADY_DELETED');
-  const result = b2.softDeleteEvent(db, { id: Number(params.eventId), sessionId: Number(params.sessionId) });
+  let result = b2.softDeleteEvent(db, { id: Number(params.eventId), sessionId: Number(params.sessionId) });
   if (result.ok) {
     // PRR-A R1 HOLD: the soft-delete flag alone leaves the raw payload on
     // disk in plain SQLite storage — overwrite it so a deleted event's
@@ -9509,7 +9517,14 @@ route('DELETE', '/api/v6/projects/:id/sessions/:sessionId/conversation/events/:e
     db.prepare(
       'UPDATE conversation_events SET content = ?, rolling_line_sha256 = NULL WHERE id = ? AND project_id = ? AND session_id = ?'
     ).run('[DELETED]', Number(params.eventId), Number(params.id), Number(params.sessionId));
-    db.prepare('PRAGMA wal_checkpoint(PASSIVE)').all();
+    // PRR-A/PRR-B R2 HOLD: PASSIVE checkpoints what it can without
+    // blocking, but leaves the overwritten page in the WAL file itself
+    // whenever a reader holds it back — TRUNCATE is the mode that
+    // actually shrinks wal back to empty, so the pre-overwrite page
+    // doesn't linger in a file this route's caller otherwise has no way
+    // to inspect or force-clear later.
+    db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').all();
+    result = { ...result, residual_locations: [] };
   }
   _v6Respond(res, result);
 });
@@ -9648,6 +9663,41 @@ route('POST', '/api/v6/doc-planes/write-boundary', (req, res, _params, body) => 
   _v6RespondAllowed(res, e1.checkWriteBoundary(b.path, { grant: null, root: __dirname }));
 });
 
+/**
+ * Does `resolved` (already lexically `path.resolve`d against `root`) name
+ * no symlink anywhere, and fully realpath-resolve to a target still
+ * inside `root`? PRR-A/PRR-B R2 HOLD (Ruling A585-PR3016-R2-HOLD-RECONCILED):
+ * lexical containment (`resolved.startsWith(root)`) says nothing about
+ * what the filesystem actually does at read time — a symlink inside the
+ * checkout can point anywhere, including outside it, and
+ * `fs.readFileSync` follows it transparently. Rejecting a symlink
+ * outright (not merely one that currently resolves outside root) closes
+ * the TOCTOU window a swapped-target symlink would otherwise open.
+ * @param {string} resolved
+ * @param {string} root
+ * @returns {boolean} false when `resolved` is a symlink, is unreadable,
+ *   or escapes `root` after full realpath resolution; true when it does
+ *   not exist yet (nothing to escape with, and `compileContextBundle`'s
+ *   own try/catch answers the missing-file case) or resolves cleanly
+ *   inside `root`.
+ */
+function _v6PathIsContained(resolved, root) {
+  let lst;
+  try {
+    lst = fs.lstatSync(resolved);
+  } catch {
+    return true;
+  }
+  if (lst.isSymbolicLink()) return false;
+  try {
+    const realRoot = fs.realpathSync(root);
+    const realTarget = fs.realpathSync(resolved);
+    return realTarget === realRoot || realTarget.startsWith(realRoot + path.sep);
+  } catch {
+    return false;
+  }
+}
+
 route('POST', '/api/v6/doc-planes/context-bundle', (req, res, _params, body) => {
   if (!operatorProjectCaller(req, res, 'compile a context bundle')) return;
   const b = _v6Body(body);
@@ -9668,10 +9718,19 @@ route('POST', '/api/v6/doc-planes/context-bundle', (req, res, _params, body) => 
     if (resolved !== projectRoot && !resolved.startsWith(projectRoot + path.sep)) {
       return errorResponse(res, 400, `path escapes the project root: ${p}`, 'INVALID_REQUEST');
     }
+    if (!_v6PathIsContained(resolved, projectRoot)) {
+      return errorResponse(res, 400, `path escapes the project root via a symlink: ${p}`, 'INVALID_REQUEST');
+    }
   }
   jsonResponse(res, 200, e1.compileContextBundle(b.paths, {
     tokenBudget: b.tokenBudget, includeHistoricalArchive: b.includeHistoricalArchive === true, root: projectRoot,
-    readFile: (p) => fs.readFileSync(path.resolve(projectRoot, p), 'utf8')
+    readFile: (p) => {
+      const resolved = path.resolve(projectRoot, p);
+      if (!_v6PathIsContained(resolved, projectRoot)) {
+        throw Object.assign(new Error(`path escapes the project root via a symlink: ${p}`), { code: 'ENOENT' });
+      }
+      return fs.readFileSync(resolved, 'utf8');
+    }
   }));
 });
 

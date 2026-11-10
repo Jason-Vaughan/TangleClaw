@@ -200,6 +200,29 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       assert.equal(event.redacted, 1);
     });
 
+    it('redacts quoted secret-shaped content (password=, password:, api_key:) and a Basic auth token (Ruling A585-PR3016-R2-HOLD-RECONCILED)', async () => {
+      const projectId = await seedProject('b2-redaction-quoted');
+      const sessionId = await seedSession(projectId, 'claude');
+      const cases = [
+        { content: 'config: password="supersecret" end', secret: 'supersecret' },
+        { content: 'note password: "hunter2-synthetic" stored', secret: 'hunter2-synthetic' },
+        { content: 'header api_key: "sensitive-value" sent', secret: 'sensitive-value' },
+        { content: 'auth header Basic dXNlcjpwYXNz used', secret: 'dXNlcjpwYXNz' }
+      ];
+      for (let i = 0; i < cases.length; i++) {
+        const { content, secret } = cases[i];
+        const append = await post(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`, {
+          launchId: 'l1', seq: i + 1, tier: 'A', adapter: 'claude', role: 'assistant', content
+        });
+        assert.equal(append.statusCode, 201, append.body);
+        const { id } = json(append);
+        const row = store.getDb().prepare('SELECT content, redacted FROM conversation_events WHERE id = ?').get(id);
+        assert.doesNotMatch(row.content, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `case ${i}: ${content}`);
+        assert.match(row.content, /\[REDACTED\]/, `case ${i}: ${content}`);
+        assert.equal(row.redacted, 1, `case ${i}: ${content}`);
+      }
+    });
+
     it('does not mark ordinary content redacted', async () => {
       const projectId = await seedProject('b2-no-redaction');
       const sessionId = await seedSession(projectId, 'claude');
@@ -223,6 +246,7 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       const row = store.getDb().prepare('SELECT content, rolling_line_sha256 FROM conversation_events WHERE id = ?').get(id);
       assert.equal(row.content, '[DELETED]');
       assert.equal(row.rolling_line_sha256, null);
+      assert.deepEqual(json(del1).residual_locations, [], 'TRUNCATE checkpoint leaves nothing to report as residual');
     });
   });
 
@@ -358,6 +382,22 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       const res = await post('/api/v6/doc-planes/context-bundle', { paths: ['../../../../../etc/passwd'] });
       assert.equal(res.statusCode, 400, res.body);
       assert.equal(json(res).code, 'INVALID_REQUEST');
+    });
+
+    it('400s a context bundle whose path is a symlink escaping the project root, not merely lexically-contained (Ruling A585-PR3016-R2-HOLD-RECONCILED)', async () => {
+      const projectRoot = path.join(__dirname, '..');
+      const externalTarget = path.join(tempDir, 'symlink-target-outside-repo.md');
+      fs.writeFileSync(externalTarget, 'external content the route must never read');
+      const linkName = '.tc-test-symlink-escape-tmp.md';
+      const linkPath = path.join(projectRoot, linkName);
+      fs.symlinkSync(externalTarget, linkPath);
+      try {
+        const res = await post('/api/v6/doc-planes/context-bundle', { paths: [linkName] });
+        assert.equal(res.statusCode, 400, res.body);
+        assert.equal(json(res).code, 'INVALID_REQUEST');
+      } finally {
+        fs.unlinkSync(linkPath);
+      }
     });
 
     it('400s a context bundle whose paths array contains a non-string entry', async () => {
