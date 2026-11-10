@@ -196,6 +196,21 @@ const medusaSend = require('./lib/medusa-send');
 const medusaRegistry = require('./lib/medusa-registry');
 const launchAgentScan = require('./lib/launchagent-scan');
 
+// v6 Stage 1 (BRIDGE-2, Car V60-T1-W2-ROUTES, Charter A512): the first live
+// HTTP wiring for the v6 library modules each landed schema-and-library-only
+// in their own car (#1149/#2977/#2978 via PR #3008, #2118/#2980 via PR
+// #3009). Architect Ruling A547-W2-ROUTES-REAL-MODULE-CONTRACT-RECONCILED
+// superseded an earlier ruling (A545) whose endpoint names and status-code
+// taxonomy did not match these modules' real, merged exports — this wiring
+// binds the real function names and the real {ok, code} strings instead.
+const v3Validator = require('./lib/v6/sprint-report-validator-v3');
+const c1 = require('./lib/v6/c1-logical-projects');
+const e5 = require('./lib/v6/e5-kaizen-ledger');
+const authorityService = require('./lib/v6/authority-service');
+const transitionLedger = require('./lib/v6/transition-ledger');
+const incidentRegistry = require('./lib/v6/incident-registry');
+const v6Crypto = require('node:crypto');
+
 const log = createLogger('server');
 
 // The body-size constants, the route table and the response, body and query
@@ -8571,6 +8586,742 @@ require('./lib/routes/engine-health-routes').register();
 // The secure clipboard / secret uploader routes (#1032) likewise take no
 // deps — same no-deps convention as engines-canary and engine-health above.
 require('./lib/routes/secure-clipboard').register();
+
+// ── V6 Stage 1 Routes (BRIDGE-2, Car V60-T1-W2-ROUTES) ──
+//
+// First live wiring for the C1 logical-project hierarchy
+// (lib/v6/c1-logical-projects.js, #2118), the E5 Kaizen Ledger
+// (lib/v6/e5-kaizen-ledger.js, #2980), and the Sprint Report Validator
+// (lib/v6/sprint-report-validator-v3.js, #2979). Every route here is
+// OPERATOR-ONLY (operatorProjectCaller): these are new, low-level
+// provisioning/ledger primitives with no existing caller and no established
+// mapping from "a session bound to one legacy project" to "which native v6
+// entities that session may touch" (a fleet, role lease or shared asset is
+// not itself bound to any one legacy project the way a session is) — a
+// narrower, project-scoped grant is a later car's decision once a real
+// caller needs it, not invented here. GET routes are included in this
+// restriction too: unlike a mutating route, a GET is not swept by the
+// launch-binding floor automatically, so without an explicit check here it
+// would be open to anyone.
+//
+// lib/v6/authority-service.js (#1149), lib/v6/transition-ledger.js (#2977)
+// and lib/v6/incident-registry.js (#2978) are wired below too, through
+// `_v6OperatorAuthorize` — every mutating function in these three modules
+// calls `auth.authorize(principalId, action, {type:'project', id})`
+// unconditionally, and nothing anywhere populates
+// `trusted_principals`/`trusted_workspaces`/`trusted_memberships` for a real
+// caller, so that call would DEFAULT_DENY forever without it. Rather than
+// map the HTTP operator onto a `kind: 'user'` principal (Architect Ruling
+// A546's own design) — `trusted_principals.user_id` is a real FK to
+// `users(id)`, which an operator request with no signed-in account (the
+// gate stood down, ADR 0009's own opt-out mode) can never satisfy — this
+// lazily provisions ONE `kind: 'service'` principal (no `user_id` at all,
+// satisfying `trusted_principals`' own CHECK) and grants it exactly the one
+// action a route is about to call, the first time a proven HTTP operator
+// request needs it. It starts with zero capability and is never a blanket
+// role: flagged to Architect as an alternative to A546's user-identity
+// model, pending reconciliation; this is this route layer vouching for the
+// SAME operator `operatorProjectCaller` already verified, not a second,
+// independent identity.
+
+/**
+ * Every {ok, code} string these three v6 modules actually return, mapped to
+ * an HTTP status — read from the real, merged source (not an assumed
+ * taxonomy): `grep -n "code: '" lib/v6/c1-logical-projects.js
+ * lib/v6/e5-kaizen-ledger.js` plus the `_guardConflict` call sites in
+ * c1-logical-projects.js. A code this map does not list answers 400 — the
+ * conservative default for a response shape this file does not expect uses,
+ * not a fall-through to 200.
+ * @type {Object<string, number>}
+ */
+const V6_STATUS_BY_CODE = {
+  // Not found
+  NOT_FOUND: 404,
+  NOT_FOUND_OR_UNCHANGED: 404,
+  NOT_FOUND_OR_ALREADY_CLOSED: 404,
+  NOT_FOUND_OR_ALREADY_REVOKED: 404,
+  NOT_FOUND_OR_ALREADY_RESOLVED: 404,
+  NOT_FOUND_OR_NOT_PROVEN: 404,
+  PROJECT_NOT_FOUND: 404,
+  FLEET_NOT_FOUND: 404,
+  RESOURCE_NOT_FOUND: 404,
+  ASSET_NOT_FOUND: 404,
+  ITEM_NOT_FOUND: 404,
+  // Conflict — a CAS mismatch, a uniqueness constraint, or a state that
+  // already forbids the requested transition.
+  INVALID_TRANSITION: 409,
+  STALE_POLICY_REVISION: 409,
+  STALE_ROW_VERSION: 409,
+  DISPLAY_NAME_TAKEN: 409,
+  LEGACY_PROJECT_ALREADY_MAPPED: 409,
+  ABSOLUTE_PATH_TAKEN: 409,
+  ROLE_CONFLICT: 409,
+  CANONICAL_REF_TAKEN: 409,
+  GRANT_EXISTS: 409,
+  PRE_IMPLEMENTATION_MEASUREMENT: 409,
+  INSUFFICIENT_EVIDENCE: 409,
+  INSUFFICIENT_CONSECUTIVE_SPRINTS: 409,
+  INSUFFICIENT_DRILL_OR_MONITOR_EVIDENCE: 409,
+  INSUFFICIENT_TREND_SERIES: 409,
+  // Bad request
+  INVALID_REQUEST: 400,
+  RATIONALE_REQUIRED: 400,
+  UNKNOWN_VERIFICATION_CLASS: 400,
+
+  // ── lib/v6/authority-service.js (#1149) ── grep -n "code: '" lib/v6/authority-service.js,
+  // plus the ternary verdict.code/USER_ALLOWED/GRANT_ALLOWED/GRANT_DENIED sites.
+  DEFAULT_DENY: 403,
+  SCOPE_DENIED: 403,
+  MEMBERSHIP_DENIED: 403,
+  ROLE_DENIED: 403,
+  INITIATOR_CEILING: 403,
+  GRANT_DENIED: 403,
+  OPERATOR_PROOF_REQUIRED: 403,
+  // ── POST /api/v6/projects/:id/g1-approvals (#1149, P08) ── route-layer
+  // codes, not library codes: no v6/*.js function returns either.
+  SIGNED_IN_OPERATOR_REQUIRED: 403,
+  DISTINCT_OPERATOR_REQUIRED: 403,
+  PROJECT_MISSING: 404,
+  POLICY_MISSING: 404,
+  UNREGISTERED_SETTING: 400,
+  INVALID_VALUE: 400,
+  POLICY_VALIDATOR_REQUIRED: 400,
+  USE_EXISTING_RECOVERY_PIN: 400,
+  FILE_UNREADABLE: 400,
+  STALE_POLICY: 409,
+  IMPORT_BLOCKED: 409,
+  PARTIAL_IMPORT: 409,
+  IMPORTED_BLOCKED: 409,
+  POLICY_INCOMPLETE: 409,
+  FILE_TAMPER: 409,
+  NOT_FOUND_OR_ALREADY_RESOLVED: 404,
+
+  // ── lib/v6/transition-ledger.js (#2977) ── grep -n "code:" lib/v6/transition-ledger.js.
+  IDEMPOTENCY_CONFLICT: 409,
+  STALE_GENERATION: 409,
+  IN_FLIGHT: 409,
+  TERMINAL: 409,
+  EVIDENCE_REQUIRED: 400,
+  ABSENCE_REQUIRED: 400,
+
+  // ── lib/v6/incident-registry.js (#2978) ── grep -n "code:" lib/v6/incident-registry.js.
+  RESERVED_ACTION: 403,
+  STALE_INCIDENT: 409,
+  BACKOFF: 409,
+  MAX_ATTEMPTS: 409,
+  CIRCUIT_OPEN: 409,
+  ATTEMPT_FAILED: 409
+};
+
+/**
+ * Answer a v6 module's `{ok, code, ...}` result over HTTP: the whole result
+ * on success, or the mapped status with `code`/a readable message on
+ * failure. Any OTHER field the result carries (e.g. incident-registry's
+ * `step()` returning a real incident `id` alongside `ok: false` for an
+ * unverified remediation attempt) rides along as `extra` — a non-2xx
+ * response must not silently drop information a caller needs just because
+ * the attempt itself did not succeed. The one place every v6 route in this
+ * section ends.
+ * @param {http.ServerResponse} res
+ * @param {{ok: boolean, code: string}} result
+ * @param {number} [successStatus] - Defaults to 200; a route that just
+ *   created something passes 201.
+ * @returns {void}
+ */
+function _v6Respond(res, result, successStatus = 200) {
+  if (result.ok) return jsonResponse(res, successStatus, result);
+  const status = V6_STATUS_BY_CODE[result.code] || 400;
+  const { ok: _ok, code: _code, ...extra } = result;
+  errorResponse(res, status, `v6 request refused: ${result.code}`, result.code, Object.keys(extra).length ? extra : undefined);
+}
+
+/** `body` when it is a plain JSON object, else `{}` — every v6 handler reads optional fields through this rather than assuming the parser handed back an object. */
+function _v6Body(body) {
+  return (body && typeof body === 'object' && !Array.isArray(body)) ? body : {};
+}
+
+const v6Db = () => store.getDb();
+
+// ── Operator trust bootstrap for authority-service.js/transition-ledger.js/
+// incident-registry.js (Architect Ruling A546 part 1, the service-principal
+// alternative to part 2 — see the section comment above) ──
+
+/** The one workspace every lazily-bootstrapped legacy project shares, so a single service principal anchored to it can act across all of them. */
+const V6_DEFAULT_WORKSPACE_ID = 'ws-default';
+/** The one service principal every v6 operator route authorizes through. */
+const V6_OPERATOR_SERVICE_PRINCIPAL = 'principal-v6-operator-service';
+
+/**
+ * Ensure `projectId` has a workspace mapping (Ruling A546 part 1): a
+ * pre-seeded mapping from a test or a future car is left untouched; only a
+ * project with none gets the shared default.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {number} projectId
+ * @returns {void}
+ */
+/**
+ * Ensure `projectId` has a workspace mapping (Ruling A546 part 1): a
+ * pre-seeded mapping from a test or a future car is left untouched; only a
+ * project with none gets the shared default. PRR-A R1 / Ruling A549:
+ * `trusted_project_workspaces.project_id` is a real FK to `projects(id)` —
+ * check the project actually exists FIRST, so an unknown projectId answers
+ * `null` instead of throwing a raw FK-constraint error.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {number} projectId
+ * @returns {string|null} The project's effective workspace id, or `null` when `projectId` does not exist.
+ */
+function _v6EnsureProjectWorkspace(db, projectId) {
+  const existing = db.prepare('SELECT workspace_id FROM trusted_project_workspaces WHERE project_id = ?').get(projectId);
+  if (existing) return existing.workspace_id;
+  if (!db.prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId)) return null;
+  db.prepare('INSERT OR IGNORE INTO trusted_workspaces (id, name, created_at) VALUES (?, ?, ?)')
+    .run(V6_DEFAULT_WORKSPACE_ID, 'Default Workspace', new Date().toISOString());
+  db.prepare('INSERT OR IGNORE INTO trusted_project_workspaces (project_id, workspace_id) VALUES (?, ?)')
+    .run(projectId, V6_DEFAULT_WORKSPACE_ID);
+  return V6_DEFAULT_WORKSPACE_ID;
+}
+
+/**
+ * Ensure a v6 operator service principal exists FOR `workspaceId`, holding
+ * zero capability until {@link _v6EnsureOperatorGrant} grants it one. One
+ * principal per workspace, not one global principal (PRR-A R1): `authorize`
+ * scopes a caller by `principal.workspace_id === project.workspace_id`
+ * exactly, so a single principal could satisfy that check for at most one
+ * workspace — a project pre-mapped to a workspace other than the shared
+ * default needs its own principal anchored there, not a scope mismatch.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {string} workspaceId
+ * @returns {string} The service principal id for `workspaceId`.
+ */
+function _v6EnsureOperatorServicePrincipal(db, workspaceId) {
+  const id = `${V6_OPERATOR_SERVICE_PRINCIPAL}-${workspaceId}`;
+  if (!db.prepare('SELECT 1 FROM trusted_principals WHERE id = ?').get(id)) {
+    db.prepare("INSERT OR IGNORE INTO trusted_principals (id, kind, workspace_id, created_at) VALUES (?, 'service', ?, ?)")
+      .run(id, workspaceId, new Date().toISOString());
+  }
+  return id;
+}
+
+/**
+ * Ensure the operator service principal holds `action` over `projectId` —
+ * self-granted (there is no higher authority yet in this bootstrap), and a
+ * no-op once the grant already exists.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {string} principalId
+ * @param {number} projectId
+ * @param {string} action
+ * @returns {void}
+ */
+function _v6EnsureOperatorGrant(db, principalId, projectId, action) {
+  const existing = db.prepare(
+    "SELECT id FROM trusted_capability_grants WHERE principal_id = ? AND action = ? AND resource_type = 'project' AND resource_id = ? AND revoked_at IS NULL"
+  ).get(principalId, action, String(projectId));
+  if (existing) return;
+  db.prepare(
+    'INSERT INTO trusted_capability_grants (id, principal_id, action, resource_type, resource_id, granted_by, created_at) VALUES (?,?,?,?,?,?,?)'
+  ).run(v6Crypto.randomUUID(), principalId, action, 'project', String(projectId), principalId, new Date().toISOString());
+}
+
+/**
+ * The authorization bundle a v6 authority/transition/incident route needs
+ * for one call: the project's workspace bootstrapped, the service
+ * principal (scoped to that SAME workspace) provisioned and granted
+ * `action` over it. Called only after `operatorProjectCaller` has already
+ * proven the HTTP caller is the operator — this vouches for that same
+ * operator, not a second identity.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {number} projectId
+ * @param {string} action
+ * @returns {{principalId: string, auth: {authorize: Function}}|null} `null` when `projectId` does not exist.
+ */
+function _v6OperatorAuthorize(db, projectId, action) {
+  const workspaceId = _v6EnsureProjectWorkspace(db, projectId);
+  if (!workspaceId) return null;
+  const principalId = _v6EnsureOperatorServicePrincipal(db, workspaceId);
+  _v6EnsureOperatorGrant(db, principalId, projectId, action);
+  return { principalId, auth: authorityService.createAuthorizationService(db) };
+}
+
+/**
+ * {@link _v6OperatorAuthorize}, answering the route's 404 itself when
+ * `projectId` does not exist, so every call site is one line.
+ * @param {http.ServerResponse} res
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {number} projectId
+ * @param {string} action
+ * @returns {{principalId: string, auth: {authorize: Function}}|null} `null` once this has already answered the response.
+ */
+function _v6RequireOperatorAuthz(res, db, projectId, action) {
+  const authz = _v6OperatorAuthorize(db, projectId, action);
+  if (!authz) errorResponse(res, 404, `Project "${projectId}" not found`, 'PROJECT_NOT_FOUND');
+  return authz;
+}
+
+// ── C1: Logical Project Hierarchy (#2118) ──
+
+route('POST', '/api/v6/logical-projects', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'create a logical project')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.createLogicalProject(v6Db(), { displayName: b.displayName, origin: b.origin }), 201);
+});
+
+route('GET', '/api/v6/logical-projects/:id', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a logical project')) return;
+  const project = c1.getLogicalProject(v6Db(), params.id);
+  if (!project) return errorResponse(res, 404, `Logical project "${params.id}" not found`, 'NOT_FOUND');
+  jsonResponse(res, 200, project);
+});
+
+route('GET', '/api/v6/logical-projects/:id/hierarchy', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a logical project\'s hierarchy')) return;
+  const hierarchy = c1.getHierarchy(v6Db(), params.id);
+  if (!hierarchy) return errorResponse(res, 404, `Logical project "${params.id}" not found`, 'NOT_FOUND');
+  jsonResponse(res, 200, hierarchy);
+});
+
+route('PATCH', '/api/v6/logical-projects/:id/state', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'change a logical project\'s state')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.setLogicalProjectState(v6Db(), { id: params.id, nextState: b.nextState }));
+});
+
+route('POST', '/api/v6/fleets', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'create a fleet')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.createFleet(v6Db(), {
+    logicalProjectId: b.logicalProjectId, displayName: b.displayName,
+    templateId: b.templateId, templateVersion: b.templateVersion
+  }), 201);
+});
+
+route('GET', '/api/v6/fleets/:id', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a fleet')) return;
+  const fleet = c1.getFleet(v6Db(), params.id);
+  if (!fleet) return errorResponse(res, 404, `Fleet "${params.id}" not found`, 'NOT_FOUND');
+  jsonResponse(res, 200, fleet);
+});
+
+route('PATCH', '/api/v6/fleets/:id/state', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'change a fleet\'s state')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.setFleetState(v6Db(), {
+    id: params.id, logicalProjectId: b.logicalProjectId, nextState: b.nextState,
+    expectedPolicyRevision: b.expectedPolicyRevision
+  }));
+});
+
+route('POST', '/api/v6/resources', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'create a resource')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.createResource(v6Db(), {
+    logicalProjectId: b.logicalProjectId, fleetId: b.fleetId, kind: b.kind,
+    displayName: b.displayName, legacyProjectId: b.legacyProjectId
+  }), 201);
+});
+
+route('GET', '/api/v6/resources/:id', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a resource')) return;
+  const resource = c1.getResource(v6Db(), params.id);
+  if (!resource) return errorResponse(res, 404, `Resource "${params.id}" not found`, 'NOT_FOUND');
+  jsonResponse(res, 200, resource);
+});
+
+route('PATCH', '/api/v6/resources/:id/state', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'change a resource\'s desired state')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.setResourceDesiredState(v6Db(), {
+    id: params.id, logicalProjectId: b.logicalProjectId, nextState: b.nextState,
+    expectedRowVersion: b.expectedRowVersion
+  }));
+});
+
+route('POST', '/api/v6/checkouts', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'create a checkout')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.createCheckout(v6Db(), {
+    logicalProjectId: b.logicalProjectId, resourceId: b.resourceId, absolutePath: b.absolutePath,
+    repositoryKey: b.repositoryKey, kind: b.kind, legacyProjectId: b.legacyProjectId
+  }), 201);
+});
+
+route('PATCH', '/api/v6/checkouts/:id/state', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'change a checkout\'s state')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.setCheckoutState(v6Db(), { id: params.id, logicalProjectId: b.logicalProjectId, nextState: b.nextState }));
+});
+
+route('POST', '/api/v6/role-leases', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'propose a role lease')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.createRoleLease(v6Db(), {
+    resourceId: b.resourceId, logicalProjectId: b.logicalProjectId, fleetId: b.fleetId,
+    roleKey: b.roleKey, domainKey: b.domainKey, exclusive: b.exclusive === true,
+    issuedByPrincipal: b.issuedByPrincipal, startsAt: b.startsAt, endsAt: b.endsAt
+  }), 201);
+});
+
+route('POST', '/api/v6/role-leases/:id/close', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'close a role lease')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.closeRoleLease(v6Db(), { id: params.id, resourceId: b.resourceId, outcome: b.outcome }));
+});
+
+route('POST', '/api/v6/shared-assets', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'create a shared asset')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.createSharedAsset(v6Db(), {
+    ownerProjectId: b.ownerProjectId, kind: b.kind, classification: b.classification,
+    displayName: b.displayName, canonicalRef: b.canonicalRef, legacySharedDocumentId: b.legacySharedDocumentId
+  }), 201);
+});
+
+route('POST', '/api/v6/asset-grants', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'grant shared-asset access')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.grantAssetAccess(v6Db(), {
+    assetId: b.assetId, granteeProjectId: b.granteeProjectId, access: b.access,
+    grantedByPrincipal: b.grantedByPrincipal, expiresAt: b.expiresAt
+  }), 201);
+});
+
+route('POST', '/api/v6/asset-grants/:id/revoke', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'revoke a shared-asset grant')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.revokeAssetGrant(v6Db(), { id: params.id, assetId: b.assetId }));
+});
+
+route('POST', '/api/v6/authority-grants', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'mint an authority grant')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.grantAuthority(v6Db(), {
+    principal: b.principal, logicalProjectId: b.logicalProjectId, fleetId: b.fleetId,
+    operation: b.operation, limits: b.limits, expectedPolicyRevision: b.expectedPolicyRevision,
+    issuedByPrincipal: b.issuedByPrincipal, expiresAt: b.expiresAt
+  }), 201);
+});
+
+route('POST', '/api/v6/authority-grants/:id/revoke', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'revoke an authority grant')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.revokeAuthority(v6Db(), { id: params.id, logicalProjectId: b.logicalProjectId }));
+});
+
+route('GET', '/api/v6/legacy-projects/:legacyProjectId', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a legacy project\'s v6 mapping')) return;
+  const view = v6Db().prepare('SELECT * FROM v6_legacy_project_view WHERE legacy_project_id = ?').get(params.legacyProjectId);
+  if (!view) return errorResponse(res, 404, `Legacy project "${params.legacyProjectId}" has no v6 mapping`, 'NOT_FOUND');
+  jsonResponse(res, 200, view);
+});
+
+// ── E5: Closed-Loop Kaizen Ledger (#2980) ──
+
+route('POST', '/api/v6/kaizen/items', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'detect a Kaizen item')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, e5.detectItem(v6Db(), {
+    originSprint: b.originSprint, findingId: b.findingId, defectCategory: b.defectCategory,
+    rootCause: b.rootCause, originEvidenceRefs: b.originEvidenceRefs, correctiveActionSpec: b.correctiveActionSpec,
+    ownerRole: b.ownerRole, ownerLane: b.ownerLane, linkedIssueId: b.linkedIssueId, linkedPrId: b.linkedPrId,
+    linkedRuleId: b.linkedRuleId, verificationClass: b.verificationClass, targetMetric: b.targetMetric,
+    logicalProjectId: b.logicalProjectId
+  }), 201);
+});
+
+route('GET', '/api/v6/kaizen/items/:id', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a Kaizen item')) return;
+  const item = e5.getItem(v6Db(), params.id);
+  if (!item) return errorResponse(res, 404, `Kaizen item "${params.id}" not found`, 'NOT_FOUND');
+  jsonResponse(res, 200, item);
+});
+
+route('GET', '/api/v6/kaizen/items/:id/measurements', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a Kaizen item\'s measurements')) return;
+  jsonResponse(res, 200, e5.listMeasurements(v6Db(), params.id));
+});
+
+// CRITICAL (Charter A512 checklist (g)): a transition to 'Effectiveness
+// Measured' or 'Closed' is dispatched to markProvenEffective/closeItem, NOT
+// to advanceLifecycle directly — advanceLifecycle itself refuses both
+// (Architect Ruling A535, PR #3009) precisely so no caller, HTTP included,
+// can reach either state without the 4-Class proof rules/close precondition
+// actually running.
+route('PATCH', '/api/v6/kaizen/items/:id/state', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'change a Kaizen item\'s lifecycle state')) return;
+  const b = _v6Body(body);
+  let result;
+  if (b.nextState === 'Effectiveness Measured') result = e5.markProvenEffective(v6Db(), { id: params.id });
+  else if (b.nextState === 'Closed') result = e5.closeItem(v6Db(), { id: params.id });
+  else result = e5.advanceLifecycle(v6Db(), { id: params.id, nextState: b.nextState });
+  _v6Respond(res, result);
+});
+
+route('POST', '/api/v6/kaizen/items/:id/measurements', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'record a Kaizen measurement')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, e5.recordMeasurement(v6Db(), {
+    kaizenId: params.id, sprintVersion: b.sprintVersion, measurementKind: b.measurementKind,
+    passed: b.passed, recurrenceCount: b.recurrenceCount, metricValue: b.metricValue,
+    baselineValue: b.baselineValue, evidenceRef: b.evidenceRef, notes: b.notes
+  }), 201);
+});
+
+// Dry-run: answers whether the 4-Class proof rules would pass right now,
+// without mutating anything — PATCH .../state is what actually commits.
+route('POST', '/api/v6/kaizen/items/:id/evaluate-effectiveness', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'evaluate a Kaizen item\'s effectiveness')) return;
+  const item = e5.getItem(v6Db(), params.id);
+  if (!item) return errorResponse(res, 404, `Kaizen item "${params.id}" not found`, 'NOT_FOUND');
+  _v6Respond(res, e5.canMarkProvenEffective(item, e5.listMeasurements(v6Db(), params.id)));
+});
+
+// PRR-B R1: markRegressed() itself only checks effectiveness_status, not
+// lifecycle_state — a Closed item (lifecycle_state: 'Closed') can still
+// carry effectiveness_status: 'PROVEN_EFFECTIVE' (closeItem never changes
+// it), so without this check a Closed item could flip to REGRESSED and
+// become invisible to gate0Feed (Closed is not a GATE0_OPEN_STATE) with no
+// way to see or act on the regression. Refused here rather than in
+// lib/v6/e5-kaizen-ledger.js, which this car's file envelope does not
+// include.
+route('POST', '/api/v6/kaizen/items/:id/mark-regressed', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'mark a Kaizen item regressed')) return;
+  const item = e5.getItem(v6Db(), params.id);
+  if (item && item.lifecycle_state === 'Closed') {
+    return _v6Respond(res, { ok: false, code: 'INVALID_TRANSITION' });
+  }
+  _v6Respond(res, e5.markRegressed(v6Db(), { id: params.id }));
+});
+
+route('POST', '/api/v6/kaizen/items/:id/gate0-disposition', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'set a Kaizen item\'s Gate 0 disposition')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, e5.setGate0Disposition(v6Db(), { id: params.id, disposition: b.disposition, rationale: b.rationale }));
+});
+
+route('GET', '/api/v6/kaizen/gate0-feed', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'read the Gate 0 Kaizen feed')) return;
+  const query = parseQuery(reqUrl(req).search);
+  jsonResponse(res, 200, e5.gate0Feed(v6Db(), { logicalProjectId: query.logicalProjectId || undefined }));
+});
+
+// ── Sprint Report Validator v3 (#2979) ──
+
+// Sprint report HTML can run well past the kernel's 10 KB default (a real
+// multi-version retrospective is commonly hundreds of KB), so this route
+// overrides maxBodySize rather than making every other route pay for it.
+route('POST', '/api/v6/sprint-reports/validate', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'validate a sprint report')) return;
+  const b = _v6Body(body);
+  if (typeof b.html !== 'string' || !b.html) {
+    return errorResponse(res, 400, 'html must be a non-empty string', 'BAD_REQUEST');
+  }
+  const options = {};
+  if (b.mode === 'retrospective') options.mode = 'retrospective';
+  if (b.sourcesLock && typeof b.sourcesLock === 'object') options.sourcesLock = b.sourcesLock;
+  if (b.roadmapData && typeof b.roadmapData === 'object') options.roadmapData = b.roadmapData;
+  if (Array.isArray(b.corpus)) options.corpus = b.corpus;
+  if (Array.isArray(b.legTexts)) options.legTexts = b.legTexts;
+  if (Number.isSafeInteger(b.contaminationMinWords)) options.contaminationMinWords = b.contaminationMinWords;
+  if (Array.isArray(b.priorLedgerSnapshot)) options.priorLedgerSnapshot = b.priorLedgerSnapshot;
+  if (typeof b.version === 'string') options.version = b.version;
+  const result = v3Validator.validateReport(b.html, options);
+  jsonResponse(res, 200, result);
+}, { maxBodySize: 2 * 1024 * 1024 });
+
+// ── Authority Service (#1149) ──
+// getEffective/backfillProject/backfillAll/detectDrift take no `auth` —
+// only setPolicy/mintLease/revokeLease/mintApproval/revokeApproval do, and
+// go through _v6OperatorAuthorize.
+
+route('GET', '/api/v6/projects/:id/authority/:key', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a project authority policy')) return;
+  const projectId = Number(params.id);
+  _v6Respond(res, authorityService.getEffective(v6Db(), projectId, params.key));
+});
+
+route('PUT', '/api/v6/projects/:id/authority/:key', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'write a project authority policy')) return;
+  const projectId = Number(params.id);
+  const b = _v6Body(body);
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'project.writePolicy');
+  if (!authz) return;
+  const { principalId, auth } = authz;
+  _v6Respond(res, authorityService.setPolicy(v6Db(), {
+    projectId, key: params.key, value: b.value, expectedVersion: b.expectedVersion,
+    principalId, requestId: b.requestId || v6Crypto.randomUUID(), auth,
+    // The route's own operatorProjectCaller check is the operator proof
+    // setPolicy's own `operator`-writer-class fields (fleetCoordinator,
+    // launchSequence.recoveryMode) require — a second, independent proof
+    // inside the library would only re-ask the question this route already
+    // answered.
+    operatorProof: true
+  }));
+});
+
+route('POST', '/api/v6/projects/:id/authority/backfill', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'backfill a project\'s authority policies')) return;
+  _v6Respond(res, authorityService.backfillProject(v6Db(), Number(params.id)), 201);
+});
+
+route('GET', '/api/v6/projects/:id/authority-drift', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a project\'s authority drift')) return;
+  const drift = authorityService.detectDrift(v6Db(), Number(params.id));
+  jsonResponse(res, 200, { drift });
+});
+
+// Ruling A553-PR3010-R3-HOLD-P08-ROUND4-COSIGN: a lease's `actor` is the
+// identity g1-approvals' P08 check later compares the approving operator
+// against — a client-supplied `b.actor` would let a signed-in operator
+// mint a lease under any name they choose and then approve it as a
+// "different" actor. Same session-resolution fallback as g1-approvals.
+route('POST', '/api/v6/projects/:id/g1-leases', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'mint a G1 lease')) return;
+  const projectId = Number(params.id);
+  const b = _v6Body(body);
+  const session = req.tcSession || _gateIdentity(req, req.socket, '/api/v6/projects').session;
+  if (!session || session.userId == null) {
+    return _v6Respond(res, { ok: false, code: 'SIGNED_IN_OPERATOR_REQUIRED' });
+  }
+  const actor = String(session.username || session.userId);
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'g1.mintLease');
+  if (!authz) return;
+  const { principalId, auth } = authz;
+  _v6Respond(res, authorityService.mintLease(v6Db(), {
+    principalId, auth, projectId, actor, repo: b.repo,
+    connectionEpoch: b.connectionEpoch, actions: b.actions, ttlMs: b.ttlMs
+  }), 201);
+});
+
+route('POST', '/api/v6/projects/:id/g1-leases/:leaseId/revoke', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'revoke a G1 lease')) return;
+  const projectId = Number(params.id);
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'g1.revokeLease');
+  if (!authz) return;
+  const { principalId, auth } = authz;
+  _v6Respond(res, authorityService.revokeLease(v6Db(), { principalId, auth, projectId, leaseId: params.leaseId }));
+});
+
+// PRR-A R1+R2 (P08): a G1 approval records WHO approved it — operatorActor is
+// not a claim the request body gets to make (a client-supplied role string
+// is not authority, the same principle operatorProjectCaller itself rests
+// on). The `signedInOperator` route option is deliberately NOT used here:
+// the dispatcher enforces it only via req.tcSession, which the gate leaves
+// null whenever authGate.standsDown() is true (#2378's own documented
+// limit) — the exact fallback below (req.tcSession || _gateIdentity(...))
+// exists so a real signed-in session still resolves under a stood-down
+// gate, and the dispatcher-level option would refuse the request before
+// this handler ever got the chance to apply it. P08 also requires the
+// approval's minter be a DIFFERENT operator from whoever minted the G1
+// lease it approves — authority-service.js's own module doc defers this
+// cross-request identity check to this route layer, since the schema
+// carries no column tying an approval back to its lease's minting actor.
+route('POST', '/api/v6/projects/:id/g1-approvals', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'mint a G1 approval')) return;
+  const projectId = Number(params.id);
+  const b = _v6Body(body);
+  const session = req.tcSession || _gateIdentity(req, req.socket, '/api/v6/projects').session;
+  if (!session || session.userId == null) {
+    return _v6Respond(res, { ok: false, code: 'SIGNED_IN_OPERATOR_REQUIRED' });
+  }
+  const operatorActor = String(session.username || session.userId);
+  // Ruling A553-PR3010-R3-HOLD-P08-ROUND4-COSIGN: .get() only ever
+  // inspects ONE row, so a second active lease for the same (project_id,
+  // repo) — minted by a different actor — hid a matching one from view.
+  // .all() over every active, unrevoked, unexpired lease for this exact
+  // project+repo fixes that; an approval naming no such lease at all, or
+  // a leaseId that doesn't match one of them, fails closed with 404 —
+  // there is nothing live for this approval to concern.
+  const activeLeases = v6Db().prepare(
+    'SELECT id, actor FROM v6_g1_leases WHERE project_id = ? AND repo = ? AND revoked_at IS NULL AND expires_at > ?'
+  ).all(projectId, String(b.repo || ''), Date.now());
+  if (activeLeases.length === 0 || (b.leaseId != null && !activeLeases.some((l) => l.id === String(b.leaseId)))) {
+    return _v6Respond(res, { ok: false, code: 'NOT_FOUND' });
+  }
+  if (activeLeases.some((l) => l.actor === operatorActor)) {
+    return _v6Respond(res, { ok: false, code: 'DISTINCT_OPERATOR_REQUIRED' });
+  }
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'g1.mintApproval');
+  if (!authz) return;
+  const { principalId, auth } = authz;
+  _v6Respond(res, authorityService.mintApproval(v6Db(), {
+    principalId, auth, projectId, operatorActor, action: b.action,
+    repo: b.repo, targetDigest: b.targetDigest, ttlMs: b.ttlMs
+  }), 201);
+});
+
+route('POST', '/api/v6/projects/:id/g1-approvals/:approvalId/revoke', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'revoke a G1 approval')) return;
+  const projectId = Number(params.id);
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'g1.revokeApproval');
+  if (!authz) return;
+  const { principalId, auth } = authz;
+  _v6Respond(res, authorityService.revokeApproval(v6Db(), { principalId, auth, projectId, approvalId: params.approvalId }));
+});
+
+// ── Transition Ledger & Reconciler (#2977) ──
+
+route('POST', '/api/v6/projects/:id/transitions', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'begin a runtime transition')) return;
+  const projectId = Number(params.id);
+  const b = _v6Body(body);
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'runtime.createTransition');
+  if (!authz) return;
+  const { principalId, auth } = authz;
+  const { request } = transitionLedger.createRuntimeTransitions(v6Db(), auth);
+  _v6Respond(res, request({
+    principalId, projectId, resourceId: b.resourceId, action: b.action,
+    expectedGeneration: b.expectedGeneration, key: b.key, detail: b.detail
+  }), 201);
+});
+
+route('POST', '/api/v6/projects/:id/transitions/:transitionId/settle', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'settle a runtime transition')) return;
+  const projectId = Number(params.id);
+  const b = _v6Body(body);
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'runtime.reconcile');
+  if (!authz) return;
+  const { principalId, auth } = authz;
+  const { settle } = transitionLedger.createRuntimeTransitions(v6Db(), auth);
+  _v6Respond(res, settle({ principalId, projectId, id: params.transitionId, state: b.state, evidence: b.evidence }));
+});
+
+// Reconciliation's five probes (SQLite, tmux, Git, PortHub, Medusa) are
+// "production integration adapters this car does not provide" per
+// transition-ledger.js's own doc comment — the caller (an orchestrator
+// that has already gathered its own live observations) submits them as
+// `observations.<surface>`, and each probe here just replays what was
+// submitted; reconcile() itself still does the actual finding logic.
+route('POST', '/api/v6/projects/:id/reconcile', async (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'reconcile a runtime resource')) return;
+  const projectId = Number(params.id);
+  const b = _v6Body(body);
+  if (!b.resource || typeof b.resource !== 'object' || !b.resource.id) {
+    return errorResponse(res, 400, 'resource (with an id) is required', 'BAD_REQUEST');
+  }
+  const observations = (b.observations && typeof b.observations === 'object') ? b.observations : {};
+  const probes = {};
+  for (const surface of transitionLedger.SURFACES) {
+    probes[surface] = async () => observations[surface] || { status: 'unknown' };
+  }
+  const result = await transitionLedger.reconcile(b.resource, probes);
+  const written = transitionLedger.persistFindings(v6Db(), projectId, b.resource.id, result);
+  jsonResponse(res, 200, { ...result, written });
+});
+
+// ── Incident & Recovery Registry (#2978) ──
+
+route('POST', '/api/v6/projects/:id/incidents', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'report runtime incident evidence')) return;
+  const projectId = Number(params.id);
+  const b = _v6Body(body);
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'runtime.recover');
+  if (!authz) return;
+  const { principalId, auth } = authz;
+  const { step } = incidentRegistry.createRuntimeIncidents(v6Db(), auth);
+  _v6Respond(res, step({
+    principalId, projectId, fingerprint: b.fingerprint, generation: b.generation,
+    action: b.action, health: b.health, evidence: b.evidence, verification: b.verification
+  }), 201);
+});
 
 // ── Server Creation ──
 
