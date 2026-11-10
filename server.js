@@ -216,6 +216,7 @@ const d1 = require('./lib/v6/d1-model-attestation');
 const e1 = require('./lib/v6/e1-doc-planes-context-compiler');
 const g3 = require('./lib/v6/g3-medusa-isolation');
 const h1 = require('./lib/v6/h1-branding-policy');
+const transcript = require('./lib/transcript');
 const v6Crypto = require('node:crypto');
 
 const log = createLogger('server');
@@ -8856,6 +8857,67 @@ function _v6RedactConversationContent(raw) {
   return scrubbed;
 }
 
+/**
+ * Checkpoint-TRUNCATE the WAL and report whether a concurrent reader
+ * blocked it (ADR 0026 §3.4.4 item 1: "report walCheckpointPending: true if
+ * blocked by a concurrent reader and checkpoint on release"). A blocked
+ * checkpoint schedules a bounded, unref'd background retry rather than
+ * reporting `busy` once and giving up.
+ *
+ * This repo's own database runs in SQLite's default rollback-journal mode —
+ * confirmed by grepping the whole codebase for `journal_mode`: nothing
+ * anywhere sets `WAL`. Against a non-WAL database `wal_checkpoint` is a
+ * harmless no-op that always reports `busy: 0, log: -1, checkpointed: -1`
+ * (verified directly against a real `node:sqlite` `DatabaseSync`), so
+ * `walCheckpointPending` is always `false` in production today; this only
+ * does real work if the database is ever switched into WAL mode.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @returns {boolean} walCheckpointPending
+ */
+function _v6WalCheckpointTruncate(db) {
+  const row = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').all()[0];
+  const pending = Boolean(row && Number(row.busy) > 0);
+  if (pending) {
+    let attempts = 0;
+    const retry = () => {
+      try {
+        const r = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').all()[0];
+        if (r && Number(r.busy) > 0 && ++attempts < 10) setTimeout(retry, 25).unref();
+      } catch {
+        // db closed/unavailable between retries -- nothing left to retry against
+      }
+    };
+    setTimeout(retry, 25).unref();
+  }
+  return pending;
+}
+
+/**
+ * External engine transcripts a conversation-event deletion can never reach
+ * (ADR 0026 §3.4.4 item 3). Claude/Codex resolve through the SAME
+ * `lib/transcript.js` adapter CC-4b uses to snapshot them at wrap, scoped by
+ * project path + session timing — never a blanket home-directory existence
+ * check (`fs.existsSync('~/.claude')`), which would read as present on
+ * nearly every TangleClaw host regardless of whether THIS session actually
+ * has a matching transcript. Aider has no adapter there yet
+ * (`lib/transcript.js`'s own `aider: { resolve: () => null }` stub, #2074
+ * "implement when needed"), so this checks its documented convention
+ * (`<project>/.aider.chat.history.md`) directly, without expanding that
+ * module's own, differently-scoped envelope.
+ * @param {{path: string}} project
+ * @param {{engineId: string, startedAt: string, endedAt: string}} session
+ * @returns {string[]}
+ */
+function _v6ExternalTranscriptLocations(project, session) {
+  const harness = transcript._normalizeHarness(session.engineId);
+  if (harness === 'aider') {
+    const aiderHistory = path.join(project.path, '.aider.chat.history.md');
+    return fs.existsSync(aiderHistory) ? [aiderHistory] : [];
+  }
+  const resolved = transcript.resolve(harness, project.path, session);
+  return resolved ? [resolved] : [];
+}
+
 // ── Operator trust bootstrap for authority-service.js/transition-ledger.js/
 // incident-registry.js (Architect Ruling A546 part 1, the service-principal
 // alternative to part 2 — see the section comment above) ──
@@ -9523,8 +9585,16 @@ route('DELETE', '/api/v6/projects/:id/sessions/:sessionId/conversation/events/:e
     // actually shrinks wal back to empty, so the pre-overwrite page
     // doesn't linger in a file this route's caller otherwise has no way
     // to inspect or force-clear later.
-    db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').all();
-    result = { ...result, residual_locations: [] };
+    const walCheckpointPending = _v6WalCheckpointTruncate(db);
+    const residualLocations = walCheckpointPending ? ['sqlite:tangleclaw.db-wal'] : [];
+    const sessionRow = db.prepare('SELECT engine_id, started_at, ended_at FROM sessions WHERE id = ?').get(Number(params.sessionId));
+    const projectRow = db.prepare('SELECT path FROM projects WHERE id = ?').get(Number(params.id));
+    if (sessionRow && projectRow) {
+      residualLocations.push(..._v6ExternalTranscriptLocations(projectRow, {
+        engineId: sessionRow.engine_id, startedAt: sessionRow.started_at, endedAt: sessionRow.ended_at
+      }));
+    }
+    result = { ...result, walCheckpointPending, residual_locations: residualLocations };
   }
   _v6Respond(res, result);
 });

@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { DatabaseSync } = require('node:sqlite');
 const store = require('../lib/store');
 const { handleRequest } = require('../server');
 
@@ -247,6 +248,66 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       assert.equal(row.content, '[DELETED]');
       assert.equal(row.rolling_line_sha256, null);
       assert.deepEqual(json(del1).residual_locations, [], 'TRUNCATE checkpoint leaves nothing to report as residual');
+    });
+
+    it('reports walCheckpointPending and a WAL residual while a concurrent reader blocks the TRUNCATE checkpoint, then clears once it releases (ADR 0026 §3.4.4 item 1)', async () => {
+      // This repo's real database runs in SQLite's default rollback-journal
+      // mode (nothing anywhere sets journal_mode=WAL), where wal_checkpoint
+      // is a harmless always-non-busy no-op -- so this test opts the shared
+      // fixture db INTO WAL mode itself, to prove the retry mechanism works
+      // correctly if the database is ever run in WAL mode, not because
+      // today's real deployment hits this path.
+      const db = store.getDb();
+      db.exec('PRAGMA journal_mode=WAL');
+      try {
+        const projectId = await seedProject('b2-wal-pending');
+        const sessionId = await seedSession(projectId, 'claude');
+        const append = await post(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`, {
+          launchId: 'l1', seq: 1, tier: 'A', adapter: 'claude', role: 'assistant', content: 'x'
+        });
+        const { id } = json(append);
+
+        const dbPath = path.join(tempDir, 'tangleclaw.db');
+        const reader = new DatabaseSync(dbPath);
+        reader.exec('BEGIN');
+        reader.prepare('SELECT COUNT(*) AS n FROM conversation_events').get();
+        try {
+          const del1 = await del(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events/${id}`);
+          assert.equal(del1.statusCode, 200, del1.body);
+          const body = json(del1);
+          assert.equal(body.walCheckpointPending, true);
+          assert.ok(body.residual_locations.includes('sqlite:tangleclaw.db-wal'), JSON.stringify(body.residual_locations));
+        } finally {
+          reader.exec('COMMIT');
+          reader.close();
+        }
+
+        await new Promise((r) => setTimeout(r, 150));
+        const confirmCkpt = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').all()[0];
+        assert.equal(confirmCkpt.busy, 0, 'WAL must not stay stuck once the reader releases');
+      } finally {
+        db.exec('PRAGMA journal_mode=DELETE');
+      }
+    });
+
+    it('enumerates an existing .aider.chat.history.md as a residual location, with walCheckpointPending false when no reader is open (ADR 0026 §3.4.4 item 3)', async () => {
+      const projectName = 'b2-aider-transcript';
+      const projectId = await seedProject(projectName);
+      const projectPath = path.join(tempDir, projectName);
+      fs.mkdirSync(projectPath, { recursive: true });
+      const transcriptPath = path.join(projectPath, '.aider.chat.history.md');
+      fs.writeFileSync(transcriptPath, '# aider chat history\n');
+      const sessionId = await seedSession(projectId, 'aider');
+      const append = await post(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`, {
+        launchId: 'l1', seq: 1, tier: 'B', adapter: 'aider', role: 'assistant', content: 'x',
+        paneCursorWatermark: 0, rollingLineSha256: 'b'.repeat(64)
+      });
+      const { id } = json(append);
+      const del1 = await del(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events/${id}`);
+      assert.equal(del1.statusCode, 200, del1.body);
+      const body = json(del1);
+      assert.equal(body.walCheckpointPending, false);
+      assert.ok(body.residual_locations.includes(transcriptPath), JSON.stringify(body.residual_locations));
     });
   });
 
