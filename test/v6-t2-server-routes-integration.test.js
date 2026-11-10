@@ -158,6 +158,72 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       assert.equal(res.statusCode, 200, res.body);
       assert.equal(json(res).tier, 'A');
     });
+
+    it('404s append/replay/delete when sessionId does not belong to the named project (Ruling A581)', async () => {
+      const projectId = await seedProject('b2-wrong-project');
+      const otherProjectId = await seedProject('b2-other-project');
+      const sessionId = await seedSession(otherProjectId, 'claude');
+      const append = await post(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`, {
+        launchId: 'l1', seq: 1, tier: 'A', adapter: 'claude', role: 'assistant', content: 'x'
+      });
+      assert.equal(append.statusCode, 404, append.body);
+      const replay = await get(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`);
+      assert.equal(replay.statusCode, 404, replay.body);
+      const del1 = await del(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events/1`);
+      assert.equal(del1.statusCode, 404, del1.body);
+    });
+
+    it('404s deleting an event that belongs to a DIFFERENT session on the same project (Ruling A581)', async () => {
+      const projectId = await seedProject('b2-cross-session-delete');
+      const sessionA = await seedSession(projectId, 'claude');
+      const sessionB = await seedSession(projectId, 'claude');
+      const append = await post(`/api/v6/projects/${projectId}/sessions/${sessionA}/conversation/events`, {
+        launchId: 'l1', seq: 1, tier: 'A', adapter: 'claude', role: 'assistant', content: 'x'
+      });
+      const { id } = json(append);
+      const del1 = await del(`/api/v6/projects/${projectId}/sessions/${sessionB}/conversation/events/${id}`);
+      assert.equal(del1.statusCode, 404, del1.body);
+    });
+
+    it('redacts a secret-shaped content server-side, ignoring a caller-supplied redacted: false (Ruling A581)', async () => {
+      const projectId = await seedProject('b2-redaction');
+      const sessionId = await seedSession(projectId, 'claude');
+      const append = await post(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`, {
+        launchId: 'l1', seq: 1, tier: 'A', adapter: 'claude', role: 'assistant',
+        content: 'here is my token: Bearer abc123XYZ.def-456', redacted: false
+      });
+      assert.equal(append.statusCode, 201, append.body);
+      const replay = await get(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`);
+      const event = json(replay).events[0];
+      assert.doesNotMatch(event.content, /abc123XYZ/);
+      assert.match(event.content, /\[REDACTED\]/);
+      assert.equal(event.redacted, 1);
+    });
+
+    it('does not mark ordinary content redacted', async () => {
+      const projectId = await seedProject('b2-no-redaction');
+      const sessionId = await seedSession(projectId, 'claude');
+      const append = await post(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`, {
+        launchId: 'l1', seq: 1, tier: 'A', adapter: 'claude', role: 'assistant', content: 'just a normal message'
+      });
+      const replay = await get(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`);
+      assert.equal(json(replay).events[0].redacted, 0);
+    });
+
+    it('overwrites the stored content and clears rolling_line_sha256 on delete, rather than merely soft-deleting (Ruling A581)', async () => {
+      const projectId = await seedProject('b2-secure-overwrite');
+      const sessionId = await seedSession(projectId, 'aider');
+      const append = await post(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`, {
+        launchId: 'l1', seq: 1, tier: 'B', adapter: 'aider', role: 'assistant', content: 'sensitive pane text',
+        paneCursorWatermark: 0, rollingLineSha256: 'a'.repeat(64)
+      });
+      const { id } = json(append);
+      const del1 = await del(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events/${id}`);
+      assert.equal(del1.statusCode, 200, del1.body);
+      const row = store.getDb().prepare('SELECT content, rolling_line_sha256 FROM conversation_events WHERE id = ?').get(id);
+      assert.equal(row.content, '[DELETED]');
+      assert.equal(row.rolling_line_sha256, null);
+    });
   });
 
   describe('B4: Telemetry Header routes (#2983)', () => {
@@ -195,6 +261,24 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       const res = await get('/api/v6/fleet-templates/not-a-real-template');
       assert.equal(res.statusCode, 404, res.body);
     });
+
+    it('404s admit for an unknown template, before checking the plan shape (Ruling A581)', async () => {
+      const res = await post('/api/v6/fleet-templates/not-a-real-template/admit', { plan: {}, seatId: 'x' });
+      assert.equal(res.statusCode, 404, res.body);
+    });
+
+    it('400s admit for a malformed plan (missing immediateSeats/deferredSeats arrays)', async () => {
+      const res = await post('/api/v6/fleet-templates/small-4-seat/admit', { plan: { immediateSeats: [] }, seatId: 'x' });
+      assert.equal(res.statusCode, 400, res.body);
+      assert.equal(json(res).code, 'INVALID_REQUEST');
+    });
+
+    it('400s admit when plan.templateId does not match the template named in the URL', async () => {
+      const plan = json(await post('/api/v6/fleet-templates/small-4-seat/plan', {}));
+      const res = await post('/api/v6/fleet-templates/recommended-10-role/admit', { plan, seatId: 'architect' });
+      assert.equal(res.statusCode, 400, res.body);
+      assert.equal(json(res).code, 'INVALID_REQUEST');
+    });
   });
 
   describe('D1: Model Attestation routes (#2985)', () => {
@@ -221,6 +305,20 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       const res = await get(`/api/v6/projects/${projectId}/sessions/${sessionId}/attestations/1`);
       assert.equal(res.statusCode, 404, res.body);
     });
+
+    it('404s record/read when sessionId does not belong to the named project (Ruling A581)', async () => {
+      const projectId = await seedProject('d1-wrong-project');
+      const otherProjectId = await seedProject('d1-other-project');
+      const sessionId = await seedSession(otherProjectId);
+      const record = await post(`/api/v6/projects/${projectId}/sessions/${sessionId}/attestations`, {
+        generation: 1, engineId: 'claude', source: 'unavailable', confidence: 'unavailable'
+      });
+      assert.equal(record.statusCode, 404, record.body);
+      const history = await get(`/api/v6/projects/${projectId}/sessions/${sessionId}/attestations`);
+      assert.equal(history.statusCode, 404, history.body);
+      const one = await get(`/api/v6/projects/${projectId}/sessions/${sessionId}/attestations/1`);
+      assert.equal(one.statusCode, 404, one.body);
+    });
   });
 
   describe('E1: 4-Plane Documentation Model routes (#1151)', () => {
@@ -236,6 +334,12 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       assert.equal(json(res).code, 'DOC_AUTHORING_GRANT_REQUIRED');
     });
 
+    it('ignores a caller-supplied grant -- it is a claim, not proof, with no real issuance mechanism behind this route (Ruling A581)', async () => {
+      const res = await post('/api/v6/doc-planes/write-boundary', { path: 'README.md', grant: { path: 'README.md', grantedBy: 'self-asserted' } });
+      assert.equal(res.statusCode, 403, res.body);
+      assert.equal(json(res).code, 'DOC_AUTHORING_GRANT_REQUIRED');
+    });
+
     it('compiles a context bundle, excluding historical-archive by default', async () => {
       const res = await post('/api/v6/doc-planes/context-bundle', { paths: ['CLAUDE.md', 'archive/x.md'] });
       assert.equal(res.statusCode, 200, res.body);
@@ -244,9 +348,32 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       assert.equal(result.included[0].path, 'CLAUDE.md');
     });
 
-    it('syncs and validates the SSOT index against this server\'s own checkout', async () => {
+    it('400s a context bundle whose paths include an absolute path, rather than reading it from the real filesystem (Ruling A581)', async () => {
+      const res = await post('/api/v6/doc-planes/context-bundle', { paths: ['/etc/passwd'] });
+      assert.equal(res.statusCode, 400, res.body);
+      assert.equal(json(res).code, 'INVALID_REQUEST');
+    });
+
+    it('400s a context bundle whose paths escape the project root via ".."', async () => {
+      const res = await post('/api/v6/doc-planes/context-bundle', { paths: ['../../../../../etc/passwd'] });
+      assert.equal(res.statusCode, 400, res.body);
+      assert.equal(json(res).code, 'INVALID_REQUEST');
+    });
+
+    it('400s a context bundle whose paths array contains a non-string entry', async () => {
+      const res = await post('/api/v6/doc-planes/context-bundle', { paths: [42] });
+      assert.equal(res.statusCode, 400, res.body);
+      assert.equal(json(res).code, 'INVALID_REQUEST');
+    });
+
+    it('syncs and validates the SSOT index into store._getBasePath(), never the real checkout (Ruling A581)', async () => {
+      const indexPath = path.join(tempDir, 'ssot-index.json');
+      assert.equal(fs.existsSync(indexPath), false, 'precondition: nothing there yet');
       const sync = await post('/api/v6/doc-planes/ssot-index/sync', {});
       assert.equal(sync.statusCode, 201, sync.body);
+      assert.equal(fs.existsSync(indexPath), true, 'the index must land inside store._getBasePath()');
+      assert.equal(fs.existsSync(path.join(__dirname, '..', '.tangleclaw', 'ssot-index.json')), false,
+        'the real checkout must never be mutated by a route test');
       const validate = await get('/api/v6/doc-planes/ssot-index/validate');
       assert.equal(validate.statusCode, 200, validate.body);
       assert.equal(json(validate).ok, true);
@@ -278,6 +405,17 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
     it('refuses a different project with MEDUSA_CROSS_PROJECT_DENIED when no link exists', async () => {
       const projectId = await seedProject('g3-route-denied');
       const res = await post(`/api/v6/projects/${projectId}/medusa-access-check`, { targetProjectId: projectId + 999 });
+      assert.equal(res.statusCode, 403, res.body);
+      assert.equal(json(res).code, 'MEDUSA_CROSS_PROJECT_DENIED');
+    });
+
+    it('ignores a caller-supplied crossProjectLinks -- it is a claim, not proof, with no real link table behind this route (Ruling A581)', async () => {
+      const projectId = await seedProject('g3-forged-link');
+      const targetProjectId = projectId + 999;
+      const res = await post(`/api/v6/projects/${projectId}/medusa-access-check`, {
+        targetProjectId,
+        crossProjectLinks: [{ fromProjectId: projectId, toProjectId: targetProjectId, bidirectional: true }]
+      });
       assert.equal(res.statusCode, 403, res.body);
       assert.equal(json(res).code, 'MEDUSA_CROSS_PROJECT_DENIED');
     });

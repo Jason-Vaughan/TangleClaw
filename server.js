@@ -8794,6 +8794,60 @@ function _v6RespondAllowed(res, result, successStatus = 200) {
 
 const v6Db = () => store.getDb();
 
+/**
+ * Verify `(params.sessionId, params.id)` names a real session belonging to
+ * that project, before any B2/D1 session-scoped route reads or writes
+ * through it — PRR-A/Arc R1 HOLD (Ruling A581-PR3016-R1-HOLD-RECONCILED):
+ * without this, a caller could name any session id alongside any project
+ * id in the URL and the two were never cross-checked against each other.
+ * @param {http.ServerResponse} res
+ * @param {{id: string, sessionId: string}} params
+ * @returns {boolean} true when the session exists and belongs to the project
+ */
+function _v6RequireProjectSession(res, params) {
+  const row = v6Db().prepare('SELECT id FROM sessions WHERE id = ? AND project_id = ?')
+    .get(Number(params.sessionId), Number(params.id));
+  if (!row) {
+    errorResponse(res, 404, `Session ${params.sessionId} not found for project ${params.id}`, 'NOT_FOUND');
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Secret-shaped substrings a conversation event's `content` must never
+ * reach SQLite/SSE carrying verbatim — PRR-A/PRR-B R1 HOLD (Ruling
+ * A581-PR3016-R1-HOLD-RECONCILED). #2982's own text names
+ * `lib/secret-redactor.js` for this; verified it does not exist anywhere
+ * in this repo (grep, no match) and is not in this car's envelope either
+ * way, so this is a denylist of known credential shapes (bearer tokens,
+ * `sk-`/`gh*_`/`xox*-`/AKIA-prefixed keys, a labeled password/secret/
+ * token/api-key assignment) scoped to THIS route only — a real, shared
+ * `lib/secret-redactor.js` is future work, not a claim this comment
+ * repeats without having checked.
+ * @type {RegExp[]}
+ */
+const V6_SECRET_PATTERNS = Object.freeze([
+  /Bearer\s+[A-Za-z0-9._\-+/=]+/gi,
+  /\bsk-[A-Za-z0-9_-]{8,}\b/gi,
+  /\bgh[pousr]_[A-Za-z0-9_]{8,}\b/gi,
+  /\bxox[baprs]-[A-Za-z0-9-]{8,}\b/gi,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /(?:password|secret|token|api[_-]?key)\s*[:=]\s*[^\s,"']+/gi
+]);
+
+/**
+ * Scrub every known secret shape out of `raw`, replacing each match with
+ * `[REDACTED]`.
+ * @param {string} raw
+ * @returns {string}
+ */
+function _v6RedactConversationContent(raw) {
+  let scrubbed = raw;
+  for (const pattern of V6_SECRET_PATTERNS) scrubbed = scrubbed.replace(pattern, '[REDACTED]');
+  return scrubbed;
+}
+
 // ── Operator trust bootstrap for authority-service.js/transition-ledger.js/
 // incident-registry.js (Architect Ruling A546 part 1, the service-principal
 // alternative to part 2 — see the section comment above) ──
@@ -9410,16 +9464,25 @@ route('POST', '/api/v6/projects/:id/incidents', (req, res, params, body) => {
 
 route('POST', '/api/v6/projects/:id/sessions/:sessionId/conversation/events', (req, res, params, body) => {
   if (!operatorProjectCaller(req, res, 'append a conversation event')) return;
+  if (!_v6RequireProjectSession(res, params)) return;
   const b = _v6Body(body);
+  // PRR-A/PRR-B R1 HOLD: scrub before persistence, server-side, never
+  // trusting a client-supplied `redacted` claim — a caller that already
+  // knows its content is secret-bearing could otherwise ship the raw
+  // secret while asserting `redacted: true` and have this route believe it.
+  const rawContent = b.content;
+  const scrubbedContent = typeof rawContent === 'string' ? _v6RedactConversationContent(rawContent) : rawContent;
+  const redacted = typeof rawContent === 'string' && scrubbedContent !== rawContent;
   _v6Respond(res, b2.appendEvent(v6Db(), {
     projectId: Number(params.id), sessionId: Number(params.sessionId), launchId: b.launchId, seq: b.seq,
-    tier: b.tier, adapter: b.adapter, role: b.role, content: b.content,
-    paneCursorWatermark: b.paneCursorWatermark, rollingLineSha256: b.rollingLineSha256, redacted: b.redacted === true
+    tier: b.tier, adapter: b.adapter, role: b.role, content: scrubbedContent,
+    paneCursorWatermark: b.paneCursorWatermark, rollingLineSha256: b.rollingLineSha256, redacted
   }), 201);
 });
 
 route('GET', '/api/v6/projects/:id/sessions/:sessionId/conversation/events', (req, res, params) => {
   if (!operatorProjectCaller(req, res, 'replay conversation events')) return;
+  if (!_v6RequireProjectSession(res, params)) return;
   const query = parseQuery(reqUrl(req).search);
   const events = b2.getEvents(v6Db(), {
     sessionId: Number(params.sessionId),
@@ -9431,7 +9494,24 @@ route('GET', '/api/v6/projects/:id/sessions/:sessionId/conversation/events', (re
 
 route('DELETE', '/api/v6/projects/:id/sessions/:sessionId/conversation/events/:eventId', (req, res, params) => {
   if (!operatorProjectCaller(req, res, 'delete a conversation event')) return;
-  _v6Respond(res, b2.softDeleteEvent(v6Db(), { id: Number(params.eventId), sessionId: Number(params.sessionId) }));
+  if (!_v6RequireProjectSession(res, params)) return;
+  const db = v6Db();
+  const eventRow = db.prepare(
+    'SELECT id FROM conversation_events WHERE id = ? AND project_id = ? AND session_id = ? AND deleted_at IS NULL'
+  ).get(Number(params.eventId), Number(params.id), Number(params.sessionId));
+  if (!eventRow) return errorResponse(res, 404, 'Event not found', 'NOT_FOUND_OR_ALREADY_DELETED');
+  const result = b2.softDeleteEvent(db, { id: Number(params.eventId), sessionId: Number(params.sessionId) });
+  if (result.ok) {
+    // PRR-A R1 HOLD: the soft-delete flag alone leaves the raw payload on
+    // disk in plain SQLite storage — overwrite it so a deleted event's
+    // actual content is gone, not merely hidden behind deleted_at.
+    db.prepare('PRAGMA secure_delete = ON').all();
+    db.prepare(
+      'UPDATE conversation_events SET content = ?, rolling_line_sha256 = NULL WHERE id = ? AND project_id = ? AND session_id = ?'
+    ).run('[DELETED]', Number(params.eventId), Number(params.id), Number(params.sessionId));
+    db.prepare('PRAGMA wal_checkpoint(PASSIVE)').all();
+  }
+  _v6Respond(res, result);
 });
 
 // Deliberately NOT implementing `.../messages/:id/prioritize` (#2982
@@ -9495,8 +9575,18 @@ route('POST', '/api/v6/fleet-templates/:templateId/plan', (req, res, params, bod
 
 route('POST', '/api/v6/fleet-templates/:templateId/admit', (req, res, params, body) => {
   if (!operatorProjectCaller(req, res, 'admit a deferred fleet seat')) return;
+  if (!c2.getFleetTemplate(params.templateId)) {
+    return errorResponse(res, 404, `Template "${params.templateId}" not found`, 'NOT_FOUND');
+  }
   const b = _v6Body(body);
-  if (!b.plan || !b.seatId) return errorResponse(res, 400, 'plan and seatId are required', 'INVALID_REQUEST');
+  const planShapeOk = b.plan && typeof b.plan === 'object'
+    && Array.isArray(b.plan.immediateSeats) && Array.isArray(b.plan.deferredSeats);
+  if (!planShapeOk || !b.seatId) {
+    return errorResponse(res, 400, 'a well-shaped plan (immediateSeats/deferredSeats arrays) and seatId are required', 'INVALID_REQUEST');
+  }
+  if (b.plan.templateId && b.plan.templateId !== params.templateId) {
+    return errorResponse(res, 400, 'plan.templateId does not match the template named in the URL', 'INVALID_REQUEST');
+  }
   const { plan, admitted } = c2.admitDeferredSeat(b.plan, b.seatId);
   jsonResponse(res, 200, { plan, admitted });
 });
@@ -9505,6 +9595,7 @@ route('POST', '/api/v6/fleet-templates/:templateId/admit', (req, res, params, bo
 
 route('POST', '/api/v6/projects/:id/sessions/:sessionId/attestations', (req, res, params, body) => {
   if (!operatorProjectCaller(req, res, 'record a model attestation')) return;
+  if (!_v6RequireProjectSession(res, params)) return;
   const b = _v6Body(body);
   _v6Respond(res, d1.recordAttestation(v6Db(), {
     projectId: Number(params.id), sessionId: Number(params.sessionId), generation: b.generation,
@@ -9515,11 +9606,13 @@ route('POST', '/api/v6/projects/:id/sessions/:sessionId/attestations', (req, res
 
 route('GET', '/api/v6/projects/:id/sessions/:sessionId/attestations', (req, res, params) => {
   if (!operatorProjectCaller(req, res, 'read attestation history')) return;
+  if (!_v6RequireProjectSession(res, params)) return;
   jsonResponse(res, 200, { attestations: d1.getAttestationHistory(v6Db(), { sessionId: Number(params.sessionId) }) });
 });
 
 route('GET', '/api/v6/projects/:id/sessions/:sessionId/attestations/:generation', (req, res, params) => {
   if (!operatorProjectCaller(req, res, 'read one generation\'s attestation')) return;
+  if (!_v6RequireProjectSession(res, params)) return;
   const attestation = d1.getAttestation(v6Db(), { sessionId: Number(params.sessionId), generation: Number(params.generation) });
   if (!attestation) return errorResponse(res, 404, 'No attestation for that generation', 'NOT_FOUND');
   jsonResponse(res, 200, attestation);
@@ -9545,26 +9638,73 @@ route('POST', '/api/v6/doc-planes/write-boundary', (req, res, _params, body) => 
   if (!operatorProjectCaller(req, res, 'check the doc write boundary')) return;
   const b = _v6Body(body);
   if (!b.path) return errorResponse(res, 400, 'path is required', 'INVALID_REQUEST');
-  _v6RespondAllowed(res, e1.checkWriteBoundary(b.path, { grant: b.grant, root: __dirname }));
+  // PRR-A/PRR-B R1 HOLD (Ruling A581-PR3016-R1-HOLD-RECONCILED): a
+  // caller-supplied `grant` is a caller-supplied CLAIM of authorization,
+  // not proof of it — there is no real grant-issuance mechanism behind
+  // this route yet (same open question e1's own module doc already
+  // names), so trusting `b.grant` would let any caller self-authorize a
+  // write to a protected Plane 1/2 path just by asserting one. Always
+  // `null` until a real issuance path exists.
+  _v6RespondAllowed(res, e1.checkWriteBoundary(b.path, { grant: null, root: __dirname }));
 });
 
 route('POST', '/api/v6/doc-planes/context-bundle', (req, res, _params, body) => {
   if (!operatorProjectCaller(req, res, 'compile a context bundle')) return;
   const b = _v6Body(body);
   if (!Array.isArray(b.paths)) return errorResponse(res, 400, 'paths must be an array', 'INVALID_REQUEST');
+  const projectRoot = __dirname;
+  // PRR-A R1 HOLD: lib/v6/e1-doc-planes-context-compiler.js#compileContextBundle's
+  // DEFAULT readFile is `fs.readFileSync(p)` with NO root-joining at all
+  // (verified by reading its source) — passing `root` to it only affects
+  // `classifyPlane`'s OWN stripping of an absolute path, never where a
+  // file is actually read from. Without this check, `paths: ['/etc/passwd']`
+  // reached the real filesystem unchanged. Every path is validated against
+  // `projectRoot` BEFORE compiling, and the `readFile` passed below
+  // resolves against that same root explicitly.
+  for (const p of b.paths) {
+    if (typeof p !== 'string') return errorResponse(res, 400, `every path must be a string, got ${JSON.stringify(p)}`, 'INVALID_REQUEST');
+    if (path.isAbsolute(p)) return errorResponse(res, 400, `path must be relative: ${p}`, 'INVALID_REQUEST');
+    const resolved = path.resolve(projectRoot, p);
+    if (resolved !== projectRoot && !resolved.startsWith(projectRoot + path.sep)) {
+      return errorResponse(res, 400, `path escapes the project root: ${p}`, 'INVALID_REQUEST');
+    }
+  }
   jsonResponse(res, 200, e1.compileContextBundle(b.paths, {
-    tokenBudget: b.tokenBudget, includeHistoricalArchive: b.includeHistoricalArchive === true, root: __dirname
+    tokenBudget: b.tokenBudget, includeHistoricalArchive: b.includeHistoricalArchive === true, root: projectRoot,
+    readFile: (p) => fs.readFileSync(path.resolve(projectRoot, p), 'utf8')
   }));
 });
 
+/**
+ * The SSOT index's real on-disk location: under `store._getBasePath()`
+ * (this install's own runtime data directory), never inside the git
+ * checkout (Arc A580 #3 / Ruling A581-PR3016-R1-HOLD-RECONCILED) — a
+ * route test must not mutate the checkout it runs from, and in
+ * production the index is per-install runtime state, not source.
+ *
+ * `lib/v6/e1-doc-planes-context-compiler.js#syncSsotIndex`/
+ * `validateSsotIndex` resolve `opts.indexPath` with `path.join(root,
+ * indexPath)` (verified by reading the source) — NOT `path.resolve` — so
+ * an ABSOLUTE `indexPath` would be wrongly concatenated onto `root`
+ * rather than replacing it. `path.relative(root, absoluteTarget)`
+ * produces the exact `..`-prefixed relative string that `path.join`
+ * reconstructs back into the original absolute target, which is what
+ * this returns — `root` itself stays `__dirname` for both calls, so the
+ * SCAN still covers the real checkout's canonical docs.
+ * @returns {{indexPath: string}}
+ */
+function _v6SsotIndexOpts() {
+  return { indexPath: path.relative(__dirname, path.join(store._getBasePath(), 'ssot-index.json')) };
+}
+
 route('POST', '/api/v6/doc-planes/ssot-index/sync', (req, res) => {
   if (!operatorProjectCaller(req, res, 'sync the SSOT index')) return;
-  jsonResponse(res, 201, e1.syncSsotIndex(__dirname));
+  jsonResponse(res, 201, e1.syncSsotIndex(__dirname, _v6SsotIndexOpts()));
 });
 
 route('GET', '/api/v6/doc-planes/ssot-index/validate', (req, res) => {
   if (!operatorProjectCaller(req, res, 'validate the SSOT index')) return;
-  const result = e1.validateSsotIndex(__dirname);
+  const result = e1.validateSsotIndex(__dirname, _v6SsotIndexOpts());
   jsonResponse(res, result.ok ? 200 : 409, result);
 });
 
@@ -9590,7 +9730,17 @@ route('POST', '/api/v6/doc-planes/webhook-state-advance', (req, res, _params, bo
 route('POST', '/api/v6/projects/:id/medusa-access-check', (req, res, params, body) => {
   if (!operatorProjectCaller(req, res, 'check Medusa cross-project access')) return;
   const b = _v6Body(body);
-  _v6RespondAllowed(res, g3.checkMedusaCrossProjectAccess(Number(params.id), b.targetProjectId, { crossProjectLinks: b.crossProjectLinks || [] }));
+  // PRR-A/PRR-B R1 HOLD (Ruling A581-PR3016-R1-HOLD-RECONCILED): a
+  // caller-supplied `crossProjectLinks` is a caller-supplied CLAIM that a
+  // link exists, not proof of one — there is no real, persisted link
+  // table behind this route yet (the same open design question
+  // lib/v6/g3-medusa-isolation.js's own module doc already names).
+  // Trusting `b.crossProjectLinks` would let any caller self-authorize
+  // cross-project switchboard access by asserting a link in its own
+  // request body. Always `[]` until a real link mechanism exists — this
+  // route can confirm "same project" or refuse "different project," and
+  // nothing else, until then.
+  _v6RespondAllowed(res, g3.checkMedusaCrossProjectAccess(Number(params.id), b.targetProjectId, { crossProjectLinks: [] }));
 });
 
 // ── H1: Branding & Attribution Policy (#2987) ──
