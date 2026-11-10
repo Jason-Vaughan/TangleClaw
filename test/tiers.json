@@ -276,6 +276,7 @@
     "test/uploads.test.js",
     "test/upstream-drift-workflow.test.js",
     "test/upstream-observer.test.js",
+    "test/v6-sprint-report-validator-v3.test.js",
     "test/visual-viewport-layout.test.js",
     "test/workflow-action-pins.test.js",
     "test/workflow-queue-trigger.test.js",

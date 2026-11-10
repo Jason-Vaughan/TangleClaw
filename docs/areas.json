@@ -433,6 +433,13 @@
         "lib/native-sprint-tracker.js",
         "lib/routes/sprint-wave-routes.js"
       ]
+    },
+    "sprint-report-contract": {
+      "label": "area:sprint-report-contract",
+      "why": "Sprint Report Contract v3.0.0 validation (#2979): the ten deterministic evidence-integrity rules a published Individual Sprint Report or Multi-Version Retrospective's rendered HTML and embedded JSON anchors must satisfy, and the historical errata remediation helper for the two known production defects that shipped past the prior (TangleClaw-Shared-hosted) validator. Distinct from `sprint-tracking` (the wave/car/lane/PR dispatch lifecycle while a sprint is IN PROGRESS): this area validates the CONTENT of a report already written, after the fact. Owned by no other family.",
+      "paths": [
+        "lib/v6/sprint-report-validator-v3.js"
+      ]
     }
   },
   "shared": {
