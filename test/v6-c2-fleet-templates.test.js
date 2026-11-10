@@ -23,6 +23,35 @@ describe('listFleetTemplates / getFleetTemplate (#2984)', () => {
       assert.ok(Object.isFrozen(template), template.id);
     }
   });
+
+  it('returns null for "__proto__" rather than Object.prototype (PRR-B R1 HOLD)', () => {
+    assert.equal(c2.getFleetTemplate('__proto__'), null);
+    assert.equal(c2.getFleetTemplate('constructor'), null);
+    assert.equal(c2.getFleetTemplate('toString'), null);
+  });
+
+  it('mutating a seat object returned from getFleetTemplate throws (frozen), never silently corrupting the shared template (PRR-B R1 HOLD)', () => {
+    const template = c2.getFleetTemplate('small-4-seat');
+    assert.ok(Object.isFrozen(template.seats[0]), 'each seat object must itself be frozen');
+    // This file is already 'use strict' (line 1), so assigning to a frozen
+    // object's property throws here rather than silently no-opping.
+    assert.throws(() => { template.seats[0].supervisory = false; }, TypeError);
+    const stillSupervisory = c2.getFleetTemplate('small-4-seat').seats[0];
+    assert.equal(stillSupervisory.role, 'PM');
+    assert.equal(stillSupervisory.supervisory, true);
+  });
+
+  it('mutating a seat object does not corrupt a LATER planFleetApply call for the same template (PRR-B R1 HOLD regression)', () => {
+    const template = c2.getFleetTemplate('small-4-seat');
+    try {
+      template.seats[0].supervisory = false;
+    } catch {
+      // frozen -- the throw itself is the protection; ignore and verify below.
+    }
+    const plan = c2.planFleetApply('small-4-seat');
+    assert.equal(plan.immediateSeats.length, 1);
+    assert.equal(plan.immediateSeats[0].role, 'PM');
+  });
 });
 
 describe('instantiateFleetTemplate (#2984)', () => {
@@ -70,6 +99,10 @@ describe('instantiateFleetTemplate (#2984)', () => {
 
   it('returns null for an unknown template id', () => {
     assert.equal(c2.instantiateFleetTemplate('not-a-real-template'), null);
+  });
+
+  it('returns null for "__proto__" rather than throwing (PRR-B R1 HOLD)', () => {
+    assert.equal(c2.instantiateFleetTemplate('__proto__'), null);
   });
 });
 

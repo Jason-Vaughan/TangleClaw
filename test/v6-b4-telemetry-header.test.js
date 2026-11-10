@@ -129,4 +129,12 @@ describe('createTelemetryVisibility (#2983 deliverable 2 — HIDE means HIDE, ne
     const vis = b4.createTelemetryVisibility();
     assert.ok(Object.isFrozen(vis));
   });
+
+  it('refuses an unknown scope on every method (Arc A559 polish)', () => {
+    const vis = b4.createTelemetryVisibility();
+    assert.throws(() => vis.setBarHidden('not-a-real-scope', true), RangeError);
+    assert.throws(() => vis.isBarHidden('not-a-real-scope'), RangeError);
+    assert.throws(() => vis.setMetricVisible('not-a-real-scope', 'tokens', true), RangeError);
+    assert.throws(() => vis.isMetricVisible('not-a-real-scope', 'tokens'), RangeError);
+  });
 });
