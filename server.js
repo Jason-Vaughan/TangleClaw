@@ -8677,6 +8677,10 @@ const V6_STATUS_BY_CODE = {
   INITIATOR_CEILING: 403,
   GRANT_DENIED: 403,
   OPERATOR_PROOF_REQUIRED: 403,
+  // ── POST /api/v6/projects/:id/g1-approvals (#1149, P08) ── route-layer
+  // codes, not library codes: no v6/*.js function returns either.
+  SIGNED_IN_OPERATOR_REQUIRED: 403,
+  DISTINCT_OPERATOR_REQUIRED: 403,
   PROJECT_MISSING: 404,
   POLICY_MISSING: 404,
   UNREGISTERED_SETTING: 400,
@@ -9186,24 +9190,43 @@ route('POST', '/api/v6/projects/:id/g1-leases/:leaseId/revoke', (req, res, param
   _v6Respond(res, authorityService.revokeLease(v6Db(), { principalId, auth, projectId, leaseId: params.leaseId }));
 });
 
-// PRR-A R1 (P08): a G1 approval records WHO approved it — operatorActor is
+// PRR-A R1+R2 (P08): a G1 approval records WHO approved it — operatorActor is
 // not a claim the request body gets to make (a client-supplied role string
 // is not authority, the same principle operatorProjectCaller itself rests
-// on). signedInOperator requires a REAL signed-in session before this
-// handler ever runs, so req.tcSession.username is guaranteed and is what
-// gets recorded, never body.operatorActor.
+// on). The `signedInOperator` route option is deliberately NOT used here:
+// the dispatcher enforces it only via req.tcSession, which the gate leaves
+// null whenever authGate.standsDown() is true (#2378's own documented
+// limit) — the exact fallback below (req.tcSession || _gateIdentity(...))
+// exists so a real signed-in session still resolves under a stood-down
+// gate, and the dispatcher-level option would refuse the request before
+// this handler ever got the chance to apply it. P08 also requires the
+// approval's minter be a DIFFERENT operator from whoever minted the G1
+// lease it approves — authority-service.js's own module doc defers this
+// cross-request identity check to this route layer, since the schema
+// carries no column tying an approval back to its lease's minting actor.
 route('POST', '/api/v6/projects/:id/g1-approvals', (req, res, params, body) => {
   if (!operatorProjectCaller(req, res, 'mint a G1 approval')) return;
   const projectId = Number(params.id);
   const b = _v6Body(body);
+  const session = req.tcSession || _gateIdentity(req, req.socket, '/api/v6/projects').session;
+  if (!session || session.userId == null) {
+    return _v6Respond(res, { ok: false, code: 'SIGNED_IN_OPERATOR_REQUIRED' });
+  }
+  const operatorActor = String(session.username || session.userId);
+  const lease = v6Db().prepare(
+    'SELECT actor FROM v6_g1_leases WHERE (project_id = ? AND repo = ? AND revoked_at IS NULL AND expires_at > ?) OR id = ?'
+  ).get(projectId, String(b.repo || ''), Date.now(), String(b.leaseId || ''));
+  if (lease && lease.actor === operatorActor) {
+    return _v6Respond(res, { ok: false, code: 'DISTINCT_OPERATOR_REQUIRED' });
+  }
   const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'g1.mintApproval');
   if (!authz) return;
   const { principalId, auth } = authz;
   _v6Respond(res, authorityService.mintApproval(v6Db(), {
-    principalId, auth, projectId, operatorActor: req.tcSession.username, action: b.action,
+    principalId, auth, projectId, operatorActor, action: b.action,
     repo: b.repo, targetDigest: b.targetDigest, ttlMs: b.ttlMs
   }), 201);
-}, { signedInOperator: { action: 'mint a G1 milestone approval' } });
+});
 
 route('POST', '/api/v6/projects/:id/g1-approvals/:approvalId/revoke', (req, res, params) => {
   if (!operatorProjectCaller(req, res, 'revoke a G1 approval')) return;

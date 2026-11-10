@@ -101,19 +101,16 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
 /**
    * Create a REAL signed-in operator session (a user row + an auth_sessions
    * row, same facts a real login would mint — `session.token_hash`/
-   * `username`/`csrfToken`), for the one route gated by `signedInOperator`
-   * (g1-approvals) rather than the `authEnabled: false` gate-stood-down
-   * shape every other test here uses. Arms the gate (`authEnabled: true`) —
-   * the dispatcher skips session resolution ENTIRELY while the gate stands
-   * down, cookie or no cookie, so a real session only reads as signed-in
-   * once the gate is armed. The next `beforeEach` disarms it again.
+   * `username`/`csrfToken`), for g1-approvals' own in-handler session
+   * resolution (`req.tcSession || _gateIdentity(...).session`, Ruling
+   * A550-R2-SUPPLEMENT-PRRA-P08-COSIGN). Deliberately does NOT arm the
+   * gate: `_gateIdentity` resolves a valid cookie regardless of
+   * `authEnabled`, so this proves the fallback itself, under the same
+   * `authEnabled: false` every other test here runs under.
    * @param {string} username
    * @returns {{cookie: string, headers: Record<string, string>}} `opts` fields for {@link send}.
    */
   function signInOperator(username) {
-    const cfg = store.config.load();
-    cfg.authEnabled = true;
-    store.config.save(cfg);
     const user = store.users.create(username, 'correct-horse-battery');
     const { token, csrfToken } = store.authSessions.create(user);
     return { cookie: `tc_session=${token}`, headers: { [authSession.CSRF_HEADER]: csrfToken } };
@@ -504,8 +501,11 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
       assert.equal(revokeAgain.statusCode, 404, revokeAgain.body);
     });
 
-    it('mints and revokes a G1 approval, recording the REAL signed-in operator as operatorActor, never the body claim (PRR-A R1)', async () => {
+    it('mints and revokes a G1 approval from a DISTINCT operator, recording the REAL signed-in operator as operatorActor, never the body claim (PRR-A R1)', async () => {
       const projectId = await seedProject('g1-approval-project');
+      const lease = await post(`/api/v6/projects/${projectId}/g1-leases`,
+        { actor: 'tc-lane-c', repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 });
+      assert.equal(lease.statusCode, 201, lease.body);
       const signedIn = signInOperator('rosie-g1-test');
       const mint = await post(`/api/v6/projects/${projectId}/g1-approvals`,
         { operatorActor: 'someone-else-entirely', action: 'merge', repo: 'TangleClaw', targetDigest: 'abc123', ttlMs: 60000 },
@@ -513,9 +513,6 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
       assert.equal(mint.statusCode, 201, mint.body);
       const row = store.getDb().prepare('SELECT operator_actor FROM v6_g1_approvals WHERE id = ?').get(json(mint).id);
       assert.equal(row.operator_actor, 'rosie-g1-test', 'the real signed-in session, not the body claim, must be recorded');
-      // Revoke is not signedInOperator-gated, but the gate is now armed
-      // (authEnabled: true) for the rest of this test, so operatorProjectCaller
-      // itself needs the same real session to still read as the operator.
       const revoke = await post(`/api/v6/projects/${projectId}/g1-approvals/${json(mint).id}/revoke`, {}, signedIn);
       assert.equal(revoke.statusCode, 200, revoke.body);
     });
@@ -524,6 +521,20 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
       const projectId = await seedProject('g1-approval-no-session');
       const res = await post(`/api/v6/projects/${projectId}/g1-approvals`, { operatorActor: 'x', action: 'merge', repo: 'r', targetDigest: 'd', ttlMs: 1000 });
       assert.ok([401, 403].includes(res.statusCode), res.body);
+      assert.equal(json(res).code, 'SIGNED_IN_OPERATOR_REQUIRED');
+    });
+
+    it('refuses a G1 approval mint by the SAME operator who minted the underlying lease (P08 distinct-operator, Ruling A550-R2-SUPPLEMENT-PRRA-P08-COSIGN)', async () => {
+      const projectId = await seedProject('g1-approval-p08-same-operator');
+      const signedIn = signInOperator('same-operator-x');
+      const lease = await post(`/api/v6/projects/${projectId}/g1-leases`,
+        { actor: 'same-operator-x', repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 });
+      assert.equal(lease.statusCode, 201, lease.body);
+      const mint = await post(`/api/v6/projects/${projectId}/g1-approvals`,
+        { action: 'merge', repo: 'TangleClaw', targetDigest: 'abc123', ttlMs: 60000 },
+        signedIn);
+      assert.equal(mint.statusCode, 403, mint.body);
+      assert.equal(json(mint).code, 'DISTINCT_OPERATOR_REQUIRED');
     });
 
     it('404s an authority route against a project that does not exist, rather than throwing on the trust-bootstrap FK (PRR-A R1 / Ruling A549)', async () => {

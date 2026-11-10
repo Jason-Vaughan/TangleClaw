@@ -179,11 +179,6 @@ const SIGNED_IN_OPERATOR = Object.freeze([
   // the fleetCoordinator flag), reviewed the same way any other
   // authority-granting route here is.
   'POST /api/tc/fleet/coordinator',
-  // #1149 BRIDGE-2: a G1 milestone approval records WHO approved it
-  // (operator_actor) — the same authority-granting shape as every other
-  // route reviewed here, so it is the real signed-in session recorded,
-  // never a caller-supplied body field.
-  'POST /api/v6/projects/:id/g1-approvals',
   'PUT /api/launch/isolation-overrides/install',
   'PUT /api/launch/isolation-overrides/projects/:id',
   'PUT /api/learnings/:id/tier',
