@@ -115,4 +115,44 @@ describe('checkMedusaCrossProjectAccess (#2986 deliverable 2)', () => {
     assert.equal(res.allowed, false);
     assert.equal(res.code, 'MEDUSA_CROSS_PROJECT_DENIED');
   });
+
+  it('fails closed for two plain objects, rather than letting String({}) === String({}) ("[object Object]") read as equal (PRR-B R2 HOLD)', () => {
+    const res = g3.checkMedusaCrossProjectAccess({}, {});
+    assert.equal(res.allowed, false);
+    assert.equal(res.code, 'MEDUSA_CROSS_PROJECT_DENIED');
+  });
+
+  it('fails closed for an object compared against its own stringified form', () => {
+    const res = g3.checkMedusaCrossProjectAccess({}, '[object Object]');
+    assert.equal(res.allowed, false);
+    assert.equal(res.code, 'MEDUSA_CROSS_PROJECT_DENIED');
+  });
+
+  it('fails closed for two identical arrays, rather than letting String(["p1"]) === String(["p1"]) read as equal', () => {
+    const res = g3.checkMedusaCrossProjectAccess(['p1'], ['p1']);
+    assert.equal(res.allowed, false);
+    assert.equal(res.code, 'MEDUSA_CROSS_PROJECT_DENIED');
+  });
+
+  it('fails closed for booleans', () => {
+    assert.equal(g3.checkMedusaCrossProjectAccess(true, true).allowed, false);
+    assert.equal(g3.checkMedusaCrossProjectAccess(false, false).allowed, false);
+  });
+
+  it('accepts a safe integer project id, comparing it correctly against the same integer', () => {
+    assert.equal(g3.checkMedusaCrossProjectAccess(42, 42).allowed, true);
+    assert.equal(g3.checkMedusaCrossProjectAccess(42, 43).allowed, false);
+  });
+
+  it('a link whose endpoints are objects or arrays covers nothing', () => {
+    const res = g3.checkMedusaCrossProjectAccess('p1', 'p2', {
+      crossProjectLinks: [
+        { fromProjectId: {}, toProjectId: 'p2' },
+        { fromProjectId: 'p1', toProjectId: ['p2'] },
+        { fromProjectId: {}, toProjectId: {} }
+      ]
+    });
+    assert.equal(res.allowed, false);
+    assert.equal(res.code, 'MEDUSA_CROSS_PROJECT_DENIED');
+  });
 });
