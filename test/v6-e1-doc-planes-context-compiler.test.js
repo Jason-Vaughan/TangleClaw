@@ -57,6 +57,17 @@ describe('classifyPlane (#1151)', () => {
     assert.equal(e1.classifyPlane('/repo/README.md', { root: '/repo' }), 'product');
     assert.equal(e1.classifyPlane('README.md'), e1.classifyPlane('/repo/README.md', { root: '/repo' }));
   });
+
+  it('collapses a ".." segment BEFORE classifying, so a path that merely looks archived resolves to what it really is (PRR-A R1 HOLD)', () => {
+    assert.equal(e1.classifyPlane('archive/../README.md'), 'product');
+    assert.equal(e1.classifyPlane('docs/../README.md'), 'product');
+    assert.equal(e1.classifyPlane('docs/adr/archive/../0001-foo.md'), 'maintainer');
+  });
+
+  it('defaults to operational-memory for a path that still escapes root after normalization', () => {
+    assert.equal(e1.classifyPlane('../README.md'), 'operational-memory');
+    assert.equal(e1.classifyPlane('..'), 'operational-memory');
+  });
 });
 
 describe('checkWriteBoundary (#1151)', () => {
@@ -88,6 +99,38 @@ describe('checkWriteBoundary (#1151)', () => {
   it('always allows a write to Plane 3 or Plane 4 paths, grant or no grant', () => {
     assert.equal(e1.checkWriteBoundary('.tangleclaw/memories/MEMORY.md').allowed, true);
     assert.equal(e1.checkWriteBoundary('archive/old.md').allowed, true);
+  });
+
+  it('refuses archive/../README.md as Plane 1 (product), not historical-archive (PRR-A R1 HOLD)', () => {
+    const res = e1.checkWriteBoundary('archive/../README.md');
+    assert.equal(res.allowed, false);
+    assert.equal(res.plane, 'product');
+    assert.equal(res.code, 'DOC_AUTHORING_GRANT_REQUIRED');
+  });
+
+  it('refuses docs/../README.md the same way', () => {
+    const res = e1.checkWriteBoundary('docs/../README.md');
+    assert.equal(res.allowed, false);
+    assert.equal(res.plane, 'product');
+  });
+
+  it('refuses a path that still escapes root with PATH_TRAVERSAL_DENIED, plane null', () => {
+    const res = e1.checkWriteBoundary('../README.md');
+    assert.equal(res.allowed, false);
+    assert.equal(res.plane, null);
+    assert.equal(res.code, 'PATH_TRAVERSAL_DENIED');
+  });
+
+  it('a grant naming the CANONICAL path still admits a traversal-shaped but in-root target', () => {
+    const res = e1.checkWriteBoundary('archive/../README.md', { grant: { path: 'README.md' } });
+    assert.equal(res.allowed, true);
+    assert.equal(res.plane, 'product');
+  });
+
+  it('a grant whose own path escapes root never admits anything', () => {
+    const res = e1.checkWriteBoundary('README.md', { grant: { path: '../README.md' } });
+    assert.equal(res.allowed, false);
+    assert.equal(res.code, 'DOC_AUTHORING_GRANT_REQUIRED');
   });
 });
 
@@ -229,6 +272,76 @@ describe('syncSsotIndex / validateSsotIndex (#1151)', () => {
     const res = e1.validateSsotIndex(tempDir);
     assert.equal(res.ok, false);
     assert.ok(res.issues.some((i) => i.code === 'ENTRY_UNINDEXED' && i.path === 'docs/new-doc.md'));
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('reports ENTRY_STALE when an entry\'s recorded plane is tampered, even though its sha256 is untouched (PRR-A R1 HOLD)', () => {
+    tempDir = freshRoot();
+    e1.syncSsotIndex(tempDir);
+    const indexAbs = path.join(tempDir, '.tangleclaw', 'ssot-index.json');
+    const index = JSON.parse(fs.readFileSync(indexAbs, 'utf8'));
+    const readme = index.entries.find((e) => e.path === 'README.md');
+    readme.plane = 'historical-archive';
+    fs.writeFileSync(indexAbs, JSON.stringify(index, null, 2));
+    const res = e1.validateSsotIndex(tempDir);
+    assert.equal(res.ok, false);
+    assert.ok(res.issues.some((i) => i.code === 'ENTRY_STALE' && i.path === 'README.md'));
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('reports ENTRY_STALE when an entry\'s recorded byte count is tampered, even though its sha256 field is left alone', () => {
+    tempDir = freshRoot();
+    e1.syncSsotIndex(tempDir);
+    const indexAbs = path.join(tempDir, '.tangleclaw', 'ssot-index.json');
+    const index = JSON.parse(fs.readFileSync(indexAbs, 'utf8'));
+    const readme = index.entries.find((e) => e.path === 'README.md');
+    readme.bytes = 1;
+    fs.writeFileSync(indexAbs, JSON.stringify(index, null, 2));
+    const res = e1.validateSsotIndex(tempDir);
+    assert.equal(res.ok, false);
+    assert.ok(res.issues.some((i) => i.code === 'ENTRY_STALE' && i.path === 'README.md'));
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('reports INDEX_MALFORMED for a duplicate entry.path row', () => {
+    tempDir = freshRoot();
+    e1.syncSsotIndex(tempDir);
+    const indexAbs = path.join(tempDir, '.tangleclaw', 'ssot-index.json');
+    const index = JSON.parse(fs.readFileSync(indexAbs, 'utf8'));
+    const readme = index.entries.find((e) => e.path === 'README.md');
+    index.entries.push({ ...readme });
+    fs.writeFileSync(indexAbs, JSON.stringify(index, null, 2));
+    const res = e1.validateSsotIndex(tempDir);
+    assert.equal(res.ok, false);
+    assert.ok(res.issues.some((i) => i.code === 'INDEX_MALFORMED' && i.path === 'README.md'));
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('reports INDEX_MALFORMED for a non-canonical entry.path', () => {
+    tempDir = freshRoot();
+    e1.syncSsotIndex(tempDir);
+    const indexAbs = path.join(tempDir, '.tangleclaw', 'ssot-index.json');
+    const index = JSON.parse(fs.readFileSync(indexAbs, 'utf8'));
+    const readme = index.entries.find((e) => e.path === 'README.md');
+    readme.path = './README.md';
+    fs.writeFileSync(indexAbs, JSON.stringify(index, null, 2));
+    const res = e1.validateSsotIndex(tempDir);
+    assert.equal(res.ok, false);
+    assert.ok(res.issues.some((i) => i.code === 'INDEX_MALFORMED' && i.path === './README.md'));
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('reports INDEX_MALFORMED for an entry.path that escapes root', () => {
+    tempDir = freshRoot();
+    e1.syncSsotIndex(tempDir);
+    const indexAbs = path.join(tempDir, '.tangleclaw', 'ssot-index.json');
+    const index = JSON.parse(fs.readFileSync(indexAbs, 'utf8'));
+    const readme = index.entries.find((e) => e.path === 'README.md');
+    readme.path = '../README.md';
+    fs.writeFileSync(indexAbs, JSON.stringify(index, null, 2));
+    const res = e1.validateSsotIndex(tempDir);
+    assert.equal(res.ok, false);
+    assert.ok(res.issues.some((i) => i.code === 'INDEX_MALFORMED' && i.path === '../README.md'));
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 

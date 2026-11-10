@@ -58,12 +58,13 @@ and reports drift: an indexed document whose content no longer matches its recor
 (`ENTRY_STALE`), one that no longer exists (`ENTRY_GONE`), or a canonical document on disk the
 index doesn't list at all (`ENTRY_UNINDEXED`).
 
-**Known gap, not silently resolved:** this repo's own `.gitignore` fail-closes `.tangleclaw/*`
-("internal working documents... never in this public repo"), and this car's file envelope does
-not include `.gitignore`. `syncSsotIndex`/`validateSsotIndex` are fully implemented and tested
-against an injectable root, but no `.tangleclaw/ssot-index.json` is committed by this PR —
-escalated to PM/Architect to decide whether the path needs a `.gitignore` negation or is meant
-to stay host-generated-only.
+**By design, not git-tracked (Ruling A556-W1C-SSOT-INDEX-RUNTIME-ONLY):** `.tangleclaw/
+ssot-index.json` is runtime-generated per project, the same way `.tangleclaw/config.json` is —
+this repo's own `.gitignore` fail-closes `.tangleclaw/*` ("internal working documents... never
+in this public repo"), and that invariant is preserved here on purpose. `syncSsotIndex`/
+`validateSsotIndex` are fully implemented and tested against an injectable root
+(`os.tmpdir()`); no `.tangleclaw/ssot-index.json` and no `.gitignore` edit are committed by
+this PR.
 
 ## Sprint/Wave Tracker helpers
 
@@ -86,7 +87,7 @@ This car ships the four deliverables above as library functions, fully tested. I
 
 - Wire `checkWriteBoundary` into any real file-write call site.
 - Wire `compileContextBundle` into any real launch/prime path.
-- Commit a `.tangleclaw/ssot-index.json` (see the known gap above).
+- Commit a `.tangleclaw/ssot-index.json` — by design, runtime-generated only (see above).
 - Classify or restructure any existing documentation file — the plane rules describe where a
   path *would* land; no file in this repo is moved or reclassified by this PR.
 
