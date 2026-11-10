@@ -9213,10 +9213,18 @@ route('POST', '/api/v6/projects/:id/g1-approvals', (req, res, params, body) => {
     return _v6Respond(res, { ok: false, code: 'SIGNED_IN_OPERATOR_REQUIRED' });
   }
   const operatorActor = String(session.username || session.userId);
-  const lease = v6Db().prepare(
-    'SELECT actor FROM v6_g1_leases WHERE (project_id = ? AND repo = ? AND revoked_at IS NULL AND expires_at > ?) OR id = ?'
-  ).get(projectId, String(b.repo || ''), Date.now(), String(b.leaseId || ''));
-  if (lease && lease.actor === operatorActor) {
+  // PRR-A R3 HOLD: .get() only ever inspects ONE row, so a second active
+  // lease for the same (project_id, repo) — minted by a different actor —
+  // hid a matching one from view. .all()/.some() checks every active,
+  // unrevoked, unexpired lease for this exact project+repo; the `id =
+  // leaseId` arm is dropped rather than re-scoped, since a row that
+  // qualifies by id but fails project_id/repo/revoked/expiry is not "the"
+  // live lease this approval concerns, and one that DOES qualify is
+  // already covered by the scoped check below.
+  const leases = v6Db().prepare(
+    'SELECT actor FROM v6_g1_leases WHERE project_id = ? AND repo = ? AND revoked_at IS NULL AND expires_at > ?'
+  ).all(projectId, String(b.repo || ''), Date.now());
+  if (leases.some((row) => row.actor === operatorActor)) {
     return _v6Respond(res, { ok: false, code: 'DISTINCT_OPERATOR_REQUIRED' });
   }
   const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'g1.mintApproval');

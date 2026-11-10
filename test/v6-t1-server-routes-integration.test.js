@@ -537,6 +537,22 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
       assert.equal(json(mint).code, 'DISTINCT_OPERATOR_REQUIRED');
     });
 
+    it('refuses a G1 approval mint when a SECOND active lease for the same project/repo shares the signed-in actor, even though it is not the first one minted (PRR-A R3 HOLD counterexample)', async () => {
+      const projectId = await seedProject('g1-approval-p08-second-lease');
+      const first = await post(`/api/v6/projects/${projectId}/g1-leases`,
+        { actor: 'other-operator', repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 });
+      assert.equal(first.statusCode, 201, first.body);
+      const second = await post(`/api/v6/projects/${projectId}/g1-leases`,
+        { actor: 'rosie-g1-test-2', repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 });
+      assert.equal(second.statusCode, 201, second.body);
+      const signedIn = signInOperator('rosie-g1-test-2');
+      const mint = await post(`/api/v6/projects/${projectId}/g1-approvals`,
+        { action: 'merge', repo: 'TangleClaw', targetDigest: 'abc123', ttlMs: 60000 },
+        signedIn);
+      assert.equal(mint.statusCode, 403, mint.body);
+      assert.equal(json(mint).code, 'DISTINCT_OPERATOR_REQUIRED');
+    });
+
     it('404s an authority route against a project that does not exist, rather than throwing on the trust-bootstrap FK (PRR-A R1 / Ruling A549)', async () => {
       const res = await put('/api/v6/projects/999999/authority/fleetCoordinator', { value: true, expectedVersion: 1 });
       assert.equal(res.statusCode, 404, res.body);
