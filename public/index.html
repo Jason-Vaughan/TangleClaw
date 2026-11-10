@@ -455,6 +455,16 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
     </div>
   </nav>
 
+  <!-- v6 Fleet-First route-based shell (#2981, V6-08 / B1). Additive,
+       BRIDGE-5 coexistence: mounted by public/v6-shell.js only when the
+       current location hash matches one of its own routes
+       (#/projects/:id, #/projects/:id/fleets/:fleetId,
+       #/resources/:id/conversation, #/settings/*); otherwise this stays
+       empty and the existing flat dashboard below renders exactly as it
+       always has. See public/v6-shell.js's own module doc comment for
+       the full coexistence rationale. -->
+  <div id="v6ShellRoot" class="v6-shell-root hidden" aria-label="Fleet navigation shell"></div>
+
   <!-- Main Content -->
   <main id="projectsContainer" aria-label="Projects">
     <!-- System health panel (#345). Hidden until /api/system/health reports a
@@ -872,6 +882,8 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
   <script src="/next-markdown.js"></script>
   <!-- Loaded before ui.js: openProjectSettings calls renderSubagentParallelizationToggle at render time (#1257). -->
   <script src="/subagent-parallelization-ui.js"></script>
+  <!-- Loaded before ui.js: its own bottom-of-file hook feature-detects window.tcCreateV6Shell (#2981). -->
+  <script src="/v6-shell.js"></script>
   <script src="/ui.js"></script>
   <!-- Loaded before history-drawer.js: it calls transcriptSourceBadge (#2881). -->
   <script src="/session-history-ui.js"></script>
