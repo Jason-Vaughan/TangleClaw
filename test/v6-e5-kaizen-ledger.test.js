@@ -148,6 +148,7 @@ describe('recordMeasurement / listMeasurements', () => {
     const db = freshStore();
     t.after(cleanup);
     const id = seedItem(db);
+    toVerified(db, id); // past Implemented -- recordMeasurement refuses a pre-implementation item (see dedicated test below)
     const r = e5.recordMeasurement(db, { kaizenId: id, sprintVersion: 'v5.75.0', measurementKind: 'sprint_window', passed: true, evidenceRef: 'ref-1' });
     assert.equal(r.ok, true);
     assert.equal(e5.listMeasurements(db, id).length, 1);
@@ -159,6 +160,78 @@ describe('recordMeasurement / listMeasurements', () => {
       e5.recordMeasurement(db, { kaizenId: id, sprintVersion: 'v1', measurementKind: 'bogus', passed: true, evidenceRef: 'x' }).code,
       'INVALID_REQUEST'
     );
+  });
+
+  it('refuses recordMeasurement outright while the item is pre-implementation (Detected through Assigned), across classes A/B/D (PRR-B R3)', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    for (const verificationClass of ['A_DETERMINISTIC', 'B_WORKFLOW', 'D_LONGITUDINAL']) {
+      const id = seedItem(db, { verificationClass, findingId: `pre-impl-${verificationClass}` });
+      assert.equal(
+        e5.recordMeasurement(db, { kaizenId: id, sprintVersion: 'v1', measurementKind: 'sprint_window', passed: true, evidenceRef: 'x' }).code,
+        'PRE_IMPLEMENTATION_MEASUREMENT',
+        `${verificationClass} at Detected`
+      );
+      e5.advanceLifecycle(db, { id, nextState: 'Classified' });
+      e5.advanceLifecycle(db, { id, nextState: 'Proposed' });
+      e5.advanceLifecycle(db, { id, nextState: 'Approved' });
+      e5.advanceLifecycle(db, { id, nextState: 'Assigned' });
+      assert.equal(
+        e5.recordMeasurement(db, { kaizenId: id, sprintVersion: 'v1', measurementKind: 'sprint_window', passed: true, evidenceRef: 'x' }).code,
+        'PRE_IMPLEMENTATION_MEASUREMENT',
+        `${verificationClass} at Assigned`
+      );
+      e5.advanceLifecycle(db, { id, nextState: 'Implemented' });
+      assert.equal(
+        e5.recordMeasurement(db, { kaizenId: id, sprintVersion: 'v1', measurementKind: 'sprint_window', passed: true, evidenceRef: 'x' }).ok,
+        true,
+        `${verificationClass} at Implemented`
+      );
+    }
+  });
+
+  it('a pre-implementation / backdated measurement cannot satisfy markProvenEffective even if its row exists, across classes A/B/D (PRR-B R3)', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const EARLY = '2026-01-02T00:00:00.000Z';
+    const LATE = '2026-02-01T00:00:00.000Z';
+
+    // Class A: backdated evidence + a backdated clean sprint_window, inserted
+    // directly (bypassing recordMeasurement's own gate) to prove
+    // canMarkProvenEffective ALSO enforces the boundary, not just the write gate.
+    const a = seedItem(db, { verificationClass: 'A_DETERMINISTIC', findingId: 'backdated-a' });
+    for (const next of ['Classified', 'Proposed', 'Approved', 'Assigned']) e5.advanceLifecycle(db, { id: a, nextState: next });
+    e5.advanceLifecycle(db, { id: a, nextState: 'Implemented', now: () => LATE });
+    e5.advanceLifecycle(db, { id: a, nextState: 'Verified', now: () => LATE });
+    db.prepare("UPDATE kaizen_items SET verification_evidence_ref = 'x' WHERE id = ?").run(a);
+    db.prepare(
+      'INSERT INTO kaizen_measurements (id, kaizen_id, sprint_version, measurement_kind, passed, recurrence_count, evidence_ref, measured_at) VALUES (?,?,?,?,?,?,?,?)'
+    ).run('m-a', a, 'v1', 'sprint_window', 1, 0, 'x', EARLY);
+    assert.equal(e5.markProvenEffective(db, { id: a }).code, 'INSUFFICIENT_EVIDENCE');
+
+    // Class B: 3 distinct backdated sprints, all before implemented_at.
+    const b = seedItem(db, { verificationClass: 'B_WORKFLOW', findingId: 'backdated-b' });
+    for (const next of ['Classified', 'Proposed', 'Approved', 'Assigned']) e5.advanceLifecycle(db, { id: b, nextState: next });
+    e5.advanceLifecycle(db, { id: b, nextState: 'Implemented', now: () => LATE });
+    e5.advanceLifecycle(db, { id: b, nextState: 'Verified', now: () => LATE });
+    for (const [i, v] of ['v1', 'v2', 'v3'].entries()) {
+      db.prepare(
+        'INSERT INTO kaizen_measurements (id, kaizen_id, sprint_version, measurement_kind, passed, recurrence_count, evidence_ref, measured_at) VALUES (?,?,?,?,?,?,?,?)'
+      ).run(`m-b-${i}`, b, v, 'sprint_window', 1, 0, 'x', EARLY);
+    }
+    assert.equal(e5.markProvenEffective(db, { id: b }).code, 'INSUFFICIENT_CONSECUTIVE_SPRINTS');
+
+    // Class D: 3 distinct backdated, qualifying-shaped trend measurements.
+    const d = seedItem(db, { verificationClass: 'D_LONGITUDINAL', findingId: 'backdated-d' });
+    for (const next of ['Classified', 'Proposed', 'Approved', 'Assigned']) e5.advanceLifecycle(db, { id: d, nextState: next });
+    e5.advanceLifecycle(db, { id: d, nextState: 'Implemented', now: () => LATE });
+    e5.advanceLifecycle(db, { id: d, nextState: 'Verified', now: () => LATE });
+    for (const [i, v] of ['v1', 'v2', 'v3'].entries()) {
+      db.prepare(
+        'INSERT INTO kaizen_measurements (id, kaizen_id, sprint_version, measurement_kind, passed, recurrence_count, metric_value, baseline_value, evidence_ref, measured_at) VALUES (?,?,?,?,?,?,?,?,?,?)'
+      ).run(`m-d-${i}`, d, v, 'statistical_trend', 1, 0, 5, 10, 'x', EARLY);
+    }
+    assert.equal(e5.markProvenEffective(db, { id: d }).code, 'INSUFFICIENT_TREND_SERIES');
   });
 });
 
