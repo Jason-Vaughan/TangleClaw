@@ -279,6 +279,19 @@ describe('canMarkProvenEffective / markProvenEffective — the 4-Class proof rul
     assert.equal(e5.markProvenEffective(db, { id }).code, 'INSUFFICIENT_TREND_SERIES');
   });
 
+  it('Class D_LONGITUDINAL: 6+ consecutive clean distinct sprints still proves (rolling window, not a lifetime cap)', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const id = seedItem(db, { verificationClass: 'D_LONGITUDINAL' });
+    toVerified(db, id);
+    const trend = (sprintVersion) =>
+      e5.recordMeasurement(db, { kaizenId: id, sprintVersion, measurementKind: 'statistical_trend', passed: true, metricValue: 5, baselineValue: 10, evidenceRef: 'x' });
+    for (const v of ['v1', 'v2', 'v3', 'v4', 'v5', 'v6']) trend(v);
+    const r = e5.markProvenEffective(db, { id });
+    assert.deepEqual(r, { ok: true, code: 'PROVEN' });
+    assert.equal(e5.getItem(db, id).effectiveness_status, 'PROVEN_EFFECTIVE');
+  });
+
   it('Class D_LONGITUDINAL: rejects null/missing metric_value or baseline_value, and a worse-than-baseline reading', (t) => {
     const db = freshStore();
     t.after(cleanup);
@@ -288,11 +301,14 @@ describe('canMarkProvenEffective / markProvenEffective — the 4-Class proof rul
       e5.recordMeasurement(db, { kaizenId: id, sprintVersion, measurementKind: 'statistical_trend', passed: true, metricValue, baselineValue, evidenceRef: 'x' });
     trend('v1', null, null);
     trend('v2', 5, 10);
-    trend('v3', 15, 10); // worse than baseline -- does not qualify
+    trend('v3', 15, 10); // worse than baseline -- does not qualify, resets the trailing window
     assert.equal(e5.markProvenEffective(db, { id }).code, 'INSUFFICIENT_TREND_SERIES');
     trend('v4', 5, 10);
     trend('v5', 5, 10);
-    // Now v2, v4, v5 qualify (3 distinct sprints); v1 (null) and v3 (worse) never count.
+    // v3's disqualification reset the window, so v2 alone isn't enough --
+    // the trailing window must rebuild 3 CONSECUTIVE qualifying sprints after it.
+    assert.equal(e5.markProvenEffective(db, { id }).code, 'INSUFFICIENT_TREND_SERIES');
+    trend('v6', 5, 10);
     assert.equal(e5.markProvenEffective(db, { id }).ok, true);
   });
 
