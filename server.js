@@ -209,6 +209,13 @@ const e5 = require('./lib/v6/e5-kaizen-ledger');
 const authorityService = require('./lib/v6/authority-service');
 const transitionLedger = require('./lib/v6/transition-ledger');
 const incidentRegistry = require('./lib/v6/incident-registry');
+const b2 = require('./lib/v6/b2-conversation-layer');
+const b4 = require('./lib/v6/b4-telemetry-header');
+const c2 = require('./lib/v6/c2-fleet-templates');
+const d1 = require('./lib/v6/d1-model-attestation');
+const e1 = require('./lib/v6/e1-doc-planes-context-compiler');
+const g3 = require('./lib/v6/g3-medusa-isolation');
+const h1 = require('./lib/v6/h1-branding-policy');
 const v6Crypto = require('node:crypto');
 
 const log = createLogger('server');
@@ -8710,7 +8717,35 @@ const V6_STATUS_BY_CODE = {
   BACKOFF: 409,
   MAX_ATTEMPTS: 409,
   CIRCUIT_OPEN: 409,
-  ATTEMPT_FAILED: 409
+  ATTEMPT_FAILED: 409,
+
+  // ── lib/v6/b2-conversation-layer.js (#2982) ──
+  SEQ_CONFLICT: 409,
+  NOT_FOUND_OR_ALREADY_DELETED: 404,
+  // Route-layer code, matching #2982's own named HTTP status verbatim
+  // ("failing closed with 409 INTERRUPT_UNSUPPORTED_BY_ENGINE").
+  INTERRUPT_UNSUPPORTED_BY_ENGINE: 409,
+
+  // ── lib/v6/d1-model-attestation.js (#2985) ──
+  MODEL_MALFORMED: 400,
+
+  // ── lib/v6/e1-doc-planes-context-compiler.js (#1151) ──
+  DOC_AUTHORING_GRANT_REQUIRED: 403,
+  PATH_TRAVERSAL_DENIED: 400,
+  INDEX_MISSING: 404,
+  INDEX_MALFORMED: 409,
+  ENTRY_STALE: 409,
+  ENTRY_GONE: 404,
+  ENTRY_UNINDEXED: 409,
+
+  // ── lib/v6/g3-medusa-isolation.js (#2986) ── matches #2986's own named
+  // HTTP 403 code verbatim.
+  MEDUSA_CROSS_PROJECT_DENIED: 403,
+
+  // ── lib/v6/h1-branding-policy.js (#2987) ──
+  UNKNOWN_BRANDING_KEY: 400,
+  GIT_COMMIT_TRAILER_LOCKED_CLIENT_EXTERNAL: 403,
+  DOC_ATTRIBUTION_FORBIDDEN_ON_APPLICATION_PATH: 403
 };
 
 /**
@@ -8738,6 +8773,23 @@ function _v6Respond(res, result, successStatus = 200) {
 /** `body` when it is a plain JSON object, else `{}` — every v6 handler reads optional fields through this rather than assuming the parser handed back an object. */
 function _v6Body(body) {
   return (body && typeof body === 'object' && !Array.isArray(body)) ? body : {};
+}
+
+/**
+ * Answer a v6 module's `{allowed, code?}` result over HTTP — the shape
+ * `lib/v6/b2-conversation-layer.js#checkInterruptSupport`,
+ * `lib/v6/e1-doc-planes-context-compiler.js#checkWriteBoundary`, and
+ * `lib/v6/g3-medusa-isolation.js#checkMedusaCrossProjectAccess` all share,
+ * distinct from `_v6Respond`'s `{ok, code}`.
+ * @param {http.ServerResponse} res
+ * @param {{allowed: boolean, code?: string}} result
+ * @param {number} [successStatus]
+ * @returns {void}
+ */
+function _v6RespondAllowed(res, result, successStatus = 200) {
+  if (result.allowed) return jsonResponse(res, successStatus, result);
+  const status = V6_STATUS_BY_CODE[result.code] || 403;
+  errorResponse(res, status, `v6 request refused: ${result.code}`, result.code);
 }
 
 const v6Db = () => store.getDb();
@@ -9321,6 +9373,269 @@ route('POST', '/api/v6/projects/:id/incidents', (req, res, params, body) => {
     principalId, projectId, fingerprint: b.fingerprint, generation: b.generation,
     action: b.action, health: b.health, evidence: b.evidence, verification: b.verification
   }), 201);
+});
+
+// ── V6 Train 2 Routes (BRIDGE-2b, Car V60-T2-W2-ROUTES) ──
+//
+// Live wiring for the seven Train 2 modules: the Native Conversation Layer
+// (lib/v6/b2-conversation-layer.js, #2982), the telemetry header
+// (lib/v6/b4-telemetry-header.js, #2983), the fleet template catalog
+// (lib/v6/c2-fleet-templates.js, #2984), model attestation
+// (lib/v6/d1-model-attestation.js, #2985), the 4-plane doc model
+// (lib/v6/e1-doc-planes-context-compiler.js, #1151), the Medusa switchboard
+// ACL (lib/v6/g3-medusa-isolation.js, #2986), and the branding/attribution
+// policy (lib/v6/h1-branding-policy.js, #2987). Same house style as the
+// Train 1 routes above: `operatorProjectCaller`, `_v6Body`, `_v6Respond`/
+// `_v6RespondAllowed`, `jsonResponse`/`errorResponse` (from `lib/routes/
+// _kernel.js`) — operator-actor identity, where one of these modules
+// records it, is always read from `req.tcSession`, never a client-supplied
+// body field, the same P08 principle BRIDGE-2's g1-approvals route holds.
+//
+// Several of these modules are deliberately decoupled from real
+// persistence/collector wiring they do not yet have (documented in each
+// module's own doc comment, flagged again at each route below) — this car
+// mounts the route and calls the real function; wiring a module's data
+// source into live infrastructure it does not already touch (real
+// telemetry collectors for B4, `authority-service.js`'s `KEYS` registry
+// for H1's branding keys, real project-creation code for G3's
+// `defaultMedusaSettings`) is explicitly out of `server.js`'s own file
+// envelope for this car and is flagged, not silently attempted.
+//
+// No SPA fallback route is added for #2981's B1 shell: it routes entirely
+// on the location HASH (`#/projects/:id`, …), which the browser never
+// sends to the server at all — there is nothing for a server-side
+// fallback to catch.
+
+// ── B2: Native Conversation Layer (#2982) ──
+
+route('POST', '/api/v6/projects/:id/sessions/:sessionId/conversation/events', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'append a conversation event')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, b2.appendEvent(v6Db(), {
+    projectId: Number(params.id), sessionId: Number(params.sessionId), launchId: b.launchId, seq: b.seq,
+    tier: b.tier, adapter: b.adapter, role: b.role, content: b.content,
+    paneCursorWatermark: b.paneCursorWatermark, rollingLineSha256: b.rollingLineSha256, redacted: b.redacted === true
+  }), 201);
+});
+
+route('GET', '/api/v6/projects/:id/sessions/:sessionId/conversation/events', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'replay conversation events')) return;
+  const query = parseQuery(reqUrl(req).search);
+  const events = b2.getEvents(v6Db(), {
+    sessionId: Number(params.sessionId),
+    sinceSeq: query.sinceSeq ? Number(query.sinceSeq) : 0,
+    includeDeleted: query.includeDeleted === '1' || query.includeDeleted === 'true'
+  });
+  jsonResponse(res, 200, { events });
+});
+
+route('DELETE', '/api/v6/projects/:id/sessions/:sessionId/conversation/events/:eventId', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'delete a conversation event')) return;
+  _v6Respond(res, b2.softDeleteEvent(v6Db(), { id: Number(params.eventId), sessionId: Number(params.sessionId) }));
+});
+
+// Deliberately NOT implementing `.../messages/:id/prioritize` (#2982
+// deliverable 2's OTHER half): no lib/v6/*.js function backs it (the
+// issue's own description, "zero signals sent," is pure request
+// metadata with no module behind it), and inventing a route with no
+// library logic to call would be fabrication, not wiring — flagged here
+// rather than shipped as a placeholder.
+route('POST', '/api/v6/projects/:id/conversation/interrupt', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'request an engine-verified interrupt')) return;
+  const b = _v6Body(body);
+  _v6RespondAllowed(res, b2.checkInterruptSupport(b.engineProfile || null));
+});
+
+route('GET', '/api/v6/conversation/adapter-tier/:adapter', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'classify a conversation adapter tier')) return;
+  jsonResponse(res, 200, { adapter: params.adapter, tier: b2.classifyAdapterTier(params.adapter) });
+});
+
+// ── B4: Telemetry Header (#2983) ──
+//
+// KNOWN GAP, flagged rather than silently resolved: this module has no
+// real collector wiring (lib/usage-windows.js #2599, lib/medusa-drift.js
+// #2956, etc. — see lib/v6/b4-telemetry-header.js's own doc comment,
+// which names that wiring BRIDGE-5, not this car). This route assembles a
+// bar from whatever `metrics` the caller supplies (empty by default —
+// every badge reads `unavailable`), rather than fabricating readings.
+
+route('GET', '/api/v6/projects/:id/telemetry', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'read the telemetry header')) return;
+  const query = parseQuery(reqUrl(req).search);
+  const scope = b4.SCOPES.includes(query.scope) ? query.scope : 'global';
+  jsonResponse(res, 200, b4.assembleTelemetryBar(scope, {}));
+});
+
+// ── C2: Starter Fleet Template Catalog (#2984) ──
+//
+// Pure, stateless planning functions — no persistence. A `plan` is
+// returned to the caller to hold and pass back to `/admit`, the same way
+// the library module itself has no stored-plan concept.
+
+route('GET', '/api/v6/fleet-templates', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'list fleet templates')) return;
+  jsonResponse(res, 200, { templates: c2.listFleetTemplates() });
+});
+
+route('GET', '/api/v6/fleet-templates/:templateId', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a fleet template')) return;
+  const template = c2.getFleetTemplate(params.templateId);
+  if (!template) return errorResponse(res, 404, `Template "${params.templateId}" not found`, 'NOT_FOUND');
+  jsonResponse(res, 200, template);
+});
+
+route('POST', '/api/v6/fleet-templates/:templateId/plan', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'plan a fleet apply')) return;
+  const b = _v6Body(body);
+  const plan = c2.planFleetApply(params.templateId, b.config || {});
+  if (!plan) return errorResponse(res, 404, `Template "${params.templateId}" not found`, 'NOT_FOUND');
+  jsonResponse(res, 200, plan);
+});
+
+route('POST', '/api/v6/fleet-templates/:templateId/admit', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'admit a deferred fleet seat')) return;
+  const b = _v6Body(body);
+  if (!b.plan || !b.seatId) return errorResponse(res, 400, 'plan and seatId are required', 'INVALID_REQUEST');
+  const { plan, admitted } = c2.admitDeferredSeat(b.plan, b.seatId);
+  jsonResponse(res, 200, { plan, admitted });
+});
+
+// ── D1: Model Attestation (#2985) ──
+
+route('POST', '/api/v6/projects/:id/sessions/:sessionId/attestations', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'record a model attestation')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, d1.recordAttestation(v6Db(), {
+    projectId: Number(params.id), sessionId: Number(params.sessionId), generation: b.generation,
+    engineId: b.engineId, requestedModel: b.requestedModel, observedModel: b.observedModel,
+    source: b.source, confidence: b.confidence
+  }), 201);
+});
+
+route('GET', '/api/v6/projects/:id/sessions/:sessionId/attestations', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read attestation history')) return;
+  jsonResponse(res, 200, { attestations: d1.getAttestationHistory(v6Db(), { sessionId: Number(params.sessionId) }) });
+});
+
+route('GET', '/api/v6/projects/:id/sessions/:sessionId/attestations/:generation', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read one generation\'s attestation')) return;
+  const attestation = d1.getAttestation(v6Db(), { sessionId: Number(params.sessionId), generation: Number(params.generation) });
+  if (!attestation) return errorResponse(res, 404, 'No attestation for that generation', 'NOT_FOUND');
+  jsonResponse(res, 200, attestation);
+});
+
+// ── E1: 4-Plane Documentation Model & SSOT Index (#1151) ──
+//
+// `root` is always `__dirname` (this server's own checkout) — NEVER a
+// caller-supplied path, the same fail-closed posture
+// `lib/v6/e1-doc-planes-context-compiler.js#checkWriteBoundary` itself
+// takes against path traversal. A caller chooses WHICH paths to classify/
+// bundle; it never chooses WHERE on this host those paths are resolved
+// from.
+
+route('GET', '/api/v6/doc-planes/classify', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'classify a documentation path')) return;
+  const query = parseQuery(reqUrl(req).search);
+  if (!query.path) return errorResponse(res, 400, 'path is required', 'INVALID_REQUEST');
+  jsonResponse(res, 200, { path: query.path, plane: e1.classifyPlane(query.path, { root: __dirname }) });
+});
+
+route('POST', '/api/v6/doc-planes/write-boundary', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'check the doc write boundary')) return;
+  const b = _v6Body(body);
+  if (!b.path) return errorResponse(res, 400, 'path is required', 'INVALID_REQUEST');
+  _v6RespondAllowed(res, e1.checkWriteBoundary(b.path, { grant: b.grant, root: __dirname }));
+});
+
+route('POST', '/api/v6/doc-planes/context-bundle', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'compile a context bundle')) return;
+  const b = _v6Body(body);
+  if (!Array.isArray(b.paths)) return errorResponse(res, 400, 'paths must be an array', 'INVALID_REQUEST');
+  jsonResponse(res, 200, e1.compileContextBundle(b.paths, {
+    tokenBudget: b.tokenBudget, includeHistoricalArchive: b.includeHistoricalArchive === true, root: __dirname
+  }));
+});
+
+route('POST', '/api/v6/doc-planes/ssot-index/sync', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'sync the SSOT index')) return;
+  jsonResponse(res, 201, e1.syncSsotIndex(__dirname));
+});
+
+route('GET', '/api/v6/doc-planes/ssot-index/validate', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'validate the SSOT index')) return;
+  const result = e1.validateSsotIndex(__dirname);
+  jsonResponse(res, result.ok ? 200 : 409, result);
+});
+
+route('POST', '/api/v6/doc-planes/car-dependency-admission', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'check car dependency admission')) return;
+  const b = _v6Body(body);
+  jsonResponse(res, 200, e1.checkCarDependencyAdmission(b.car || {}, { completedCarIds: b.completedCarIds || [] }));
+});
+
+route('POST', '/api/v6/doc-planes/webhook-state-advance', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'evaluate a webhook state advance')) return;
+  const b = _v6Body(body);
+  jsonResponse(res, 200, e1.evaluateWebhookStateAdvance(b.event || {}, b.currentState));
+});
+
+// ── G3: Medusa Switchboard Isolation (#2986) ──
+//
+// `defaultMedusaSettings()` (#2986 deliverable 1) is not exposed as its
+// own route: it is meant to be APPLIED at project-creation time
+// (lib/projects.js, outside this car's envelope), not read over HTTP.
+// Only the switchboard ACL (deliverable 2) is wired here.
+
+route('POST', '/api/v6/projects/:id/medusa-access-check', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'check Medusa cross-project access')) return;
+  const b = _v6Body(body);
+  _v6RespondAllowed(res, g3.checkMedusaCrossProjectAccess(Number(params.id), b.targetProjectId, { crossProjectLinks: b.crossProjectLinks || [] }));
+});
+
+// ── H1: Branding & Attribution Policy (#2987) ──
+//
+// KNOWN GAP, flagged rather than silently resolved: `BRANDING_KEYS` is
+// not registered in `lib/project-authority-settings.js`'s own
+// `OPERATOR_AUTHORITY_SETTINGS` (verified: no `branding.*` entry exists
+// there), so these three keys cannot yet be read/written through
+// `lib/v6/authority-service.js#getEffective`/`setPolicy` — that
+// registration is BRIDGE-1/4/5 (lib/v6/h1-branding-policy.js's own doc
+// comment), outside this car's envelope. These routes expose the
+// STATELESS decision functions directly: the caller supplies whatever
+// `storedValue` it has (from wherever it is actually persisting it today,
+// if anywhere) and the server computes the effective value or validates a
+// proposed change — no policy is read or written here.
+
+route('GET', '/api/v6/branding/default-policy', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'read the default branding policy')) return;
+  jsonResponse(res, 200, h1.defaultBrandingPolicy());
+});
+
+route('GET', '/api/v6/branding/classify', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'classify an attribution target path')) return;
+  const query = parseQuery(reqUrl(req).search);
+  if (!query.path) return errorResponse(res, 400, 'path is required', 'INVALID_REQUEST');
+  jsonResponse(res, 200, { path: query.path, classification: h1.classifyAttributionTarget(query.path) });
+});
+
+route('POST', '/api/v6/branding/effective', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'compute an effective branding value')) return;
+  const b = _v6Body(body);
+  if (!h1.BRANDING_KEYS.includes(b.key)) {
+    return errorResponse(res, 400, `Unknown branding key "${b.key}"`, 'UNKNOWN_BRANDING_KEY');
+  }
+  let value;
+  if (b.key === 'branding.gitCommitTrailer') value = h1.effectiveGitCommitTrailer(b.storedValue, b.repoClassification);
+  else if (b.key === 'branding.generatedDocAttribution') value = h1.effectiveGeneratedDocAttribution(b.storedValue, b.targetPath);
+  else value = h1.effectiveUiWatermark(b.storedValue);
+  jsonResponse(res, 200, { key: b.key, value });
+});
+
+route('POST', '/api/v6/branding/validate-change', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'validate a branding policy change')) return;
+  const b = _v6Body(body);
+  _v6RespondAllowed(res, h1.validateBrandingPolicyChange(b.key, b.value, { repoClassification: b.repoClassification, targetPath: b.targetPath }));
 });
 
 // ── Server Creation ──
