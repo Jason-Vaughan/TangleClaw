@@ -8755,28 +8755,47 @@ const V6_OPERATOR_SERVICE_PRINCIPAL = 'principal-v6-operator-service';
  * @param {number} projectId
  * @returns {void}
  */
+/**
+ * Ensure `projectId` has a workspace mapping (Ruling A546 part 1): a
+ * pre-seeded mapping from a test or a future car is left untouched; only a
+ * project with none gets the shared default. PRR-A R1 / Ruling A549:
+ * `trusted_project_workspaces.project_id` is a real FK to `projects(id)` —
+ * check the project actually exists FIRST, so an unknown projectId answers
+ * `null` instead of throwing a raw FK-constraint error.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {number} projectId
+ * @returns {string|null} The project's effective workspace id, or `null` when `projectId` does not exist.
+ */
 function _v6EnsureProjectWorkspace(db, projectId) {
   const existing = db.prepare('SELECT workspace_id FROM trusted_project_workspaces WHERE project_id = ?').get(projectId);
-  if (existing) return;
+  if (existing) return existing.workspace_id;
+  if (!db.prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId)) return null;
   db.prepare('INSERT OR IGNORE INTO trusted_workspaces (id, name, created_at) VALUES (?, ?, ?)')
     .run(V6_DEFAULT_WORKSPACE_ID, 'Default Workspace', new Date().toISOString());
   db.prepare('INSERT OR IGNORE INTO trusted_project_workspaces (project_id, workspace_id) VALUES (?, ?)')
     .run(projectId, V6_DEFAULT_WORKSPACE_ID);
+  return V6_DEFAULT_WORKSPACE_ID;
 }
 
 /**
- * Ensure the v6 operator service principal exists, holding zero capability
- * until {@link _v6EnsureOperatorGrant} grants it one.
+ * Ensure a v6 operator service principal exists FOR `workspaceId`, holding
+ * zero capability until {@link _v6EnsureOperatorGrant} grants it one. One
+ * principal per workspace, not one global principal (PRR-A R1): `authorize`
+ * scopes a caller by `principal.workspace_id === project.workspace_id`
+ * exactly, so a single principal could satisfy that check for at most one
+ * workspace — a project pre-mapped to a workspace other than the shared
+ * default needs its own principal anchored there, not a scope mismatch.
  * @param {import('node:sqlite').DatabaseSync} db
- * @returns {string} {@link V6_OPERATOR_SERVICE_PRINCIPAL}
+ * @param {string} workspaceId
+ * @returns {string} The service principal id for `workspaceId`.
  */
-function _v6EnsureOperatorServicePrincipal(db) {
-  const existing = db.prepare('SELECT id FROM trusted_principals WHERE id = ?').get(V6_OPERATOR_SERVICE_PRINCIPAL);
-  if (!existing) {
+function _v6EnsureOperatorServicePrincipal(db, workspaceId) {
+  const id = `${V6_OPERATOR_SERVICE_PRINCIPAL}-${workspaceId}`;
+  if (!db.prepare('SELECT 1 FROM trusted_principals WHERE id = ?').get(id)) {
     db.prepare("INSERT OR IGNORE INTO trusted_principals (id, kind, workspace_id, created_at) VALUES (?, 'service', ?, ?)")
-      .run(V6_OPERATOR_SERVICE_PRINCIPAL, V6_DEFAULT_WORKSPACE_ID, new Date().toISOString());
+      .run(id, workspaceId, new Date().toISOString());
   }
-  return V6_OPERATOR_SERVICE_PRINCIPAL;
+  return id;
 }
 
 /**
@@ -8802,19 +8821,36 @@ function _v6EnsureOperatorGrant(db, principalId, projectId, action) {
 /**
  * The authorization bundle a v6 authority/transition/incident route needs
  * for one call: the project's workspace bootstrapped, the service
- * principal provisioned and granted `action` over it. Called only after
- * `operatorProjectCaller` has already proven the HTTP caller is the
- * operator — this vouches for that same operator, not a second identity.
+ * principal (scoped to that SAME workspace) provisioned and granted
+ * `action` over it. Called only after `operatorProjectCaller` has already
+ * proven the HTTP caller is the operator — this vouches for that same
+ * operator, not a second identity.
  * @param {import('node:sqlite').DatabaseSync} db
  * @param {number} projectId
  * @param {string} action
- * @returns {{principalId: string, auth: {authorize: Function}}}
+ * @returns {{principalId: string, auth: {authorize: Function}}|null} `null` when `projectId` does not exist.
  */
 function _v6OperatorAuthorize(db, projectId, action) {
-  _v6EnsureProjectWorkspace(db, projectId);
-  const principalId = _v6EnsureOperatorServicePrincipal(db);
+  const workspaceId = _v6EnsureProjectWorkspace(db, projectId);
+  if (!workspaceId) return null;
+  const principalId = _v6EnsureOperatorServicePrincipal(db, workspaceId);
   _v6EnsureOperatorGrant(db, principalId, projectId, action);
   return { principalId, auth: authorityService.createAuthorizationService(db) };
+}
+
+/**
+ * {@link _v6OperatorAuthorize}, answering the route's 404 itself when
+ * `projectId` does not exist, so every call site is one line.
+ * @param {http.ServerResponse} res
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {number} projectId
+ * @param {string} action
+ * @returns {{principalId: string, auth: {authorize: Function}}|null} `null` once this has already answered the response.
+ */
+function _v6RequireOperatorAuthz(res, db, projectId, action) {
+  const authz = _v6OperatorAuthorize(db, projectId, action);
+  if (!authz) errorResponse(res, 404, `Project "${projectId}" not found`, 'PROJECT_NOT_FOUND');
+  return authz;
 }
 
 // ── C1: Logical Project Hierarchy (#2118) ──
@@ -9034,8 +9070,20 @@ route('POST', '/api/v6/kaizen/items/:id/evaluate-effectiveness', (req, res, para
   _v6Respond(res, e5.canMarkProvenEffective(item, e5.listMeasurements(v6Db(), params.id)));
 });
 
+// PRR-B R1: markRegressed() itself only checks effectiveness_status, not
+// lifecycle_state — a Closed item (lifecycle_state: 'Closed') can still
+// carry effectiveness_status: 'PROVEN_EFFECTIVE' (closeItem never changes
+// it), so without this check a Closed item could flip to REGRESSED and
+// become invisible to gate0Feed (Closed is not a GATE0_OPEN_STATE) with no
+// way to see or act on the regression. Refused here rather than in
+// lib/v6/e5-kaizen-ledger.js, which this car's file envelope does not
+// include.
 route('POST', '/api/v6/kaizen/items/:id/mark-regressed', (req, res, params) => {
   if (!operatorProjectCaller(req, res, 'mark a Kaizen item regressed')) return;
+  const item = e5.getItem(v6Db(), params.id);
+  if (item && item.lifecycle_state === 'Closed') {
+    return _v6Respond(res, { ok: false, code: 'INVALID_TRANSITION' });
+  }
   _v6Respond(res, e5.markRegressed(v6Db(), { id: params.id }));
 });
 
@@ -9090,7 +9138,9 @@ route('PUT', '/api/v6/projects/:id/authority/:key', (req, res, params, body) => 
   if (!operatorProjectCaller(req, res, 'write a project authority policy')) return;
   const projectId = Number(params.id);
   const b = _v6Body(body);
-  const { principalId, auth } = _v6OperatorAuthorize(v6Db(), projectId, 'project.writePolicy');
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'project.writePolicy');
+  if (!authz) return;
+  const { principalId, auth } = authz;
   _v6Respond(res, authorityService.setPolicy(v6Db(), {
     projectId, key: params.key, value: b.value, expectedVersion: b.expectedVersion,
     principalId, requestId: b.requestId || v6Crypto.randomUUID(), auth,
@@ -9118,7 +9168,9 @@ route('POST', '/api/v6/projects/:id/g1-leases', (req, res, params, body) => {
   if (!operatorProjectCaller(req, res, 'mint a G1 lease')) return;
   const projectId = Number(params.id);
   const b = _v6Body(body);
-  const { principalId, auth } = _v6OperatorAuthorize(v6Db(), projectId, 'g1.mintLease');
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'g1.mintLease');
+  if (!authz) return;
+  const { principalId, auth } = authz;
   _v6Respond(res, authorityService.mintLease(v6Db(), {
     principalId, auth, projectId, actor: b.actor, repo: b.repo,
     connectionEpoch: b.connectionEpoch, actions: b.actions, ttlMs: b.ttlMs
@@ -9128,25 +9180,37 @@ route('POST', '/api/v6/projects/:id/g1-leases', (req, res, params, body) => {
 route('POST', '/api/v6/projects/:id/g1-leases/:leaseId/revoke', (req, res, params) => {
   if (!operatorProjectCaller(req, res, 'revoke a G1 lease')) return;
   const projectId = Number(params.id);
-  const { principalId, auth } = _v6OperatorAuthorize(v6Db(), projectId, 'g1.revokeLease');
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'g1.revokeLease');
+  if (!authz) return;
+  const { principalId, auth } = authz;
   _v6Respond(res, authorityService.revokeLease(v6Db(), { principalId, auth, projectId, leaseId: params.leaseId }));
 });
 
+// PRR-A R1 (P08): a G1 approval records WHO approved it — operatorActor is
+// not a claim the request body gets to make (a client-supplied role string
+// is not authority, the same principle operatorProjectCaller itself rests
+// on). signedInOperator requires a REAL signed-in session before this
+// handler ever runs, so req.tcSession.username is guaranteed and is what
+// gets recorded, never body.operatorActor.
 route('POST', '/api/v6/projects/:id/g1-approvals', (req, res, params, body) => {
   if (!operatorProjectCaller(req, res, 'mint a G1 approval')) return;
   const projectId = Number(params.id);
   const b = _v6Body(body);
-  const { principalId, auth } = _v6OperatorAuthorize(v6Db(), projectId, 'g1.mintApproval');
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'g1.mintApproval');
+  if (!authz) return;
+  const { principalId, auth } = authz;
   _v6Respond(res, authorityService.mintApproval(v6Db(), {
-    principalId, auth, projectId, operatorActor: b.operatorActor, action: b.action,
+    principalId, auth, projectId, operatorActor: req.tcSession.username, action: b.action,
     repo: b.repo, targetDigest: b.targetDigest, ttlMs: b.ttlMs
   }), 201);
-});
+}, { signedInOperator: { action: 'mint a G1 milestone approval' } });
 
 route('POST', '/api/v6/projects/:id/g1-approvals/:approvalId/revoke', (req, res, params) => {
   if (!operatorProjectCaller(req, res, 'revoke a G1 approval')) return;
   const projectId = Number(params.id);
-  const { principalId, auth } = _v6OperatorAuthorize(v6Db(), projectId, 'g1.revokeApproval');
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'g1.revokeApproval');
+  if (!authz) return;
+  const { principalId, auth } = authz;
   _v6Respond(res, authorityService.revokeApproval(v6Db(), { principalId, auth, projectId, approvalId: params.approvalId }));
 });
 
@@ -9156,7 +9220,9 @@ route('POST', '/api/v6/projects/:id/transitions', (req, res, params, body) => {
   if (!operatorProjectCaller(req, res, 'begin a runtime transition')) return;
   const projectId = Number(params.id);
   const b = _v6Body(body);
-  const { principalId, auth } = _v6OperatorAuthorize(v6Db(), projectId, 'runtime.createTransition');
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'runtime.createTransition');
+  if (!authz) return;
+  const { principalId, auth } = authz;
   const { request } = transitionLedger.createRuntimeTransitions(v6Db(), auth);
   _v6Respond(res, request({
     principalId, projectId, resourceId: b.resourceId, action: b.action,
@@ -9168,7 +9234,9 @@ route('POST', '/api/v6/projects/:id/transitions/:transitionId/settle', (req, res
   if (!operatorProjectCaller(req, res, 'settle a runtime transition')) return;
   const projectId = Number(params.id);
   const b = _v6Body(body);
-  const { principalId, auth } = _v6OperatorAuthorize(v6Db(), projectId, 'runtime.reconcile');
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'runtime.reconcile');
+  if (!authz) return;
+  const { principalId, auth } = authz;
   const { settle } = transitionLedger.createRuntimeTransitions(v6Db(), auth);
   _v6Respond(res, settle({ principalId, projectId, id: params.transitionId, state: b.state, evidence: b.evidence }));
 });
@@ -9202,7 +9270,9 @@ route('POST', '/api/v6/projects/:id/incidents', (req, res, params, body) => {
   if (!operatorProjectCaller(req, res, 'report runtime incident evidence')) return;
   const projectId = Number(params.id);
   const b = _v6Body(body);
-  const { principalId, auth } = _v6OperatorAuthorize(v6Db(), projectId, 'runtime.recover');
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'runtime.recover');
+  if (!authz) return;
+  const { principalId, auth } = authz;
   const { step } = incidentRegistry.createRuntimeIncidents(v6Db(), auth);
   _v6Respond(res, step({
     principalId, projectId, fingerprint: b.fingerprint, generation: b.generation,

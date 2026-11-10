@@ -6,19 +6,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const store = require('../lib/store');
+const authSession = require('../lib/auth-session');
 const { handleRequest } = require('../server');
 
 // v6 Stage 1 (BRIDGE-2, Car V60-T1-W2-ROUTES): the first live HTTP wiring for
 // lib/v6/c1-logical-projects.js (#2118), lib/v6/e5-kaizen-ledger.js (#2980),
-// and lib/v6/sprint-report-validator-v3.js (#2979). Driven through the REAL
-// request handler (server.js#handleRequest), same harness as
+// lib/v6/sprint-report-validator-v3.js (#2979), lib/v6/authority-service.js
+// (#1149), lib/v6/transition-ledger.js (#2977), and
+// lib/v6/incident-registry.js (#2978). Driven through the REAL request
+// handler (server.js#handleRequest), same harness as
 // test/api-add-login.test.js, so the launch-binding floor and
 // operatorProjectCaller gate this PR actually wires are what the test
 // exercises — not a re-implementation of them.
-//
-// Routes for lib/v6/authority-service.js, lib/v6/transition-ledger.js, and
-// lib/v6/incident-registry.js are deferred (see server.js's own comment at
-// the "V6 Stage 1 Routes" section) and have no tests here.
 
 describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
   let tempDir;
@@ -75,6 +74,7 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
     const raw = opts.body === undefined ? null : JSON.stringify(opts.body);
     const operatorHeaders = opts.operator === false ? {} : { 'x-tangleclaw-client': 'dashboard' };
     const headers = Object.assign({ host: 'localhost:3102' }, operatorHeaders, opts.headers);
+    if (opts.cookie) headers.cookie = opts.cookie;
     if (raw !== null) {
       headers['content-type'] = 'application/json';
       headers['content-length'] = String(Buffer.byteLength(raw));
@@ -97,6 +97,27 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
   const put = (url, body, opts) => send('PUT', url, Object.assign({ body: body || {} }, opts));
   const get = (url, opts) => send('GET', url, opts);
   const json = (res) => JSON.parse(res.body);
+
+/**
+   * Create a REAL signed-in operator session (a user row + an auth_sessions
+   * row, same facts a real login would mint — `session.token_hash`/
+   * `username`/`csrfToken`), for the one route gated by `signedInOperator`
+   * (g1-approvals) rather than the `authEnabled: false` gate-stood-down
+   * shape every other test here uses. Arms the gate (`authEnabled: true`) —
+   * the dispatcher skips session resolution ENTIRELY while the gate stands
+   * down, cookie or no cookie, so a real session only reads as signed-in
+   * once the gate is armed. The next `beforeEach` disarms it again.
+   * @param {string} username
+   * @returns {{cookie: string, headers: Record<string, string>}} `opts` fields for {@link send}.
+   */
+  function signInOperator(username) {
+    const cfg = store.config.load();
+    cfg.authEnabled = true;
+    store.config.save(cfg);
+    const user = store.users.create(username, 'correct-horse-battery');
+    const { token, csrfToken } = store.authSessions.create(user);
+    return { cookie: `tc_session=${token}`, headers: { [authSession.CSRF_HEADER]: csrfToken } };
+  }
 
   describe('launch-binding floor: every mutating route here refuses a non-operator caller', () => {
     it('refuses POST /api/v6/logical-projects with no bound caller', async () => {
@@ -355,6 +376,19 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
       assert.equal(json(await get(`/api/v6/kaizen/items/${id}`)).effectiveness_status, 'REGRESSED');
     });
 
+    it('refuses marking a CLOSED item regressed with 409 (PRR-B R1): it must never become invisible to gate0-feed', async () => {
+      const id = await implementedItem();
+      await patch(`/api/v6/kaizen/items/${id}/state`, { nextState: 'Verified' });
+      await post(`/api/v6/kaizen/items/${id}/measurements`, { sprintVersion: 'v1', measurementKind: 'regression_test', passed: true, evidenceRef: 'x' });
+      await post(`/api/v6/kaizen/items/${id}/measurements`, { sprintVersion: 'v1', measurementKind: 'sprint_window', passed: true, evidenceRef: 'x' });
+      await patch(`/api/v6/kaizen/items/${id}/state`, { nextState: 'Effectiveness Measured' });
+      await patch(`/api/v6/kaizen/items/${id}/state`, { nextState: 'Closed' });
+      const regress = await post(`/api/v6/kaizen/items/${id}/mark-regressed`);
+      assert.equal(regress.statusCode, 409, regress.body);
+      assert.equal(json(regress).code, 'INVALID_TRANSITION');
+      assert.equal(json(await get(`/api/v6/kaizen/items/${id}`)).effectiveness_status, 'PROVEN_EFFECTIVE', 'a refused mark-regressed must not have mutated anything');
+    });
+
     it('sets a Gate 0 disposition, requiring a rationale for deferred_with_rationale', async () => {
       const create = await post('/api/v6/kaizen/items', {
         originSprint: 'v1', findingId: 'f-gate0', defectCategory: 'c', rootCause: 'r',
@@ -470,12 +504,32 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
       assert.equal(revokeAgain.statusCode, 404, revokeAgain.body);
     });
 
-    it('mints and revokes a G1 approval', async () => {
+    it('mints and revokes a G1 approval, recording the REAL signed-in operator as operatorActor, never the body claim (PRR-A R1)', async () => {
       const projectId = await seedProject('g1-approval-project');
-      const mint = await post(`/api/v6/projects/${projectId}/g1-approvals`, { operatorActor: 'rosie', action: 'merge', repo: 'TangleClaw', targetDigest: 'abc123', ttlMs: 60000 });
+      const signedIn = signInOperator('rosie-g1-test');
+      const mint = await post(`/api/v6/projects/${projectId}/g1-approvals`,
+        { operatorActor: 'someone-else-entirely', action: 'merge', repo: 'TangleClaw', targetDigest: 'abc123', ttlMs: 60000 },
+        signedIn);
       assert.equal(mint.statusCode, 201, mint.body);
-      const revoke = await post(`/api/v6/projects/${projectId}/g1-approvals/${json(mint).id}/revoke`);
+      const row = store.getDb().prepare('SELECT operator_actor FROM v6_g1_approvals WHERE id = ?').get(json(mint).id);
+      assert.equal(row.operator_actor, 'rosie-g1-test', 'the real signed-in session, not the body claim, must be recorded');
+      // Revoke is not signedInOperator-gated, but the gate is now armed
+      // (authEnabled: true) for the rest of this test, so operatorProjectCaller
+      // itself needs the same real session to still read as the operator.
+      const revoke = await post(`/api/v6/projects/${projectId}/g1-approvals/${json(mint).id}/revoke`, {}, signedIn);
       assert.equal(revoke.statusCode, 200, revoke.body);
+    });
+
+    it('refuses a G1 approval mint with no signed-in operator session, even from an otherwise-admitted gate-stood-down caller', async () => {
+      const projectId = await seedProject('g1-approval-no-session');
+      const res = await post(`/api/v6/projects/${projectId}/g1-approvals`, { operatorActor: 'x', action: 'merge', repo: 'r', targetDigest: 'd', ttlMs: 1000 });
+      assert.ok([401, 403].includes(res.statusCode), res.body);
+    });
+
+    it('404s an authority route against a project that does not exist, rather than throwing on the trust-bootstrap FK (PRR-A R1 / Ruling A549)', async () => {
+      const res = await put('/api/v6/projects/999999/authority/fleetCoordinator', { value: true, expectedVersion: 1 });
+      assert.equal(res.statusCode, 404, res.body);
+      assert.equal(json(res).code, 'PROJECT_NOT_FOUND');
     });
 
     it('refuses the launch-binding floor and the operator gate for a non-operator caller', async () => {
