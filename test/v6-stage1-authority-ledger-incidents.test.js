@@ -620,6 +620,27 @@ describe('lib/v6/incident-registry.js (#2978, V6-04)', () => {
     assert.ok(row.payload_json.includes('[REDACTED]'));
   });
 
+  it('redacts X-TangleClaw-Launch-Id, TANGLECLAW_LAUNCH_ID=, tc_launch_ and tc_hb_ values (PRR-A R2, PR #3008)', () => {
+    const db = freshStore();
+    const projectId = seedProject(db, { path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v6-project-')) });
+    const ownerId = seedUserPrincipal(db, { projectId, role: 'owner' });
+    const auth = authorityService.createAuthorizationService(db);
+    const incidents = incidentRegistry.createRuntimeIncidents(db, auth);
+    const result = incidents.step({
+      principalId: ownerId, projectId, fingerprint: 'fp-secret-2', generation: 1, action: 'noop', health: 'unhealthy',
+      evidence: {
+        headers: 'X-TangleClaw-Launch-Id: opaque-value-12345',
+        env: 'TANGLECLAW_LAUNCH_ID=opaque-value-12345',
+        note: 'saw tc_launch_ABCdef1234567890 and tc_hb_ABCdef1234567890 in the log'
+      }
+    });
+    const row = db.prepare('SELECT payload_json FROM incident_evidence WHERE incident_id = ?').get(result.id);
+    assert.ok(!row.payload_json.includes('opaque-value-12345'), 'launch id leaked unredacted');
+    assert.ok(!row.payload_json.includes('tc_launch_ABCdef1234567890'), 'tc_launch_ token leaked unredacted');
+    assert.ok(!row.payload_json.includes('tc_hb_ABCdef1234567890'), 'tc_hb_ token leaked unredacted');
+    assert.ok(row.payload_json.includes('[REDACTED]'));
+  });
+
   it('refuses a reserved action outright', () => {
     const db = freshStore();
     const projectId = seedProject(db, { path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v6-project-')) });
