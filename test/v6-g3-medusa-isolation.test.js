@@ -78,4 +78,41 @@ describe('checkMedusaCrossProjectAccess (#2986 deliverable 2)', () => {
     });
     assert.equal(res.allowed, true);
   });
+
+  it('fails closed, never allowed, when both ids are null (PRR-B R1 HOLD)', () => {
+    const res = g3.checkMedusaCrossProjectAccess(null, null);
+    assert.equal(res.allowed, false);
+    assert.equal(res.code, 'MEDUSA_CROSS_PROJECT_DENIED');
+  });
+
+  it('fails closed when both ids are undefined', () => {
+    const res = g3.checkMedusaCrossProjectAccess(undefined, undefined);
+    assert.equal(res.allowed, false);
+    assert.equal(res.code, 'MEDUSA_CROSS_PROJECT_DENIED');
+  });
+
+  it('fails closed when both ids are blank strings', () => {
+    const res = g3.checkMedusaCrossProjectAccess('', '');
+    assert.equal(res.allowed, false);
+    assert.equal(res.code, 'MEDUSA_CROSS_PROJECT_DENIED');
+  });
+
+  it('fails closed when both ids are whitespace-only strings', () => {
+    const res = g3.checkMedusaCrossProjectAccess('   ', '   ');
+    assert.equal(res.allowed, false);
+  });
+
+  it('fails closed when one id is present and the other is missing', () => {
+    assert.equal(g3.checkMedusaCrossProjectAccess('p1', null).allowed, false);
+    assert.equal(g3.checkMedusaCrossProjectAccess(null, 'p1').allowed, false);
+    assert.equal(g3.checkMedusaCrossProjectAccess('p1', '').allowed, false);
+  });
+
+  it('a link missing either fromProjectId or toProjectId covers nothing', () => {
+    const res = g3.checkMedusaCrossProjectAccess('p1', 'p2', {
+      crossProjectLinks: [{ fromProjectId: null, toProjectId: 'p2' }, { fromProjectId: 'p1', toProjectId: '' }]
+    });
+    assert.equal(res.allowed, false);
+    assert.equal(res.code, 'MEDUSA_CROSS_PROJECT_DENIED');
+  });
 });

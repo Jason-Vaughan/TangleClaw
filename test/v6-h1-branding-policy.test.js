@@ -39,6 +39,17 @@ describe('classifyAttributionTarget', () => {
   it('fails closed to application for an unrecognized path', () => {
     assert.equal(h1.classifyAttributionTarget('literally/anything/else.txt'), 'application');
   });
+
+  it('collapses ".." BEFORE classifying, so a path that merely looks generated resolves to what it really is (PRR-B R1 HOLD)', () => {
+    assert.equal(h1.classifyAttributionTarget('.tangleclaw/../src/app.js'), 'application');
+    assert.equal(h1.classifyAttributionTarget('reports/../server.js'), 'application');
+    assert.equal(h1.classifyAttributionTarget('.tangleclaw/../.tangleclaw/real.md'), 'generated');
+  });
+
+  it('fails closed to application for a path that still escapes root after normalization', () => {
+    assert.equal(h1.classifyAttributionTarget('../.tangleclaw/x.md'), 'application');
+    assert.equal(h1.classifyAttributionTarget('/etc/passwd'), 'application');
+  });
 });
 
 describe('effectiveGitCommitTrailer — hard lock on client/external repos', () => {
@@ -72,6 +83,11 @@ describe('effectiveGeneratedDocAttribution — permanently forbidden on applicat
     assert.equal(h1.effectiveGeneratedDocAttribution(true, 'server.js'), false);
     assert.equal(h1.effectiveGeneratedDocAttribution(true, 'test/foo.test.js'), false);
     assert.equal(h1.effectiveGeneratedDocAttribution(true, '.testament.toml'), false);
+  });
+
+  it('is PERMANENTLY FORBIDDEN for a traversal-shaped path that resolves to application source (PRR-B R1 HOLD)', () => {
+    assert.equal(h1.effectiveGeneratedDocAttribution(true, '.tangleclaw/../src/app.js'), false);
+    assert.equal(h1.effectiveGeneratedDocAttribution(true, 'reports/../server.js'), false);
   });
 });
 
@@ -119,6 +135,12 @@ describe('validateBrandingPolicyChange', () => {
 
   it('refuses generatedDocAttribution: true for an application target path', () => {
     const res = h1.validateBrandingPolicyChange('branding.generatedDocAttribution', true, { targetPath: 'server.js' });
+    assert.equal(res.allowed, false);
+    assert.equal(res.code, 'DOC_ATTRIBUTION_FORBIDDEN_ON_APPLICATION_PATH');
+  });
+
+  it('refuses generatedDocAttribution: true for a traversal-shaped target path that resolves to application source (PRR-B R1 HOLD)', () => {
+    const res = h1.validateBrandingPolicyChange('branding.generatedDocAttribution', true, { targetPath: '.tangleclaw/../src/app.js' });
     assert.equal(res.allowed, false);
     assert.equal(res.code, 'DOC_ATTRIBUTION_FORBIDDEN_ON_APPLICATION_PATH');
   });
