@@ -91,7 +91,7 @@ describe('appendEvent / getEvents (#2982 deliverable 1)', () => {
       const sessionId = seedSession(db, projectId, 'aider');
       b2.appendEvent(db, {
         projectId, sessionId, launchId: 'launch-1', seq: 1, tier: 'B', adapter: 'aider',
-        role: 'assistant', content: 'pane-derived text', rollingLineSha256: 'a'.repeat(64)
+        role: 'assistant', content: 'pane-derived text', paneCursorWatermark: 0, rollingLineSha256: 'a'.repeat(64)
       });
       const events = b2.getEvents(db, { sessionId });
       assert.equal(events[0].degraded_fidelity, 1);
@@ -291,6 +291,42 @@ describe('appendEvent / getEvents (#2982 deliverable 1)', () => {
       assert.match(missingWatermark.message, /Tier B pane events require/);
       const complete = b2.appendEvent(db, { ...base, seq: 3, paneCursorWatermark: 0, rollingLineSha256: 'a'.repeat(64) });
       assert.equal(complete.ok, true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('refuses a Tier B event that OMITS paneCursorWatermark entirely, rather than silently defaulting it to 0 (PRR-A R2 HOLD)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'b2-tier-b-omitted-watermark');
+      const sessionId = seedSession(db, projectId);
+      const res = b2.appendEvent(db, {
+        projectId, sessionId, launchId: 'l1', seq: 1, tier: 'B', adapter: 'aider', role: 'assistant', content: 'x',
+        rollingLineSha256: 'a'.repeat(64)
+      });
+      assert.equal(res.ok, false);
+      assert.match(res.message, /Tier B pane events require/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('normalizes rollingLineSha256 to lowercase, so an uppercase hash dedupes against its lowercase equivalent (PRR-A R2 HOLD)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'b2-hash-case-dedup');
+      const sessionId = seedSession(db, projectId);
+      const base = { projectId, sessionId, launchId: 'l1', tier: 'B', adapter: 'aider', role: 'assistant', content: 'x', paneCursorWatermark: 0 };
+      const first = b2.appendEvent(db, { ...base, seq: 1, rollingLineSha256: 'b'.repeat(64) });
+      assert.equal(first.code, 'APPENDED');
+      const second = b2.appendEvent(db, { ...base, seq: 2, rollingLineSha256: 'B'.repeat(64) });
+      assert.equal(second.ok, true);
+      assert.equal(second.code, 'DEDUPED');
+      assert.equal(second.id, first.id);
+      const events = b2.getEvents(db, { sessionId });
+      assert.equal(events.length, 1);
+      assert.equal(events[0].rolling_line_sha256, 'b'.repeat(64), 'stored in normalized lowercase form');
     } finally {
       cleanup();
     }
