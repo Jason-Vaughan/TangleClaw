@@ -478,6 +478,8 @@
   </style>
 </head>
 <body>
+  <script type="application/json" id="tc-report-errata">{"schema_version":"1.0.0","revision":"1.1","errata_ledger":[{"entry_id":"errata-v5.68.0-v5.71.0-001","corrected_at":"2026-11-10T09:57:59.855Z","field":"issue_citations","original_value":"Session Hierarchy (#108), Engine Failover (#109), Adversarial Agent (#1032), Secure Secrets (#1257) & Dynamic Agents (#1578)","corrected_value":"Adversarial Agent (#108), Engine Failover (#109), Secure Clipboard Sync (#1032), Sub-Agent Parallelization (#1257) & Session Hierarchy (#1578)","reason":"The generator sorted five issue IDs ascending and zipped them against an unsorted label list, scrambling four of five Issue-ID-to-title mappings (#109 happened to land correctly by coincidence). Corrected against each issue's real GitHub title (verified via `gh issue view`)."}]}</script>
+  <div class="errata-banner" role="note">Revision 1.1 — Errata & Canonical Reconciliation Applied</div>
   <div style="position:fixed;inset:0;z-index:0;pointer-events:none;display:flex;align-items:center;justify-content:center;overflow:hidden;" aria-hidden="true">
     <img src="https://jason-vaughan.github.io/TangleClaw/reports/assets/logo-icon.png" alt="" style="width:min(82vw,860px);height:min(82vw,860px);object-fit:contain;opacity:0.06;user-select:none;-webkit-user-drag:none;" />
   </div>
@@ -1840,7 +1842,7 @@
       <div class="grid-3">
         <div class="subcard">
           <span class="pillar-num">ROADMAP MILESTONE #59 · v5.72.0 (⚡ FULLY AUTONOMOUS · 5 ISSUES)</span>
-          <h4>Session Hierarchy (`#108`), Engine Failover (`#109`), Adversarial Agent (`#1032`), Secure Secrets (`#1257`) &amp; Dynamic Agents (`#1578`)</h4>
+          <h4>Adversarial Agent (`#108`), Engine Failover (`#109`), Secure Clipboard Sync (`#1032`), Sub-Agent Parallelization (`#1257`) &amp; Session Hierarchy (`#1578`)</h4>
           <p>
             All 5 remaining in-repo engineering issues are organized into <code>Milestone #59</code> (<code>v5.72.0</code>) on the public roadmap with a <code>⚡ Fully autonomous</code> pill, ready for the next autonomous sprint train.
           </p>

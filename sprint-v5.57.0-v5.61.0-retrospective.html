@@ -478,6 +478,8 @@
   </style>
 </head>
 <body>
+  <script type="application/json" id="tc-report-errata">{"schema_version":"1.0.0","revision":"1.1","errata_ledger":[{"entry_id":"errata-v5.57.0-v5.61.0-001","corrected_at":"2026-11-10T09:57:59.850Z","field":"total_prs_merged","original_value":"26","corrected_value":"27","reason":"The Architecture section badge, fleet table and Total Run Time card stated the stale pre-reconciliation figures (\"26 True-Merged PRs\", \"21 feature cars + 5 release cuts\", \"12h 16m (736m)\"); the hero banner already stated the canonical, git-verified totals (\"27 PRs (22 Feat + 5 Rel)\", \"12h 15m 26s\") this report's own declared commit range (1ce2dd19..d5b3491c) confirms."}]}</script>
+  <div class="errata-banner" role="note">Revision 1.1 — Errata & Canonical Reconciliation Applied</div>
   <header class="topnav">
     <div class="topnav-inner">
       <div class="brand">
@@ -587,7 +589,7 @@
         <!-- PLAIN-ENGLISH SUMMARY FOR NON-TECHNICAL READERS (MANDATORY v5.47.0+ CONTRACT) -->
         <div id="plain-english" style="margin-top:22px;padding:22px 24px;border-radius:14px;background:linear-gradient(135deg,rgba(52,211,153,0.10),rgba(56,189,248,0.08));border:1px solid rgba(52,211,153,0.35);">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
-            <span class="badge badge-green" style="font-size:0.76rem;padding:4px 10px;">📖 PLAIN-ENGLISH SUMMARY · FIVE VERSIONS SHIPPED BACK-TO-BACK IN 12h 16m TOTAL WALL-CLOCK TIME (5h 36m → 22m)</span>
+            <span class="badge badge-green" style="font-size:0.76rem;padding:4px 10px;">📖 PLAIN-ENGLISH SUMMARY · FIVE VERSIONS SHIPPED BACK-TO-BACK IN 12h 15m 26s TOTAL WALL-CLOCK TIME (5h 36m → 22m)</span>
             <span class="badge badge-cyan" style="font-size:0.76rem;padding:4px 10px;">Start 22:58 PST (Nov 2) → Finish 11:14 PST (:3102 Live) / 11:18 PST (Closeout)</span>
           </div>
           <h3 style="margin:0 0 12px;font-size:1.15rem;color:var(--text);">What the 5-Version Sprint Train Delivered — and Start-to-Finish Wall-Clock Run Time Breakdown</h3>
@@ -603,9 +605,9 @@
               </ul>
             </div>
             <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
-              <h4 style="margin:0 0 8px;color:var(--green);font-size:0.98rem;">⏱️ Total Run Time: 12h 16m Start-to-Finish (5h 36m → 4h 09m → 1h 15m → 56m → 22m)</h4>
+              <h4 style="margin:0 0 8px;color:var(--green);font-size:0.98rem;">⏱️ Total Run Time: 12h 15m 26s Start-to-Finish (5h 36m → 4h 09m → 1h 15m → 56m → 22m)</h4>
               <p style="margin:0;font-size:0.88rem;line-height:1.58;color:var(--text-muted);">
-                From Operator Go (<code>22:58 PST</code> Nov 2) to <code>v5.61.0</code> live on <code>:3102</code> (<code>11:14 PST</code> Nov 3), total elapsed wall-clock time was <strong><code>12h 16m</code> (<code>736m</code>)</strong> (<code>12h 20m</code> to final O-Gate closeout at <code>11:18 PST</code>; <code>9h 12m</code> active merge-to-live train from first PR merge at <code>02:02 PST</code>):<br/>
+                From Operator Go (<code>22:58 PST</code> Nov 2) to <code>v5.61.0</code> live on <code>:3102</code> (<code>11:14 PST</code> Nov 3), total elapsed wall-clock time was <strong><code>12h 15m 26s</code></strong> (<code>12h 20m</code> to final O-Gate closeout at <code>11:18 PST</code>; <code>9h 12m</code> active merge-to-live train from first PR merge at <code>02:02 PST</code>):<br/>
                 • <strong>Leg 1 (<code>v5.57.0</code>):</strong> <code>22:58 → 04:34 PST</code> = <strong><code>5h 36m</code> (<code>336m</code>)</strong> to live <code>:3102</code> / O-Gate (<code>2h 17m</code> merge window <code>02:02 → 04:19 PST</code> across 6 PRs).<br/>
                 • <strong>Leg 2 (<code>v5.58.0</code>):</strong> <code>04:34 → 08:43 PST</code> = <strong><code>4h 09m</code> (<code>249m</code>)</strong> total leg wall time to live <code>:3102</code> (<strong><code>1h 15m</code></strong> active merge-to-deploy window <code>07:28 → 08:43 PST</code> across 5 PRs).<br/>
                 • <strong>Leg 3 (<code>v5.59.0</code>):</strong> <code>08:43 → 09:58 PST</code> = <strong><code>1h 15m</code> (<code>75m</code>)</strong> to live <code>:3102</code> (<code>1h 06m</code> merge window <code>08:43 → 09:49 PST</code> across 5 PRs + <code>9m</code> Release CI/deploy).<br/>
@@ -625,7 +627,7 @@
           <h2 class="section-title"><span class="num">01</span> 10-Lane Multi-Agent Topology &amp; 5-Version Cross-Sprint Pipeline Architecture</h2>
           <p class="section-desc">How the 10-lane fleet + Morpheus Advisor executed 5 consecutive release cycles (`Charters A494–A498`) with zero host test contention and zero cross-version branch contamination.</p>
         </div>
-        <span class="badge badge-blue">10 Active Lanes · 5 Co-Signed Charters (A494–A498) · 26 True-Merged PRs</span>
+        <span class="badge badge-blue">10 Active Lanes · 5 Co-Signed Charters (A494–A498) · 27 True-Merged PRs</span>
       </div>
 
       <div class="grid-2">
@@ -649,13 +651,13 @@
                   <td><code>TC-Lane-PM</code> (<code>#1541</code>)</td>
                   <td><code>tc-lane-pm-9d85f3aa</code> (<code>antigravity</code>)</td>
                   <td>Coordinator (<code>Rule #285 v3</code>)</td>
-                  <td>Authored Charters <code>A494–A498</code>, orchestrated 21 feature cars + 5 release cuts, enforced `Guardrail 06` pipelining, and managed Operator Bridge Milestone Candidates</td>
+                  <td>Authored Charters <code>A494–A498</code>, orchestrated 22 feature cars + 5 release cuts, enforced `Guardrail 06` pipelining, and managed Operator Bridge Milestone Candidates</td>
                 </tr>
                 <tr>
                   <td><code>TC-Lane-Arc</code> (<code>#1538</code>)</td>
                   <td><code>tc-lane-arc-4041e89e</code> (<code>claude</code>)</td>
                   <td>Architect (<code>A-Gate / R-Gate</code>)</td>
-                  <td>Batch co-signed Charters <code>A494–A498</code> (`[03140778]`), issued Slice 1 Ruling `A497-S1`, and certified `A-Gate` across all 26 merged PRs</td>
+                  <td>Batch co-signed Charters <code>A494–A498</code> (`[03140778]`), issued Slice 1 Ruling `A497-S1`, and certified `A-Gate` across all 27 merged PRs</td>
                 </tr>
                 <tr>
                   <td><code>TC-Lane-B</code></td>
@@ -691,7 +693,7 @@
                   <td><code>TC-Lane-INT</code></td>
                   <td><code>tc-lane-int-08674b81</code> (<code>codex medium</code>)</td>
                   <td>Integrator (<code>B-Gate / Release</code>)</td>
-                  <td>Serialized all 26 `--no-ff` true merges onto `main`, cut 5 release PRs (`#2845, #2860, #2867, #2872, #2873`), and executed 5 guarded `:3102` updates</td>
+                  <td>Serialized all 27 `--no-ff` true merges onto `main`, cut 5 release PRs (`#2845, #2860, #2867, #2872, #2873`), and executed 5 guarded `:3102` updates</td>
                 </tr>
                 <tr>
                   <td><code>TC-Lane-Obsr</code> (<code>#1540</code>)</td>
@@ -805,7 +807,7 @@
           <h2 class="section-title"><span class="num">02</span> Five-Version Velocity Compression &amp; Execution Timeline</h2>
           <p class="section-desc">Empirical progression across all 5 legs (`02:02 PST` → `11:18 PST`, Nov 3, 2026) showing how `Guardrail 06` cross-version pipelining reduced release cycle time by 93.5%.</p>
         </div>
-        <span class="badge badge-green">26 PRs True-Merged · 54 Chartered Issues (68 Milestone Closures) · 5h 36m → 22m</span>
+        <span class="badge badge-green">27 PRs True-Merged · 54 Chartered Issues (68 Milestone Closures) · 5h 36m → 22m</span>
       </div>
 
       <div class="grid-2">
@@ -928,7 +930,7 @@
       <div class="section-header">
         <div>
           <h2 class="section-title"><span class="num">03</span> Five-Version Architectural Deliverables Matrix (Milestones #42–#46)</h2>
-          <p class="section-desc">Complete rollup of the 21 feature cars and 5 release cuts (`26` PRs, `+29,421 / -881` LOC across `186` files) delivered across `v5.57.0 → v5.61.0`.</p>
+          <p class="section-desc">Complete rollup of the 22 feature cars and 5 release cuts (`27` PRs, `+29,421 / -881` LOC across `186` files) delivered across `v5.57.0 → v5.61.0`.</p>
         </div>
         <span class="badge badge-purple">54 Chartered Issues (52 Feature + 2 Carryover / 68 Milestone Closures) · 0 Open</span>
       </div>
@@ -1042,8 +1044,8 @@
                 <td><code>100%</code> True Merge (5 PRs)</td>
                 <td><code>100%</code> True Merge (5 PRs)</td>
                 <td><code>100%</code> True Merge (5 PRs)</td>
-                <td><strong><code>100%</code> True Merge (26/26 Train PRs)</strong></td>
-                <td><span class="badge badge-green">Zero squash/rebase merges; 100% 2-parent ancestry preserved across all 26 PRs</span></td>
+                <td><strong><code>100%</code> True Merge (27/27 Train PRs)</strong></td>
+                <td><span class="badge badge-green">Zero squash/rebase merges; 100% 2-parent ancestry preserved across all 27 PRs</span></td>
               </tr>
               <tr>
                 <td><strong>Commits / PR &amp; Token Efficiency (<code>Guardrail 06</code>)</strong></td>
@@ -1130,7 +1132,7 @@
           <div class="bar-row">
             <div class="bar-label-row">
               <span><strong><code>Rule #282 True-Merge Compliance Across All 26 Train Pull Requests</code></strong></span>
-              <span><strong>26 / 26 True Merges (100% 2-Parent Ancestry)</strong></span>
+              <span><strong>27/27 True Merges (100% 2-Parent Ancestry)</strong></span>
             </div>
             <div class="bar-track"><div class="bar-fill purple" style="width:100%;"></div></div>
           </div>
@@ -1213,7 +1215,7 @@
             <div class="pm-item">
               <h4>4. Pre-Staged Parameterized Report Generators (`gen_v5580.py–gen_v5610.py`) &amp; 100% Remote Testament Pool</h4>
               <p>
-                Pre-staging each version's HTML report generator during Wave 1 reduced Gate 4 (`O-Gate`) turnaround to under 2 minutes after `:3102` deploy, while `Guardrail 10` (100% remote Testament `0.34.0` pool execution) kept Mac Studio host CPU contention at zero across all 26 PRs.
+                Pre-staging each version's HTML report generator during Wave 1 reduced Gate 4 (`O-Gate`) turnaround to under 2 minutes after `:3102` deploy, while `Guardrail 10` (100% remote Testament `0.34.0` pool execution) kept Mac Studio host CPU contention at zero across all 27 PRs.
               </p>
             </div>
           </div>
@@ -1269,15 +1271,15 @@
                 <td><strong>Gate 1 — I-Gate (PRR Code &amp; Contract Review)</strong></td>
                 <td><code>TC-Lane-PRR-A</code> + <code>TC-Lane-PRR-B</code></td>
                 <td>21 Feature PRs + 5 Release PRs (<code>26</code> Total PRs)</td>
-                <td>100% exact-head PRR <code>ACCEPT</code> verdicts across all 26 PRs; 28 pre-merge findings resolved and regression-tested in-branch</td>
-                <td><span class="badge badge-green">PASS (26/26 PRs)</span></td>
+                <td>100% exact-head PRR <code>ACCEPT</code> verdicts across all 27 PRs; 28 pre-merge findings resolved and regression-tested in-branch</td>
+                <td><span class="badge badge-green">PASS (27/27 PRs)</span></td>
               </tr>
               <tr>
                 <td><strong>Gate 2 — B-Gate (Integrator CI &amp; True-Merge Gate)</strong></td>
                 <td><code>TC-Lane-INT</code></td>
                 <td><code>origin/main</code> across <code>33bcfbca → 1a4ac404 → 87d49f8d → 6efd74eb → d5b3491c</code></td>
-                <td>All 26 PRs merged via <code>gh pr merge --merge</code> (<code>Rule #282</code>, 2 parents each) with 100% green Testament <code>0.34.0</code> + GitHub Actions CI</td>
-                <td><span class="badge badge-green">PASS (26/26 True Merges)</span></td>
+                <td>all 27 PRs merged via <code>gh pr merge --merge</code> (<code>Rule #282</code>, 2 parents each) with 100% green Testament <code>0.34.0</code> + GitHub Actions CI</td>
+                <td><span class="badge badge-green">PASS (27/27 True Merges)</span></td>
               </tr>
               <tr>
                 <td><strong>Gate 3 — A-Gate / R-Gate, Tags &amp; Live :3102 Deploys</strong></td>
@@ -1318,16 +1320,16 @@
               <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>Per-leg wall time compressed monotonically: `5h 36m` (L1) → `4h 09m` (L2) → `1h 15m` (L3) → `56m` (L4) → `22m` (L5)</td><td>Bounded waves</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Retain `Guardrail 06` cross-version pipelining across all multi-leg trains</td></tr>
               <tr><td>3</td><td><strong>Active vs Allowed Builders &amp; Parallelism</strong></td><td>100% active Builder utilization; balancing Leg 5 cars 2x2 across `TC-Lane-B` &amp; `TC-Lane-D` enabled a 47s 4-car merge burst</td><td>100% utilization</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Always balance multi-car waves evenly across active Builder lanes</td></tr>
               <tr><td>4</td><td><strong>Forced Re-Syncs / Rebases When <code>main</code> Moves</strong></td><td>Zero destructive rebases; shared registry files (`docs/areas.json`, `test/tiers.json`) synced cleanly via fast ancestor merges</td><td>0 conflicts</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Keep `docs/areas.json` and `test/tiers.json` sorted alphabetically</td></tr>
-              <tr><td>5</td><td><strong>Open PR Age Since Current <code>main</code></strong></td><td>All 26 PRs merged cleanly within their chartered release legs; `0` stale or orphaned PRs</td><td>0 stale PRs</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Hold next-version merges until preceding version tag lands (`Guardrail 06`)</td></tr>
-              <tr><td>6</td><td><strong>CI Red After Ready (<code>#2595</code> Pre-Push Hook)</strong></td><td><code>100%</code> exact-head GitHub Actions `Tests` green at merge across all 26 PRs</td><td>0 red at merge</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Retain Stage 1 + Remote Testament 0.34.0 pre-push verification</td></tr>
-              <tr><td>7</td><td><strong>PRR Review Rounds &amp; Findings by Severity</strong></td><td><code>28</code> pre-merge PRR/Arc findings caught and fixed across 21 feature cars; `0` escaped test regressions</td><td>0 escaped defects</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Preserve dual-PRR (`PRR-A` + `PRR-B`) exact-SHA review discipline</td></tr>
+              <tr><td>5</td><td><strong>Open PR Age Since Current <code>main</code></strong></td><td>all 27 PRs merged cleanly within their chartered release legs; `0` stale or orphaned PRs</td><td>0 stale PRs</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Hold next-version merges until preceding version tag lands (`Guardrail 06`)</td></tr>
+              <tr><td>6</td><td><strong>CI Red After Ready (<code>#2595</code> Pre-Push Hook)</strong></td><td><code>100%</code> exact-head GitHub Actions `Tests` green at merge across all 27 PRs</td><td>0 red at merge</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Retain Stage 1 + Remote Testament 0.34.0 pre-push verification</td></tr>
+              <tr><td>7</td><td><strong>PRR Review Rounds &amp; Findings by Severity</strong></td><td><code>28</code> pre-merge PRR/Arc findings caught and fixed across 22 feature cars; `0` escaped test regressions</td><td>0 escaped defects</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Preserve dual-PRR (`PRR-A` + `PRR-B`) exact-SHA review discipline</td></tr>
               <tr><td>8</td><td><strong>Post-Merge Defects on <code>main</code></strong></td><td><code>0</code> post-merge test regressions; post-deploy `#2853` backfill noise (`192` rows) caught by `historical-backfill-suppressed` guard (`52` dropped)</td><td>0 regressions</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Bound `_operatorResolved(since)` by the reconciler window</td></tr>
               <tr><td>9</td><td><strong>Clears, Retries &amp; Stalls</strong></td><td><code>0</code> unrecovered session stalls; pre-staged report generators preserved 100% state across automatic context compactions</td><td>0 untracked stalls</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Pre-stage parameterized report generators during Wave 1</td></tr>
               <tr><td>10</td><td><strong>Wrong Triage / Scope Fields</strong></td><td>Milestones `#42–#46` all closed at `open_issues: 0` (`54/54` chartered issues, `68` total milestone closures); Ruling `A497-S1` routed Slice 2 to `#51`</td><td>0 premise drift</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Route new Slice 2 follow-ups to post-train integration milestones</td></tr>
               <tr><td>11</td><td><strong>Rule Breaches &amp; Governance Discipline</strong></td><td><code>0</code> rule breaches; 100% adherence to `Rule #273 cl. 3`, `Rule #282` true merges, and runtime `#2601` / `#2397` / `#2014` guards</td><td>0 breaches</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Enforce governance rules in tested runtime modules (`#2601, #2397, #2014`)</td></tr>
               <tr><td>12</td><td><strong>Unlabelled PRs, Dirty Clones &amp; Worktrees</strong></td><td>All 26 feature/release branches retired cleanly; all fleet worktrees synced to `origin/main`</td><td>0 orphan clones</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Transition all lanes to `complete / safe-to-clear` at train closeout</td></tr>
               <tr><td>13</td><td><strong>Release-Status Lag &amp; Finish-Line Honesty</strong></td><td>All 5 versions tagged, GitHub-released, and verified live on `:3102` before O-Gate certification</td><td>100% honesty</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Verify tag, `/api/health`, `/api/server-info`, and SQLite backup SHA before O-Gate PASS</td></tr>
-              <tr><td>14</td><td><strong>Conflict Resolution Time</strong></td><td><code>0</code> source-code merge conflicts across 21 feature cars (`186` files changed)</td><td>&lt; 5m sync time</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Partition wave cars strictly by disjoint module boundaries</td></tr>
+              <tr><td>14</td><td><strong>Conflict Resolution Time</strong></td><td><code>0</code> source-code merge conflicts across 22 feature cars (`186` files changed)</td><td>&lt; 5m sync time</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Partition wave cars strictly by disjoint module boundaries</td></tr>
               <tr><td>15</td><td><strong>Wakes, Tokens &amp; Turns by Role &amp; Model</strong></td><td>REST `gh api` + local `git` inspection eliminated GraphQL rate-limit stalls; 100% reply-before-ack Switchboard hygiene</td><td>0 API lockouts</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Never use `gh pr view` when GraphQL quota is contended; use REST `gh api`</td></tr>
               <tr><td>16</td><td><strong>4 End-of-Sprint Maintenance Gates</strong></td><td>All 20 Maintenance Gates (`4` gates × `5` legs) + Retrospective validation green (`34/34` reports `0 FAIL`)</td><td>20 / 20 Gates green</td><td><span class="badge badge-green">PASS (5/5)</span></td><td>Run `validate-sprint-report.py --all` + `publish-public-roadmap.sh` at every leg</td></tr>
             </tbody>
@@ -1340,16 +1342,16 @@
     <section class="section" id="waves">
       <div class="section-header">
         <div>
-          <h2 class="section-title"><span class="num">06</span> Interactive Five-Version Release &amp; PR Explorer (26 PRs · Milestones #42–#46)</h2>
-          <p class="section-desc">Filter by release leg or architectural domain, or search across all 26 PRs, 68 milestone closures, commit SHAs, and post-deploy findings.</p>
+          <h2 class="section-title"><span class="num">06</span> Interactive Five-Version Release &amp; PR Explorer (27 PRs · Milestones #42–#46)</h2>
+          <p class="section-desc">Filter by release leg or architectural domain, or search across all 27 PRs, 68 milestone closures, commit SHAs, and post-deploy findings.</p>
         </div>
-        <span class="badge badge-cyan">5 Version Cards · 10 Filter Tags · Instant Search Across All 26 PRs</span>
+        <span class="badge badge-cyan">5 Version Cards · 10 Filter Tags · Instant Search Across all 27 PRs</span>
       </div>
 
       <div class="card" style="margin-bottom:18px;">
         <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;">
           <div style="display:flex;flex-wrap:wrap;gap:6px;">
-            <button class="filter-btn active" data-filter="all" onclick="filterWaves('all', this)">All 5 Versions (26 PRs)</button>
+            <button class="filter-btn active" data-filter="all" onclick="filterWaves('all', this)">All 5 Versions (27 PRs)</button>
             <button class="filter-btn" data-filter="v5570" onclick="filterWaves('v5570', this)">Leg 1: v5.57.0 (6 PRs)</button>
             <button class="filter-btn" data-filter="v5580" onclick="filterWaves('v5580', this)">Leg 2: v5.58.0 (5 PRs)</button>
             <button class="filter-btn" data-filter="v5590" onclick="filterWaves('v5590', this)">Leg 3: v5.59.0 (5 PRs)</button>
@@ -1620,7 +1622,7 @@
           <strong>TangleClaw Five-Version Autonomous Sprint Train Retrospective (<code>v5.57.0 → v5.61.0</code>)</strong> · Generated by <code>TC-Lane-Obsr</code> (#1540) &amp; <code>TC-Lane-PM</code> (#1541) (Rule #283)
         </div>
         <div>
-          Standing Auth <code>OP-GO-V5570-V5610-20261102</code> · Charters <code>A494–A498</code> (<code>[03140778]</code>) · 26 PRs · 54 Chartered (68 Milestone) Issues Closed · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
+          Standing Auth <code>OP-GO-V5570-V5610-20261102</code> · Charters <code>A494–A498</code> (<code>[03140778]</code>) · 27 PRs · 54 Chartered (68 Milestone) Issues Closed · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
         </div>
       </div>
     </div>
