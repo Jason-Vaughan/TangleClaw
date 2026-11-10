@@ -18,6 +18,7 @@ const ADR_0008_PATH = path.join(
   'adr',
   '0008-project-master-session-model.md'
 );
+const ADR_INDEX_PATH = path.join(ROOT, 'docs', 'adr', 'README.md');
 
 test('ADR 0026 exists and records ratified status amending ADR 0008 Decision 6', () => {
   assert.equal(fs.existsSync(ADR_0026_PATH), true, 'ADR 0026 file must exist');
@@ -69,4 +70,19 @@ test('ADR 0008 cross-references ADR 0026 as superseding Decision 6 while retaini
   assert.match(adr0008, /0026-native-conversation-layer-and-open-hood-contract\.md/);
   assert.match(adr0008, /Decision 6[\s\S]*superseded by \[ADR 0026\]/i);
   assert.match(adr0008, /Decisions 1–5[\s\S]*remain 100% binding/i);
+});
+
+test('ADR 0026 is registered in the ADR index (#2976 AC3)', () => {
+  assert.equal(fs.existsSync(ADR_INDEX_PATH), true, 'docs/adr/README.md must exist');
+  const index = fs.readFileSync(ADR_INDEX_PATH, 'utf8');
+  assert.match(index, /0026-native-conversation-layer-and-open-hood-contract\.md/);
+  assert.match(index, /0008-project-master-session-model\.md/);
+
+  // The index names every real ADR file under docs/adr/ — a file that exists
+  // on disk but has no row here is exactly the drift AC3 exists to prevent.
+  const adrDir = path.join(ROOT, 'docs', 'adr');
+  const files = fs.readdirSync(adrDir).filter((f) => /^\d{4}-.*\.md$/.test(f));
+  for (const file of files) {
+    assert.ok(index.includes(file), `${file} exists under docs/adr/ but has no row in docs/adr/README.md`);
+  }
 });
