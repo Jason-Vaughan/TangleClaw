@@ -94,6 +94,7 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
 
   const post = (url, body, opts) => send('POST', url, Object.assign({ body: body || {} }, opts));
   const patch = (url, body, opts) => send('PATCH', url, Object.assign({ body: body || {} }, opts));
+  const put = (url, body, opts) => send('PUT', url, Object.assign({ body: body || {} }, opts));
   const get = (url, opts) => send('GET', url, opts);
   const json = (res) => JSON.parse(res.body);
 
@@ -410,6 +411,167 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
       assert.equal(res.statusCode, 200, res.body);
       assert.equal(json(res).ok, false);
       assert.ok(json(res).findings.some((f) => f.code === 'CANONICAL_METRICS_MISSING'));
+    });
+  });
+
+  describe('Authority Service routes (#1149) — via the lazy service-principal bootstrap', () => {
+    /** @returns {Promise<number>} A fresh legacy project id. */
+    async function seedProject(name) {
+      store.getDb().exec(`INSERT INTO projects (name, path, archived) VALUES ('${name}', '${path.join(tempDir, name)}', 0)`);
+      return store.getDb().prepare('SELECT id FROM projects WHERE name = ?').get(name).id;
+    }
+
+    it('backfills, reads, and writes a policy, CAS-guarded', async () => {
+      const projectId = await seedProject('auth-route-project');
+      const backfill = await post(`/api/v6/projects/${projectId}/authority/backfill`);
+      assert.equal(backfill.statusCode, 201, backfill.body);
+      assert.equal(json(backfill).code, 'IMPORTED');
+
+      const read = await get(`/api/v6/projects/${projectId}/authority/fleetCoordinator`);
+      assert.equal(read.statusCode, 200, read.body);
+      assert.equal(json(read).value, false);
+
+      const write = await put(`/api/v6/projects/${projectId}/authority/fleetCoordinator`, { value: true, expectedVersion: 1 });
+      assert.equal(write.statusCode, 200, write.body);
+      assert.equal(json(write).rowVersion, 2);
+
+      const stale = await put(`/api/v6/projects/${projectId}/authority/fleetCoordinator`, { value: false, expectedVersion: 1 });
+      assert.equal(stale.statusCode, 409, stale.body);
+      assert.equal(json(stale).code, 'STALE_POLICY');
+    });
+
+    it('404s a policy read against an unbackfilled key, and 400s an unregistered setting', async () => {
+      const projectId = await seedProject('auth-no-backfill');
+      const res = await get(`/api/v6/projects/${projectId}/authority/fleetCoordinator`);
+      assert.equal(res.statusCode, 404, res.body);
+      assert.equal(json(res).code, 'POLICY_MISSING');
+
+      const bogus = await get(`/api/v6/projects/${projectId}/authority/not-a-real-setting`);
+      assert.equal(bogus.statusCode, 400, bogus.body);
+      assert.equal(json(bogus).code, 'UNREGISTERED_SETTING');
+    });
+
+    it('reads authority drift as an empty array for a project with no legacy file', async () => {
+      const projectId = await seedProject('auth-drift-project');
+      await post(`/api/v6/projects/${projectId}/authority/backfill`);
+      const res = await get(`/api/v6/projects/${projectId}/authority-drift`);
+      assert.equal(res.statusCode, 200, res.body);
+      assert.deepEqual(json(res).drift, []);
+    });
+
+    it('mints and revokes a G1 lease', async () => {
+      const projectId = await seedProject('g1-lease-project');
+      const mint = await post(`/api/v6/projects/${projectId}/g1-leases`, { actor: 'tc-lane-c', repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 });
+      assert.equal(mint.statusCode, 201, mint.body);
+      const { id } = json(mint);
+      const revoke = await post(`/api/v6/projects/${projectId}/g1-leases/${id}/revoke`);
+      assert.equal(revoke.statusCode, 200, revoke.body);
+      const revokeAgain = await post(`/api/v6/projects/${projectId}/g1-leases/${id}/revoke`);
+      assert.equal(revokeAgain.statusCode, 404, revokeAgain.body);
+    });
+
+    it('mints and revokes a G1 approval', async () => {
+      const projectId = await seedProject('g1-approval-project');
+      const mint = await post(`/api/v6/projects/${projectId}/g1-approvals`, { operatorActor: 'rosie', action: 'merge', repo: 'TangleClaw', targetDigest: 'abc123', ttlMs: 60000 });
+      assert.equal(mint.statusCode, 201, mint.body);
+      const revoke = await post(`/api/v6/projects/${projectId}/g1-approvals/${json(mint).id}/revoke`);
+      assert.equal(revoke.statusCode, 200, revoke.body);
+    });
+
+    it('refuses the launch-binding floor and the operator gate for a non-operator caller', async () => {
+      const projectId = await seedProject('auth-refuse-project');
+      const res = await put(`/api/v6/projects/${projectId}/authority/fleetCoordinator`, { value: true, expectedVersion: 1 }, { operator: false });
+      assert.ok([401, 403].includes(res.statusCode), res.body);
+    });
+  });
+
+  describe('Transition Ledger & Reconciler routes (#2977)', () => {
+    async function seedProjectAndResource(projectName, resourceId) {
+      store.getDb().exec(`INSERT INTO projects (name, path, archived) VALUES ('${projectName}', '${path.join(tempDir, projectName)}', 0)`);
+      const projectId = store.getDb().prepare('SELECT id FROM projects WHERE name = ?').get(projectName).id;
+      store.getDb().prepare('INSERT INTO runtime_resources (id, project_id, generation) VALUES (?,?,0)').run(resourceId, projectId);
+      return projectId;
+    }
+
+    it('begins and settles a transition (committed)', async () => {
+      const projectId = await seedProjectAndResource('transition-project', 'res-t1');
+      const begin = await post(`/api/v6/projects/${projectId}/transitions`, { resourceId: 'res-t1', action: 'start', expectedGeneration: 0, key: 'k1' });
+      assert.equal(begin.statusCode, 201, begin.body);
+      const { id } = json(begin);
+      const settle = await post(`/api/v6/projects/${projectId}/transitions/${id}/settle`, {
+        state: 'committed', evidence: { source: 'test', observedAt: new Date().toISOString() }
+      });
+      assert.equal(settle.statusCode, 200, settle.body);
+      assert.equal(json(settle).code, 'COMMITTED');
+    });
+
+    it('refuses settling without evidence with 400', async () => {
+      const projectId = await seedProjectAndResource('transition-no-evidence', 'res-t2');
+      const begin = await post(`/api/v6/projects/${projectId}/transitions`, { resourceId: 'res-t2', action: 'start', expectedGeneration: 0, key: 'k1' });
+      const settle = await post(`/api/v6/projects/${projectId}/transitions/${json(begin).id}/settle`, { state: 'committed' });
+      assert.equal(settle.statusCode, 400, settle.body);
+      assert.equal(json(settle).code, 'EVIDENCE_REQUIRED');
+    });
+
+    it('refuses a second begin against an in-flight transition with 409', async () => {
+      const projectId = await seedProjectAndResource('transition-in-flight', 'res-t3');
+      await post(`/api/v6/projects/${projectId}/transitions`, { resourceId: 'res-t3', action: 'start', expectedGeneration: 0, key: 'k1' });
+      const second = await post(`/api/v6/projects/${projectId}/transitions`, { resourceId: 'res-t3', action: 'start', expectedGeneration: 0, key: 'k2' });
+      assert.equal(second.statusCode, 409, second.body);
+      assert.equal(json(second).code, 'IN_FLIGHT');
+    });
+
+    it('reconciles from caller-submitted observations and persists findings', async () => {
+      const projectId = await seedProjectAndResource('reconcile-project', 'res-r1');
+      const res = await post(`/api/v6/projects/${projectId}/reconcile`, {
+        resource: { id: 'res-r1' },
+        observations: { sqlite: { status: 'ok', active: false } }
+      });
+      assert.equal(res.statusCode, 200, res.body);
+      const body = json(res);
+      assert.equal(body.safe, false); // tmux/git/ports/medusa all unknown — not a clean reconciliation
+      assert.ok(body.findings.length > 0);
+      assert.equal(body.written, body.findings.length);
+    });
+
+    it('400s a reconcile request missing resource.id', async () => {
+      const projectId = await seedProjectAndResource('reconcile-bad-request', 'res-r2');
+      const res = await post(`/api/v6/projects/${projectId}/reconcile`, {});
+      assert.equal(res.statusCode, 400, res.body);
+    });
+  });
+
+  describe('Incident & Recovery Registry routes (#2978)', () => {
+    async function seedProject(name) {
+      store.getDb().exec(`INSERT INTO projects (name, path, archived) VALUES ('${name}', '${path.join(tempDir, name)}', 0)`);
+      return store.getDb().prepare('SELECT id FROM projects WHERE name = ?').get(name).id;
+    }
+
+    it('a healthy report against a fingerprint with no prior incident creates nothing', async () => {
+      const projectId = await seedProject('incident-healthy-project');
+      const res = await post(`/api/v6/projects/${projectId}/incidents`, { fingerprint: 'fp-healthy', generation: 1, action: 'noop', health: 'healthy' });
+      assert.equal(res.statusCode, 201, res.body);
+      assert.equal(json(res).code, 'HEALTHY_NO_ACTION');
+      assert.equal(json(res).id, null);
+    });
+
+    it('an unhealthy report opens an incident and records an unverified attempt', async () => {
+      const projectId = await seedProject('incident-unhealthy-project');
+      const res = await post(`/api/v6/projects/${projectId}/incidents`, { fingerprint: 'fp-unhealthy', generation: 1, action: 'restart', health: 'unhealthy' });
+      // step() returns ok: false for an unverified attempt (no `verification`
+      // was submitted) -- the write itself succeeded (an incident now exists),
+      // so _v6Respond's non-2xx response must still carry that incident's id,
+      // not just {error, code}.
+      assert.equal(res.statusCode, 409, res.body);
+      assert.equal(json(res).code, 'ATTEMPT_FAILED');
+      assert.ok(json(res).id, 'the incident id must survive a non-2xx v6 response');
+    });
+
+    it('refuses a RESERVED action outright with 403', async () => {
+      const projectId = await seedProject('incident-reserved-project');
+      const res = await post(`/api/v6/projects/${projectId}/incidents`, { fingerprint: 'fp-reserved', generation: 1, action: 'kill', health: 'unhealthy' });
+      assert.equal(res.statusCode, 403, res.body);
+      assert.equal(json(res).code, 'RESERVED_ACTION');
     });
   });
 });
