@@ -287,6 +287,8 @@ files = [
   "test/uploads.test.js",
   "test/upstream-drift-workflow.test.js",
   "test/upstream-observer.test.js",
+  "test/v6-b4-telemetry-header.test.js",
+  "test/v6-c2-fleet-templates.test.js",
   "test/v6-e1-doc-planes-context-compiler.test.js",
   "test/v6-sprint-report-validator-v3.test.js",
   "test/visual-viewport-layout.test.js",
