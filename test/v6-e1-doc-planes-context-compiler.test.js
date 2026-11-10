@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const crypto = require('node:crypto');
 
 const e1 = require('../lib/v6/e1-doc-planes-context-compiler');
 
@@ -342,6 +343,26 @@ describe('syncSsotIndex / validateSsotIndex (#1151)', () => {
     const res = e1.validateSsotIndex(tempDir);
     assert.equal(res.ok, false);
     assert.ok(res.issues.some((i) => i.code === 'INDEX_MALFORMED' && i.path === '../README.md'));
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('reports INDEX_MALFORMED for a smuggled Plane 3/4 entry, even with its own true, internally-consistent plane/sha256/bytes (PRR-A R2 HOLD)', () => {
+    tempDir = freshRoot();
+    e1.syncSsotIndex(tempDir);
+    const indexAbs = path.join(tempDir, '.tangleclaw', 'ssot-index.json');
+    const index = JSON.parse(fs.readFileSync(indexAbs, 'utf8'));
+    const changelogPath = path.join(tempDir, 'changelog.d', '1.added.md');
+    const content = fs.readFileSync(changelogPath);
+    index.entries.push({
+      path: 'changelog.d/1.added.md',
+      plane: e1.classifyPlane('changelog.d/1.added.md'),
+      sha256: crypto.createHash('sha256').update(content).digest('hex'),
+      bytes: content.length
+    });
+    fs.writeFileSync(indexAbs, JSON.stringify(index, null, 2));
+    const res = e1.validateSsotIndex(tempDir);
+    assert.equal(res.ok, false);
+    assert.ok(res.issues.some((i) => i.code === 'INDEX_MALFORMED' && i.path === 'changelog.d/1.added.md'));
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
