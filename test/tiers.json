@@ -476,6 +476,8 @@
     "test/tailnet-cutover.test.js",
     "test/tcc-folders.test.js",
     "test/update-applier.test.js",
+    "test/v6-c1-logical-projects.test.js",
+    "test/v6-e5-kaizen-ledger.test.js",
     "test/v6-stage1-authority-ledger-incidents.test.js",
     "test/version-bump-fail-closed.test.js",
     "test/version-bump-fragments.test.js",

@@ -9,9 +9,15 @@
 // lib/project-authority-settings.js (32 keys) and a real node:sqlite-backed
 // store, not the bundles' own isolated in-memory fixtures.
 //
-// Deliberately does NOT test fleets/resource_modules/role_leases/worktrees/
-// asset_grants or kaizen_items/kaizen_measurements: PM Ruling (LANE_QUEUE.md
-// revision 1621, Charter A512) assigns those to Car V60-T1-W1-D (BRIDGE-1b).
+// Still does not test lib/v6/c1-logical-projects.js's or
+// lib/v6/e5-kaizen-ledger.js's own lifecycle/service behavior — PM Ruling
+// (LANE_QUEUE.md revision 1621, Charter A512) assigns that to Car
+// V60-T1-W1-D (BRIDGE-1b)'s own test/v6-c1-logical-projects.test.js and
+// test/v6-e5-kaizen-ledger.test.js. This file's one BRIDGE-1b-touching
+// assertion (below) only checks that those tables EXIST once both halves
+// of v81 are installed (PM Ruling / Architect Ruling
+// A533-W1D-SCOPE-COSIGN-R2, 2026-11-10) — it originally asserted their
+// ABSENCE, back when only BRIDGE-1a had landed.
 
 const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -142,15 +148,31 @@ describe('v6 Stage 1 schema v80→v81 migration (#1149, #2977, #2978, BRIDGE-1a)
     assert.ok(version >= 81);
   });
 
-  it('does not create the BRIDGE-1b fleet/resource/role/worktree/asset or kaizen tables', () => {
+  // BRIDGE-1b (Car V60-T1-W1-D, #2118 & #2980) landed its own C1 hierarchy
+  // and Kaizen Ledger tables in a SEPARATE PR, sequenced after this one —
+  // this block originally asserted their ABSENCE, to catch BRIDGE-1a
+  // accidentally encroaching on BRIDGE-1b's own scope before it shipped.
+  // Now that both halves of v81 are on main (PM Ruling / Architect Ruling
+  // A533-W1D-SCOPE-COSIGN-R2, 2026-11-10), the guard's job is done and its
+  // assertion direction flips: these tables are now a REQUIRED part of a
+  // fresh v81 install, not a forbidden one. The speculative table names an
+  // early plan draft used before `v81-up.sql` was finalized ('fleets',
+  // 'resource_modules', 'role_leases', 'worktrees', 'asset_grants' — none
+  // ever real; BRIDGE-1b's actual names are the `v6_`-prefixed ones below)
+  // remain a negative check, documenting that nobody built a second table
+  // under the old guessed name.
+  it('the BRIDGE-1b C1 hierarchy and Kaizen Ledger tables exist at v81, and no table exists under an early draft\'s guessed name', () => {
     const db = freshStore();
     const existing = existingTables(db);
     for (const table of [
-      'fleets', 'resource_modules', 'role_leases', 'worktrees', 'asset_grants',
-      'v6_logical_projects', 'v6_fleets', 'v6_resources', 'v6_checkouts',
+      'v6_logical_projects', 'v6_fleets', 'v6_resources', 'v6_checkouts', 'v6_legacy_project_map',
+      'v6_role_leases', 'v6_shared_assets', 'v6_asset_grants', 'v6_authority_grants',
       'kaizen_items', 'kaizen_measurements'
     ]) {
-      assert.ok(!existing.has(table), `${table} belongs to Car V60-T1-W1-D (BRIDGE-1b), not this car`);
+      assert.ok(existing.has(table), `missing BRIDGE-1b table ${table}`);
+    }
+    for (const table of ['fleets', 'resource_modules', 'role_leases', 'worktrees', 'asset_grants']) {
+      assert.ok(!existing.has(table), `${table} was never a real BRIDGE-1b table name`);
     }
   });
 });
