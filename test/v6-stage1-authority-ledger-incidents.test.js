@@ -688,6 +688,23 @@ describe('lib/v6/incident-registry.js (#2978, V6-04)', () => {
     assert.ok(row.payload_json.includes('[REDACTED]'));
   });
 
+  it('redacts a PEM private-key block with no END marker (truncated capture) through to end of string (Arc Ruling A523, PR #3008)', () => {
+    const db = freshStore();
+    const projectId = seedProject(db, { path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v6-project-')) });
+    const ownerId = seedUserPrincipal(db, { projectId, role: 'owner' });
+    const auth = authorityService.createAuthorizationService(db);
+    const incidents = incidentRegistry.createRuntimeIncidents(db, auth);
+    const truncated = '-----BEGIN RSA PRIVATE KEY-----\nMIIEEXAMPLEKEYBODYDATAHERE\nMORELINESOFBASE64EXAMPLE'; // no END line
+    const result = incidents.step({
+      principalId: ownerId, projectId, fingerprint: 'fp-secret-5', generation: 1, action: 'noop', health: 'unhealthy',
+      evidence: { note: truncated }
+    });
+    const row = db.prepare('SELECT payload_json FROM incident_evidence WHERE incident_id = ?').get(result.id);
+    assert.ok(!row.payload_json.includes('MIIEEXAMPLEKEYBODYDATAHERE'), 'truncated PEM key body leaked unredacted');
+    assert.ok(!row.payload_json.includes('MORELINESOFBASE64EXAMPLE'), 'truncated PEM key body leaked unredacted');
+    assert.ok(row.payload_json.includes('[REDACTED]'));
+  });
+
   it('refuses a reserved action outright', () => {
     const db = freshStore();
     const projectId = seedProject(db, { path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v6-project-')) });
