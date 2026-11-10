@@ -196,6 +196,19 @@ const medusaSend = require('./lib/medusa-send');
 const medusaRegistry = require('./lib/medusa-registry');
 const launchAgentScan = require('./lib/launchagent-scan');
 
+// v6 Stage 1 (BRIDGE-2, Car V60-T1-W2-ROUTES, Charter A512): the first live
+// HTTP wiring for the v6 library modules each landed schema-and-library-only
+// in their own car (#1149/#2977/#2978 via PR #3008, #2118/#2980 via PR
+// #3009). Routes for lib/v6/authority-service.js, lib/v6/transition-ledger.js
+// and lib/v6/incident-registry.js are deferred pending Architect
+// reconciliation of Ruling A545 against those modules' real, already-merged
+// {ok, code} contracts (flagged 2026-11-10) — this car wires the two
+// capability areas that need no further ruling: the C1 logical-project
+// hierarchy and the E5 Kaizen Ledger, plus the Sprint Report Validator.
+const v3Validator = require('./lib/v6/sprint-report-validator-v3');
+const c1 = require('./lib/v6/c1-logical-projects');
+const e5 = require('./lib/v6/e5-kaizen-ledger');
+
 const log = createLogger('server');
 
 // The body-size constants, the route table and the response, body and query
@@ -8571,6 +8584,357 @@ require('./lib/routes/engine-health-routes').register();
 // The secure clipboard / secret uploader routes (#1032) likewise take no
 // deps — same no-deps convention as engines-canary and engine-health above.
 require('./lib/routes/secure-clipboard').register();
+
+// ── V6 Stage 1 Routes (BRIDGE-2, Car V60-T1-W2-ROUTES) ──
+//
+// First live wiring for the C1 logical-project hierarchy
+// (lib/v6/c1-logical-projects.js, #2118), the E5 Kaizen Ledger
+// (lib/v6/e5-kaizen-ledger.js, #2980), and the Sprint Report Validator
+// (lib/v6/sprint-report-validator-v3.js, #2979). Every route here is
+// OPERATOR-ONLY (operatorProjectCaller): these are new, low-level
+// provisioning/ledger primitives with no existing caller and no established
+// mapping from "a session bound to one legacy project" to "which native v6
+// entities that session may touch" (a fleet, role lease or shared asset is
+// not itself bound to any one legacy project the way a session is) — a
+// narrower, project-scoped grant is a later car's decision once a real
+// caller needs it, not invented here. GET routes are included in this
+// restriction too: unlike a mutating route, a GET is not swept by the
+// launch-binding floor automatically, so without an explicit check here it
+// would be open to anyone.
+//
+// Routes for lib/v6/authority-service.js, lib/v6/transition-ledger.js and
+// lib/v6/incident-registry.js (#1149/#2977/#2978) are deferred: their real,
+// merged {ok, code} contracts do not match Architect Ruling A545's
+// HTTP-status-mapping text (flagged 2026-11-10, reconciliation pending),
+// and all three take an `auth` with `.authorize()` backed by
+// `trusted_principals`/`trusted_workspaces`/`trusted_memberships` — tables
+// nothing yet populates for a real caller (also flagged, pending PM).
+
+/**
+ * Every {ok, code} string these three v6 modules actually return, mapped to
+ * an HTTP status — read from the real, merged source (not an assumed
+ * taxonomy): `grep -n "code: '" lib/v6/c1-logical-projects.js
+ * lib/v6/e5-kaizen-ledger.js` plus the `_guardConflict` call sites in
+ * c1-logical-projects.js. A code this map does not list answers 400 — the
+ * conservative default for a response shape this file does not expect uses,
+ * not a fall-through to 200.
+ * @type {Object<string, number>}
+ */
+const V6_STATUS_BY_CODE = {
+  // Not found
+  NOT_FOUND: 404,
+  NOT_FOUND_OR_UNCHANGED: 404,
+  NOT_FOUND_OR_ALREADY_CLOSED: 404,
+  NOT_FOUND_OR_ALREADY_REVOKED: 404,
+  NOT_FOUND_OR_ALREADY_RESOLVED: 404,
+  NOT_FOUND_OR_NOT_PROVEN: 404,
+  PROJECT_NOT_FOUND: 404,
+  FLEET_NOT_FOUND: 404,
+  RESOURCE_NOT_FOUND: 404,
+  ASSET_NOT_FOUND: 404,
+  ITEM_NOT_FOUND: 404,
+  // Conflict — a CAS mismatch, a uniqueness constraint, or a state that
+  // already forbids the requested transition.
+  INVALID_TRANSITION: 409,
+  STALE_POLICY_REVISION: 409,
+  STALE_ROW_VERSION: 409,
+  DISPLAY_NAME_TAKEN: 409,
+  LEGACY_PROJECT_ALREADY_MAPPED: 409,
+  ABSOLUTE_PATH_TAKEN: 409,
+  ROLE_CONFLICT: 409,
+  CANONICAL_REF_TAKEN: 409,
+  GRANT_EXISTS: 409,
+  PRE_IMPLEMENTATION_MEASUREMENT: 409,
+  INSUFFICIENT_EVIDENCE: 409,
+  INSUFFICIENT_CONSECUTIVE_SPRINTS: 409,
+  INSUFFICIENT_DRILL_OR_MONITOR_EVIDENCE: 409,
+  INSUFFICIENT_TREND_SERIES: 409,
+  // Bad request
+  INVALID_REQUEST: 400,
+  RATIONALE_REQUIRED: 400,
+  UNKNOWN_VERIFICATION_CLASS: 400
+};
+
+/**
+ * Answer a v6 module's `{ok, code, ...}` result over HTTP: the whole result
+ * on success, or the mapped status with `code`/a readable message on
+ * failure. The one place every v6 route in this section ends.
+ * @param {http.ServerResponse} res
+ * @param {{ok: boolean, code: string}} result
+ * @param {number} [successStatus] - Defaults to 200; a route that just
+ *   created something passes 201.
+ * @returns {void}
+ */
+function _v6Respond(res, result, successStatus = 200) {
+  if (result.ok) return jsonResponse(res, successStatus, result);
+  const status = V6_STATUS_BY_CODE[result.code] || 400;
+  errorResponse(res, status, `v6 request refused: ${result.code}`, result.code);
+}
+
+/** `body` when it is a plain JSON object, else `{}` — every v6 handler reads optional fields through this rather than assuming the parser handed back an object. */
+function _v6Body(body) {
+  return (body && typeof body === 'object' && !Array.isArray(body)) ? body : {};
+}
+
+const v6Db = () => store.getDb();
+
+// ── C1: Logical Project Hierarchy (#2118) ──
+
+route('POST', '/api/v6/logical-projects', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'create a logical project')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.createLogicalProject(v6Db(), { displayName: b.displayName, origin: b.origin }), 201);
+});
+
+route('GET', '/api/v6/logical-projects/:id', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a logical project')) return;
+  const project = c1.getLogicalProject(v6Db(), params.id);
+  if (!project) return errorResponse(res, 404, `Logical project "${params.id}" not found`, 'NOT_FOUND');
+  jsonResponse(res, 200, project);
+});
+
+route('GET', '/api/v6/logical-projects/:id/hierarchy', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a logical project\'s hierarchy')) return;
+  const hierarchy = c1.getHierarchy(v6Db(), params.id);
+  if (!hierarchy) return errorResponse(res, 404, `Logical project "${params.id}" not found`, 'NOT_FOUND');
+  jsonResponse(res, 200, hierarchy);
+});
+
+route('PATCH', '/api/v6/logical-projects/:id/state', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'change a logical project\'s state')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.setLogicalProjectState(v6Db(), { id: params.id, nextState: b.nextState }));
+});
+
+route('POST', '/api/v6/fleets', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'create a fleet')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.createFleet(v6Db(), {
+    logicalProjectId: b.logicalProjectId, displayName: b.displayName,
+    templateId: b.templateId, templateVersion: b.templateVersion
+  }), 201);
+});
+
+route('GET', '/api/v6/fleets/:id', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a fleet')) return;
+  const fleet = c1.getFleet(v6Db(), params.id);
+  if (!fleet) return errorResponse(res, 404, `Fleet "${params.id}" not found`, 'NOT_FOUND');
+  jsonResponse(res, 200, fleet);
+});
+
+route('PATCH', '/api/v6/fleets/:id/state', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'change a fleet\'s state')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.setFleetState(v6Db(), {
+    id: params.id, logicalProjectId: b.logicalProjectId, nextState: b.nextState,
+    expectedPolicyRevision: b.expectedPolicyRevision
+  }));
+});
+
+route('POST', '/api/v6/resources', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'create a resource')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.createResource(v6Db(), {
+    logicalProjectId: b.logicalProjectId, fleetId: b.fleetId, kind: b.kind,
+    displayName: b.displayName, legacyProjectId: b.legacyProjectId
+  }), 201);
+});
+
+route('GET', '/api/v6/resources/:id', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a resource')) return;
+  const resource = c1.getResource(v6Db(), params.id);
+  if (!resource) return errorResponse(res, 404, `Resource "${params.id}" not found`, 'NOT_FOUND');
+  jsonResponse(res, 200, resource);
+});
+
+route('PATCH', '/api/v6/resources/:id/state', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'change a resource\'s desired state')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.setResourceDesiredState(v6Db(), {
+    id: params.id, logicalProjectId: b.logicalProjectId, nextState: b.nextState,
+    expectedRowVersion: b.expectedRowVersion
+  }));
+});
+
+route('POST', '/api/v6/checkouts', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'create a checkout')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.createCheckout(v6Db(), {
+    logicalProjectId: b.logicalProjectId, resourceId: b.resourceId, absolutePath: b.absolutePath,
+    repositoryKey: b.repositoryKey, kind: b.kind, legacyProjectId: b.legacyProjectId
+  }), 201);
+});
+
+route('PATCH', '/api/v6/checkouts/:id/state', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'change a checkout\'s state')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.setCheckoutState(v6Db(), { id: params.id, logicalProjectId: b.logicalProjectId, nextState: b.nextState }));
+});
+
+route('POST', '/api/v6/role-leases', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'propose a role lease')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.createRoleLease(v6Db(), {
+    resourceId: b.resourceId, logicalProjectId: b.logicalProjectId, fleetId: b.fleetId,
+    roleKey: b.roleKey, domainKey: b.domainKey, exclusive: b.exclusive === true,
+    issuedByPrincipal: b.issuedByPrincipal, startsAt: b.startsAt, endsAt: b.endsAt
+  }), 201);
+});
+
+route('POST', '/api/v6/role-leases/:id/close', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'close a role lease')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.closeRoleLease(v6Db(), { id: params.id, resourceId: b.resourceId, outcome: b.outcome }));
+});
+
+route('POST', '/api/v6/shared-assets', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'create a shared asset')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.createSharedAsset(v6Db(), {
+    ownerProjectId: b.ownerProjectId, kind: b.kind, classification: b.classification,
+    displayName: b.displayName, canonicalRef: b.canonicalRef, legacySharedDocumentId: b.legacySharedDocumentId
+  }), 201);
+});
+
+route('POST', '/api/v6/asset-grants', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'grant shared-asset access')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.grantAssetAccess(v6Db(), {
+    assetId: b.assetId, granteeProjectId: b.granteeProjectId, access: b.access,
+    grantedByPrincipal: b.grantedByPrincipal, expiresAt: b.expiresAt
+  }), 201);
+});
+
+route('POST', '/api/v6/asset-grants/:id/revoke', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'revoke a shared-asset grant')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.revokeAssetGrant(v6Db(), { id: params.id, assetId: b.assetId }));
+});
+
+route('POST', '/api/v6/authority-grants', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'mint an authority grant')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.grantAuthority(v6Db(), {
+    principal: b.principal, logicalProjectId: b.logicalProjectId, fleetId: b.fleetId,
+    operation: b.operation, limits: b.limits, expectedPolicyRevision: b.expectedPolicyRevision,
+    issuedByPrincipal: b.issuedByPrincipal, expiresAt: b.expiresAt
+  }), 201);
+});
+
+route('POST', '/api/v6/authority-grants/:id/revoke', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'revoke an authority grant')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, c1.revokeAuthority(v6Db(), { id: params.id, logicalProjectId: b.logicalProjectId }));
+});
+
+route('GET', '/api/v6/legacy-projects/:legacyProjectId', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a legacy project\'s v6 mapping')) return;
+  const view = v6Db().prepare('SELECT * FROM v6_legacy_project_view WHERE legacy_project_id = ?').get(params.legacyProjectId);
+  if (!view) return errorResponse(res, 404, `Legacy project "${params.legacyProjectId}" has no v6 mapping`, 'NOT_FOUND');
+  jsonResponse(res, 200, view);
+});
+
+// ── E5: Closed-Loop Kaizen Ledger (#2980) ──
+
+route('POST', '/api/v6/kaizen/items', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'detect a Kaizen item')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, e5.detectItem(v6Db(), {
+    originSprint: b.originSprint, findingId: b.findingId, defectCategory: b.defectCategory,
+    rootCause: b.rootCause, originEvidenceRefs: b.originEvidenceRefs, correctiveActionSpec: b.correctiveActionSpec,
+    ownerRole: b.ownerRole, ownerLane: b.ownerLane, linkedIssueId: b.linkedIssueId, linkedPrId: b.linkedPrId,
+    linkedRuleId: b.linkedRuleId, verificationClass: b.verificationClass, targetMetric: b.targetMetric,
+    logicalProjectId: b.logicalProjectId
+  }), 201);
+});
+
+route('GET', '/api/v6/kaizen/items/:id', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a Kaizen item')) return;
+  const item = e5.getItem(v6Db(), params.id);
+  if (!item) return errorResponse(res, 404, `Kaizen item "${params.id}" not found`, 'NOT_FOUND');
+  jsonResponse(res, 200, item);
+});
+
+route('GET', '/api/v6/kaizen/items/:id/measurements', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a Kaizen item\'s measurements')) return;
+  jsonResponse(res, 200, e5.listMeasurements(v6Db(), params.id));
+});
+
+// CRITICAL (Charter A512 checklist (g)): a transition to 'Effectiveness
+// Measured' or 'Closed' is dispatched to markProvenEffective/closeItem, NOT
+// to advanceLifecycle directly — advanceLifecycle itself refuses both
+// (Architect Ruling A535, PR #3009) precisely so no caller, HTTP included,
+// can reach either state without the 4-Class proof rules/close precondition
+// actually running.
+route('PATCH', '/api/v6/kaizen/items/:id/state', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'change a Kaizen item\'s lifecycle state')) return;
+  const b = _v6Body(body);
+  let result;
+  if (b.nextState === 'Effectiveness Measured') result = e5.markProvenEffective(v6Db(), { id: params.id });
+  else if (b.nextState === 'Closed') result = e5.closeItem(v6Db(), { id: params.id });
+  else result = e5.advanceLifecycle(v6Db(), { id: params.id, nextState: b.nextState });
+  _v6Respond(res, result);
+});
+
+route('POST', '/api/v6/kaizen/items/:id/measurements', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'record a Kaizen measurement')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, e5.recordMeasurement(v6Db(), {
+    kaizenId: params.id, sprintVersion: b.sprintVersion, measurementKind: b.measurementKind,
+    passed: b.passed, recurrenceCount: b.recurrenceCount, metricValue: b.metricValue,
+    baselineValue: b.baselineValue, evidenceRef: b.evidenceRef, notes: b.notes
+  }), 201);
+});
+
+// Dry-run: answers whether the 4-Class proof rules would pass right now,
+// without mutating anything — PATCH .../state is what actually commits.
+route('POST', '/api/v6/kaizen/items/:id/evaluate-effectiveness', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'evaluate a Kaizen item\'s effectiveness')) return;
+  const item = e5.getItem(v6Db(), params.id);
+  if (!item) return errorResponse(res, 404, `Kaizen item "${params.id}" not found`, 'NOT_FOUND');
+  _v6Respond(res, e5.canMarkProvenEffective(item, e5.listMeasurements(v6Db(), params.id)));
+});
+
+route('POST', '/api/v6/kaizen/items/:id/mark-regressed', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'mark a Kaizen item regressed')) return;
+  _v6Respond(res, e5.markRegressed(v6Db(), { id: params.id }));
+});
+
+route('POST', '/api/v6/kaizen/items/:id/gate0-disposition', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'set a Kaizen item\'s Gate 0 disposition')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, e5.setGate0Disposition(v6Db(), { id: params.id, disposition: b.disposition, rationale: b.rationale }));
+});
+
+route('GET', '/api/v6/kaizen/gate0-feed', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'read the Gate 0 Kaizen feed')) return;
+  const query = parseQuery(reqUrl(req).search);
+  jsonResponse(res, 200, e5.gate0Feed(v6Db(), { logicalProjectId: query.logicalProjectId || undefined }));
+});
+
+// ── Sprint Report Validator v3 (#2979) ──
+
+// Sprint report HTML can run well past the kernel's 10 KB default (a real
+// multi-version retrospective is commonly hundreds of KB), so this route
+// overrides maxBodySize rather than making every other route pay for it.
+route('POST', '/api/v6/sprint-reports/validate', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'validate a sprint report')) return;
+  const b = _v6Body(body);
+  if (typeof b.html !== 'string' || !b.html) {
+    return errorResponse(res, 400, 'html must be a non-empty string', 'BAD_REQUEST');
+  }
+  const options = {};
+  if (b.mode === 'retrospective') options.mode = 'retrospective';
+  if (b.sourcesLock && typeof b.sourcesLock === 'object') options.sourcesLock = b.sourcesLock;
+  if (b.roadmapData && typeof b.roadmapData === 'object') options.roadmapData = b.roadmapData;
+  if (Array.isArray(b.corpus)) options.corpus = b.corpus;
+  if (Array.isArray(b.legTexts)) options.legTexts = b.legTexts;
+  if (Number.isSafeInteger(b.contaminationMinWords)) options.contaminationMinWords = b.contaminationMinWords;
+  if (Array.isArray(b.priorLedgerSnapshot)) options.priorLedgerSnapshot = b.priorLedgerSnapshot;
+  if (typeof b.version === 'string') options.version = b.version;
+  const result = v3Validator.validateReport(b.html, options);
+  jsonResponse(res, 200, result);
+}, { maxBodySize: 2 * 1024 * 1024 });
 
 // ── Server Creation ──
 
