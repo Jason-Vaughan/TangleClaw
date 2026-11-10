@@ -86,6 +86,44 @@ describe('recordAttestation / getAttestation (#2985 deliverable 2)', () => {
     }
   });
 
+  it('an observation-only update (requestedModel omitted) PRESERVES the original requested_model (PRR-A R1 HOLD)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'd1-preserve-requested');
+      const sessionId = seedSession(db, projectId);
+      d1.recordAttestation(db, {
+        projectId, sessionId, generation: 1, engineId: 'claude',
+        requestedModel: 'claude-sonnet-5', source: 'unavailable', confidence: 'unavailable'
+      });
+      const second = d1.recordAttestation(db, {
+        projectId, sessionId, generation: 1, engineId: 'claude',
+        observedModel: 'claude-sonnet-5', source: 'cli-roster', confidence: 'observed'
+      });
+      assert.equal(second.ok, true);
+      const row = d1.getAttestation(db, { sessionId, generation: 1 });
+      assert.equal(row.requested_model, 'claude-sonnet-5', 'the omitted requestedModel must not wipe the original');
+      assert.equal(row.observed_model, 'claude-sonnet-5');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('refuses INVALID_REQUEST when an update targets a (session_id, generation) belonging to a DIFFERENT project (PRR-A R1 HOLD)', () => {
+    const db = freshStore();
+    try {
+      const projectA = seedProject(db, 'd1-project-a');
+      const projectB = seedProject(db, 'd1-project-b');
+      const sessionId = seedSession(db, projectA);
+      d1.recordAttestation(db, { projectId: projectA, sessionId, generation: 1, engineId: 'claude', source: 'cli-roster', confidence: 'observed' });
+      const res = d1.recordAttestation(db, { projectId: projectB, sessionId, generation: 1, engineId: 'claude', source: 'cli-roster', confidence: 'observed' });
+      assert.equal(res.ok, false);
+      assert.equal(res.code, 'INVALID_REQUEST');
+      assert.match(res.message, /project_id mismatch/);
+    } finally {
+      cleanup();
+    }
+  });
+
   it('refuses INVALID_REQUEST for an unknown source, confidence, or generation < 1', () => {
     const db = freshStore();
     try {

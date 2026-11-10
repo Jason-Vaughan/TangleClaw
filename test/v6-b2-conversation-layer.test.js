@@ -198,6 +198,104 @@ describe('appendEvent / getEvents (#2982 deliverable 1)', () => {
     }
   });
 
+  it('refuses INVALID_REQUEST for a malformed paneCursorWatermark or rollingLineSha256 (PRR-A R1 HOLD)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'b2-malformed-watermark-hash');
+      const sessionId = seedSession(db, projectId);
+      const base = { projectId, sessionId, launchId: 'l1', tier: 'A', adapter: 'claude', role: 'assistant', content: 'x' };
+      assert.equal(b2.appendEvent(db, { ...base, seq: 1, paneCursorWatermark: -1 }).code, 'INVALID_REQUEST');
+      assert.equal(b2.appendEvent(db, { ...base, seq: 2, paneCursorWatermark: 1.5 }).code, 'INVALID_REQUEST');
+      assert.equal(b2.appendEvent(db, { ...base, seq: 3, paneCursorWatermark: 'not-a-number' }).code, 'INVALID_REQUEST');
+      assert.equal(b2.appendEvent(db, { ...base, seq: 4, rollingLineSha256: 'too-short' }).code, 'INVALID_REQUEST');
+      assert.equal(b2.appendEvent(db, { ...base, seq: 5, rollingLineSha256: 'g'.repeat(64) }).code, 'INVALID_REQUEST');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('accepts a null paneCursorWatermark for a Tier-A event, storing 0', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'b2-null-watermark');
+      const sessionId = seedSession(db, projectId);
+      const res = b2.appendEvent(db, {
+        projectId, sessionId, launchId: 'l1', seq: 1, tier: 'A', adapter: 'claude', role: 'assistant', content: 'x',
+        paneCursorWatermark: null
+      });
+      assert.equal(res.ok, true);
+      assert.equal(b2.getEvents(db, { sessionId })[0].pane_cursor_watermark, 0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('refuses a tier that disagrees with the adapter\'s own classification (aider cannot claim Tier A) (PRR-A R1 HOLD)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'b2-tier-adapter-mismatch');
+      const sessionId = seedSession(db, projectId);
+      const res = b2.appendEvent(db, {
+        projectId, sessionId, launchId: 'l1', seq: 1, tier: 'A', adapter: 'aider', role: 'assistant', content: 'x',
+        paneCursorWatermark: 0, rollingLineSha256: 'a'.repeat(64)
+      });
+      assert.equal(res.ok, false);
+      assert.equal(res.code, 'INVALID_REQUEST');
+      assert.match(res.message, /tier does not match adapter classification/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('refuses claude claiming Tier B the same way', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'b2-tier-adapter-mismatch-2');
+      const sessionId = seedSession(db, projectId);
+      const res = b2.appendEvent(db, {
+        projectId, sessionId, launchId: 'l1', seq: 1, tier: 'B', adapter: 'claude', role: 'assistant', content: 'x',
+        paneCursorWatermark: 0, rollingLineSha256: 'a'.repeat(64)
+      });
+      assert.equal(res.ok, false);
+      assert.equal(res.code, 'INVALID_REQUEST');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('allows an UNRECOGNIZED adapter to declare either tier (classifyAdapterTier returns null, so nothing to disagree with)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'b2-unrecognized-adapter');
+      const sessionId = seedSession(db, projectId);
+      const res = b2.appendEvent(db, {
+        projectId, sessionId, launchId: 'l1', seq: 1, tier: 'A', adapter: 'some-future-engine', role: 'assistant', content: 'x'
+      });
+      assert.equal(res.ok, true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('refuses a Tier B event missing paneCursorWatermark or rollingLineSha256, so dedup can never be silently defeated (PRR-A R1 HOLD)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'b2-tier-b-requires-dedup-key');
+      const sessionId = seedSession(db, projectId);
+      const base = { projectId, sessionId, launchId: 'l1', tier: 'B', adapter: 'aider', role: 'assistant', content: 'x' };
+      const missingHash = b2.appendEvent(db, { ...base, seq: 1, paneCursorWatermark: 0 });
+      assert.equal(missingHash.ok, false);
+      assert.match(missingHash.message, /Tier B pane events require/);
+      const missingWatermark = b2.appendEvent(db, { ...base, seq: 2, paneCursorWatermark: null, rollingLineSha256: 'a'.repeat(64) });
+      assert.equal(missingWatermark.ok, false);
+      assert.match(missingWatermark.message, /Tier B pane events require/);
+      const complete = b2.appendEvent(db, { ...base, seq: 3, paneCursorWatermark: 0, rollingLineSha256: 'a'.repeat(64) });
+      assert.equal(complete.ok, true);
+    } finally {
+      cleanup();
+    }
+  });
+
   it('getEvents respects sinceSeq and orders by seq ascending', () => {
     const db = freshStore();
     try {
