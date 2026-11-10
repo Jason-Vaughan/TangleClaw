@@ -12,10 +12,14 @@ Two contradictions reached live publication under v2.1.0:
 
 1. **`v5.57.0-v5.61.0-retrospective`** — the hero banner states `27 PRs` and `12h 15m 26s`; the
    Architecture section (`#architecture`) states `26 True-Merged PRs` and the Total Run Time card
-   states `12h 16m (736m)`. Root cause: `requires_v2_canonical_metrics()` exempted this report
-   from the v2.0.0 canonical-metrics requirement entirely (its version tuple predated the cutoff),
-   and the enricher that patched the hero banner to include a later release PR never updated the
-   body prose or ran an intra-document reconciler — because there wasn't one.
+   states `12h 16m (736m)`. The hero's figures are the canonical ones — `27` (`22` feature + `5`
+   release) is exactly the true-merge count across this report's own declared commit range
+   (`1ce2dd19..d5b3491c`; `git log --merges --oneline 1ce2dd19..d5b3491c | grep -c "Merge pull
+   request #"` returns `27`) — and the body/architecture figures are the stale, pre-reconciliation
+   ones. Root cause: `requires_v2_canonical_metrics()` exempted this report from the v2.0.0
+   canonical-metrics requirement entirely (its version tuple predated the cutoff), and v2.1.0 had
+   no intra-document reconciler at all — the hero was reconciled to the correct totals at some
+   point; the body, badges and fleet table never were.
 2. **`v5.68.0-v5.71.0-retrospective`** — Section 12 (`#next-sprint`) cites `Session Hierarchy
    (#108), Engine Failover (#109), Adversarial Agent (#1032), Secure Secrets (#1257) & Dynamic
    Agents (#1578)`; the real titles are `#108` Adversarial Agent, `#109` Engine Failover (the one
@@ -57,7 +61,10 @@ exists to close).
   "schema_version": "3.0.0",
   "version": "v5.72.0",
   "timestamps": { "...": "unchanged from v2.0.0 (t1..t8)" },
-  "durations": { "...": "unchanged from v2.0.0" },
+  "durations": {
+    "...": "unchanged from v2.0.0, plus:",
+    "total_run_time_display": "12h 15m 26s"
+  },
   "completion": { "...": "unchanged from v2.0.0 (State A..D)" },
   "diff": { "...": "unchanged from v2.0.0" },
   "economics": {
@@ -138,7 +145,7 @@ with.
 |---|---|---|---|
 | 1 | Canonical Versioned Source Lock | `provenance.canonical_source_sha256` is absent, or disagrees with the caller-supplied lock record (when one is supplied) for this report's GitHub Issue/PR/Milestone/Commit/CI snapshot | blocking |
 | 2 | Issue Citation Verifier | Any `Label (#NNNN)` cited anywhere in the 12 sections — **`#next-sprint` included** — names a label the roadmap source's real title for `#NNNN` does not match | blocking |
-| 3 | Intra-Document Aggregate Reconciler | `economics`/`diff`/PR-count figures disagree between the JSON anchor and ANY rendered location (hero, badges, tables, prose), or `feature_prs_merged + release_prs_merged != total_repo_prs_merged` | blocking |
+| 3 | Intra-Document Aggregate Reconciler | `economics`/`diff`/PR-count/duration figures disagree between the JSON anchor and ANY rendered location (hero, badges, tables, prose), `feature_prs_merged + release_prs_merged != total_repo_prs_merged`, or a rendered "Total Run Time: …" figure disagrees with `durations.total_run_time_display` | blocking |
 | 4 | Scope Taxonomy Strip | `scope_taxonomy`'s three counts are missing, or any rendered scope figure cannot be attributed to exactly one of the three | blocking |
 | 5 | Release-State Vocabulary | `release_state[]` contains a term outside the seven-term vocabulary, or rendered release-status prose uses a synonym not drawn from it | blocking |
 | 6 | Four-Tier Cost Separation | Any of the four `economics` fields is absent, non-numeric, or negative | blocking |
@@ -157,6 +164,7 @@ can.
 ```
 node lib/v6/sprint-report-validator-v3.js --mode single <path/to/index.html>
 node lib/v6/sprint-report-validator-v3.js --mode retrospective <path/to/index.html>
+node lib/v6/sprint-report-validator-v3.js --mode single --roadmap-data roadmap2-data.json --prior-ledger prior-ledger.json <path/to/index.html>
 node lib/v6/sprint-report-validator-v3.js --remediate v5.57.0-v5.61.0 <path/to/index.html>
 node lib/v6/sprint-report-validator-v3.js --remediate v5.68.0-v5.71.0 <path/to/index.html>
 ```
@@ -167,8 +175,16 @@ recognizes) and prints the corrected HTML plus the `#tc-report-errata` block to 
 writing in place — a human or a wrap step applies the output, so the exact bytes that changed are
 always visible before they land.
 
-`--sources-lock <path>` and `--corpus <dir>` are optional inputs to Rules 1 and 8 respectively;
-omitted, Rule 1 checks internal consistency only (the field is present and well-formed, not that
-it matches an external record) and Rule 8 compares within the document only (every leg in
-retrospective mode; nothing in single mode, which then reports contamination as not-applicable
-rather than a vacuous pass).
+`--sources-lock <path>`, `--roadmap-data <path>` and `--corpus <dir>` are optional inputs to Rules
+1, 2 and 8 respectively; `--prior-ledger <path>` feeds Rule 10's immutability check. Omitted:
+
+- Rule 1 checks internal consistency only (the field is present and well-formed, not that it
+  matches an external record).
+- Rule 2 still runs against `KNOWN_ISSUE_TITLES` — a small built-in floor covering exactly the
+  five issue numbers Defect Case 2 scrambled, each verified via `gh issue view`, never a
+  substitute for a real `roadmap2-data.json` for any other issue number. A caller-supplied
+  `--roadmap-data` always takes precedence over it.
+- Rule 8 compares within the document only (every leg in retrospective mode; nothing in single
+  mode, which then reports contamination as not-applicable rather than a vacuous pass).
+- Rule 10 checks the current ledger's own shape and banner only — it cannot detect a REMOVED or
+  MUTATED prior entry without something to compare against.

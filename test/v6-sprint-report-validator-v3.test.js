@@ -116,9 +116,16 @@ describe('#2979 Rule 2 — Issue Citation Verifier (Defect Case 2: #2979 canonic
     }
   };
 
-  it('is skipped (not failed) when no roadmapData is supplied', () => {
-    const html = fixture({ sections: { 'next-sprint': '<h4>Wrong Label (#108)</h4>' } });
+  it('is skipped (not failed) when no roadmapData is supplied and the issue is outside the built-in floor', () => {
+    const html = fixture({ sections: { 'next-sprint': '<h4>Wrong Label (#9999)</h4>' } });
     assert.equal(v3.validateReport(html).findings.filter((f) => f.rule === 2).length, 0);
+  });
+
+  it('still checks against the built-in KNOWN_ISSUE_TITLES floor when no roadmapData is supplied', () => {
+    assert.ok(v3.KNOWN_ISSUE_TITLES[108] && v3.KNOWN_ISSUE_TITLES[108].title, 'the floor names #108\'s real title');
+    const html = fixture({ sections: { 'next-sprint': '<h4>Wrong Label (#108)</h4>' } });
+    const r = v3.validateReport(html);
+    assert.ok(r.findings.some((f) => f.rule === 2 && f.code === 'CITATION_MISMATCH' && f.message.includes('#108')));
   });
 
   it('REPRODUCES the real v5.68.0-v5.71.0 defect: the scrambled citation block fails, #next-sprint included', () => {
@@ -348,27 +355,39 @@ describe('#2979 remediateHistoricalErrata', () => {
   });
 
   it('reports nothing-to-do when the known defect pattern is not present', () => {
-    const r = v3.remediateHistoricalErrata('v5.57.0-v5.61.0', '<html><body>already fine, 26 PRs</body></html>');
+    const r = v3.remediateHistoricalErrata('v5.57.0-v5.61.0', '<html><body>already fine, 27 True-Merged PRs</body></html>');
     assert.equal(r.ok, false);
     assert.match(r.reason, /nothing to remediate/);
   });
 
-  it('v5.57.0-v5.61.0: fixes the REAL hero contradiction and the corrected text passes Rule 3', () => {
-    // Excerpted verbatim from the real production file's hero region.
-    const realHeroExcerpt = '<div class="eyebrow">CHARTERS A494–A498 FIVE-VERSION RETROSPECTIVE · 27 PRs · TOTAL RUN TIME: 12h 15m 26s TO FINAL MERGE</div>';
-    const r = v3.remediateHistoricalErrata('v5.57.0-v5.61.0', `<html><body>${realHeroExcerpt}</body></html>`);
+  it('v5.57.0-v5.61.0: fixes the REAL body/badge contradiction (stale 26-PR figures) and the corrected text passes Rule 3', () => {
+    // Excerpted verbatim (shape) from the real production file's Architecture section
+    // badge, fleet table and Total Run Time card — the STALE, pre-reconciliation
+    // figures. The hero banner already stated the canonical 27-PR / 12h15m26s totals;
+    // the body never caught up. Direction verified directly against git (Architect
+    // Ruling A512-PR3006-R1-HOLD B2): 27 (22 feature + 5 release) is canonical.
+    const staleBodyExcerpt = '<div class="architecture-badge">26 True-Merged PRs</div>'
+      + '<p>all 26 merged PRs are true `--no-ff` merges</p>'
+      + '<table><tr><td>21 feature cars + 5 release cuts</td></tr></table>'
+      + '<div class="total-run-time-card">Total Run Time: 12h 16m (736m) Start-to-Finish</div>';
+    const r = v3.remediateHistoricalErrata('v5.57.0-v5.61.0', `<html><body>${staleBodyExcerpt}</body></html>`);
     assert.equal(r.ok, true);
-    assert.ok(r.html.includes('26 PRs'));
-    assert.ok(!r.html.includes('27 PRs'));
-    assert.ok(r.html.includes('12h 16m (736m)'));
+    assert.ok(r.html.includes('27 True-Merged PRs'));
+    assert.ok(!r.html.includes('26 True-Merged PRs'));
+    assert.ok(r.html.includes('22 feature cars + 5 release cuts'));
+    assert.ok(r.html.includes('12h 15m 26s Start-to-Finish'));
     assert.ok(r.html.includes('Revision 1.1'));
-    assert.equal(r.errataEntry.original_value, '27');
-    assert.equal(r.errataEntry.corrected_value, '26');
+    assert.equal(r.errataEntry.original_value, '26');
+    assert.equal(r.errataEntry.corrected_value, '27');
 
-    // Re-validate: splice the remediated hero text (now carrying the banner too)
-    // into a fixture whose anchor already states the reconciled 26-PR total.
+    // Re-validate: splice the remediated body text (now carrying the banner too)
+    // into a fixture whose anchor already states the reconciled 27-PR total and
+    // matching duration — the corrected body must no longer disagree with either.
     const fixHtml = fixture({
-      metrics: { diff: { feature_prs_merged: 21, release_prs_merged: 5, total_repo_prs_merged: 26 } },
+      metrics: {
+        diff: { feature_prs_merged: 22, release_prs_merged: 5, total_repo_prs_merged: 27 },
+        durations: { total_run_time_display: '12h 15m 26s' }
+      },
       extraBody: r.html.match(/<body>([\s\S]*)<\/body>/)[1]
     });
     const result = v3.validateReport(fixHtml);
@@ -383,7 +402,7 @@ describe('#2979 remediateHistoricalErrata', () => {
     assert.ok(r.html.includes('Adversarial Agent (`#108`)'));
     assert.ok(r.html.includes('Session Hierarchy (`#1578`)'));
     assert.ok(!r.html.includes('Session Hierarchy (`#108`)'));
-    assert.equal(r.errataEntry.field, 'next_sprint_citations');
+    assert.equal(r.errataEntry.field, 'issue_citations');
 
     const roadmapData = {
       issue_fields: {
