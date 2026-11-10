@@ -455,8 +455,30 @@ describe('lib/v6/transition-ledger.js (#2977, V6-03)', () => {
     const replay = ledger.request(args);
     assert.equal(replay.code, 'DEDUP');
     assert.equal(replay.id, first.id);
+    assert.equal(replay.replayed, true);
+    assert.equal(replay.transition.id, first.id);
+    assert.equal(replay.transition.state, 'pending');
     const conflict = ledger.request({ ...args, detail: { different: true } });
     assert.equal(conflict.code, 'IDEMPOTENCY_CONFLICT');
+  });
+
+  it('a replay after the original transition has committed returns the full, current receipt, not a bare {status, id} (PRR-A R1, PR #3008)', () => {
+    const db = freshStore();
+    const projectId = seedProject(db, { path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v6-project-')) });
+    const ownerId = seedUserPrincipal(db, { projectId, role: 'owner' });
+    const auth = authorityService.createAuthorizationService(db);
+    const resourceId = seedResource(db, projectId, 0);
+    const ledger = transitionLedger.createRuntimeTransitions(db, auth);
+    const args = { principalId: ownerId, projectId, resourceId, action: 'launch', expectedGeneration: 0, key: 'req-committed' };
+    const { id } = ledger.request(args);
+    ledger.settle({ principalId: ownerId, projectId, id, state: 'committed', evidence: { source: 'tmux', observedAt: new Date().toISOString() } });
+    const replay = ledger.request(args);
+    assert.equal(replay.ok, true);
+    assert.equal(replay.code, 'DEDUP');
+    assert.equal(replay.replayed, true);
+    assert.equal(replay.id, id);
+    assert.equal(replay.transition.state, 'committed');
+    assert.equal(replay.transition.target_generation, 1);
   });
 
   it('refuses a stale generation and an in-flight resource', () => {
@@ -548,7 +570,7 @@ describe('lib/v6/incident-registry.js (#2978, V6-04)', () => {
     tmpDir = null;
   });
 
-  it('a healthy step only records evidence, taking no recovery action', () => {
+  it('a healthy first-ever report for a fingerprint creates zero runtime_incidents rows (PRR-A R1, PR #3008)', () => {
     const db = freshStore();
     const projectId = seedProject(db, { path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v6-project-')) });
     const ownerId = seedUserPrincipal(db, { projectId, role: 'owner' });
@@ -556,8 +578,46 @@ describe('lib/v6/incident-registry.js (#2978, V6-04)', () => {
     const incidents = incidentRegistry.createRuntimeIncidents(db, auth);
     const result = incidents.step({ principalId: ownerId, projectId, fingerprint: 'fp-1', generation: 1, action: 'noop', health: 'healthy' });
     assert.equal(result.code, 'HEALTHY_NO_ACTION');
-    const attempts = db.prepare('SELECT COUNT(*) n FROM remediation_attempts WHERE incident_id = ?').get(result.id).n;
-    assert.equal(attempts, 0);
+    assert.equal(result.id, null);
+    const incidentRows = db.prepare('SELECT COUNT(*) n FROM runtime_incidents WHERE project_id = ? AND fingerprint = ?').get(projectId, 'fp-1').n;
+    assert.equal(incidentRows, 0);
+    const evidenceRows = db.prepare('SELECT COUNT(*) n FROM incident_evidence').get().n;
+    assert.equal(evidenceRows, 0);
+  });
+
+  it('a healthy report against an EXISTING incident (recovery) still records evidence and returns its real id', () => {
+    const db = freshStore();
+    const projectId = seedProject(db, { path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v6-project-')) });
+    const ownerId = seedUserPrincipal(db, { projectId, role: 'owner' });
+    const auth = authorityService.createAuthorizationService(db);
+    const incidents = incidentRegistry.createRuntimeIncidents(db, auth);
+    const unhealthy = incidents.step({ principalId: ownerId, projectId, fingerprint: 'fp-recover', generation: 1, action: 'restart', health: 'unhealthy' });
+    assert.notEqual(unhealthy.id, null);
+    const healthy = incidents.step({ principalId: ownerId, projectId, fingerprint: 'fp-recover', generation: 1, action: 'noop', health: 'healthy' });
+    assert.equal(healthy.code, 'HEALTHY_NO_ACTION');
+    assert.equal(healthy.id, unhealthy.id);
+    const attempts = db.prepare('SELECT COUNT(*) n FROM remediation_attempts WHERE incident_id = ?').get(healthy.id).n;
+    assert.equal(attempts, 1); // from the earlier unhealthy step only; the healthy step attempts no recovery
+    const evidenceRows = db.prepare('SELECT COUNT(*) n FROM incident_evidence WHERE incident_id = ?').get(healthy.id).n;
+    assert.equal(evidenceRows, 2); // one per step
+  });
+
+  it('redacts a bare Bearer/ghp_/tc_master_ token value with no adjacent token/secret keyword (PRR-A R1, PR #3008)', () => {
+    const db = freshStore();
+    const projectId = seedProject(db, { path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v6-project-')) });
+    const ownerId = seedUserPrincipal(db, { projectId, role: 'owner' });
+    const auth = authorityService.createAuthorizationService(db);
+    const incidents = incidentRegistry.createRuntimeIncidents(db, auth);
+    // A fresh fingerprint's first report must be unhealthy to get an incident_evidence row
+    // at all (a healthy first report creates none, per the regression test above).
+    const result = incidents.step({
+      principalId: ownerId, projectId, fingerprint: 'fp-secret', generation: 1, action: 'noop', health: 'unhealthy',
+      evidence: { note: 'saw Bearer ghp_EXAMPLE_SECRET_12345 and tc_master_EXAMPLE_SECRET_12345 in the log' }
+    });
+    const row = db.prepare('SELECT payload_json FROM incident_evidence WHERE incident_id = ?').get(result.id);
+    assert.ok(!row.payload_json.includes('ghp_EXAMPLE_SECRET_12345'), 'ghp_ token leaked unredacted');
+    assert.ok(!row.payload_json.includes('tc_master_EXAMPLE_SECRET_12345'), 'tc_master_ token leaked unredacted');
+    assert.ok(row.payload_json.includes('[REDACTED]'));
   });
 
   it('refuses a reserved action outright', () => {
@@ -624,8 +684,11 @@ describe('lib/v6/incident-registry.js (#2978, V6-04)', () => {
     const ownerId = seedUserPrincipal(db, { projectId, role: 'owner' });
     const auth = authorityService.createAuthorizationService(db);
     const incidents = incidentRegistry.createRuntimeIncidents(db, auth);
+    // unhealthy, not healthy: a healthy first-ever report for a fingerprint
+    // creates no incident/evidence row at all (see the dedicated regression
+    // test above), so this key-name-based redaction case needs a real row.
     const result = incidents.step({
-      principalId: ownerId, projectId, fingerprint: 'fp-5', generation: 1, action: 'noop', health: 'healthy',
+      principalId: ownerId, projectId, fingerprint: 'fp-5', generation: 1, action: 'noop', health: 'unhealthy',
       evidence: { apiKey: 'should-be-gone', note: 'token: abc123 in a log line' }
     });
     const row = db.prepare('SELECT payload_json FROM incident_evidence WHERE incident_id = ?').get(result.id);
