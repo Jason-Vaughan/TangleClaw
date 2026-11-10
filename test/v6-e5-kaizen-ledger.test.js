@@ -213,6 +213,22 @@ describe('canMarkProvenEffective / markProvenEffective — the 4-Class proof rul
     assert.equal(e5.markProvenEffective(db, { id }).ok, true);
   });
 
+  it('Class B_WORKFLOW: rejects 3 clean measurements against the SAME sprint_version (no real 3-sprint streak)', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const id = seedItem(db, { verificationClass: 'B_WORKFLOW' });
+    toVerified(db, id);
+    for (let i = 0; i < 3; i++) {
+      e5.recordMeasurement(db, { kaizenId: id, sprintVersion: 'v1', measurementKind: 'sprint_window', passed: true, evidenceRef: `x${i}` });
+    }
+    assert.equal(e5.markProvenEffective(db, { id }).code, 'INSUFFICIENT_CONSECUTIVE_SPRINTS');
+    // A genuinely new, distinct sprint on top of the duplicate-sprint rows still only reaches 2 distinct.
+    e5.recordMeasurement(db, { kaizenId: id, sprintVersion: 'v2', measurementKind: 'sprint_window', passed: true, evidenceRef: 'x3' });
+    assert.equal(e5.markProvenEffective(db, { id }).code, 'INSUFFICIENT_CONSECUTIVE_SPRINTS');
+    e5.recordMeasurement(db, { kaizenId: id, sprintVersion: 'v3', measurementKind: 'sprint_window', passed: true, evidenceRef: 'x4' });
+    assert.equal(e5.markProvenEffective(db, { id }).ok, true);
+  });
+
   it('Class C_OPERATIONAL_DRILL: needs one passing chaos_drill AND one clean passive_monitor', (t) => {
     const db = freshStore();
     t.after(cleanup);
@@ -224,15 +240,44 @@ describe('canMarkProvenEffective / markProvenEffective — the 4-Class proof rul
     assert.equal(e5.markProvenEffective(db, { id }).ok, true);
   });
 
-  it('Class D_LONGITUDINAL: needs 3 to 5 passing statistical_trend measurements, not fewer and not more', (t) => {
+  it('Class D_LONGITUDINAL: needs 3 to 5 passing statistical_trend measurements across DISTINCT sprints, each numerically meeting baseline', (t) => {
     const db = freshStore();
     t.after(cleanup);
     const id = seedItem(db, { verificationClass: 'D_LONGITUDINAL' });
     toVerified(db, id);
-    const trend = (sprintVersion) => e5.recordMeasurement(db, { kaizenId: id, sprintVersion, measurementKind: 'statistical_trend', passed: true, evidenceRef: 'x' });
+    const trend = (sprintVersion, metricValue = 5, baselineValue = 10) =>
+      e5.recordMeasurement(db, { kaizenId: id, sprintVersion, measurementKind: 'statistical_trend', passed: true, metricValue, baselineValue, evidenceRef: 'x' });
     trend('v1'); trend('v2');
     assert.equal(e5.markProvenEffective(db, { id }).code, 'INSUFFICIENT_TREND_SERIES');
     trend('v3');
+    assert.equal(e5.markProvenEffective(db, { id }).ok, true);
+  });
+
+  it('Class D_LONGITUDINAL: rejects 3 measurements against the SAME sprint_version (no real series)', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const id = seedItem(db, { verificationClass: 'D_LONGITUDINAL' });
+    toVerified(db, id);
+    for (let i = 0; i < 3; i++) {
+      e5.recordMeasurement(db, { kaizenId: id, sprintVersion: 'v1', measurementKind: 'statistical_trend', passed: true, metricValue: 5, baselineValue: 10, evidenceRef: `x${i}` });
+    }
+    assert.equal(e5.markProvenEffective(db, { id }).code, 'INSUFFICIENT_TREND_SERIES');
+  });
+
+  it('Class D_LONGITUDINAL: rejects null/missing metric_value or baseline_value, and a worse-than-baseline reading', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const id = seedItem(db, { verificationClass: 'D_LONGITUDINAL' });
+    toVerified(db, id);
+    const trend = (sprintVersion, metricValue, baselineValue) =>
+      e5.recordMeasurement(db, { kaizenId: id, sprintVersion, measurementKind: 'statistical_trend', passed: true, metricValue, baselineValue, evidenceRef: 'x' });
+    trend('v1', null, null);
+    trend('v2', 5, 10);
+    trend('v3', 15, 10); // worse than baseline -- does not qualify
+    assert.equal(e5.markProvenEffective(db, { id }).code, 'INSUFFICIENT_TREND_SERIES');
+    trend('v4', 5, 10);
+    trend('v5', 5, 10);
+    // Now v2, v4, v5 qualify (3 distinct sprints); v1 (null) and v3 (worse) never count.
     assert.equal(e5.markProvenEffective(db, { id }).ok, true);
   });
 
