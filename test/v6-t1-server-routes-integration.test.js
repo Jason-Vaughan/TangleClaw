@@ -490,21 +490,34 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
       assert.deepEqual(json(res).drift, []);
     });
 
-    it('mints and revokes a G1 lease', async () => {
+    it('mints and revokes a G1 lease, binding actor to the signed-in operator, never body.actor (Ruling A553-PR3010-R3-HOLD-P08-ROUND4-COSIGN)', async () => {
       const projectId = await seedProject('g1-lease-project');
-      const mint = await post(`/api/v6/projects/${projectId}/g1-leases`, { actor: 'tc-lane-c', repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 });
+      const signedIn = signInOperator('tc-lane-c-lease-test');
+      const mint = await post(`/api/v6/projects/${projectId}/g1-leases`,
+        { actor: 'spoofed-actor-ignored', repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 },
+        signedIn);
       assert.equal(mint.statusCode, 201, mint.body);
       const { id } = json(mint);
+      const row = store.getDb().prepare('SELECT actor FROM v6_g1_leases WHERE id = ?').get(id);
+      assert.equal(row.actor, 'tc-lane-c-lease-test', 'actor is bound to the signed-in session, never the body claim');
       const revoke = await post(`/api/v6/projects/${projectId}/g1-leases/${id}/revoke`);
       assert.equal(revoke.statusCode, 200, revoke.body);
       const revokeAgain = await post(`/api/v6/projects/${projectId}/g1-leases/${id}/revoke`);
       assert.equal(revokeAgain.statusCode, 404, revokeAgain.body);
     });
 
+    it('refuses a G1 lease mint with no signed-in operator session', async () => {
+      const projectId = await seedProject('g1-lease-no-session');
+      const res = await post(`/api/v6/projects/${projectId}/g1-leases`, { repo: 'r', connectionEpoch: 1, actions: ['read'], ttlMs: 1000 });
+      assert.ok([401, 403].includes(res.statusCode), res.body);
+      assert.equal(json(res).code, 'SIGNED_IN_OPERATOR_REQUIRED');
+    });
+
     it('mints and revokes a G1 approval from a DISTINCT operator, recording the REAL signed-in operator as operatorActor, never the body claim (PRR-A R1)', async () => {
       const projectId = await seedProject('g1-approval-project');
+      const leaseSignedIn = signInOperator('tc-lane-c');
       const lease = await post(`/api/v6/projects/${projectId}/g1-leases`,
-        { actor: 'tc-lane-c', repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 });
+        { repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 }, leaseSignedIn);
       assert.equal(lease.statusCode, 201, lease.body);
       const signedIn = signInOperator('rosie-g1-test');
       const mint = await post(`/api/v6/projects/${projectId}/g1-approvals`,
@@ -528,7 +541,7 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
       const projectId = await seedProject('g1-approval-p08-same-operator');
       const signedIn = signInOperator('same-operator-x');
       const lease = await post(`/api/v6/projects/${projectId}/g1-leases`,
-        { actor: 'same-operator-x', repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 });
+        { repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 }, signedIn);
       assert.equal(lease.statusCode, 201, lease.body);
       const mint = await post(`/api/v6/projects/${projectId}/g1-approvals`,
         { action: 'merge', repo: 'TangleClaw', targetDigest: 'abc123', ttlMs: 60000 },
@@ -539,18 +552,58 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
 
     it('refuses a G1 approval mint when a SECOND active lease for the same project/repo shares the signed-in actor, even though it is not the first one minted (PRR-A R3 HOLD counterexample)', async () => {
       const projectId = await seedProject('g1-approval-p08-second-lease');
+      const otherSignedIn = signInOperator('other-operator');
       const first = await post(`/api/v6/projects/${projectId}/g1-leases`,
-        { actor: 'other-operator', repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 });
+        { repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 }, otherSignedIn);
       assert.equal(first.statusCode, 201, first.body);
-      const second = await post(`/api/v6/projects/${projectId}/g1-leases`,
-        { actor: 'rosie-g1-test-2', repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 });
-      assert.equal(second.statusCode, 201, second.body);
       const signedIn = signInOperator('rosie-g1-test-2');
+      const second = await post(`/api/v6/projects/${projectId}/g1-leases`,
+        { repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 }, signedIn);
+      assert.equal(second.statusCode, 201, second.body);
       const mint = await post(`/api/v6/projects/${projectId}/g1-approvals`,
         { action: 'merge', repo: 'TangleClaw', targetDigest: 'abc123', ttlMs: 60000 },
         signedIn);
       assert.equal(mint.statusCode, 403, mint.body);
       assert.equal(json(mint).code, 'DISTINCT_OPERATOR_REQUIRED');
+    });
+
+    it('refuses a G1 approval mint when the lease actor was spoofed via body.actor but bound to the real signed-in session (PRR-B repro)', async () => {
+      const projectId = await seedProject('g1-approval-p08-spoofed-actor');
+      const signedIn = signInOperator('spoofed-actor-operator');
+      const lease = await post(`/api/v6/projects/${projectId}/g1-leases`,
+        { actor: 'different-string', repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 }, signedIn);
+      assert.equal(lease.statusCode, 201, lease.body);
+      const leaseRow = store.getDb().prepare('SELECT actor FROM v6_g1_leases WHERE id = ?').get(json(lease).id);
+      assert.equal(leaseRow.actor, 'spoofed-actor-operator', 'actor is bound to the signed-in session, never body.actor');
+      const mint = await post(`/api/v6/projects/${projectId}/g1-approvals`,
+        { action: 'merge', repo: 'TangleClaw', targetDigest: 'abc123', ttlMs: 60000 },
+        signedIn);
+      assert.equal(mint.statusCode, 403, mint.body);
+      assert.equal(json(mint).code, 'DISTINCT_OPERATOR_REQUIRED');
+    });
+
+    it('404s a G1 approval mint when no active lease exists for the project/repo', async () => {
+      const projectId = await seedProject('g1-approval-no-active-lease');
+      const signedIn = signInOperator('no-lease-operator');
+      const mint = await post(`/api/v6/projects/${projectId}/g1-approvals`,
+        { action: 'merge', repo: 'TangleClaw', targetDigest: 'abc123', ttlMs: 60000 },
+        signedIn);
+      assert.equal(mint.statusCode, 404, mint.body);
+      assert.equal(json(mint).code, 'NOT_FOUND');
+    });
+
+    it('404s a G1 approval mint when leaseId is supplied but matches no active lease for the project/repo', async () => {
+      const projectId = await seedProject('g1-approval-mismatched-lease-id');
+      const leaseSignedIn = signInOperator('mismatched-lease-operator');
+      const lease = await post(`/api/v6/projects/${projectId}/g1-leases`,
+        { repo: 'TangleClaw', connectionEpoch: 1, actions: ['read'], ttlMs: 60000 }, leaseSignedIn);
+      assert.equal(lease.statusCode, 201, lease.body);
+      const signedIn = signInOperator('mismatched-lease-approver');
+      const mint = await post(`/api/v6/projects/${projectId}/g1-approvals`,
+        { action: 'merge', repo: 'TangleClaw', targetDigest: 'abc123', ttlMs: 60000, leaseId: 'not-a-real-lease-id' },
+        signedIn);
+      assert.equal(mint.statusCode, 404, mint.body);
+      assert.equal(json(mint).code, 'NOT_FOUND');
     });
 
     it('404s an authority route against a project that does not exist, rather than throwing on the trust-bootstrap FK (PRR-A R1 / Ruling A549)', async () => {

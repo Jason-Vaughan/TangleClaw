@@ -9168,15 +9168,25 @@ route('GET', '/api/v6/projects/:id/authority-drift', (req, res, params) => {
   jsonResponse(res, 200, { drift });
 });
 
+// Ruling A553-PR3010-R3-HOLD-P08-ROUND4-COSIGN: a lease's `actor` is the
+// identity g1-approvals' P08 check later compares the approving operator
+// against — a client-supplied `b.actor` would let a signed-in operator
+// mint a lease under any name they choose and then approve it as a
+// "different" actor. Same session-resolution fallback as g1-approvals.
 route('POST', '/api/v6/projects/:id/g1-leases', (req, res, params, body) => {
   if (!operatorProjectCaller(req, res, 'mint a G1 lease')) return;
   const projectId = Number(params.id);
   const b = _v6Body(body);
+  const session = req.tcSession || _gateIdentity(req, req.socket, '/api/v6/projects').session;
+  if (!session || session.userId == null) {
+    return _v6Respond(res, { ok: false, code: 'SIGNED_IN_OPERATOR_REQUIRED' });
+  }
+  const actor = String(session.username || session.userId);
   const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'g1.mintLease');
   if (!authz) return;
   const { principalId, auth } = authz;
   _v6Respond(res, authorityService.mintLease(v6Db(), {
-    principalId, auth, projectId, actor: b.actor, repo: b.repo,
+    principalId, auth, projectId, actor, repo: b.repo,
     connectionEpoch: b.connectionEpoch, actions: b.actions, ttlMs: b.ttlMs
   }), 201);
 });
@@ -9213,18 +9223,20 @@ route('POST', '/api/v6/projects/:id/g1-approvals', (req, res, params, body) => {
     return _v6Respond(res, { ok: false, code: 'SIGNED_IN_OPERATOR_REQUIRED' });
   }
   const operatorActor = String(session.username || session.userId);
-  // PRR-A R3 HOLD: .get() only ever inspects ONE row, so a second active
-  // lease for the same (project_id, repo) — minted by a different actor —
-  // hid a matching one from view. .all()/.some() checks every active,
-  // unrevoked, unexpired lease for this exact project+repo; the `id =
-  // leaseId` arm is dropped rather than re-scoped, since a row that
-  // qualifies by id but fails project_id/repo/revoked/expiry is not "the"
-  // live lease this approval concerns, and one that DOES qualify is
-  // already covered by the scoped check below.
-  const leases = v6Db().prepare(
-    'SELECT actor FROM v6_g1_leases WHERE project_id = ? AND repo = ? AND revoked_at IS NULL AND expires_at > ?'
+  // Ruling A553-PR3010-R3-HOLD-P08-ROUND4-COSIGN: .get() only ever
+  // inspects ONE row, so a second active lease for the same (project_id,
+  // repo) — minted by a different actor — hid a matching one from view.
+  // .all() over every active, unrevoked, unexpired lease for this exact
+  // project+repo fixes that; an approval naming no such lease at all, or
+  // a leaseId that doesn't match one of them, fails closed with 404 —
+  // there is nothing live for this approval to concern.
+  const activeLeases = v6Db().prepare(
+    'SELECT id, actor FROM v6_g1_leases WHERE project_id = ? AND repo = ? AND revoked_at IS NULL AND expires_at > ?'
   ).all(projectId, String(b.repo || ''), Date.now());
-  if (leases.some((row) => row.actor === operatorActor)) {
+  if (activeLeases.length === 0 || (b.leaseId != null && !activeLeases.some((l) => l.id === String(b.leaseId)))) {
+    return _v6Respond(res, { ok: false, code: 'NOT_FOUND' });
+  }
+  if (activeLeases.some((l) => l.actor === operatorActor)) {
     return _v6Respond(res, { ok: false, code: 'DISTINCT_OPERATOR_REQUIRED' });
   }
   const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'g1.mintApproval');
