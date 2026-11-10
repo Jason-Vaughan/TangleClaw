@@ -668,6 +668,26 @@ describe('lib/v6/incident-registry.js (#2978, V6-04)', () => {
     assert.ok(row.payload_json.includes('[REDACTED]'));
   });
 
+  it('redacts a full multiline PEM private-key block and a Discord webhook URL (PM Ruling, PR #3008 R5)', () => {
+    const db = freshStore();
+    const projectId = seedProject(db, { path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v6-project-')) });
+    const ownerId = seedUserPrincipal(db, { projectId, role: 'owner' });
+    const auth = authorityService.createAuthorizationService(db);
+    const incidents = incidentRegistry.createRuntimeIncidents(db, auth);
+    const pem = '-----BEGIN RSA PRIVATE KEY-----\nMIIEEXAMPLEKEYBODYDATAHERE\nMORELINESOFBASE64EXAMPLE\n-----END RSA PRIVATE KEY-----';
+    const webhook = 'https://discord.com/api/webhooks/123456789012345678/AbCdEf-ExampleToken_123';
+    const result = incidents.step({
+      principalId: ownerId, projectId, fingerprint: 'fp-secret-4', generation: 1, action: 'noop', health: 'unhealthy',
+      evidence: { key: pem, hook: `posted to ${webhook}` }
+    });
+    const row = db.prepare('SELECT payload_json FROM incident_evidence WHERE incident_id = ?').get(result.id);
+    assert.ok(!row.payload_json.includes('MIIEEXAMPLEKEYBODYDATAHERE'), 'PEM key body leaked unredacted');
+    assert.ok(!row.payload_json.includes('MORELINESOFBASE64EXAMPLE'), 'PEM key body leaked unredacted');
+    assert.ok(!row.payload_json.includes('-----BEGIN RSA PRIVATE KEY-----'), 'PEM header leaked unredacted');
+    assert.ok(!row.payload_json.includes('AbCdEf-ExampleToken_123'), 'Discord webhook token leaked unredacted');
+    assert.ok(row.payload_json.includes('[REDACTED]'));
+  });
+
   it('refuses a reserved action outright', () => {
     const db = freshStore();
     const projectId = seedProject(db, { path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v6-project-')) });
