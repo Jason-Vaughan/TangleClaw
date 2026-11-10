@@ -119,6 +119,21 @@ describe('advanceLifecycle (validated transition graph, Dismissed a terminal dea
     assert.equal(e5.advanceLifecycle(db, { id, nextState: 'Verified' }).code, 'INVALID_TRANSITION');
     assert.equal(e5.advanceLifecycle(db, { id: 'missing', nextState: 'Classified' }).code, 'NOT_FOUND');
   });
+
+  it('cannot bypass markProvenEffective/closeItem\'s gating via a direct advanceLifecycle call (Architect Ruling A535)', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const id = seedItem(db);
+    toVerified(db, id);
+    // No measurements recorded at all -- canMarkProvenEffective would refuse this.
+    // A direct advanceLifecycle call must refuse too, not silently succeed.
+    assert.equal(e5.advanceLifecycle(db, { id, nextState: 'Effectiveness Measured' }).code, 'INVALID_TRANSITION');
+    assert.equal(e5.getItem(db, id).lifecycle_state, 'Verified');
+
+    db.prepare("UPDATE kaizen_items SET lifecycle_state = 'Effectiveness Measured', effectiveness_status = 'PROVEN_EFFECTIVE' WHERE id = ?").run(id);
+    assert.equal(e5.advanceLifecycle(db, { id, nextState: 'Closed' }).code, 'INVALID_TRANSITION');
+    assert.equal(e5.getItem(db, id).lifecycle_state, 'Effectiveness Measured');
+  });
 });
 
 /** Drive an item to `Verified`, the precondition every `canMarkProvenEffective`/`markProvenEffective` test needs. */
