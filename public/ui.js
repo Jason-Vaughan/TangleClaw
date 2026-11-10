@@ -8187,3 +8187,27 @@ if (typeof window.tcWireMedusaDriftAction === 'function') {
 
 loadMedusaDrift();
 setInterval(loadMedusaDrift, MEDUSA_DRIFT_POLL_MS);
+
+// ── v6 Fleet-First route-based shell (#2981, V6-08 / B1, BRIDGE-5 coexistence) ──
+// Additive: mounts into its own root (#v6ShellRoot) only when
+// public/v6-shell.js defines window.tcCreateV6Shell. Shows itself only
+// while the location hash matches one of its own routes, hiding the
+// existing #projectsContainer dashboard while it does, and reverses that
+// the moment the hash no longer matches — the one coupling point between
+// the two, kept here rather than inside v6-shell.js so that file stays
+// usable standalone (e.g. under test) with no knowledge of this page's
+// other container ids. Data feeds (tree/telemetry/templates/attestation)
+// are server.js route wiring (BRIDGE-2b, Car V60-T2-W2-ROUTES), not yet
+// built, so the shell mounts with none for now.
+if (typeof window.tcCreateV6Shell === 'function') {
+  const v6ShellRoot = document.getElementById('v6ShellRoot');
+  const v6DashboardRoot = document.getElementById('projectsContainer');
+  window.tcCreateV6Shell(document, {
+    root: v6ShellRoot,
+    onRender(route) {
+      const active = Boolean(route && route.view);
+      if (v6ShellRoot) v6ShellRoot.classList.toggle('hidden', !active);
+      if (v6DashboardRoot) v6DashboardRoot.classList.toggle('hidden', active);
+    }
+  });
+}
