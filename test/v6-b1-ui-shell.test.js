@@ -111,6 +111,12 @@ describe('tcV6ParseRoute (#2981 deliverable 1)', () => {
   it('a project route with no fleets segment is NOT misread as a fleet route', () => {
     assert.deepEqual(plain(G.tcV6ParseRoute('#/projects/42/fleets')), { view: 'project', projectId: '42' });
   });
+
+  it('fails closed to {view: null} for a malformed percent-encoded segment, rather than throwing URIError (PRR-B R1 HOLD)', () => {
+    assert.doesNotThrow(() => G.tcV6ParseRoute('#/projects/%E0%A4%A'));
+    assert.deepEqual(plain(G.tcV6ParseRoute('#/projects/%E0%A4%A')), { view: null });
+    assert.deepEqual(plain(G.tcV6ParseRoute('#/projects/%')), { view: null });
+  });
 });
 
 describe('tcV6RouteHash (inverse of tcV6ParseRoute)', () => {
@@ -345,6 +351,16 @@ describe('tcCreateV6Shell (#2981 deliverable 1 — mount and route sync)', () =>
     assert.equal(shell.isDrawerOpen(), true);
   });
 
+  it('clicking the skip link focuses #v6ShellMain WITHOUT replacing the active route hash (PRR-B R1 HOLD)', () => {
+    const { doc, win } = mount({ initialHash: '#/projects/42' });
+    const skipLink = doc.getElementById('v6ShellSkipLink');
+    assert.ok(skipLink, 'skip link must be registered');
+    const main = doc.getElementById('v6ShellMain');
+    skipLink.dispatch('click');
+    assert.equal(win.location.hash, '#/projects/42', 'the active route hash must survive the skip-link click');
+    assert.equal(doc.activeElement, main, 'focus must move to #v6ShellMain');
+  });
+
   it('a keydown on the sidebar carrying no key does not close the drawer (negative case)', () => {
     // test/_mini-dom.js's dispatch(type) has no way to attach a `key` to the
     // synthesized event, so the actual Escape-closes-the-drawer behavior
@@ -397,5 +413,40 @@ describe('tcCreateV6Shell (#2981 deliverable 1 — mount and route sync)', () =>
     assert.ok(button, 'the launch button must be registered under its real id');
     button.dispatch('click');
     assert.deepEqual(launched, ['small-4-seat']);
+  });
+});
+
+describe('public/style.css grid placement (#2981 PRR-B R1 HOLD)', () => {
+  // Markup/CSS asserted against the static file text, the same pattern
+  // test/ui-watermark.test.js and friends use for public/*.css — no real
+  // layout engine to render against (this repo ships zero npm
+  // dependencies), so the regression this pins is "the declaration that
+  // fixed the bug is still there," not a rendered layout.
+  const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+
+  function ruleBodyFor(selector) {
+    const re = new RegExp(`${selector.replace(/[.#]/g, '\\$&')}\\s*\\{([^}]*)\\}`);
+    const match = CSS.match(re);
+    return match ? match[1] : null;
+  }
+
+  it('places the sidebar in column 1, spanning every row', () => {
+    const body = ruleBodyFor('.v6-shell-sidebar');
+    assert.ok(body, '.v6-shell-sidebar rule must exist');
+    assert.match(body, /grid-column:\s*1/);
+    assert.match(body, /grid-row:\s*1\s*\/\s*-1/);
+  });
+
+  it('places the main view, telemetry header, and watermark in column 2 on desktop', () => {
+    for (const selector of ['.v6-shell-view', '.v6-telemetry-header', '.v6-shell-watermark']) {
+      const body = ruleBodyFor(selector);
+      assert.ok(body, `${selector} rule must exist`);
+      assert.match(body, /grid-column:\s*2/, selector);
+    }
+  });
+
+  it('resets every grid-placed element back to column 1 inside the mobile media query', () => {
+    const mobileBlock = CSS.slice(CSS.indexOf('@media (max-width: 760px)'));
+    assert.match(mobileBlock, /\.v6-shell-view,\s*\n\s*\.v6-telemetry-header,\s*\n\s*\.v6-shell-watermark\s*\{\s*\n\s*grid-column:\s*1;/);
   });
 });

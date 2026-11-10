@@ -3869,6 +3869,13 @@ html[data-theme="light"] .tc-bg-watermark img {
   display: none;
 }
 .v6-shell-sidebar {
+  /* PRR-B R1 HOLD (Ruling A579-PR3015-R1-HOLD-RECONCILED): without an
+     explicit grid-column, DOM order alone placed the sidebar, telemetry
+     header, main view, and watermark footer across both of
+     .v6-shell-root's two grid columns in document order, splitting the
+     main view's own content onto the sidebar's narrow (260px) column. */
+  grid-column: 1;
+  grid-row: 1 / -1;
   border-right: 1px solid var(--border-color, #2a2f36);
   padding-right: 12px;
 }
@@ -3901,9 +3908,11 @@ html[data-theme="light"] .tc-bg-watermark img {
   font-weight: 600;
 }
 .v6-shell-view {
+  grid-column: 2;
   min-width: 0;
 }
 .v6-telemetry-header {
+  grid-column: 2;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -3934,6 +3943,7 @@ html[data-theme="light"] .tc-bg-watermark img {
   font-size: 0.85em;
 }
 .v6-shell-watermark {
+  grid-column: 2;
   text-align: center;
   opacity: 0.5;
   font-size: 0.8em;
@@ -3947,10 +3957,17 @@ html[data-theme="light"] .tc-bg-watermark img {
     display: inline-block;
   }
   .v6-shell-sidebar {
+    grid-column: 1;
+    grid-row: auto;
     display: none;
     border-right: none;
   }
   .v6-shell-sidebar.is-open {
     display: block;
+  }
+  .v6-shell-view,
+  .v6-telemetry-header,
+  .v6-shell-watermark {
+    grid-column: 1;
   }
 }

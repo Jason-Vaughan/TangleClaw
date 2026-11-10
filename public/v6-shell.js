@@ -64,7 +64,16 @@
     const raw = typeof hash === 'string' ? hash : '';
     const path = raw.replace(/^#\/?/, '');
     if (!path) return { view: null };
-    const segments = path.split('/').filter(Boolean).map(decodeURIComponent);
+    let segments;
+    try {
+      // PRR-B R1 HOLD (Ruling A579-PR3015-R1-HOLD-RECONCILED): a malformed
+      // percent-encoded segment (an incomplete escape, invalid UTF-8 bytes)
+      // throws URIError — fail closed to {view: null} rather than letting
+      // a crafted/corrupted hash crash the shell's hashchange handler.
+      segments = path.split('/').filter(Boolean).map(decodeURIComponent);
+    } catch {
+      return { view: null };
+    }
     if (segments[0] === 'projects' && segments[1]) {
       if (segments[2] === 'fleets' && segments[3]) {
         return { view: 'fleet', projectId: segments[1], fleetId: segments[3] };
@@ -313,6 +322,19 @@
     }
 
     function wireControls() {
+      const skipLink = doc.getElementById('v6ShellSkipLink');
+      if (skipLink) {
+        // PRR-B R1 HOLD (Ruling A579-PR3015-R1-HOLD-RECONCILED): a plain
+        // href="#v6ShellMain" click would overwrite location.hash,
+        // triggering hashchange -> parseRoute("#v6ShellMain") ->
+        // {view: null} -> this very shell hiding itself. Move focus
+        // directly instead, leaving the active route's hash untouched.
+        skipLink.addEventListener('click', (evt) => {
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          const main = doc.getElementById('v6ShellMain');
+          if (main && typeof main.focus === 'function') main.focus();
+        });
+      }
       const toggle = doc.getElementById('v6ShellDrawerToggle');
       if (toggle) toggle.addEventListener('click', () => toggleDrawer());
       const sidebar = doc.getElementById('v6ShellSidebar');
@@ -335,14 +357,14 @@
       if (!root) return;
       const title = routeTitle(currentRoute);
       root.innerHTML = `
-        <a class="v6-shell-skip-link" href="#v6ShellMain">Skip to main content</a>
+        <a id="v6ShellSkipLink" class="v6-shell-skip-link" href="#v6ShellMain">Skip to main content</a>
         <button type="button" id="v6ShellDrawerToggle" class="v6-shell-drawer-toggle"
           aria-expanded="${drawerOpen ? 'true' : 'false'}" aria-controls="v6ShellSidebar">☰ Menu</button>
         <nav id="v6ShellSidebar" class="v6-shell-sidebar${drawerOpen ? ' is-open' : ''}" aria-label="Fleet navigation">
           ${sidebarMarkup(tree, { activeProjectId: currentRoute.projectId, activeFleetId: currentRoute.fleetId })}
         </nav>
         ${telemetryHeaderMarkup(telemetry)}
-        <main id="v6ShellMain" class="v6-shell-view" aria-label="${escapeHtml(title)}">
+        <main id="v6ShellMain" class="v6-shell-view" tabindex="-1" aria-label="${escapeHtml(title)}">
           <h1 class="v6-shell-title">${escapeHtml(title)}</h1>
           <div id="v6ShellWizard">${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation">${modelAttestationMarkup(attestation)}</div>
