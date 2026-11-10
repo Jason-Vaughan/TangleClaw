@@ -641,6 +641,33 @@ describe('lib/v6/incident-registry.js (#2978, V6-04)', () => {
     assert.ok(row.payload_json.includes('[REDACTED]'));
   });
 
+  it('redacts a generic x-tangleclaw-* header, AWS/Slack/Google key shapes, and ANTHROPIC_API_KEY=/OPENAI_API_KEY= (Arc Ruling A520, PR #3008)', () => {
+    const db = freshStore();
+    const projectId = seedProject(db, { path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v6-project-')) });
+    const ownerId = seedUserPrincipal(db, { projectId, role: 'owner' });
+    const auth = authorityService.createAuthorizationService(db);
+    const incidents = incidentRegistry.createRuntimeIncidents(db, auth);
+    const result = incidents.step({
+      principalId: ownerId, projectId, fingerprint: 'fp-secret-3', generation: 1, action: 'noop', health: 'unhealthy',
+      evidence: {
+        header: 'x-tangleclaw-session-proof: opaque-proof-value', // a header this module has no dedicated pattern for by name
+        aws: 'AKIAABCDEFGHIJKLMNOP',
+        slack: 'xoxb-1234567890-abcdefghij',
+        google: 'AIza' + 'A'.repeat(35),
+        anthropic: 'ANTHROPIC_API_KEY=sk-ant-EXAMPLE',
+        openai: 'OPENAI_API_KEY=sk-EXAMPLE1234567890'
+      }
+    });
+    const row = db.prepare('SELECT payload_json FROM incident_evidence WHERE incident_id = ?').get(result.id);
+    assert.ok(!row.payload_json.includes('opaque-proof-value'), 'generic x-tangleclaw-* header value leaked unredacted');
+    assert.ok(!row.payload_json.includes('AKIAABCDEFGHIJKLMNOP'), 'AWS key leaked unredacted');
+    assert.ok(!row.payload_json.includes('xoxb-1234567890-abcdefghij'), 'Slack token leaked unredacted');
+    assert.ok(!row.payload_json.includes('AIza' + 'A'.repeat(35)), 'Google API key leaked unredacted');
+    assert.ok(!row.payload_json.includes('sk-ant-EXAMPLE'), 'ANTHROPIC_API_KEY value leaked unredacted');
+    assert.ok(!row.payload_json.includes('sk-EXAMPLE1234567890'), 'OPENAI_API_KEY value leaked unredacted');
+    assert.ok(row.payload_json.includes('[REDACTED]'));
+  });
+
   it('refuses a reserved action outright', () => {
     const db = freshStore();
     const projectId = seedProject(db, { path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v6-project-')) });
