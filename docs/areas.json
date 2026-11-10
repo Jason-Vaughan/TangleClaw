@@ -434,11 +434,11 @@
         "lib/routes/sprint-wave-routes.js"
       ]
     },
-    "sprint-report-contract": {
-      "label": "area:sprint-report-contract",
-      "why": "Sprint Report Contract v3.0.0 validation (#2979): the ten deterministic evidence-integrity rules a published Individual Sprint Report or Multi-Version Retrospective's rendered HTML and embedded JSON anchors must satisfy, and the historical errata remediation helper for the two known production defects that shipped past the prior (TangleClaw-Shared-hosted) validator. Distinct from `sprint-tracking` (the wave/car/lane/PR dispatch lifecycle while a sprint is IN PROGRESS): this area validates the CONTENT of a report already written, after the fact. Owned by no other family.",
+    "v6": {
+      "label": "area:v6",
+      "why": "The v6 platform's own module surface under lib/v6/ (Train 1, Charter A512): server-pinned project authority, the replay-safe runtime transition ledger and cross-plane reconciler, and unified incident/recovery tracking (#1149, #2977, #2978, BRIDGE-1a); Sprint Report Contract v3.0.0 validation (#2979) -- the ten deterministic evidence-integrity rules a published Individual Sprint Report or Multi-Version Retrospective's rendered HTML and embedded JSON anchors must satisfy, plus the historical errata remediation helper; and the fleet/logical-project hierarchy and Kaizen ledger modules (BRIDGE-1b, Car V60-T1-W1-D). A directory glob rather than a literal file list so a sibling car adding its own lib/v6/*.js files needs no further edit here -- consolidated from a separate `sprint-report-contract` area (#3006) onto this glob when both landed in the same wave, rather than retaining two owners for one path. Distinct from `sprint-tracking` (the wave/car/lane/PR dispatch lifecycle while a sprint is IN PROGRESS): the sprint-report-contract portion of this area validates the CONTENT of a report already written, after the fact. Owned by no other family.",
       "paths": [
-        "lib/v6/sprint-report-validator-v3.js"
+        "lib/v6/**"
       ]
     }
   },
