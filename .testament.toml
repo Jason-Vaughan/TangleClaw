@@ -25,6 +25,7 @@ cwd = "."
 files = [
   "test/account-self-service-ui.test.js",
   "test/account-setup-page.test.js",
+  "test/adr-0026-contract.test.js",
   "test/adversarial.test.js",
   "test/advisor-control-bar.test.js",
   "test/areas-map.test.js",
