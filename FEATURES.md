@@ -17,6 +17,14 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.74.0 — Model + effort picker, boundary model-switch admission, and Aider fleet qualification
+
+- **Pick a model and effort level per project** (#2188) — `public/ui.js#renderModelEffortPicker` drives Project Settings and the Launch Modal; `lib/engine-models.js#checkEffortSelection`/`#effortSelectionState` validate the pair against the engine's offered roster, `lib/sessions.js#_buildLaunchCommand` applies it at the next launch, and `public/session.js#renderModelEffortDivergence` shows the Session Banner note when the running session differs from what is configured.
+- **Admit self and Fleet Coordinator boundary model switches** (#2598) — `lib/model-switch.js#_defaultCheckBoundary`'s self-request exception discounts only a target's own `turn-in-flight`/`pane-writing` activity, given a current explicit safe receipt; `POST /api/sessions/:project/switch-model` now also admits a server-verified Fleet Coordinator switching a sibling in its own namespace at a safe boundary.
+- **Qualify Aider fleet sessions** (#2961) — `lib/aider-task-contract.js#_aiderIgnoreFor`/`#_escapeIgnorePath` bound a one-shot task's `.aiderignore` to its explicit file envelope and reject control-character path injection; `lib/medusa-wake.js#ENGINE_WAKE_PROFILES` gained a measured Aider wake signature (`Waiting for ` busy marker, bare `>` prompt) in place of guessed shell-readiness.
+- **Prepare the public roadmap's Vercel cutover** (#2258) — `lib/roadmap-vercel-guard.js#decide`/`#inspectStaticExport` back `vercel.json`'s `gh-pages`-skipping ignore command and validate the `/roadmap/`/`/reports/` static export targets; the actual dashboard cutover is Operator-performed and tracked separately under #2258.
+- **Resolve the live roadmap/sprint sync to the active milestone dynamically** (#2970) — the Shared `roadmap-board/sync-live-public-roadmap.py` and `sprint-reports/scripts/sync-live-sprint.py` scripts (in `TangleClaw-Shared`, a separate local-only repo with no PR here) now resolve the active or newly-graduated milestone instead of a hardcoded version, and never overwrite a finalized Gate 4 report.
+
 ## v5.73.0 — Linux systemd companion stack, service reloads, and Medusa drift notifier
 
 - **Manage Linux companion services** (#2931) — `lib/linux-systemd.js#generateTtydUnitFile`/`#generateCaddyUnitFile`/`#generateBridgeHelperUnitFile` (+ matching `verify*UnitFileContract` checkers) give `scripts/linux-systemd-install.js` 1-to-1 parity with macOS's four `launchd` jobs via a `--unit server|ttyd|caddy|bridge-helper` flag.

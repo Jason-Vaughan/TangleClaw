@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-09 — v5.74.0 release cut (Milestone #62)
+
+<!-- prawduct: type=internal | scope=v5740-release -->
+
+- Compiled 4 accepted `changelog.d/` fragments for #2188, #2258, #2598, and #2961 into `CHANGELOG.md` section `[5.74.0]`. Bumped `version.json`, updated README clone pins and the released-section lock, added release notes and Feature Index coverage, and consumed those fragments together. Milestone #62 had 2 open issues (#1564, #2258 — both Operator-performed, physical-host or dashboard actions beyond this code release) before this cut.
+
 ## 2026-11-09 — v5.73.0 release cut (Milestone #60)
 
 <!-- prawduct: type=internal | scope=v5730-release -->
