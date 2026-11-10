@@ -145,7 +145,7 @@ with.
 |---|---|---|---|
 | 1 | Canonical Versioned Source Lock | `provenance.canonical_source_sha256` is absent, or disagrees with the caller-supplied lock record (when one is supplied) for this report's GitHub Issue/PR/Milestone/Commit/CI snapshot | blocking |
 | 2 | Issue Citation Verifier | Any `Label (#NNNN)` cited anywhere in the 12 sections — **`#next-sprint` included** — names a label the roadmap source's real title for `#NNNN` does not match | blocking |
-| 3 | Intra-Document Aggregate Reconciler | `economics`/`diff`/PR-count/duration figures disagree between the JSON anchor and ANY rendered location (hero, badges, tables, prose), `feature_prs_merged + release_prs_merged != total_repo_prs_merged`, or a rendered "Total Run Time: …" figure disagrees with `durations.total_run_time_display` | blocking |
+| 3 | Intra-Document Aggregate Reconciler | `economics`/`diff`/PR-count/duration figures disagree between the JSON anchor and ANY rendered location (hero, badges, tables, prose), `feature_prs_merged + release_prs_merged != total_repo_prs_merged`, `durations.total_run_time_display` is absent or empty (a v3 report must DECLARE this field, not merely be reconciled against it when present), or a rendered "Total Run Time: …" figure disagrees with it | blocking |
 | 4 | Scope Taxonomy Strip | `scope_taxonomy`'s three counts are missing, or any rendered scope figure cannot be attributed to exactly one of the three | blocking |
 | 5 | Release-State Vocabulary | `release_state[]` contains a term outside the seven-term vocabulary, or rendered release-status prose uses a synonym not drawn from it | blocking |
 | 6 | Four-Tier Cost Separation | Any of the four `economics` fields is absent, non-numeric, or negative | blocking |
@@ -171,9 +171,11 @@ node lib/v6/sprint-report-validator-v3.js --remediate v5.68.0-v5.71.0 <path/to/i
 
 `--remediate <range>` runs the historical errata helper for exactly the one known defect that
 range names (see `lib/v6/sprint-report-validator-v3.js`'s own module doc for the two it
-recognizes) and prints the corrected HTML plus the `#tc-report-errata` block to apply, rather than
-writing in place — a human or a wrap step applies the output, so the exact bytes that changed are
-always visible before they land.
+recognizes) and prints the corrected HTML — every distinct stale phrase shape replaced, carrying
+both the visible audit banner and an embedded `#tc-report-errata` JSON anchor (appended to any
+ledger the document already carries, so two historical fixes compose on one report) — to stdout,
+rather than writing in place: a human or a wrap step applies the output, so the exact bytes that
+changed are always visible before they land.
 
 `--sources-lock <path>`, `--roadmap-data <path>` and `--corpus <dir>` are optional inputs to Rules
 1, 2 and 8 respectively; `--prior-ledger <path>` feeds Rule 10's immutability check. Omitted:

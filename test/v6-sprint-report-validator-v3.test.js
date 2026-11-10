@@ -28,6 +28,7 @@ function fixture(over = {}) {
     schema_version: '3.0.0',
     version: 'v5.72.0',
     diff: { feature_prs_merged: 10, release_prs_merged: 2, total_repo_prs_merged: 12 },
+    durations: { total_run_time_display: '3h 00m 00s' },
     scope_taxonomy: { github_feature_issues_closed: 5, chartered_execution_cars_completed: 5, milestone_issues_deferred_external_gated: 0 },
     release_state: ['code_merged_on_main', 'release_pr_merged', 'git_tag_published'],
     economics: { measured_tokens: 1000, estimated_tokens: 200, subscription_allocated_cost_usd: 1.5, api_shadow_cost_usd: 6.2 },
@@ -76,6 +77,11 @@ describe('#2979 helpers', () => {
 
   it('toPlainText strips tags and decodes the entities these reports actually use', () => {
     assert.equal(v3.toPlainText('<b>A</b> &amp; <i>B</i>'), 'A & B');
+  });
+
+  it('toPlainText drops <script>/<style> content entirely — a JSON anchor\'s own reason text must never read as rendered prose', () => {
+    const html = '<p>26 PRs</p><script type="application/json">{"reason":"the real count is 99 PRs"}</script><style>.x{content:"26 PRs"}</style>';
+    assert.equal(v3.toPlainText(html), '26 PRs');
   });
 
   it('nGrams builds a deduplicated set of fixed-length lowercase word runs', () => {
@@ -179,11 +185,27 @@ describe('#2979 Rule 3 — Intra-Document Aggregate Reconciler (Defect Case 1: #
 
   it('the CORRECTED rendering (26 everywhere) passes clean', () => {
     const html = fixture({
-      metrics: { diff: { feature_prs_merged: 21, release_prs_merged: 5, total_repo_prs_merged: 26 } },
+      metrics: {
+        diff: { feature_prs_merged: 21, release_prs_merged: 5, total_repo_prs_merged: 26 },
+        durations: { total_run_time_display: '12h 16m (736m)' }
+      },
       extraBody: '<div class="eyebrow">26 PRs · TOTAL RUN TIME: 12h 16m (736m) TO FINAL MERGE</div>'
     });
     const r = v3.validateReport(html);
     assert.equal(r.findings.filter((f) => f.rule === 3).length, 0);
+  });
+
+  it('fails when the anchor omits durations.total_run_time_display entirely (PM R-Gate Round 2)', () => {
+    const html = fixture({ metrics: { durations: undefined } });
+    const r = v3.validateReport(html);
+    assert.ok(r.findings.some((f) => f.rule === 3 && f.code === 'DURATION_FIELD_MISSING'));
+    assert.equal(r.ok, false);
+  });
+
+  it('fails when durations.total_run_time_display is an empty string', () => {
+    const html = fixture({ metrics: { durations: { total_run_time_display: '' } } });
+    const r = v3.validateReport(html);
+    assert.ok(r.findings.some((f) => f.rule === 3 && f.code === 'DURATION_FIELD_MISSING'));
   });
 });
 
@@ -372,13 +394,24 @@ describe('#2979 remediateHistoricalErrata', () => {
       + '<div class="total-run-time-card">Total Run Time: 12h 16m (736m) Start-to-Finish</div>';
     const r = v3.remediateHistoricalErrata('v5.57.0-v5.61.0', `<html><body>${staleBodyExcerpt}</body></html>`);
     assert.equal(r.ok, true);
-    assert.ok(r.html.includes('27 True-Merged PRs'));
-    assert.ok(!r.html.includes('26 True-Merged PRs'));
-    assert.ok(r.html.includes('22 feature cars + 5 release cuts'));
-    assert.ok(r.html.includes('12h 15m 26s Start-to-Finish'));
-    assert.ok(r.html.includes('Revision 1.1'));
+    // The embedded #tc-report-errata anchor's own `reason` text legitimately
+    // narrates the stale figures it corrected — check the VISIBLE markup
+    // (anchor excluded) is actually fixed, not the raw string as a whole.
+    const visible = r.html.replace(/<script type="application\/json" id="tc-report-errata">[\s\S]*?<\/script>/, '');
+    assert.ok(visible.includes('27 True-Merged PRs'));
+    assert.ok(!visible.includes('26 True-Merged PRs'));
+    assert.ok(visible.includes('22 feature cars + 5 release cuts'));
+    assert.ok(visible.includes('12h 15m 26s Start-to-Finish'));
+    assert.ok(visible.includes('Revision 1.1'));
     assert.equal(r.errataEntry.original_value, '26');
     assert.equal(r.errataEntry.corrected_value, '27');
+
+    // The #tc-report-errata JSON anchor itself must be present and carry the entry.
+    assert.ok(r.html.includes('id="tc-report-errata"'));
+    const anchorMatch = r.html.match(/<script type="application\/json" id="tc-report-errata">([\s\S]*?)<\/script>/);
+    const anchorJson = JSON.parse(anchorMatch[1]);
+    assert.ok(Array.isArray(anchorJson.errata_ledger));
+    assert.ok(anchorJson.errata_ledger.some((e) => e.original_value === '26' && e.corrected_value === '27'));
 
     // Re-validate: splice the remediated body text (now carrying the banner too)
     // into a fixture whose anchor already states the reconciled 27-PR total and
@@ -394,6 +427,62 @@ describe('#2979 remediateHistoricalErrata', () => {
     assert.equal(result.findings.filter((f) => f.rule === 3).length, 0);
   });
 
+  it('v5.57.0-v5.61.0: remediates EVERY distinct stale phrase shape found in the REAL production HTML (PM/PRR-A R-Gate Round 2)', () => {
+    // Excerpted verbatim from TangleClaw-Shared/sprint-reports/v5.57.0-v5.61.0-retrospective/index.html
+    // (lines 590, 606, 608, 628, 652, 808, 931, 1045, 1046, 1133, 1216, 1272,
+    // 1273, 1279, 1280) — the full catalogue of distinct surrounding phrasings
+    // PRR-A found Round 1's two hardcoded phrases did not reach.
+    const productionShapedExcerpt = [
+      '<span class="badge badge-green" style="font-size:0.76rem;padding:4px 10px;">📖 PLAIN-ENGLISH SUMMARY · FIVE VERSIONS SHIPPED BACK-TO-BACK IN 12h 16m TOTAL WALL-CLOCK TIME (5h 36m → 22m)</span>',
+      '<h4 style="margin:0 0 8px;color:var(--green);font-size:0.98rem;">⏱️ Total Run Time: 12h 16m Start-to-Finish (5h 36m → 4h 09m → 1h 15m → 56m → 22m)</h4>',
+      '<p>total elapsed wall-clock time was <strong><code>12h 16m</code> (<code>736m</code>)</strong> (<code>12h 20m</code> to final O-Gate closeout)</p>',
+      '<span class="badge badge-blue">10 Active Lanes · 5 Co-Signed Charters (A494–A498) · 26 True-Merged PRs</span>',
+      '<td>Authored Charters A494–A498, orchestrated 21 feature cars + 5 release cuts, enforced Guardrail 06 pipelining</td>',
+      '<td><span class="badge badge-green">100% 2-parent ancestry preserved across all 26 PRs</span></td>',
+      '<p class="section-desc">Complete rollup of the 21 feature cars and 5 release cuts (`26` PRs, `+29,421 / -881` LOC across `186` files).</p>',
+      '<td><strong><code>100%</code> True Merge (26/26 Train PRs)</strong></td>',
+      '<td><span class="badge badge-green">Zero squash/rebase merges; 100% 2-parent ancestry preserved across all 26 PRs</span></td>',
+      '<span><strong>26 / 26 True Merges (100% 2-Parent Ancestry)</strong></span>',
+      '<p>kept Mac Studio host CPU contention at zero across all 26 PRs.</p>',
+      '<td>100% exact-head PRR ACCEPT verdicts across all 26 PRs; 28 pre-merge findings resolved</td>',
+      '<td><span class="badge badge-green">PASS (26/26 PRs)</span></td>',
+      '<td>All 26 PRs merged via <code>gh pr merge --merge</code> (Rule #282, 2 parents each)</td>',
+      '<td><span class="badge badge-green">PASS (26/26 True Merges)</span></td>'
+    ].join('\n');
+    const r = v3.remediateHistoricalErrata('v5.57.0-v5.61.0', `<html><body>${productionShapedExcerpt}</body></html>`);
+    assert.equal(r.ok, true);
+
+    const visible = r.html.replace(/<script type="application\/json" id="tc-report-errata">[\s\S]*?<\/script>/, '');
+    // Not a single stale "26 ... PRs/Merges" or "12h 16m" shape survives.
+    assert.equal((visible.match(/26[^<\n]{0,25}(PRs|Merges)/gi) || []).length, 0);
+    assert.equal((visible.match(/12h\s*16m/g) || []).length, 0);
+    assert.equal((visible.match(/\b21 feature cars\b/) || []).length, 0);
+    assert.ok(visible.includes('27 True-Merged PRs'));
+    assert.ok(visible.includes('22 feature cars + 5 release cuts'));
+    assert.ok(visible.includes('22 feature cars and 5 release cuts'));
+    assert.ok(visible.includes('27/27 Train PRs'));
+    assert.ok(visible.includes('27/27 True Merges'));
+    assert.ok(visible.includes('(27/27 PRs)'));
+    assert.ok(visible.includes('(27/27 True Merges)'));
+    assert.ok(visible.includes('12h 15m 26s Start-to-Finish'));
+    assert.ok(visible.includes('12h 15m 26s TOTAL WALL-CLOCK TIME'));
+    assert.ok(visible.includes('<code>12h 15m 26s</code></strong> (<code>12h 20m</code>'));
+
+    // The remediated HTML embeds the machine-checked #tc-report-errata anchor,
+    // not just the visible banner, and passes validateReport() clean on Rule 3
+    // once spliced into a v3 anchor stating the reconciled totals.
+    assert.ok(r.html.includes('id="tc-report-errata"'));
+    const fixHtml = fixture({
+      metrics: {
+        diff: { feature_prs_merged: 22, release_prs_merged: 5, total_repo_prs_merged: 27 },
+        durations: { total_run_time_display: '12h 15m 26s' }
+      },
+      extraBody: r.html.match(/<body>([\s\S]*)<\/body>/)[1]
+    });
+    const result = v3.validateReport(fixHtml);
+    assert.equal(result.findings.filter((f) => f.rule === 3).length, 0, JSON.stringify(result.findings.filter((f) => f.rule === 3)));
+  });
+
   it('v5.68.0-v5.71.0: fixes the REAL scrambled next-sprint citation and the corrected text passes Rule 2', () => {
     // Excerpted verbatim from the real production file's #next-sprint h4.
     const realNextSprintExcerpt = '<h4>Session Hierarchy (`#108`), Engine Failover (`#109`), Adversarial Agent (`#1032`), Secure Secrets (`#1257`) &amp; Dynamic Agents (`#1578`)</h4>';
@@ -403,6 +492,9 @@ describe('#2979 remediateHistoricalErrata', () => {
     assert.ok(r.html.includes('Session Hierarchy (`#1578`)'));
     assert.ok(!r.html.includes('Session Hierarchy (`#108`)'));
     assert.equal(r.errataEntry.field, 'issue_citations');
+    assert.ok(r.html.includes('id="tc-report-errata"'));
+    const anchorJson = JSON.parse(r.html.match(/<script type="application\/json" id="tc-report-errata">([\s\S]*?)<\/script>/)[1]);
+    assert.ok(anchorJson.errata_ledger.some((e) => e.field === 'issue_citations'));
 
     const roadmapData = {
       issue_fields: {
