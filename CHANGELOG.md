@@ -4,6 +4,18 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.74.0] - 2026-11-09
+
+### Added
+- Model + reasoning-effort picker: a project's Settings modal can now select an exact model and effort level for Claude and Codex, applied at the next launch and shown next to the engine's own health status on the Session Banner when it differs from what the running session actually launched with (#2188).
+
+### Changed
+- Made Vercel configuration explicitly skip `gh-pages` and prepared tested `/roadmap/` and `/reports/` static export targets for the public-site cutover (#2258).
+
+### Fixed
+- Fixed `tc model switch`/`POST /api/sessions/:project/switch-model` refusing a session's own self-service boundary switch while its CLI turn was still in flight, and refusing a verified Fleet Coordinator switching a sibling lane in its namespace (#2598).
+- Qualify Aider fleet sessions without startup URL scraping or false shell-readiness claims, add measured Medusa wake detection, and keep one-shot tasks inside their explicit file envelopes, including rejecting control-character rule injection in task-scoped `.aiderignore` paths (#2961).
+
 ## [5.73.0] - 2026-11-09
 
 ### Added
