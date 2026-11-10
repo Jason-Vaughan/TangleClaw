@@ -10,7 +10,7 @@
 // even after they hit Cmd+Shift+R. The network-first carve-out below
 // is the structural fix; this bump is the one-time unblock for
 // existing installs.
-const CACHE_NAME = 'tangleclaw-v3-81';
+const CACHE_NAME = 'tangleclaw-v3-82';
 const STATIC_ASSETS = [
   '/',
   '/style.css',
@@ -95,6 +95,13 @@ const STATIC_ASSETS = [
   // (#2886) -- precached here for offline coherence of '/', network-first
   // below (where it already was, pre-emptively).
   '/remote-ca-assist.js',
+  // v6-shell.js (#2981) is a plain <script src> on index.html, loaded
+  // before ui.js so its window.tcCreateV6Shell is defined when ui.js's
+  // own bottom-of-file hook (guarded) calls it. Dual-listed the same way
+  // as ui.js/next-markdown.js above: precached here for offline
+  // coherence of '/', network-first below so the shell never mounts
+  // against a stale copy behind an active worker.
+  '/v6-shell.js',
   '/manifest.json'
 ];
 
@@ -268,7 +275,9 @@ const NETWORK_FIRST_PATHS = new Set([
   '/chunk-boundary-ui.js',
   // subagent-parallelization-ui.js -- see the matching comment in
   // STATIC_ASSETS above.
-  '/subagent-parallelization-ui.js'
+  '/subagent-parallelization-ui.js',
+  // v6-shell.js -- see the matching comment in STATIC_ASSETS above.
+  '/v6-shell.js'
 ]);
 
 self.addEventListener('install', (event) => {
