@@ -86,6 +86,47 @@ describe('v6 C1 schema (#2118, BRIDGE-1b): every table exists and the legacy bac
     const lp = db.prepare('SELECT * FROM v6_logical_projects WHERE id = ?').get(`lp-${legacyId}`);
     assert.equal(lp.state, 'archived');
   });
+
+  it('deleting a legacy project cleans up its v6_checkouts/v6_resources/v6_logical_projects backfill, so creating a NEW project at the same path does not collide (Architect Ruling A543, PR #3009 R5)', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const projPath = path.join(tmpDir, 'sr-proj');
+    fs.mkdirSync(projPath, { recursive: true });
+
+    const p1 = store.projects.create({ name: 'sr-proj', path: projPath, engine: 'claude' });
+    assert.ok(db.prepare('SELECT 1 FROM v6_checkouts WHERE legacy_project_id = ?').get(p1.id), 'checkout not backfilled');
+
+    store.projects.delete(p1.id);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM v6_checkouts WHERE id = ?').get(`co-legacy-${p1.id}`).n, 0, 'orphaned checkout survived delete');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM v6_resources WHERE id = ?').get(`res-legacy-${p1.id}`).n, 0, 'orphaned resource survived delete');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM v6_logical_projects WHERE id = ?').get(`lp-${p1.id}`).n, 0, 'orphaned logical project survived delete');
+
+    // The real-world repro (test/engines.test.js, test/sessions.test.js's own
+    // beforeEach/afterEach fixtures): the exact same path must be reusable.
+    const p2 = store.projects.create({ name: 'sr-proj', path: projPath, engine: 'claude' });
+    assert.ok(p2.id, 'recreating at the same path after delete must not throw DUPLICATE_NAME');
+    assert.ok(db.prepare('SELECT 1 FROM v6_checkouts WHERE legacy_project_id = ?').get(p2.id));
+  });
+
+  it('deleting a legacy project preserves its C1 backfill when a native fleet/resource/lease/asset/grant has since grown on top of it', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const projPath = path.join(tmpDir, 'sr-proj-grown');
+    fs.mkdirSync(projPath, { recursive: true });
+    const p1 = store.projects.create({ name: 'sr-proj-grown', path: projPath, engine: 'claude' });
+    const logicalProjectId = `lp-${p1.id}`;
+
+    const fleet = c1.createFleet(db, { logicalProjectId, displayName: 'Native Fleet' });
+    assert.equal(fleet.ok, true);
+
+    store.projects.delete(p1.id);
+    // The checkout/resource backfill specific to the legacy mapping is still
+    // torn down, but the logical project itself survives because a native
+    // fleet now depends on it -- deleting it would orphan the fleet.
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM v6_checkouts WHERE id = ?').get(`co-legacy-${p1.id}`).n, 0);
+    assert.ok(db.prepare('SELECT 1 FROM v6_logical_projects WHERE id = ?').get(logicalProjectId), 'logical project with a live native fleet must survive');
+    assert.ok(db.prepare('SELECT 1 FROM v6_fleets WHERE id = ?').get(fleet.id), 'the native fleet itself must be untouched');
+  });
 });
 
 describe('createLogicalProject / getLogicalProject / setLogicalProjectState', () => {
