@@ -8942,24 +8942,24 @@ function _v6GithubProbeFingerprint(probe) {
  * trust caller-supplied b.probe.permissions/expectedFingerprint").
  * `GET /repos/{repo}` returns a `permissions` object describing the
  * AUTHENTICATED caller's own access level on that exact repo — real,
- * verified scope, not a self-report. The mapping from GitHub's classic
- * `pull`/`push`/`admin` booleans to this module's fine-grained
- * `contents:read`/`contents:write`/`issues:write`/`pull_requests:write`/
- * `administration:write` vocabulary is a deliberately conservative
- * best-effort correspondence (a fine-grained GitHub App installation
- * token's own per-permission read needs a different endpoint this car's
- * envelope has no occasion to call) — honest about what it verifies
- * (repo-level read/write/admin access), not a claim of reading a GitHub
- * App's exact installation permission set.
+ * verified scope, not a self-report. This probe is deliberately scoped to
+ * classic PATs only (`kind: "classic"`): GitHub documents `permissions`
+ * there as only the `{pull, triage, push, maintain, admin}` booleans,
+ * never a fine-grained per-permission string, and a non-classic token
+ * (a GitHub App installation token) omits the `X-OAuth-Scopes` response
+ * header entirely on this exact endpoint — its real permission set lives
+ * on `GET /app/installations/{id}`, which GitHub requires an App-level
+ * JWT to call, NOT the bound bearer token this probe has (PRR-A 58f0669d
+ * / PRR-B 9e55f0db, Ruling A614: a Round 5 attempt to read that endpoint
+ * with the bound token was wrong and reverted). A missing
+ * `X-OAuth-Scopes` header therefore fails this probe closed rather than
+ * inferring anything from `perms.push` alone.
  * @param {string} token
  * @param {string} repo
- * @param {number} [installationId] - required to probe a token that carries
- *   no `X-OAuth-Scopes` header (a GitHub App/installation token); unused
- *   for a classic PAT, which the scopes header alone identifies.
  * @returns {Promise<{identity: string, kind: string, permissions: string[], repositories: string[], expiresAt: number}|null>}
  *   `null` on any probe failure — the caller fails closed on that.
  */
-async function _v6ProbeGithubConnection(token, repo, installationId) {
+async function _v6ProbeGithubConnection(token, repo) {
   let response;
   try {
     response = await fetch(`https://api.github.com/repos/${repo}`, {
@@ -8979,81 +8979,54 @@ async function _v6ProbeGithubConnection(token, repo, installationId) {
   const perms = body && body.permissions;
   if (!perms || typeof perms !== 'object') return null;
 
+  // A non-classic token omits this header entirely on `GET /repos` —
+  // fail closed rather than fall back to `perms.push` alone, which
+  // GitHub never documents as proof of issues/PR/contents/admin write
+  // for any token kind (Ruling A612/A613/A614).
+  const rawScopes = typeof response.headers?.get === 'function' ? response.headers.get('x-oauth-scopes') : null;
+  if (typeof rawScopes !== 'string') return null;
+  const scopes = rawScopes.split(',').map((s) => s.trim()).filter(Boolean);
+  const hasClassicWriteScope = scopes.includes('repo') || (body.private === false && scopes.includes('public_repo'));
+  const classicWrite = perms.push === true && hasClassicWriteScope;
+  // A repo can have its issue tracker disabled entirely (`has_issues:
+  // false`); classic `push` never implies `issues:write` in that case,
+  // since there is no tracker for the token to write to (Ruling A612
+  // item 1).
+  const classicIssuesWrite = classicWrite && body.has_issues !== false;
+  // `administration:write` requires the full `repo` scope specifically —
+  // `public_repo` alone never grants admin/destructive access even on a
+  // public repository (Ruling A614 item 1).
+  const classicAdminWrite = perms.admin === true && scopes.includes('repo');
+
   const permissions = [];
   if (perms.pull) permissions.push('contents:read', 'checks:read');
-
-  // GitHub's `GET /repos/{owner}/{repo}` documents `permissions` as only
-  // the classic `{pull, triage, push, maintain, admin}` booleans — never a
-  // fine-grained per-permission string — so `perms.push` alone is NEVER
-  // authoritative evidence of issues/PR/contents write on its own
-  // (PRR-B 04561f29/b9633ffb, Ruling A612/A613). An `X-OAuth-Scopes`
-  // header present on this exact response is what identifies a classic
-  // PAT and names the scopes that legitimately bundle that write
-  // together; its absence means this is some other token kind (a GitHub
-  // App installation token), whose actual grant can ONLY be read from
-  // GitHub's own documented `GET /app/installations/{id}` endpoint.
-  const scopesHeader = (typeof response.headers?.get === 'function' && response.headers.get('x-oauth-scopes')) || '';
-  let kind;
-  if (scopesHeader) {
-    kind = 'classic';
-    const scopes = scopesHeader.split(',').map((s) => s.trim()).filter(Boolean);
-    const hasClassicWriteScope = scopes.includes('repo') || (body.private === false && scopes.includes('public_repo'));
-    const classicWrite = perms.push === true && hasClassicWriteScope;
-    // A repo can have its issue tracker disabled entirely (`has_issues:
-    // false`); classic `push` never implies `issues:write` in that case,
-    // since there is no tracker for the token to write to (Ruling A612
-    // item 1).
-    const classicIssuesWrite = classicWrite && body.has_issues !== false;
-    if (classicWrite) permissions.push('contents:write');
-    if (classicIssuesWrite) permissions.push('issues:write');
-    if (classicWrite) permissions.push('pull_requests:write');
-    if (perms.admin) permissions.push('administration:write');
-  } else {
-    if (perms.pull !== true) return null;
-    if (!Number.isSafeInteger(installationId) || installationId < 1) return null;
-    let instResponse;
-    try {
-      instResponse = await fetch(`https://api.github.com/app/installations/${installationId}`, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'TangleClaw-v6' },
-        signal: AbortSignal.timeout(15000)
-      });
-    } catch {
-      return null;
-    }
-    if (instResponse.status !== 200) return null;
-    let instBody;
-    try {
-      instBody = await instResponse.json();
-    } catch {
-      return null;
-    }
-    const instPerms = instBody && instBody.permissions;
-    if (!instPerms || typeof instPerms !== 'object') return null;
-    kind = 'app';
-    const grants = (field) => instPerms[field] === 'write' || instPerms[field] === 'admin';
-    if (grants('contents')) permissions.push('contents:write');
-    if (grants('issues') && body.has_issues !== false) permissions.push('issues:write');
-    if (grants('pull_requests')) permissions.push('pull_requests:write');
-    if (grants('administration')) permissions.push('administration:write');
-  }
+  if (classicWrite) permissions.push('contents:write');
+  if (classicIssuesWrite) permissions.push('issues:write');
+  if (classicWrite) permissions.push('pull_requests:write');
+  if (classicAdminWrite) permissions.push('administration:write');
 
   // Honor the token's OWN real expiry when GitHub reports one, capped to a
   // conservative 5-minute ceiling even when the token itself lives much
   // longer — re-probed by _v6RefreshGithubProbeIfExpired before every
   // admission, so a long-lived token's permissions are never trusted
-  // stale for more than 5 minutes (PRR-A/B, Ruling A613 item 1). A token
-  // GitHub reports as ALREADY expired fails the probe outright rather
-  // than returning a probe with a past expiresAt for the caller to catch.
+  // stale for more than 5 minutes (PRR-A/B, Ruling A613/A614 item 2). A
+  // header present but unparseable, or already in the past, fails the
+  // probe outright rather than silently falling back to the 5-minute
+  // default; an ABSENT header (no claim from GitHub either way) still
+  // gets the conservative 5-minute default.
   const expirationHeader = typeof response.headers?.get === 'function' ? response.headers.get('github-authentication-token-expiration') : null;
-  const headerExpiresAt = expirationHeader ? Date.parse(expirationHeader) : NaN;
   const now = Date.now();
-  if (Number.isFinite(headerExpiresAt) && headerExpiresAt <= now) return null;
   const ttlCap = now + 5 * 60 * 1000;
-  const expiresAt = Number.isFinite(headerExpiresAt) ? Math.min(headerExpiresAt, ttlCap) : ttlCap;
+  let expiresAt = ttlCap;
+  if (expirationHeader) {
+    const headerExpiresAt = Date.parse(expirationHeader);
+    if (!Number.isFinite(headerExpiresAt) || headerExpiresAt <= now) return null;
+    expiresAt = Math.min(headerExpiresAt, ttlCap);
+  }
 
   return {
     identity: typeof body.full_name === 'string' ? body.full_name : repo,
-    kind,
+    kind: 'classic',
     permissions: Array.from(new Set(permissions)),
     repositories: [repo],
     expiresAt
@@ -9089,7 +9062,7 @@ async function _v6RefreshGithubProbeIfExpired(db, projectId) {
   if (Number.isFinite(probe.expiresAt) && probe.expiresAt > Date.now()) return;
   const token = _v6GithubSecretStore.get(connection.tokenRef);
   if (typeof token !== 'string') return;
-  const freshProbe = await _v6ProbeGithubConnection(token, connection.repo, connection.installationId);
+  const freshProbe = await _v6ProbeGithubConnection(token, connection.repo);
   if (!freshProbe) return;
   // `connection.expectedFingerprint` is deliberately left untouched: it is
   // the ONLY record of what was approved when the connection was created,
@@ -10647,7 +10620,7 @@ route('POST', '/api/v6/projects/:id/github/connection', async (req, res, params,
   // claim as this connection's own baseline. The probe, identity, and
   // fingerprint are all derived from a REAL authenticated call against
   // the bound token instead.
-  const probe = await _v6ProbeGithubConnection(token, binding.repo, binding.installation_id);
+  const probe = await _v6ProbeGithubConnection(token, binding.repo);
   if (!probe) return _v6Respond(res, { ok: false, code: 'PROBE_UNAVAILABLE' });
 
   // installationId/tokenRef are always derived from the binding row, never
