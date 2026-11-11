@@ -29,7 +29,7 @@ fails any auto-stub section older than 14 days.
 - **Version-aware knowledge base** (#2997) — `lib/v6/f1-knowledge-base.js#search`, `#contextualHelp` and `#getSection`: budgeted, audience-filtered, version-tagged retrieval over `docs/manual-manifest.json`.
 - **Code-to-doc parity checker** (#2998) — `lib/v6/f2-code-doc-parity.js#checkParity` and `#extractRepository`: CLI/route/default/engine tables from code, drift as a line diff, and fail-closed extraction (`data/doc-parity/engine-omitted-fields.json` lists the reviewed engine fields left out).
 - **Support diagnostic bundle** (#2999) — `lib/v6/f3-support-diagnostic-scrubber.js#buildBundle`, `#scrub` and `#submitIssue`: allowlisted, scrubbed, verifier-checked bundle filed only with digest-bound consent.
-- **Live v6.1 routes and shell views** (#1886, #2991-#3000) — 30 operator-only `/api/v6/*` routes in `server.js` plus the Fleet Shell's Settings & Profiles, contextual help and Recovery Console views in `public/v6-shell.js`.
+- **Live v6.1 routes and shell views** (#1886, #2991-#3000) — 31 operator-only `/api/v6/*` routes in `server.js` plus the Fleet Shell's Settings & Profiles, contextual help and Recovery Console views in `public/v6-shell.js`.
 - **Educational walkthroughs** (#3000) — `lib/v6/h2-educational-walkthroughs.js#listWalkthroughs` and `#publicationGate`: five walkthroughs and a glossary behind a verified-on-release publication gate.
 
 ## v6.0.1 — Live Fleet Shell data, conversation detail, and Classic View switching

@@ -11,11 +11,11 @@ All notable changes to TangleClaw are documented in this file.
   dependency waves (refusing unknown dependencies and cycles), reserves each car's
   whole file scope before dispatch so overlapping cars never run at once across runs,
   holds a car's dependents until a reviewer other than its author passes its R- or
-  A-Gate, and hands stalled cars to remediation hooks. Library only; routes arrive in
-  Wave 2 (#1886).
-- v6.1.0 modules are now live (#1886, #2991-#3000): 30 operator-only `/api/v6/*` routes expose the recovery console and latch reset, operating profiles, standing failover policy and quota-aware placement, the wave scheduler, open-weight qualification, the settings assistant, grounded report Q&A, the built-in knowledge base, code-to-doc parity, support diagnostic bundles, and walkthroughs. The v6 Fleet Shell adds a Settings & Profiles view (`#/settings/`), contextual help from the shipped manual (`#/settings/help`), and a per-project Recovery Console (`#/settings/recovery/<id>`). Auto placement applies only under the Operator-ratified policy, and support previews are always scrubbed server-side.
-- Bounded self-healing remediator (#2991, V6-20 / A2b): `lib/v6/a2b-self-healing-remediator.js` executes only three pre-authorized, non-destructive repairs (Medusa listener rebind, orphan `ttyd` reap, `wip/*` snapshot + harness restart) as the `service:recovery-controller` principal, refusing merge/release/delete/credential/authority actions outright. Each incident gets at most 2 attempts (ceiling 3), claimed atomically before the repair runs so concurrent or crash-restarted callers cannot exceed the budget. A four-state recovery circuit (closed / open / half-open on the existing v81 table, plus an Operator-only latch) backs off exponentially and latches once the budget is spent; only an Operator principal can clear the latch. Includes the Recovery Console read model; HTTP routes and the console UI mount in Wave 2.
-- Operating profiles (#2992, V6-21 / A3): `lib/v6/a3-operating-profiles.js` resolves `Full` / `Lean` / `Minimal` to the exact services and telemetry cadence each one runs, over an immutable safety floor (authentication, authorization, launch-binding verification, workspace isolation, control-gate holds, secret scanning, the tmux guard, audit, lifecycle receipts, recovery boundary) that no override can disable. Adds a workload-matched benchmark aggregator (totals, p50/p95 and deltas against `Full` per profile x seat count, from measured samples only, with no fallback tokenizer). The selector UI mounts in Wave 2.
+  A-Gate, and hands stalled cars to remediation hooks. Reachable at
+  `/api/v6/wave-scheduler/topological-waves` and `/api/v6/projects/:id/wave-runs` (#1886).
+- v6.1.0 modules are now live (#1886, #2991-#3000): 31 operator-only `/api/v6/*` routes expose the recovery console and latch reset, operating profiles, standing failover policy and quota-aware placement, the wave scheduler, open-weight qualification, the settings assistant, grounded report Q&A, the built-in knowledge base, code-to-doc parity, support diagnostic bundles, and walkthroughs. The v6 Fleet Shell adds a Settings & Profiles view (`#/settings/`), contextual help from the shipped manual (`#/settings/help`), and a per-project Recovery Console (`#/settings/recovery/<id>`). Auto placement applies only under the Operator-ratified policy, and support previews are always scrubbed server-side.
+- Bounded self-healing remediator (#2991, V6-20 / A2b): `lib/v6/a2b-self-healing-remediator.js` executes only three pre-authorized, non-destructive repairs (Medusa listener rebind, orphan `ttyd` reap, `wip/*` snapshot + harness restart) as the `service:recovery-controller` principal, refusing merge/release/delete/credential/authority actions outright. Each incident gets at most 2 attempts (ceiling 3), claimed atomically before the repair runs so concurrent or crash-restarted callers cannot exceed the budget. A four-state recovery circuit (closed / open / half-open on the existing v81 table, plus an Operator-only latch) backs off exponentially and latches once the budget is spent; only an Operator principal can clear the latch. Includes the Recovery Console read model, served at `/api/v6/projects/:id/recovery-console` with the Operator latch reset at `/api/v6/projects/:id/recovery/operator-reset`.
+- Operating profiles (#2992, V6-21 / A3): `lib/v6/a3-operating-profiles.js` resolves `Full` / `Lean` / `Minimal` to the exact services and telemetry cadence each one runs, over an immutable safety floor (authentication, authorization, launch-binding verification, workspace isolation, control-gate holds, secret scanning, the tmux guard, audit, lifecycle receipts, recovery boundary) that no override can disable. Adds a workload-matched benchmark aggregator (totals, p50/p95 and deltas against `Full` per profile x seat count, from measured samples only, with no fallback tokenizer). Reachable under `/api/v6/operating-profiles` and listed, with the safety floor, in the Fleet Shell's Settings & Profiles view.
 - Standing model failover policy and quota-aware placement (#2993, V6-23 / C4+D2): `lib/v6/c4-d2-failover-and-quota-placement.js` keeps confirmation as the default for any engine/model failure. Only an Operator-ratified standing policy (versioned, authorized on every project it governs) may auto-switch: routine chunk-boundary and quota-threshold triggers through the governed `boundary` mode, and Builder/Reviewer/Observer outages through `outage-takeover`. Decider outages escalate to the Operator unless the policy opts in. Every target must pass engine/model validation and the role's capability floor, and each decision records a durable receipt with its trigger reason. Placement ranks only approved, eligible candidates using confidence-weighted quota windows, in `recommend` or `auto` mode; `auto` applies only allowlisted placements with a known quota reading.
 - Open-weight qualification harness (`lib/v6/d3-openweight-qualification.js`): checks a
   loopback Ollama or vLLM model, directly or through an Aider/OpenClaw JSON wrapper, against
@@ -26,16 +26,15 @@ All notable changes to TangleClaw are documented in this file.
   the assistant may touch with plain-language explanations, an override inspector showing
   which scope (resource, fleet, project, global) supplies a setting's effective value, and
   a preview/commit flow where a verified principal commits exactly the diff it previewed,
-  once, against the revision it saw. Library only; the settings page arrives in Wave 2 (#2995).
+  once, against the revision it saw. Reachable under `/api/v6/settings/*` and the Fleet Shell's Settings & Profiles view (#2995).
 - v6: "Ask This Report" can now answer in prose from a selected model, across
   one sprint report or several (`lib/v6/e6b-report-narrative-synthesizer.js`).
   The model sees only the report passages retrieved for the question. Every
   sentence of its answer must cite one of them (`[Section NN]`, `[PR #NNNN]`,
   `[KR-ID]`, version-prefixed across reports), or the answer is rejected and
   the verbatim cited passages are returned instead. Model and effort choices
-  are checked with the same rules a session launch uses. Not yet reachable
-  over HTTP; `POST /api/sprint-reports/:version/ask` is wired in a later
-  change (#2996).
+  are checked with the same rules a session launch uses. Reachable at
+  `POST /api/v6/reports/ask` (#2996).
 - v6: a built-in, version-aware knowledge base over the product manual
   (`lib/v6/f1-knowledge-base.js`). It searches `docs/manual-manifest.json`'s
   pages section by section, returns stable `page#anchor` citations tagged with
@@ -43,9 +42,9 @@ All notable changes to TangleClaw are documented in this file.
   4096), and reports how much smaller the result is than the whole manual. It
   also gives contextual help for a UI file or route module and fetches one
   cited section. A request for an older version falls back to the nearest
-  older snapshot and says so, never to a newer one. Not yet reachable over
-  HTTP; `GET /api/docs/search` and the in-product reader are wired in a later
-  change (#2997).
+  older snapshot and says so, never to a newer one. Reachable at
+  `GET /api/v6/kb/search` and `GET /api/v6/kb/contextual-help`, and in the Fleet
+  Shell's contextual help view (#2997).
 - v6: a code-to-doc parity checker (`lib/v6/f2-code-doc-parity.js`) generates
   the `tc` verb, HTTP route, project-default and engine-profile reference
   tables from the code that defines them, and reports any drift from the
@@ -59,8 +58,8 @@ All notable changes to TangleClaw are documented in this file.
   scrubbed log lines only when asked), scrubs credentials, emails, IPs, home paths and
   tailnet hostnames, refuses any bundle its redaction verifier still finds a secret in,
   previews the exact issue with a digest, and files it only with consent bound to that
-  digest and an allowlisted repository, once per consent. Library only; routes arrive in
-  Wave 2 (#2999).
+  digest and an allowlisted repository, once per consent. Reachable at
+  `/api/v6/support/diagnostic-bundle` and `/api/v6/support/preview-issue` (#2999).
 - v6 educational walkthroughs core (`lib/v6/h2-educational-walkthroughs.js`): the five
   walkthroughs (Install to First Chat, 4-Seat & 10-Role Fleet Setup, Charter to Wave
   Execution, Multi-Engine Failover, Open Hood Inspection) as structured steps citing only
