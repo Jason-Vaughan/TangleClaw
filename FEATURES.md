@@ -17,6 +17,21 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.1.0 — Bounded self-healing, operating profiles, wave scheduler, grounded assistants and knowledge base
+
+- **Bounded self-healing remediator** (#2991) — `lib/v6/a2b-self-healing-remediator.js#createRemediator`, `#circuitState` and `#recoveryConsole`: three pre-authorized non-destructive repairs under `RECOVERY_PRINCIPAL`, an atomic per-incident attempt budget, and a four-state recovery circuit with an Operator-only latch.
+- **Operating profiles** (#2992) — `lib/v6/a3-operating-profiles.js#resolveProfile` and `#compareToFull`: `Full`/`Lean`/`Minimal` over an immutable `SAFETY_FLOOR`, with a measured-only benchmark aggregator.
+- **Wave scheduler** (#1886) — `lib/v6/c3-wave-scheduler.js#WaveScheduler` and `#topologicalWaves`: dependency waves, cross-run file-scope reservation, and independent-reviewer gate holds.
+- **Standing failover and quota-aware placement** (#2993) — `lib/v6/c4-d2-failover-and-quota-placement.js#decideFailover`, `#ratifyPolicy` and `#recommendPlacement`: Operator-ratified auto-switch policy with durable receipts, and confidence-weighted placement.
+- **Open-weight qualification harness** (#2994) — `lib/v6/d3-openweight-qualification.js#qualifyFleet` and `#evaluateProbe`: six per-role gates for loopback Ollama/vLLM models; unmeasured fails.
+- **Settings assistant** (#2995) — `lib/v6/b3-settings-assistant.js#createSettingsAssistant`, `#inspectOverrides` and `#explainSetting`: explained catalog, scope inspector, and single-use preview/commit.
+- **Grounded "Ask This Report"** (#2996) — `lib/v6/e6b-report-narrative-synthesizer.js#askReport` and `#verifyGrounding`: model synthesis returned only when every sentence cites a retrieved chunk, else Stage 1 verbatim passages.
+- **Version-aware knowledge base** (#2997) — `lib/v6/f1-knowledge-base.js#search`, `#contextualHelp` and `#getSection`: budgeted, audience-filtered, version-tagged retrieval over `docs/manual-manifest.json`.
+- **Code-to-doc parity checker** (#2998) — `lib/v6/f2-code-doc-parity.js#checkParity` and `#extractRepository`: CLI/route/default/engine tables from code, drift as a line diff, and fail-closed extraction (`data/doc-parity/engine-omitted-fields.json` lists the reviewed engine fields left out).
+- **Support diagnostic bundle** (#2999) — `lib/v6/f3-support-diagnostic-scrubber.js#buildBundle`, `#scrub` and `#submitIssue`: allowlisted, scrubbed, verifier-checked bundle filed only with digest-bound consent.
+- **Live v6.1 routes and shell views** (#1886, #2991-#3000) — 30 operator-only `/api/v6/*` routes in `server.js` plus the Fleet Shell's Settings & Profiles, contextual help and Recovery Console views in `public/v6-shell.js`.
+- **Educational walkthroughs** (#3000) — `lib/v6/h2-educational-walkthroughs.js#listWalkthroughs` and `#publicationGate`: five walkthroughs and a glossary behind a verified-on-release publication gate.
+
 ## v6.0.1 — Live Fleet Shell data, conversation detail, and Classic View switching
 
 - **Live v6 Fleet Shell wire-up** (#3022) — `public/v6-shell.js#tcV6CreateLiveController` and `public/ui.js`'s `#v6ViewToggleBtn` connect the Fleet Shell to live project/session data, synthesize Logical Project → Fleet → Member navigation from `/api/projects`, resolve logical and fleet routes to a real member project, replay conversation events, show model attestations and Open Hood terminal links, render live B4 telemetry with confidence labels, preview C2 fleet-template seat plans, and provide one-click Fleet Shell (v6) / Classic View switching; `GET /api/v6/projects/:id/telemetry` supplies the live telemetry payload.
