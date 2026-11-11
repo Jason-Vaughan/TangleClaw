@@ -26,15 +26,18 @@ All notable changes to TangleClaw are documented in this file.
   the assistant may touch with plain-language explanations, an override inspector showing
   which scope (resource, fleet, project, global) supplies a setting's effective value, and
   a preview/commit flow where a verified principal commits exactly the diff it previewed,
-  once, against the revision it saw. Reachable under `/api/v6/settings/*` and the Fleet Shell's Settings & Profiles view (#2995).
+  once, against the revision it saw. The catalog, explanations, override inspector and patch
+  validation are reachable under `/api/v6/settings/*` and the Fleet Shell's Settings & Profiles
+  view; preview/commit has no HTTP route yet and is library-only in this release (#2995).
 - v6: "Ask This Report" can now answer in prose from a selected model, across
   one sprint report or several (`lib/v6/e6b-report-narrative-synthesizer.js`).
   The model sees only the report passages retrieved for the question. Every
   sentence of its answer must cite one of them (`[Section NN]`, `[PR #NNNN]`,
   `[KR-ID]`, version-prefixed across reports), or the answer is rejected and
   the verbatim cited passages are returned instead. Model and effort choices
-  are checked with the same rules a session launch uses. Reachable at
-  `POST /api/v6/reports/ask` (#2996).
+  are checked with the same rules a session launch uses. `POST /api/v6/reports/ask`
+  serves the grounded, cited retrieval answer; no model adapter is bound to it
+  yet, so prose synthesis is library-only in this release (#2996).
 - v6: a built-in, version-aware knowledge base over the product manual
   (`lib/v6/f1-knowledge-base.js`). It searches `docs/manual-manifest.json`'s
   pages section by section, returns stable `page#anchor` citations tagged with
@@ -42,9 +45,9 @@ All notable changes to TangleClaw are documented in this file.
   4096), and reports how much smaller the result is than the whole manual. It
   also gives contextual help for a UI file or route module and fetches one
   cited section. A request for an older version falls back to the nearest
-  older snapshot and says so, never to a newer one. Reachable at
-  `GET /api/v6/kb/search` and `GET /api/v6/kb/contextual-help`, and in the Fleet
-  Shell's contextual help view (#2997).
+  older snapshot and says so, never to a newer one. Search and contextual help are
+  reachable at `GET /api/v6/kb/search` and `GET /api/v6/kb/contextual-help`, and in
+  the Fleet Shell's contextual help view; fetching one cited section is library-only (#2997).
 - v6: a code-to-doc parity checker (`lib/v6/f2-code-doc-parity.js`) generates
   the `tc` verb, HTTP route, project-default and engine-profile reference
   tables from the code that defines them, and reports any drift from the
@@ -58,8 +61,9 @@ All notable changes to TangleClaw are documented in this file.
   scrubbed log lines only when asked), scrubs credentials, emails, IPs, home paths and
   tailnet hostnames, refuses any bundle its redaction verifier still finds a secret in,
   previews the exact issue with a digest, and files it only with consent bound to that
-  digest and an allowlisted repository, once per consent. Reachable at
-  `/api/v6/support/diagnostic-bundle` and `/api/v6/support/preview-issue` (#2999).
+  digest and an allowlisted repository, once per consent. Building and previewing a bundle are
+  reachable at `/api/v6/support/diagnostic-bundle` and `/api/v6/support/preview-issue`;
+  consent-bound filing has no HTTP route yet and is library-only in this release (#2999).
 - v6 educational walkthroughs core (`lib/v6/h2-educational-walkthroughs.js`): the five
   walkthroughs (Install to First Chat, 4-Seat & 10-Role Fleet Setup, Charter to Wave
   Execution, Multi-Engine Failover, Open Hood Inspection) as structured steps citing only
