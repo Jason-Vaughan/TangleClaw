@@ -193,4 +193,18 @@ describe('citeThisReport (#2989 deliverable 2 -- deterministic, never generates 
     const prHit = results.find((r) => r.type === 'pr');
     assert.equal('heading' in prHit, false);
   });
+
+  it('surfaces the typed pr/kaizen hit under the DEFAULT limit even when the same identifier also appears in all 12 sections (Ruling A598-PR3018-R2-HOLD-RECONCILED)', () => {
+    const overrides = {};
+    for (const id of CANONICAL_SECTIONS) overrides[id] = 'Shipped PR #3016 and tracked KR-01.';
+    const idx = e6a.buildSearchIndex(syntheticReport(overrides));
+
+    const prResults = e6a.citeThisReport(idx, '3016');
+    assert.ok(prResults.some((r) => r.type === 'pr' && r.badge === '[PR #3016]'),
+      `expected a typed pr hit under default limit, got types: ${prResults.map((r) => r.type).join(',')}`);
+
+    const kaizenResults = e6a.citeThisReport(idx, 'KR-01');
+    assert.ok(kaizenResults.some((r) => r.type === 'kaizen' && r.badge === '[KR-01]'),
+      `expected a typed kaizen hit under default limit, got types: ${kaizenResults.map((r) => r.type).join(',')}`);
+  });
 });
