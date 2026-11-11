@@ -30,8 +30,8 @@ const SECRETS = [
   ['api-key', 'xoxb-1234567890-abcdefghij'],
   ['bearer', 'Authorization header Bearer abc.def.ghi'],
   ['key-value', 'password=hunter2'],
-  ['key-value', '{"token": "s3cr3t-value"}'],
-  ['key-value', "client_secret: 'abc123'"],
+  ['key-value-quoted', '{"token": "s3cr3t-value"}'],
+  ['key-value-quoted', "client_secret: 'abc123'"],
   ['query-secret', 'GET /cb?code=1&access_token=abc123&x=1'],
   ['email', 'contact ntehosting@gmail.com today'],
   ['tailnet-host', 'https://cursatory.tail123678.ts.net:8443/plans'],
@@ -102,7 +102,8 @@ describe('buildBundle', () => {
 
   it('includes scrubbed log lines only when asked', () => {
     const bundle = buildBundle(INPUT, { includeLogs: true, now: NOW });
-    assert.deepEqual(bundle.logLines, ['started on /[HOME]/tc', 'token=[REDACTED] refused', 'peer [IP]']);
+    // An unquoted credential value is redacted to end of line (fail closed).
+    assert.deepEqual(bundle.logLines, ['started on /[HOME]/tc', 'token=[REDACTED]', 'peer [IP]']);
   });
 
   it('bounds lines, line length, code count and free-text fields', () => {
@@ -178,7 +179,7 @@ describe('submitIssue', () => {
 
   it('files exactly the previewed issue with the consent id as the idempotency key', async () => {
     const a = adapter();
-    const r = await submitIssue({ preview, consent, adapter: a.fn, allowedRepos: ['org/repo'], now: NOW });
+    const r = await submitIssue({ preview, consent, adapter: a.fn, allowedRepos: ['org/repo'], usedConsentIds: new Set(), now: NOW });
     assert.deepEqual(r, { ok: true, issueUrl: 'https://github.com/org/repo/issues/1' });
     assert.deepEqual(a.calls, [{ repo: 'org/repo', title: preview.title, body: preview.body, idempotencyKey: 'c1' }]);
   });
@@ -195,7 +196,7 @@ describe('submitIssue', () => {
     ];
     for (const c of bad) {
       const a = adapter();
-      const r = await submitIssue({ preview, consent: c, adapter: a.fn, allowedRepos: ['org/repo'], now: NOW });
+      const r = await submitIssue({ preview, consent: c, adapter: a.fn, allowedRepos: ['org/repo'], usedConsentIds: new Set(), now: NOW });
       assert.equal(r.code, 'CONSENT_REQUIRED', JSON.stringify(c));
       assert.equal(a.calls.length, 0);
     }
@@ -203,7 +204,7 @@ describe('submitIssue', () => {
 
   it('refuses a repository outside the allowlist', async () => {
     const a = adapter();
-    const r = await submitIssue({ preview, consent, adapter: a.fn, allowedRepos: ['org/elsewhere'], now: NOW });
+    const r = await submitIssue({ preview, consent, adapter: a.fn, allowedRepos: ['org/elsewhere'], usedConsentIds: new Set(), now: NOW });
     assert.equal(r.code, 'REPO_NOT_ALLOWED');
     assert.equal(a.calls.length, 0);
   });
@@ -211,11 +212,11 @@ describe('submitIssue', () => {
   it('refuses a preview edited after consent, including one re-hashed around an unscrubbed secret', async () => {
     const edited = { ...preview, body: preview.body.replace('6.1.0', '6.1.1') };
     const a = adapter();
-    assert.equal((await submitIssue({ preview: edited, consent, adapter: a.fn, allowedRepos: ['org/repo'], now: NOW })).code, 'PREVIEW_CHANGED');
+    assert.equal((await submitIssue({ preview: edited, consent, adapter: a.fn, allowedRepos: ['org/repo'], usedConsentIds: new Set(), now: NOW })).code, 'PREVIEW_CHANGED');
     const body = `${preview.body}\npassword=hunter2`;
     const digest = crypto.createHash('sha256').update(`org/repo\n${preview.title}\n${body}`).digest('hex');
     const sneaky = { ...preview, body, digest };
-    const r = await submitIssue({ preview: sneaky, consent: { ...consent, bundleDigest: digest }, adapter: a.fn, allowedRepos: ['org/repo'], now: NOW });
+    const r = await submitIssue({ preview: sneaky, consent: { ...consent, bundleDigest: digest }, adapter: a.fn, allowedRepos: ['org/repo'], usedConsentIds: new Set(), now: NOW });
     assert.equal(r.code, 'PREVIEW_CHANGED');
     assert.equal(a.calls.length, 0);
   });
@@ -229,15 +230,62 @@ describe('submitIssue', () => {
   });
 
   it('an adapter that throws or returns no URL is a failed submission, with its error scrubbed', async () => {
-    const thrown = await submitIssue({ preview, consent, adapter: adapter(new Error('401 for token=abc123')).fn, allowedRepos: ['org/repo'], now: NOW });
+    const thrown = await submitIssue({ preview, consent, adapter: adapter(new Error('401 for token=abc123')).fn, allowedRepos: ['org/repo'], usedConsentIds: new Set(), now: NOW });
     assert.equal(thrown.code, 'SUBMIT_FAILED');
     assert.ok(!thrown.error.includes('abc123'), thrown.error);
-    const empty = await submitIssue({ preview, consent, adapter: adapter({}).fn, allowedRepos: ['org/repo'], now: NOW });
+    const empty = await submitIssue({ preview, consent, adapter: adapter({}).fn, allowedRepos: ['org/repo'], usedConsentIds: new Set(), now: NOW });
     assert.equal(empty.code, 'SUBMIT_FAILED');
   });
 
-  it('needs an adapter function and an allowlist array', async () => {
-    await assert.rejects(() => submitIssue({ preview, consent, allowedRepos: [] }), TypeError);
-    await assert.rejects(() => submitIssue({ preview, consent, adapter: async () => ({}) }), TypeError);
+  it('needs an adapter function, an allowlist array and a used-consent ledger', async () => {
+    await assert.rejects(() => submitIssue({ preview, consent, allowedRepos: [], usedConsentIds: new Set() }), TypeError);
+    await assert.rejects(() => submitIssue({ preview, consent, adapter: async () => ({}), usedConsentIds: new Set() }), TypeError);
+  });
+
+  it('omitting the used-consent ledger refuses rather than allowing a replay (PRR R1 HOLD)', async () => {
+    const a = adapter();
+    await assert.rejects(() => submitIssue({ preview, consent, adapter: a.fn, allowedRepos: ['org/repo'], now: NOW }), /usedConsentIds required/);
+    await assert.rejects(() => submitIssue({ preview, consent, adapter: a.fn, allowedRepos: ['org/repo'], usedConsentIds: {}, now: NOW }), /usedConsentIds required/);
+    assert.equal(a.calls.length, 0);
+  });
+});
+
+describe('PRR R1 HOLD regressions (PR #3028): multi-word credential values', () => {
+  const CASES = [
+    ['password=correct horse battery staple', 'password=[REDACTED]'],
+    ['token: correct horse battery staple', 'token: [REDACTED]'],
+    ['client_secret = correct horse battery staple', 'client_secret = [REDACTED]'],
+    ['{"password":"correct horse battery staple"}', '{"password":"[REDACTED]"}'],
+    ["token: 'correct horse battery staple' then", "token: '[REDACTED]' then"],
+    ['client_secret="a \\"quoted\\" pass" then', 'client_secret="[REDACTED]" then'],
+    ['TOKEN :  spaced  out  ', 'TOKEN :  [REDACTED]']
+  ];
+
+  for (const [input, expected] of CASES) {
+    it(`no tail survives: ${input}`, () => {
+      assert.equal(scrub(input), expected);
+      for (const word of ['horse', 'battery', 'staple', 'quoted', 'spaced']) assert.ok(!scrub(input).includes(word), word);
+      assert.equal(scrub(scrub(input)), scrub(input), 'idempotent');
+    });
+  }
+
+  it('buildBundle output carries no tail and passes the verifier', () => {
+    const bundle = buildBundle({ logLines: CASES.map(([input]) => input) }, { includeLogs: true, now: NOW });
+    assert.deepEqual(bundle.logLines, CASES.map(([, expected]) => expected));
+    const json = JSON.stringify(bundle);
+    for (const word of ['horse', 'battery', 'staple']) assert.ok(!json.includes(word), word);
+    assert.deepEqual(findSecrets(json), []);
+  });
+
+  it('the verifier reports a raw multi-word credential, quoted or not, rather than masking its tail', () => {
+    for (const [input] of CASES) assert.ok(findSecrets(input).some((d) => d.startsWith('key-value')), input);
+    assert.ok(findSecrets('password=[REDACTED] horse battery staple').includes('key-value'), 'a tail after a placeholder is still flagged');
+  });
+
+  it('the issue preview of such a bundle stays scrubbed, so submission does not see it as changed', () => {
+    const bundle = buildBundle({ logLines: CASES.map(([input]) => input), errorCodes: ['AUTH_FAILED'] }, { includeLogs: true, now: NOW });
+    const p = previewIssue(bundle, 'org/repo');
+    assert.equal(scrub(p.body), p.body);
+    assert.ok(!p.body.includes('horse'));
   });
 });
