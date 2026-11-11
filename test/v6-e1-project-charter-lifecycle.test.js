@@ -384,6 +384,34 @@ describe('recordApproval / revokeApproval / checkApprovalComplete (#2126 require
       cleanup();
     }
   });
+
+  it('revoking a sign-off on an OLDER, non-latest version never reverts status away from approved when the LATEST version is still fully signed (Ruling A603-PR3017-R3-HOLD-RECONCILED)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'charter-revoke-stale-version');
+      const created = e1.createDraftCharter(db, { projectId, content: { title: 'v1' } });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'sponsor', approverActor: 'carol' });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'pm', approverActor: 'dave' });
+      assert.equal(e1.getCharter(db, { projectId }).charter.status, 'approved', 'precondition: v1 alone is fully approved');
+
+      const saved = e1.saveDraftVersion(db, { projectId, content: { title: 'v2' } });
+      e1.recordApproval(db, { projectId, versionId: saved.versionId, approverRole: 'sponsor', approverActor: 'carol' });
+      e1.recordApproval(db, { projectId, versionId: saved.versionId, approverRole: 'pm', approverActor: 'dave' });
+      assert.equal(e1.getCharter(db, { projectId }).charter.status, 'approved', 'precondition: v2 (the latest) is now fully approved too');
+
+      // Revoking v1's (the now-STALE version's) pm sign-off must not drop
+      // the charter's overall status -- v2, the version 'approved'
+      // actually describes, is untouched and still fully signed.
+      const res = e1.revokeApproval(db, { projectId, versionId: created.versionId, approverRole: 'pm', approverActor: 'dave' });
+      assert.equal(res.ok, true);
+      assert.equal(
+        e1.getCharter(db, { projectId }).charter.status, 'approved',
+        'status must stay approved -- it reflects v2 (latest), not the now-stale v1 whose approval was just revoked'
+      );
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 describe('activateCharter (#2126 requirement 4, 6)', () => {
