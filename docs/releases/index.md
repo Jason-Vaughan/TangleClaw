@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.0.1 — Live Fleet Shell data, conversation detail, and Classic View switching](v6.0.1.md)
+- [v6.1.0 — Bounded self-healing, operating profiles, wave scheduler, grounded assistants and knowledge base](v6.1.0.md)
 
 ## Recent releases
+
+- [v6.0.1 — Live Fleet Shell data, conversation detail, and Classic View switching](v6.0.1.md)
 
 - [v6.0.0 — Unified v6 platform: project/fleet hierarchy, native conversation layer, closed-loop Kaizen, fleet-first UI shell, project charters, rich reports & search, and guided GitHub integration](v6.0.0.md)
 - [v5.74.0 — Model + effort picker, boundary model-switch admission, and Aider fleet qualification](v5.74.0.md)
