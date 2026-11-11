@@ -10059,18 +10059,33 @@ route('GET', '/api/v6/conversation/adapter-tier/:adapter', (req, res, params) =>
 
 // ── B4: Telemetry Header (#2983) ──
 //
-// KNOWN GAP, flagged rather than silently resolved: this module has no
-// real collector wiring (lib/usage-windows.js #2599, lib/medusa-drift.js
-// #2956, etc. — see lib/v6/b4-telemetry-header.js's own doc comment,
-// which names that wiring BRIDGE-5, not this car). This route assembles a
-// bar from whatever `metrics` the caller supplies (empty by default —
-// every badge reads `unavailable`), rather than fabricating readings.
+// #3022 supplies the readings this server already holds: the live session
+// count and the running version are read directly (`observed`); health is
+// `estimated` — this request being answered is the only evidence behind it.
+// Tokens, quota window, context use and pending Medusa messages still have
+// no collector wired here (lib/usage-windows.js #2599, lib/medusa-drift.js
+// #2956, … — see lib/v6/b4-telemetry-header.js's own doc comment), so they
+// are omitted and assembleTelemetryBar reports them `unavailable` rather
+// than this route fabricating readings. Confidence must be one of B4's own
+// CONFIDENCE_LEVELS: any other word normalizes the metric to `unavailable`.
+
+/**
+ * The B4 readings this server can supply from its own live state.
+ * @returns {Record<string, {value: *, confidence: string}>}
+ */
+function _v6LiveTelemetryMetrics() {
+  return {
+    activeSessions: { value: store.sessions.listLiveAll().length, confidence: 'observed' },
+    health: { value: 'healthy', confidence: 'estimated' },
+    versionDrift: { value: _getVersion(), confidence: 'observed' }
+  };
+}
 
 route('GET', '/api/v6/projects/:id/telemetry', (req, res) => {
   if (!operatorProjectCaller(req, res, 'read the telemetry header')) return;
   const query = parseQuery(reqUrl(req).search);
   const scope = b4.SCOPES.includes(query.scope) ? query.scope : 'global';
-  jsonResponse(res, 200, b4.assembleTelemetryBar(scope, {}));
+  jsonResponse(res, 200, b4.assembleTelemetryBar(scope, _v6LiveTelemetryMetrics()));
 });
 
 // ── C2: Starter Fleet Template Catalog (#2984) ──

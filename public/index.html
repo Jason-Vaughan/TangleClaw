@@ -451,6 +451,9 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
       <div class="tag-row" id="tagRow" role="toolbar" aria-label="Filter by tag"></div>
     </div>
     <div class="toolbar-right">
+      <!-- #3022: one-click switch between the v6 Fleet Shell and Classic View;
+           ui.js wires the click and keeps the label in step with the route. -->
+      <button type="button" class="btn btn-secondary" id="v6ViewToggleBtn" aria-label="Switch between Fleet Shell (v6) and Classic View">Fleet Shell (v6)</button>
       <button class="btn btn-primary" id="newBtn" aria-label="Create new project">+ New</button>
     </div>
   </nav>

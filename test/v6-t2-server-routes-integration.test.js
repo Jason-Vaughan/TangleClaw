@@ -324,13 +324,31 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
   });
 
   describe('B4: Telemetry Header routes (#2983)', () => {
-    it('assembles a telemetry bar with every metric unavailable (no real collector wiring in this car)', async () => {
+    it('assembles a telemetry bar from the live readings the server holds, leaving uncollected metrics unavailable (#3022)', async () => {
       const projectId = await seedProject('b4-route-project');
       const res = await get(`/api/v6/projects/${projectId}/telemetry`);
       assert.equal(res.statusCode, 200, res.body);
       const bar = json(res);
       assert.equal(bar.scope, 'global');
-      assert.equal(bar.metrics.tokens.confidence, 'unavailable');
+      // Each supplied reading must carry one of B4's own confidence levels;
+      // any other word would silently normalize it to unavailable.
+      assert.equal(bar.metrics.activeSessions.confidence, 'observed');
+      assert.equal(typeof bar.metrics.activeSessions.value, 'number');
+      assert.equal(bar.metrics.versionDrift.confidence, 'observed');
+      assert.equal(typeof bar.metrics.versionDrift.value, 'string');
+      assert.ok(bar.metrics.versionDrift.value.length > 0);
+      assert.deepEqual(bar.metrics.health, { value: 'healthy', confidence: 'estimated' });
+      for (const key of ['tokens', 'quotaWindow', 'contextUtilization', 'pendingMedusaMessages']) {
+        assert.deepEqual(bar.metrics[key], { value: null, confidence: 'unavailable' }, key);
+      }
+    });
+
+    it('counts live sessions from the store, not a constant (#3022)', async () => {
+      const before = json(await get('/api/v6/projects/1/telemetry')).metrics.activeSessions.value;
+      const projectId = await seedProject('b4-live-count-project');
+      await seedSession(projectId);
+      const after = json(await get(`/api/v6/projects/${projectId}/telemetry`)).metrics.activeSessions.value;
+      assert.equal(after, before + 1);
     });
   });
 

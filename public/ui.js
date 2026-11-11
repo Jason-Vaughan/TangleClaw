@@ -8196,18 +8196,43 @@ setInterval(loadMedusaDrift, MEDUSA_DRIFT_POLL_MS);
 // the moment the hash no longer matches — the one coupling point between
 // the two, kept here rather than inside v6-shell.js so that file stays
 // usable standalone (e.g. under test) with no knowledge of this page's
-// other container ids. Data feeds (tree/telemetry/templates/attestation)
-// are server.js route wiring (BRIDGE-2b, Car V60-T2-W2-ROUTES), not yet
-// built, so the shell mounts with none for now.
+// other container ids.
+//
+// #3022: the live data feeds (hierarchy tree, B4 telemetry, C2 templates
+// and plan preview, B2 conversation, D1 attestation) are loaded by
+// tcV6CreateLiveController, given this page's own api()/apiMutate(); the
+// toolbar's #v6ViewToggleBtn switches between the shell and Classic View.
 if (typeof window.tcCreateV6Shell === 'function') {
   const v6ShellRoot = document.getElementById('v6ShellRoot');
   const v6DashboardRoot = document.getElementById('projectsContainer');
-  window.tcCreateV6Shell(document, {
+  const v6ToggleBtn = document.getElementById('v6ViewToggleBtn');
+  let v6Shell = null;
+  const v6Live = window.tcV6CreateLiveController({ getShell: () => v6Shell, api, apiMutate });
+  v6Shell = window.tcCreateV6Shell(document, {
     root: v6ShellRoot,
+    onLaunchTemplate(templateId) { v6Live.launchTemplate(templateId); },
     onRender(route) {
       const active = Boolean(route && route.view);
       if (v6ShellRoot) v6ShellRoot.classList.toggle('hidden', !active);
       if (v6DashboardRoot) v6DashboardRoot.classList.toggle('hidden', active);
+      if (v6ToggleBtn) {
+        v6ToggleBtn.textContent = window.tcV6ViewToggleLabel(route);
+        v6ToggleBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        v6ToggleBtn.classList.toggle('is-active', active);
+      }
+      v6Live.handleRoute(route);
     }
   });
+  // The mount's own first render ran before v6Shell was assigned; load the
+  // landing route now that the controller can reach the shell.
+  v6Live.handleRoute(v6Shell.getRoute());
+  if (v6ToggleBtn) {
+    v6ToggleBtn.addEventListener('click', async () => {
+      if (v6Shell.getRoute().view) {
+        v6Shell.navigate('#/');
+        return;
+      }
+      v6Shell.navigate(await v6Live.enterHash());
+    });
+  }
 }

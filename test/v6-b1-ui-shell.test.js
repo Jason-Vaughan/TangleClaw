@@ -450,3 +450,521 @@ describe('public/style.css grid placement (#2981 PRR-B R1 HOLD)', () => {
     assert.match(mobileBlock, /\.v6-shell-view,\s*\n\s*\.v6-telemetry-header,\s*\n\s*\.v6-shell-watermark\s*\{\s*\n\s*grid-column:\s*1;/);
   });
 });
+
+// ── #3022 (Car V601-UI-WIREUP): live wire-up ──
+
+describe('tcV6SynthesizeTreeFromProjects (#3022 deliverable b)', () => {
+  const G = loadV6Shell();
+  const ROWS = [
+    { id: 12, name: 'TC-Lane-PM' },
+    { id: 10, name: 'TC-Lane-A' },
+    { id: 11, name: 'TC-Lane-B' },
+    { id: 20, name: 'Medusa-PM' },
+    { id: 21, name: 'Medusa-Lane-A' },
+    { id: 30, name: 'TangleClaw' },
+    { id: 31, name: 'HDMI-Watch' }
+  ];
+
+  it('groups projects sharing a first dash segment into one Logical Project named for their common prefix', () => {
+    const tree = plain(G.tcV6SynthesizeTreeFromProjects(ROWS));
+    const tc = tree.find((p) => p.id === 'tc-lane');
+    assert.ok(tc, JSON.stringify(tree));
+    assert.equal(tc.displayName, 'TC-Lane');
+    assert.equal(tc.fleets.length, 1);
+    assert.equal(tc.fleets[0].displayName, 'TC-Lane Fleet');
+    assert.deepEqual(tc.fleets[0].members, [
+      { seatId: '10', role: 'TC-Lane-A' },
+      { seatId: '11', role: 'TC-Lane-B' },
+      { seatId: '12', role: 'TC-Lane-PM' }
+    ]);
+    const medusa = tree.find((p) => p.id === 'medusa');
+    assert.equal(medusa.displayName, 'Medusa', 'common prefix stops at whole segments');
+    assert.deepEqual(medusa.fleets[0].members.map((m) => m.role), ['Medusa-Lane-A', 'Medusa-PM']);
+  });
+
+  it('puts every ungrouped project — no dash, or a dash head nobody shares — in Workspace Projects, last', () => {
+    const tree = plain(G.tcV6SynthesizeTreeFromProjects(ROWS));
+    const last = tree[tree.length - 1];
+    assert.equal(last.id, 'workspace');
+    assert.deepEqual(last.fleets[0].members, [
+      { seatId: '31', role: 'HDMI-Watch' },
+      { seatId: '30', role: 'TangleClaw' }
+    ]);
+  });
+
+  it('makes every input project navigable exactly once', () => {
+    const tree = plain(G.tcV6SynthesizeTreeFromProjects(ROWS));
+    const seats = tree.flatMap((p) => p.fleets.flatMap((f) => f.members.map((m) => m.seatId))).sort();
+    assert.deepEqual(seats, ROWS.map((r) => String(r.id)).sort());
+  });
+
+  it('is deterministic regardless of input order', () => {
+    const a = plain(G.tcV6SynthesizeTreeFromProjects(ROWS));
+    const b = plain(G.tcV6SynthesizeTreeFromProjects(ROWS.slice().reverse()));
+    assert.deepEqual(a, b);
+  });
+
+  it('skips malformed rows and treats a non-array as empty', () => {
+    assert.deepEqual(plain(G.tcV6SynthesizeTreeFromProjects(null)), []);
+    assert.deepEqual(plain(G.tcV6SynthesizeTreeFromProjects([null, { id: 1 }, { name: 'x' }, { id: 2, name: '' }])), []);
+  });
+
+  it('never yields an id that collides with the workspace group, a numeric project id, or another group', () => {
+    const tree = plain(G.tcV6SynthesizeTreeFromProjects([
+      { id: 1, name: 'Workspace-A' }, { id: 2, name: 'Workspace-B' },
+      { id: 3, name: '2029-A' }, { id: 4, name: '2029-B' },
+      { id: 5, name: 'TC-x' }, { id: 6, name: 'TC-y' },
+      { id: 7, name: 'tc-a' }, { id: 8, name: 'tc-b' },
+      { id: 9, name: 'Solo' }
+    ]));
+    const ids = tree.map((p) => p.id);
+    assert.equal(new Set(ids).size, ids.length, JSON.stringify(ids));
+    assert.ok(ids.every((id) => id && !/^\d+$/.test(id)), JSON.stringify(ids));
+    assert.equal(ids.filter((id) => id === 'workspace').length, 1);
+  });
+});
+
+describe('tcV6SidebarMarkup member links (#3022 deliverable b)', () => {
+  const G = loadV6Shell();
+  const tree = () => G.tcV6BuildHierarchyTree([{
+    id: 'tc-lane', displayName: 'TC-Lane',
+    fleets: [{ id: 'tc-lane', displayName: 'TC-Lane Fleet', members: [{ seatId: '11', role: 'TC-Lane-B' }, { role: 'Unseated' }] }]
+  }]);
+
+  it('links a member with a seat id to its B2 Conversation View', () => {
+    const html = G.tcV6SidebarMarkup(tree());
+    assert.match(html, /href="#\/resources\/11\/conversation"/);
+  });
+
+  it('leaves a member with no seat id as plain text', () => {
+    const html = G.tcV6SidebarMarkup(tree());
+    assert.match(html, /<li class="v6-shell-member">Unseated \(\)<\/li>/);
+  });
+
+  it('marks the member for the active resource', () => {
+    const html = G.tcV6SidebarMarkup(tree(), { activeResourceId: '11' });
+    assert.match(html, /v6-shell-member-link is-active"\s*aria-current="page"/);
+  });
+
+  it('escapes an attacker-controlled seat id inside the link', () => {
+    const html = G.tcV6SidebarMarkup(G.tcV6BuildHierarchyTree([{
+      id: 'p', displayName: 'P', fleets: [{ id: 'f', displayName: 'F', members: [{ seatId: '"><img src=x>', role: 'r' }] }]
+    }]));
+    assert.doesNotMatch(html, /<img/);
+  });
+});
+
+describe('tcV6FleetPlanMarkup / tcV6ConversationViewMarkup (#3022 deliverables d, e)', () => {
+  const G = loadV6Shell();
+
+  it('summarizes a plan\'s immediate and deferred seats', () => {
+    const html = G.tcV6FleetPlanMarkup({
+      templateId: 'small-4-seat',
+      immediateSeats: [{ role: 'PM', seatId: 'pm' }],
+      deferredSeats: [{ role: 'Builder', seatId: 'builder-a' }, { role: 'Builder', seatId: 'builder-b' }]
+    });
+    assert.match(html, /small-4-seat/);
+    assert.match(html, /1 seat\(s\) start immediately, 2 deferred/);
+    assert.match(html, /builder-b/);
+  });
+
+  it('renders nothing for a null plan and escapes seat roles', () => {
+    assert.equal(G.tcV6FleetPlanMarkup(null), '');
+    assert.doesNotMatch(G.tcV6FleetPlanMarkup({ templateId: 't', immediateSeats: [{ role: '<b>x</b>' }] }), /<b>/);
+  });
+
+  it('renders the event stream and an Open Hood link with the project name URL-encoded', () => {
+    const html = G.tcV6ConversationViewMarkup({
+      project: { id: 7, name: 'TiLT v2' }, sessionId: 99,
+      events: [{ seq: 1, role: 'user', content: 'hello <script>' }, { seq: 2, role: 'assistant', content: 'hi' }]
+    });
+    assert.match(html, /href="\/session\.html\?project=TiLT%20v2"/);
+    assert.match(html, /Open Hood \(Live Terminal\)/);
+    assert.match(html, /hello &lt;script&gt;/);
+    assert.match(html, /is-assistant/);
+  });
+
+  it('says there is no live session rather than rendering an empty stream', () => {
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 7, name: 'X' }, sessionId: null });
+    assert.match(html, /No live session/);
+    assert.match(html, /Open Hood/, 'the terminal link is still offered');
+  });
+
+  it('distinguishes "no events yet" from a failed load', () => {
+    assert.match(G.tcV6ConversationViewMarkup({ project: { name: 'X' }, sessionId: 1, events: [] }), /No conversation events recorded/);
+    assert.match(G.tcV6ConversationViewMarkup({ project: { name: 'X' }, sessionId: 1, error: 'boom' }), /boom/);
+  });
+
+  it('renders a not-found message when no project matches the resource', () => {
+    assert.match(G.tcV6ConversationViewMarkup({ project: null }), /No project matches this resource/);
+  });
+});
+
+describe('tcV6ViewToggleLabel / tcV6PickAttestation (#3022 deliverables a, e)', () => {
+  const G = loadV6Shell();
+
+  it('names where a click goes', () => {
+    assert.equal(G.tcV6ViewToggleLabel({ view: null }), 'Fleet Shell (v6)');
+    assert.equal(G.tcV6ViewToggleLabel(null), 'Fleet Shell (v6)');
+    assert.equal(G.tcV6ViewToggleLabel({ view: 'project', projectId: '1' }), 'Classic View');
+    assert.equal(G.tcV6ViewToggleLabel({ view: 'settings', settingsPath: '' }), 'Classic View');
+  });
+
+  it('prefers the latest recorded generation', () => {
+    const picked = plain(G.tcV6PickAttestation([{ generation: 1, observed_model: 'a' }, { generation: 2, observed_model: 'b' }], { model: 'z' }));
+    assert.equal(picked.observed_model, 'b');
+  });
+
+  it('falls back to the project\'s configured model and engine, marked estimated (a confidence D1 and B4 both accept)', () => {
+    const picked = plain(G.tcV6PickAttestation([], { model: 'claude-opus-5-5', engine: { id: 'claude', name: 'Claude Code' } }));
+    assert.deepEqual(picked, { requested_model: 'claude-opus-5-5', observed_model: 'Claude Code', confidence: 'estimated' });
+    const engineOnly = plain(G.tcV6PickAttestation(null, { model: null, engine: { id: 'codex' } }));
+    assert.equal(engineOnly.requested_model, 'codex');
+  });
+
+  it('returns null when there is nothing to show', () => {
+    assert.equal(G.tcV6PickAttestation(null, null), null);
+    assert.equal(G.tcV6PickAttestation([], { engine: null }), null);
+  });
+});
+
+describe('tcV6ResolveRouteProject (#3022 deliverable e, PRR-B R1 HOLD)', () => {
+  const G = loadV6Shell();
+  const ROWS = [
+    { id: 10, name: 'TC-Lane-A', session: { active: false } },
+    { id: 11, name: 'TC-Lane-B', session: { active: true } },
+    { id: 12, name: 'TC-Lane-PM' },
+    { id: 30, name: 'TangleClaw' }
+  ];
+  const resolve = (route, rows) => {
+    const p = G.tcV6ResolveRouteProject(route, rows || ROWS);
+    return p ? p.id : null;
+  };
+
+  it('resolves a conversation route and a real project id directly', () => {
+    assert.equal(resolve({ view: 'conversation', resourceId: '12' }), 12);
+    assert.equal(resolve({ view: 'project', projectId: '30' }), 30);
+  });
+
+  it('resolves a synthesized logical project to its member with a live session', () => {
+    assert.equal(resolve({ view: 'project', projectId: 'tc-lane' }), 11);
+  });
+
+  it('falls back to the first member when no member has a live session', () => {
+    const idle = ROWS.map((r) => Object.assign({}, r, { session: null }));
+    assert.equal(resolve({ view: 'project', projectId: 'tc-lane' }, idle), 10);
+  });
+
+  it('resolves a fleet route through its fleet, and refuses a fleet the project does not have', () => {
+    assert.equal(resolve({ view: 'fleet', projectId: 'tc-lane', fleetId: 'tc-lane' }), 11);
+    assert.equal(resolve({ view: 'fleet', projectId: 'tc-lane', fleetId: 'nope' }), null);
+    assert.equal(resolve({ view: 'fleet', projectId: 'workspace', fleetId: 'workspace' }), 30);
+  });
+
+  it('returns null for an unknown id, a settings route, no route, or no projects', () => {
+    assert.equal(resolve({ view: 'project', projectId: 'ghost' }), null);
+    assert.equal(resolve({ view: 'conversation', resourceId: '999' }), null);
+    assert.equal(resolve({ view: 'settings', settingsPath: '' }), null);
+    assert.equal(resolve(null), null);
+    assert.equal(G.tcV6ResolveRouteProject({ view: 'project', projectId: 'tc-lane' }, null), null);
+  });
+});
+
+describe('tcCreateV6Shell — Classic View link and detail slot (#3022 deliverable a)', () => {
+  function mount(opts) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow((opts && opts.initialHash) || '#/projects/1');
+    const shell = G.tcCreateV6Shell(doc, Object.assign({ root, window: win }, opts || {}));
+    return { shell, root, win };
+  }
+
+  it('renders a "← Classic View" link back to #/', () => {
+    const { root } = mount();
+    assert.match(root.innerHTML, /id="v6ShellClassicLink"[^>]*href="#\/"[^>]*>← Classic View</);
+  });
+
+  it('setDetail renders into #v6ShellDetail and clears with null', () => {
+    const { shell, root } = mount();
+    shell.setDetail({ kind: 'plan', plan: { templateId: 'tiny', immediateSeats: [], deferredSeats: [] } });
+    assert.match(root.innerHTML, /Plan preview — tiny/);
+    shell.setDetail({ kind: 'error', message: 'nope <i>' });
+    assert.match(root.innerHTML, /role="alert">nope &lt;i&gt;/);
+    shell.setDetail(null);
+    assert.doesNotMatch(root.innerHTML, /Plan preview|nope/);
+  });
+});
+
+describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
+  const PROJECTS = [
+    { id: 10, name: 'TC-Lane-A', model: null, engine: { id: 'claude', name: 'Claude Code' } },
+    { id: 11, name: 'TC-Lane-B', model: 'claude-opus-5-5', engine: { id: 'claude', name: 'Claude Code' }, session: { active: true } },
+    { id: 30, name: 'TangleClaw', model: null, engine: { id: 'codex', name: 'Codex' } }
+  ];
+
+  /**
+   * A fake `api()` answering from a url -> value map (a function value is
+   * called, and may return a promise); every call is recorded. An unmapped
+   * url answers null, the real api()'s failure value.
+   */
+  function makeApi(map) {
+    const calls = [];
+    const api = async (url) => {
+      calls.push(url);
+      const v = map[url];
+      return typeof v === 'function' ? v(url) : (v === undefined ? null : v);
+    };
+    return { api, calls };
+  }
+
+  function baseMap(extra) {
+    return Object.assign({
+      '/api/projects': { projects: PROJECTS },
+      '/api/v6/fleet-templates': { templates: [{ id: 'small-4-seat', name: 'Small', seats: [1, 2, 3, 4] }] },
+      '/api/sessions/TC-Lane-A/status': { active: false },
+      '/api/sessions/TC-Lane-B/status': { active: true, sessionId: 501 },
+      '/api/v6/projects/11/sessions/501/conversation/events': { events: [{ seq: 1, role: 'user', content: 'ship it' }] },
+      '/api/v6/projects/11/sessions/501/attestations': { attestations: [] }
+    }, extra || {});
+  }
+
+  /** Mount a real shell wired exactly as public/ui.js wires it. */
+  function mountLive(map, opts) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow((opts && opts.initialHash) || '');
+    const { api, calls } = makeApi(map);
+    const mutateCalls = [];
+    const apiMutate = async (url, method, body) => {
+      mutateCalls.push({ url, method, body });
+      return (opts && opts.mutate) ? opts.mutate(url) : null;
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate });
+    shell = G.tcCreateV6Shell(doc, {
+      root,
+      window: win,
+      onLaunchTemplate: (id) => pending.push(live.launchTemplate(id)),
+      onRender: (route) => pending.push(live.handleRoute(route))
+    });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    return { shell, root, win, doc, live, calls, mutateCalls, settle, pending };
+  }
+
+  it('loads nothing while the Classic View is showing', async () => {
+    const { calls, settle } = mountLive(baseMap());
+    await settle();
+    assert.deepEqual(calls, []);
+  });
+
+  it('entering the shell loads the tree, the telemetry bar and the templates', async () => {
+    const map = baseMap({
+      '/api/v6/projects/tc-lane/telemetry?scope=global': {
+        scope: 'global', metrics: { activeSessions: { value: 4, confidence: 'observed' } }
+      }
+    });
+    const { win, root, calls, settle } = mountLive(map);
+    win.location.hash = '#/projects/tc-lane';
+    await settle();
+    assert.ok(calls.includes('/api/projects'));
+    assert.ok(calls.includes('/api/v6/projects/tc-lane/telemetry?scope=global'), JSON.stringify(calls));
+    assert.ok(calls.includes('/api/v6/fleet-templates'));
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+    assert.match(root.innerHTML, /href="#\/resources\/11\/conversation"/);
+    assert.match(root.innerHTML, /v6-telemetry-chip is-observed[\s\S]*>4</);
+    assert.match(root.innerHTML, /v6ShellWizardLaunch-small-4-seat/);
+  });
+
+  it('re-renders caused by its own setters do not refetch (no onRender feedback loop)', async () => {
+    const { win, calls, settle } = mountLive(baseMap());
+    win.location.hash = '#/projects/tc-lane';
+    await settle();
+    const count = calls.filter((u) => u === '/api/projects').length;
+    assert.equal(count, 1, JSON.stringify(calls));
+  });
+
+  it('a conversation route with a live session renders its events, the Open Hood link and the attestation fallback', async () => {
+    const { win, root, calls, settle } = mountLive(baseMap());
+    win.location.hash = '#/resources/11/conversation';
+    await settle();
+    assert.ok(calls.includes('/api/v6/projects/11/sessions/501/conversation/events'));
+    assert.ok(calls.includes('/api/v6/projects/11/sessions/501/attestations'));
+    assert.match(root.innerHTML, /ship it/);
+    assert.match(root.innerHTML, /\/session\.html\?project=TC-Lane-B/);
+    assert.match(root.innerHTML, /v6-model-attestation is-estimated[\s\S]*Claude Code/);
+  });
+
+  it('prefers a recorded attestation over the fallback', async () => {
+    const map = baseMap({
+      '/api/v6/projects/11/sessions/501/attestations': {
+        attestations: [{ generation: 1, requested_model: 'r', observed_model: 'claude-opus-5-5', confidence: 'observed' }]
+      }
+    });
+    const { win, root, settle } = mountLive(map);
+    win.location.hash = '#/resources/11/conversation';
+    await settle();
+    assert.match(root.innerHTML, /v6-model-attestation is-observed[\s\S]*claude-opus-5-5/);
+  });
+
+  it('a project with no live session says so and fetches no session routes', async () => {
+    const { win, root, calls, settle } = mountLive(baseMap());
+    win.location.hash = '#/resources/10/conversation';
+    await settle();
+    assert.match(root.innerHTML, /No live session/);
+    assert.ok(!calls.some((u) => u.includes('/sessions/') && u.includes('/conversation/events')));
+  });
+
+  it('a failed events load is reported, not shown as an empty conversation', async () => {
+    const map = baseMap({ '/api/v6/projects/11/sessions/501/conversation/events': null });
+    const { win, root, settle } = mountLive(map);
+    win.location.hash = '#/resources/11/conversation';
+    await settle();
+    assert.match(root.innerHTML, /Could not load this session/);
+    assert.doesNotMatch(root.innerHTML, /No conversation events recorded/);
+  });
+
+  it('a #/projects/:id route naming a real project id shows that project\'s conversation', async () => {
+    const { win, root, settle } = mountLive(baseMap());
+    win.location.hash = '#/projects/11';
+    await settle();
+    assert.match(root.innerHTML, /ship it/);
+  });
+
+  it('the toggle\'s own landing route hydrates a real member\'s conversation and attestation (PRR-B R1 HOLD)', async () => {
+    const { live, win, root, calls, settle } = mountLive(baseMap());
+    const hash = await live.enterHash();
+    assert.equal(hash, '#/projects/tc-lane');
+    win.location.hash = hash;
+    await settle();
+    assert.ok(calls.includes('/api/v6/projects/11/sessions/501/conversation/events'), JSON.stringify(calls));
+    assert.ok(calls.includes('/api/v6/projects/11/sessions/501/attestations'));
+    assert.match(root.innerHTML, /ship it/);
+    assert.match(root.innerHTML, /\/session\.html\?project=TC-Lane-B/);
+    assert.match(root.innerHTML, /v6-model-attestation is-estimated[\s\S]*Claude Code/);
+  });
+
+  it('a fleet route hydrates its member\'s conversation and attestation (PRR-B R1 HOLD)', async () => {
+    const { win, root, calls, settle } = mountLive(baseMap());
+    win.location.hash = '#/projects/tc-lane/fleets/tc-lane';
+    await settle();
+    assert.ok(calls.includes('/api/v6/projects/11/sessions/501/conversation/events'), JSON.stringify(calls));
+    assert.ok(calls.includes('/api/v6/projects/11/sessions/501/attestations'));
+    assert.match(root.innerHTML, /ship it/);
+    assert.match(root.innerHTML, /v6-model-attestation is-estimated/);
+  });
+
+  it('the Workspace Projects group hydrates its member too', async () => {
+    const { win, root, calls, settle } = mountLive(baseMap({ '/api/sessions/TangleClaw/status': { active: false } }));
+    win.location.hash = '#/projects/workspace';
+    await settle();
+    assert.ok(calls.includes('/api/sessions/TangleClaw/status'), JSON.stringify(calls));
+    assert.match(root.innerHTML, /\/session\.html\?project=TangleClaw/);
+    assert.match(root.innerHTML, /No live session/);
+  });
+
+  it('an unknown resource renders the not-found message', async () => {
+    const { win, root, settle } = mountLive(baseMap());
+    win.location.hash = '#/resources/999/conversation';
+    await settle();
+    assert.match(root.innerHTML, /No project matches this resource/);
+  });
+
+  it('drops a slow response for a route the operator has already left', async () => {
+    let releaseSlow;
+    const slow = new Promise((resolve) => { releaseSlow = resolve; });
+    const map = baseMap({
+      '/api/sessions/TC-Lane-B/status': () => slow.then(() => ({ active: true, sessionId: 501 }))
+    });
+    const { win, root, settle, pending } = mountLive(map);
+    win.location.hash = '#/resources/11/conversation';
+    // Let the first load reach its pending status read, then set it aside
+    // (it cannot settle until released) and move on to a second route.
+    await new Promise((r) => setImmediate(r));
+    const slowLoads = pending.splice(0);
+    win.location.hash = '#/resources/10/conversation';
+    await settle();
+    assert.match(root.innerHTML, /No live session/);
+    releaseSlow();
+    await Promise.all(slowLoads);
+    await settle();
+    assert.match(root.innerHTML, /No live session/, 'the newer route\'s detail must survive');
+    assert.doesNotMatch(root.innerHTML, /ship it/);
+  });
+
+  it('launching a template shows its plan preview', async () => {
+    const plan = { templateId: 'small-4-seat', immediateSeats: [{ role: 'PM', seatId: 'pm' }], deferredSeats: [{ role: 'Builder', seatId: 'builder-a' }] };
+    const { win, doc, root, mutateCalls, settle } = mountLive(baseMap(), { mutate: () => plan });
+    win.location.hash = '#/projects/tc-lane';
+    await settle();
+    doc.getElementById('v6ShellWizardLaunch-small-4-seat').dispatch('click');
+    await settle();
+    assert.deepEqual(mutateCalls.map((c) => [c.url, c.method]), [['/api/v6/fleet-templates/small-4-seat/plan', 'POST']]);
+    assert.match(root.innerHTML, /1 seat\(s\) start immediately, 1 deferred/);
+  });
+
+  it('a failed plan request is reported', async () => {
+    const { win, doc, root, settle } = mountLive(baseMap());
+    win.location.hash = '#/projects/tc-lane';
+    await settle();
+    doc.getElementById('v6ShellWizardLaunch-small-4-seat').dispatch('click');
+    await settle();
+    assert.match(root.innerHTML, /Could not plan template/);
+  });
+
+  it('enterHash names the first logical project, loading the projects if needed', async () => {
+    const { live } = mountLive(baseMap());
+    assert.equal(await live.enterHash(), '#/projects/tc-lane');
+  });
+
+  it('enterHash falls back to settings when there are no projects', async () => {
+    const { live } = mountLive(baseMap({ '/api/projects': { projects: [] } }));
+    assert.equal(await live.enterHash(), '#/settings/');
+  });
+
+  it('a failed telemetry read leaves the bar unavailable rather than throwing', async () => {
+    const { win, root, settle } = mountLive(baseMap());
+    win.location.hash = '#/projects/tc-lane';
+    await settle();
+    assert.match(root.innerHTML, /v6-telemetry-header is-unavailable/);
+  });
+
+  it('called before the shell handle exists, it records nothing, so the kick-off call still loads', async () => {
+    const G = loadV6Shell();
+    const { api, calls } = makeApi(baseMap());
+    let shell = null;
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null });
+    await live.handleRoute({ view: 'project', projectId: 'tc-lane' });
+    assert.deepEqual(calls, []);
+    shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setDetail() {} };
+    await live.handleRoute({ view: 'project', projectId: 'tc-lane' });
+    assert.ok(calls.includes('/api/projects'));
+  });
+});
+
+describe('page wiring (#3022 deliverable a) — index.html and ui.js', () => {
+  const HTML = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const UI = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+
+  it('puts #v6ViewToggleBtn in .toolbar-right beside #newBtn', () => {
+    const toolbar = HTML.slice(HTML.indexOf('<div class="toolbar-right">'), HTML.indexOf('id="newBtn"'));
+    assert.match(toolbar, /<button type="button" class="btn btn-secondary" id="v6ViewToggleBtn" aria-label="Switch between Fleet Shell \(v6\) and Classic View">Fleet Shell \(v6\)<\/button>/);
+  });
+
+  it('ui.js mounts the live controller and wires the toggle to it', () => {
+    const block = UI.slice(UI.indexOf("if (typeof window.tcCreateV6Shell === 'function')"));
+    assert.match(block, /window\.tcV6CreateLiveController\(\{ getShell: \(\) => v6Shell, api, apiMutate \}\)/);
+    assert.match(block, /onLaunchTemplate\(templateId\) \{ v6Live\.launchTemplate\(templateId\); \}/);
+    assert.match(block, /v6Live\.handleRoute\(route\)/);
+    assert.match(block, /getElementById\('v6ViewToggleBtn'\)/);
+    assert.match(block, /v6Shell\.navigate\('#\/'\)/);
+    assert.match(block, /v6Shell\.navigate\(await v6Live\.enterHash\(\)\)/);
+  });
+});

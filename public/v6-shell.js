@@ -151,6 +151,100 @@
     }));
   }
 
+  /** Logical project id of the catch-all group every ungrouped project lands in. */
+  const WORKSPACE_PROJECT_ID = 'workspace';
+
+  /**
+   * The dash-separated prefix shared by every name in `names` — whole
+   * segments only, so `TC-Lane-A` and `TC-Lane-PM` share `TC-Lane`, never a
+   * partial segment like `TC-Lane-P`.
+   * @param {string[]} names
+   * @returns {string}
+   */
+  function commonDashPrefix(names) {
+    const split = names.map((n) => n.split('-'));
+    const shared = [];
+    for (let i = 0; i < split[0].length - 1; i++) {
+      const segment = split[0][i];
+      if (!split.every((parts) => parts.length > i + 1 && parts[i] === segment)) break;
+      shared.push(segment);
+    }
+    return shared.join('-');
+  }
+
+  /**
+   * Synthesize a Logical Project -> Fleet -> Member tree from the live
+   * `GET /api/projects` rows (#3022 deliverable b), so every existing
+   * project is navigable from the sidebar before any native v6 fleet data
+   * exists. Projects whose names share a first dash segment with at least
+   * one other project (`TC-Lane-A`, `TC-Lane-PM`, … or `Medusa-PM`,
+   * `Medusa-INT`, …) become one Logical Project named for their longest
+   * common dash prefix, holding one Fleet of those projects as members;
+   * every other project becomes a member of a single "Workspace Projects"
+   * fleet. Each member's `seatId` is the project's own id, which the
+   * sidebar links to `#/resources/<id>/conversation`.
+   *
+   * Pure: groups and members are sorted by name, so the same rows always
+   * yield the same tree.
+   * @param {Array<{id: *, name?: string}>} projects - `GET /api/projects`'s `projects`.
+   * @returns {Array<{id: string, displayName: string, fleets: Array<{id: string,
+   *   displayName: string, members: Array<{seatId: string, role: string}>}>}>}
+   */
+  function synthesizeTreeFromProjects(projects) {
+    const rows = (Array.isArray(projects) ? projects : [])
+      .filter((p) => p && p.id != null && typeof p.name === 'string' && p.name)
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const byHead = new Map();
+    for (const p of rows) {
+      const head = p.name.includes('-') ? p.name.split('-')[0] : null;
+      if (!head) continue;
+      if (!byHead.has(head)) byHead.set(head, []);
+      byHead.get(head).push(p);
+    }
+    const grouped = new Set();
+    const usedIds = new Set([WORKSPACE_PROJECT_ID]);
+    const logical = [];
+    for (const members of byHead.values()) {
+      if (members.length < 2) continue;
+      members.forEach((p) => grouped.add(p));
+      const prefix = commonDashPrefix(members.map((p) => p.name));
+      const slug = prefix.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      // Never collide with the catch-all group or a real project's numeric
+      // id (the project route resolves numeric ids to legacy projects), and
+      // never route to an empty id (a prefix with no ASCII letters or
+      // digits slugs to '').
+      let id = !slug || /^\d+$/.test(slug) ? `group-${slug || logical.length + 1}`
+        : (slug === WORKSPACE_PROJECT_ID ? `${slug}-fleet` : slug);
+      // Two heads differing only in case or punctuation slug alike.
+      for (let n = 2; usedIds.has(id); n++) id = `${slug || 'group'}-${n}`;
+      usedIds.add(id);
+      logical.push({
+        id,
+        displayName: prefix,
+        fleets: [{
+          id,
+          displayName: `${prefix} Fleet`,
+          members: members.map((p) => ({ seatId: String(p.id), role: p.name }))
+        }]
+      });
+    }
+    logical.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    const standalone = rows.filter((p) => !grouped.has(p));
+    if (standalone.length) {
+      logical.push({
+        id: WORKSPACE_PROJECT_ID,
+        displayName: 'Workspace Projects',
+        fleets: [{
+          id: WORKSPACE_PROJECT_ID,
+          displayName: 'Workspace Projects',
+          members: standalone.map((p) => ({ seatId: String(p.id), role: p.name }))
+        }]
+      });
+    }
+    return logical;
+  }
+
   /**
    * The collapsible Logical Project -> Fleet -> Member sidebar (#2981
    * deliverable 2). Plain nested lists with real `<a href="#...">` links —
@@ -160,13 +254,14 @@
    * so keyboard reachability comes from the browser's own native tab
    * order rather than a half-built custom interaction model.
    * @param {ReturnType<typeof buildHierarchyTree>} tree
-   * @param {{activeProjectId?: string, activeFleetId?: string}} [opts]
+   * @param {{activeProjectId?: string, activeFleetId?: string, activeResourceId?: string}} [opts]
    * @returns {string} HTML.
    */
   function sidebarMarkup(tree, opts) {
     const options = opts || {};
     const activeProjectId = options.activeProjectId != null ? String(options.activeProjectId) : null;
     const activeFleetId = options.activeFleetId != null ? String(options.activeFleetId) : null;
+    const activeResourceId = options.activeResourceId != null ? String(options.activeResourceId) : null;
     const list = Array.isArray(tree) ? tree : [];
     const items = list.map((project) => {
       const projectActive = activeProjectId === String(project.id);
@@ -174,9 +269,17 @@
       const fleetItems = project.fleets.map((fleet) => {
         const fleetActive = projectActive && activeFleetId === String(fleet.id);
         const fleetHash = routeHash({ view: 'fleet', projectId: project.id, fleetId: fleet.id });
-        const memberItems = fleet.members.map((m) => (
-          `<li class="v6-shell-member">${escapeHtml(m.role)} (${escapeHtml(m.seatId)})</li>`
-        )).join('');
+        // #3022: a member with a seat id is a real resource — link it to its
+        // B2 Conversation View; one without stays plain text.
+        const memberItems = fleet.members.map((m) => {
+          const label = `${escapeHtml(m.role)} (${escapeHtml(m.seatId)})`;
+          if (!m.seatId) return `<li class="v6-shell-member">${label}</li>`;
+          const memberActive = activeResourceId === String(m.seatId);
+          const memberHash = routeHash({ view: 'conversation', resourceId: m.seatId });
+          return `<li class="v6-shell-member"><a class="v6-shell-member-link${memberActive ? ' is-active' : ''}"
+            aria-current="${memberActive ? 'page' : 'false'}"
+            href="${escapeHtml(memberHash)}" data-route="${escapeHtml(memberHash)}">${label}</a></li>`;
+        }).join('');
         return `<li>
           <a class="v6-shell-fleet${fleetActive ? ' is-active' : ''}"
              aria-current="${fleetActive ? 'page' : 'false'}"
@@ -288,21 +391,293 @@
   }
 
   /**
+   * Render a C2 fleet plan summary (#3022 deliverable d) — the shape
+   * `POST /api/v6/fleet-templates/:templateId/plan` returns: which seats a
+   * launch would start now and which it would leave deferred.
+   * @param {{templateId?: string, immediateSeats?: Array<{role?: string, seatId?: string}>,
+   *   deferredSeats?: Array<{role?: string, seatId?: string}>}|null} plan
+   * @returns {string} HTML.
+   */
+  function fleetPlanMarkup(plan) {
+    if (!plan) return '';
+    const seatList = (seats) => {
+      const list = Array.isArray(seats) ? seats : [];
+      if (!list.length) return '<p class="v6-plan-empty">None</p>';
+      return `<ul class="v6-plan-seats">${list.map((s) => (
+        `<li>${escapeHtml(s && s.role)} <span class="v6-plan-seat-id">(${escapeHtml(s && s.seatId)})</span></li>`
+      )).join('')}</ul>`;
+    };
+    const immediate = Array.isArray(plan.immediateSeats) ? plan.immediateSeats.length : 0;
+    const deferred = Array.isArray(plan.deferredSeats) ? plan.deferredSeats.length : 0;
+    return `<section class="v6-plan" aria-label="Fleet plan preview">
+      <h2 class="v6-detail-title">Plan preview — ${escapeHtml(plan.templateId)}</h2>
+      <p class="v6-plan-summary">${immediate} seat(s) start immediately, ${deferred} deferred until needed.</p>
+      <h3>Immediate</h3>${seatList(plan.immediateSeats)}
+      <h3>Deferred</h3>${seatList(plan.deferredSeats)}
+    </section>`;
+  }
+
+  /**
+   * Render the B2 Conversation View for one legacy project (#3022
+   * deliverable e): its replayed conversation events and an ADR 0026
+   * "Open Hood" link to the live terminal page. With no live session it
+   * says so instead of rendering an empty stream that reads as "no
+   * messages yet".
+   * @param {{project: {id?: *, name?: string}|null, sessionId?: number|null,
+   *   events?: Array<{seq?: number, role?: string, content?: string, redacted?: number}>|null,
+   *   error?: string|null}} view
+   * @returns {string} HTML.
+   */
+  function conversationViewMarkup(view) {
+    const v = view || {};
+    if (!v.project) {
+      return `<section class="v6-conversation" aria-label="Conversation">
+        <p class="v6-conversation-empty">${escapeHtml(v.error || 'No project matches this resource.')}</p>
+      </section>`;
+    }
+    const name = String(v.project.name || '');
+    const hoodHref = `/session.html?project=${encodeURIComponent(name)}`;
+    let stream;
+    if (v.error) {
+      stream = `<p class="v6-conversation-empty">${escapeHtml(v.error)}</p>`;
+    } else if (v.sessionId == null) {
+      stream = '<p class="v6-conversation-empty">No live session — nothing to replay.</p>';
+    } else {
+      const events = Array.isArray(v.events) ? v.events : [];
+      stream = events.length
+        ? `<ol class="v6-conversation-stream">${events.map((e) => (
+          `<li class="v6-conversation-event is-${escapeHtml(e && e.role)}">
+            <span class="v6-conversation-role">${escapeHtml(e && e.role)}</span>
+            <span class="v6-conversation-content">${escapeHtml(e && e.content)}</span>
+          </li>`
+        )).join('')}</ol>`
+        : '<p class="v6-conversation-empty">No conversation events recorded for this session yet.</p>';
+    }
+    return `<section class="v6-conversation" aria-label="Conversation — ${escapeHtml(name)}">
+      <h2 class="v6-detail-title">${escapeHtml(name)}</h2>
+      <a class="btn btn-secondary v6-open-hood" href="${escapeHtml(hoodHref)}">Open Hood (Live Terminal)</a>
+      ${stream}
+    </section>`;
+  }
+
+  /**
+   * Render whichever detail the current view carries.
+   * @param {{kind: 'plan', plan: object}|{kind: 'conversation', view: object}|{kind: 'loading'}|null} detail
+   * @returns {string} HTML.
+   */
+  function detailMarkup(detail) {
+    if (!detail) return '';
+    if (detail.kind === 'plan') return fleetPlanMarkup(detail.plan);
+    if (detail.kind === 'conversation') return conversationViewMarkup(detail.view);
+    if (detail.kind === 'loading') return '<p class="v6-detail-loading" role="status">Loading…</p>';
+    if (detail.kind === 'error') return `<p class="v6-detail-error" role="alert">${escapeHtml(detail.message)}</p>`;
+    return '';
+  }
+
+  /**
+   * The label the top-bar view switcher should carry for a route (#3022
+   * deliverable a): it names where a click goes, not where you are.
+   * @param {{view: string|null}|null} route
+   * @returns {string}
+   */
+  function viewToggleLabel(route) {
+    return route && route.view ? 'Classic View' : 'Fleet Shell (v6)';
+  }
+
+  /**
+   * The D1 attestation to show for a project: the latest recorded
+   * generation when one exists, otherwise a fallback read from the
+   * project's own configured model and engine, marked `estimated` because
+   * nothing observed it (#3022 deliverable e).
+   * @param {Array<object>|null} history - `GET .../attestations`' `attestations`, oldest generation first.
+   * @param {{model?: string|null, engine?: {id?: string, name?: string}|null}|null} project
+   * @returns {object|null}
+   */
+  function pickAttestation(history, project) {
+    const rows = Array.isArray(history) ? history : [];
+    if (rows.length) return rows[rows.length - 1];
+    if (!project) return null;
+    const engine = project.engine || null;
+    const requested = project.model || (engine && engine.id) || null;
+    const observed = (engine && engine.name) || null;
+    if (!requested && !observed) return null;
+    return { requested_model: requested, observed_model: observed, confidence: 'estimated' };
+  }
+
+  /**
+   * The legacy project a route's detail pane should show (#3022 deliverable
+   * e). A conversation route, or a project route naming a real project id,
+   * resolves to that project directly. A synthesized Logical Project route
+   * (`#/projects/tc-lane`, where the toolbar toggle lands) or a fleet route
+   * (`#/projects/tc-lane/fleets/tc-lane`) resolves through the synthesized
+   * tree to one of its members: the first whose session is live, else the
+   * first that is a real project — so every route the sidebar or the toggle
+   * produces has a project behind it.
+   * @param {{view: string|null, projectId?: string, fleetId?: string, resourceId?: string}|null} route
+   * @param {Array<{id: *, name?: string, session?: {active?: *}|null}>|null} projects - `GET /api/projects`' `projects`.
+   * @returns {object|null} The project row, or null when the route names none.
+   */
+  function resolveRouteProject(route, projects) {
+    const rows = Array.isArray(projects) ? projects : [];
+    const byId = (id) => (id == null ? null : rows.find((p) => p && String(p.id) === String(id)) || null);
+    if (!route) return null;
+    if (route.view === 'conversation') return byId(route.resourceId);
+    if (route.view !== 'project' && route.view !== 'fleet') return null;
+    if (route.view === 'project') {
+      const direct = byId(route.projectId);
+      if (direct) return direct;
+    }
+    const node = synthesizeTreeFromProjects(rows).find((lp) => String(lp.id) === String(route.projectId));
+    if (!node) return null;
+    const fleets = route.view === 'fleet'
+      ? node.fleets.filter((f) => String(f.id) === String(route.fleetId))
+      : node.fleets;
+    const members = fleets.flatMap((f) => f.members.map((m) => byId(m.seatId)).filter(Boolean));
+    return members.find((p) => p.session && p.session.active === true) || members[0] || null;
+  }
+
+  /**
+   * Wire a mounted shell to the live server (#3022 deliverables b–e): the
+   * synthesized hierarchy tree, the B4 telemetry bar, the C2 template list
+   * and plan preview, and per-route B2 conversation / D1 attestation
+   * detail. Kept here rather than in `public/ui.js` so it runs under test
+   * with injected fetchers; `ui.js` only supplies the page's own `api`.
+   *
+   * `handleRoute` is meant to be called from the shell's `onRender`, which
+   * fires on EVERY re-render — including the ones this controller's own
+   * `setTree`/`setTelemetry`/… calls cause — so it acts only when the route
+   * itself changed. Every load is stamped with a sequence number and its
+   * results are dropped if the route moved on while it was in flight, so a
+   * slow response for an old route never overwrites the current one.
+   *
+   * @param {{getShell: () => object|null, api: (url: string) => Promise<object|null>,
+   *   apiMutate: (url: string, method: string, body: object) => Promise<object|null>}} deps -
+   *   `api`/`apiMutate` resolve to `null` on any failure (the page's own
+   *   `tcCreateApi` contract).
+   * @returns {{handleRoute: (route: object) => Promise<void>, launchTemplate: (templateId: string) => Promise<void>,
+   *   enterHash: () => Promise<string>, getProjects: () => Array<object>|null}}
+   */
+  function createLiveController(deps) {
+    const getShell = deps.getShell;
+    const api = deps.api;
+    const apiMutate = deps.apiMutate;
+    let projects = null;
+    let templatesLoaded = false;
+    let lastRouteKey = null;
+    let seq = 0;
+
+    async function loadProjects() {
+      const data = await api('/api/projects');
+      if (data && Array.isArray(data.projects)) projects = data.projects;
+      return projects;
+    }
+
+    async function loadConversation(project, mine) {
+      const shell = getShell();
+      const status = await api(`/api/sessions/${encodeURIComponent(project.name)}/status`);
+      if (mine !== seq) return;
+      const sessionId = status && status.active && status.sessionId != null ? status.sessionId : null;
+      if (sessionId == null) {
+        shell.setAttestation(pickAttestation(null, project));
+        shell.setDetail({ kind: 'conversation', view: { project, sessionId: null } });
+        return;
+      }
+      const base = `/api/v6/projects/${encodeURIComponent(project.id)}/sessions/${encodeURIComponent(sessionId)}`;
+      const [events, attestations] = await Promise.all([
+        api(`${base}/conversation/events`),
+        api(`${base}/attestations`)
+      ]);
+      if (mine !== seq) return;
+      shell.setAttestation(pickAttestation(attestations && attestations.attestations, project));
+      shell.setDetail({
+        kind: 'conversation',
+        view: events
+          ? { project, sessionId, events: events.events }
+          : { project, sessionId, error: 'Could not load this session’s conversation events.' }
+      });
+    }
+
+    async function handleRoute(route) {
+      // The shell's first render runs inside tcCreateV6Shell itself, before
+      // the caller holds the returned handle; leave the route unrecorded so
+      // the next call (the caller's own kick-off) still loads it.
+      const shell = getShell();
+      if (!shell) return;
+      const key = route && route.view ? JSON.stringify(route) : null;
+      if (key === lastRouteKey) return;
+      const entering = lastRouteKey === null;
+      lastRouteKey = key;
+      const mine = ++seq;
+      if (!key) return;
+      if (entering || !projects) {
+        await loadProjects();
+        if (mine !== seq) return;
+        if (projects) shell.setTree(synthesizeTreeFromProjects(projects));
+      }
+      if (entering) {
+        const scopeId = encodeURIComponent(route.projectId || route.resourceId || 'global');
+        const bar = await api(`/api/v6/projects/${scopeId}/telemetry?scope=global`);
+        if (mine !== seq) return;
+        shell.setTelemetry(bar);
+      }
+      if (!templatesLoaded) {
+        const res = await api('/api/v6/fleet-templates');
+        if (mine !== seq) return;
+        if (res && Array.isArray(res.templates)) {
+          templatesLoaded = true;
+          shell.setTemplates(res.templates);
+        }
+      }
+      const project = resolveRouteProject(route, projects);
+      if (!project) {
+        shell.setAttestation(null);
+        shell.setDetail(route.view === 'conversation'
+          ? { kind: 'conversation', view: { project: null } }
+          : null);
+        return;
+      }
+      shell.setDetail({ kind: 'loading' });
+      await loadConversation(project, mine);
+    }
+
+    async function launchTemplate(templateId) {
+      const mine = ++seq;
+      const shell = getShell();
+      if (!shell) return;
+      shell.setDetail({ kind: 'loading' });
+      const plan = await apiMutate(`/api/v6/fleet-templates/${encodeURIComponent(templateId)}/plan`, 'POST', {});
+      if (mine !== seq) return;
+      shell.setDetail(plan
+        ? { kind: 'plan', plan }
+        : { kind: 'error', message: `Could not plan template “${templateId}”.` });
+    }
+
+    async function enterHash() {
+      if (!projects) await loadProjects();
+      const tree = synthesizeTreeFromProjects(projects);
+      return tree.length ? routeHash({ view: 'project', projectId: tree[0].id }) : '#/settings/';
+    }
+
+    return { handleRoute, launchTemplate, enterHash, getProjects() { return projects; } };
+  }
+
+  /**
    * Mount the shell into `root` and keep it in sync with the location
    * hash. Re-renders fully on every route change and on every
-   * `setTree`/`setTelemetry`/`setTemplates`/`setAttestation` call — this
+   * `setTree`/`setTelemetry`/`setTemplates`/`setAttestation`/`setDetail` call — this
    * shell has no partial-update path, which keeps it simple and correct
    * at the data volumes a sidebar/header/wizard list actually reaches.
    * @param {object} doc - `document`, or `test/_mini-dom.js`'s stand-in.
    * @param {{root: object|string, window?: object, tree?: Array<*>,
    *   telemetry?: object|null, templates?: Array<*>, attestation?: object|null,
-   *   showWatermark?: boolean, onRender?: (route: object) => void,
+   *   detail?: object|null, showWatermark?: boolean, onRender?: (route: object) => void,
    *   onLaunchTemplate?: (templateId: string) => void}} opts
    * @returns {{getRoute: () => object, navigate: (hash: string) => void,
    *   toggleDrawer: (force?: boolean) => void, isDrawerOpen: () => boolean,
    *   setTree: (tree: Array<*>) => void, setTelemetry: (bar: object|null) => void,
    *   setTemplates: (templates: Array<*>) => void,
-   *   setAttestation: (attestation: object|null) => void, destroy: () => void}}
+   *   setAttestation: (attestation: object|null) => void,
+   *   setDetail: (detail: object|null) => void, destroy: () => void}}
    */
   function tcCreateV6Shell(doc, opts) {
     const options = opts || {};
@@ -312,6 +687,7 @@
     let telemetry = options.telemetry || null;
     let templates = Array.isArray(options.templates) ? options.templates : [];
     let attestation = options.attestation || null;
+    let detail = options.detail || null;
     const showWatermark = options.showWatermark !== false;
     let currentRoute = { view: null };
     let drawerOpen = false;
@@ -361,11 +737,19 @@
         <button type="button" id="v6ShellDrawerToggle" class="v6-shell-drawer-toggle"
           aria-expanded="${drawerOpen ? 'true' : 'false'}" aria-controls="v6ShellSidebar">☰ Menu</button>
         <nav id="v6ShellSidebar" class="v6-shell-sidebar${drawerOpen ? ' is-open' : ''}" aria-label="Fleet navigation">
-          ${sidebarMarkup(tree, { activeProjectId: currentRoute.projectId, activeFleetId: currentRoute.fleetId })}
+          ${sidebarMarkup(tree, {
+            activeProjectId: currentRoute.projectId,
+            activeFleetId: currentRoute.fleetId,
+            activeResourceId: currentRoute.resourceId
+          })}
         </nav>
         ${telemetryHeaderMarkup(telemetry)}
         <main id="v6ShellMain" class="v6-shell-view" tabindex="-1" aria-label="${escapeHtml(title)}">
-          <h1 class="v6-shell-title">${escapeHtml(title)}</h1>
+          <div class="v6-shell-header">
+            <a id="v6ShellClassicLink" class="btn btn-secondary v6-shell-classic-link" href="#/">← Classic View</a>
+            <h1 class="v6-shell-title">${escapeHtml(title)}</h1>
+          </div>
+          <div id="v6ShellDetail">${detailMarkup(detail)}</div>
           <div id="v6ShellWizard">${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation">${modelAttestationMarkup(attestation)}</div>
         </main>
@@ -407,6 +791,7 @@
       setTelemetry(bar) { telemetry = bar || null; render(); },
       setTemplates(nextTemplates) { templates = Array.isArray(nextTemplates) ? nextTemplates : []; render(); },
       setAttestation(nextAttestation) { attestation = nextAttestation || null; render(); },
+      setDetail(nextDetail) { detail = nextDetail || null; render(); },
       destroy() {
         if (win && typeof win.removeEventListener === 'function') win.removeEventListener('hashchange', handleHashChange);
       }
@@ -422,5 +807,12 @@
   global.tcV6FleetWizardMarkup = fleetWizardMarkup;
   global.tcV6ModelAttestationMarkup = modelAttestationMarkup;
   global.tcV6WatermarkFooterMarkup = watermarkFooterMarkup;
+  global.tcV6SynthesizeTreeFromProjects = synthesizeTreeFromProjects;
+  global.tcV6FleetPlanMarkup = fleetPlanMarkup;
+  global.tcV6ConversationViewMarkup = conversationViewMarkup;
+  global.tcV6ViewToggleLabel = viewToggleLabel;
+  global.tcV6PickAttestation = pickAttestation;
+  global.tcV6ResolveRouteProject = resolveRouteProject;
+  global.tcV6CreateLiveController = createLiveController;
   global.tcCreateV6Shell = tcCreateV6Shell;
 })(typeof window !== 'undefined' ? window : globalThis);
