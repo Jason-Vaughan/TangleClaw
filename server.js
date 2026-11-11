@@ -8806,7 +8806,14 @@ const v6Db = () => store.getDb();
  * @returns {boolean} true when the session exists and belongs to the project
  */
 function _v6RequireProjectSession(res, params) {
-  const row = v6Db().prepare('SELECT id FROM sessions WHERE id = ? AND project_id = ?')
+  const db = v6Db();
+  // Ruling A589-PR3016-R4-HOLD-RECONCILED's "opportunistic request-hook
+  // flush": every B2/D1 session-scoped route passes through here first, so
+  // a request arriving between the background retry's own ticks (see
+  // _v6WalCheckpointTruncate) gets a free chance to clear a pending WAL
+  // truncation sooner, with no wait of its own.
+  _v6FlushPendingWalCheckpoint(db);
+  const row = db.prepare('SELECT id FROM sessions WHERE id = ? AND project_id = ?')
     .get(Number(params.sessionId), Number(params.id));
   if (!row) {
     errorResponse(res, 404, `Session ${params.sessionId} not found for project ${params.id}`, 'NOT_FOUND');
@@ -8858,11 +8865,41 @@ function _v6RedactConversationContent(raw) {
 }
 
 /**
+ * DBs with an in-flight background WAL-TRUNCATE retry (Ruling
+ * A589-PR3016-R4-HOLD-RECONCILED: "coalesced unrefd timer"). Coalesces
+ * concurrent DELETE calls onto a single retry chain per db rather than
+ * stacking one independent timer chain per call.
+ * @type {Set<import('node:sqlite').DatabaseSync>}
+ */
+const _v6WalPendingDbs = new Set();
+
+/**
+ * If `db` has a pending WAL truncation, try once now — cheap, synchronous,
+ * no wait of its own. Called from `_v6RequireProjectSession` (every B2/D1
+ * session-scoped route's entry point) as Ruling A589's "opportunistic
+ * request-hook flush": a request arriving between the background retry's
+ * own ticks gets a free chance to clear it sooner.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @returns {void}
+ */
+function _v6FlushPendingWalCheckpoint(db) {
+  if (!_v6WalPendingDbs.has(db)) return;
+  try {
+    const r = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+    if (r && Number(r.busy) === 0) _v6WalPendingDbs.delete(db);
+  } catch {
+    _v6WalPendingDbs.delete(db);
+  }
+}
+
+/**
  * Checkpoint-TRUNCATE the WAL and report whether a concurrent reader
  * blocked it (ADR 0026 §3.4.4 item 1: "report walCheckpointPending: true if
  * blocked by a concurrent reader and checkpoint on release"). A blocked
- * checkpoint schedules a bounded, unref'd background retry rather than
- * reporting `busy` once and giving up.
+ * checkpoint coalesces onto (at most one) unbounded, unref'd background
+ * retry per db — Ruling A589-PR3016-R4-HOLD-RECONCILED: a reader held
+ * longer than any fixed attempt budget must never cause the retry to give
+ * up, since nothing else will ever truncate the WAL once this returns.
  *
  * This repo's own database runs in SQLite's default rollback-journal mode —
  * confirmed by grepping the whole codebase for `journal_mode`: nothing
@@ -8878,16 +8915,25 @@ function _v6WalCheckpointTruncate(db) {
   const row = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
   const pending = Boolean(row && Number(row.busy) > 0);
   if (pending) {
-    let attempts = 0;
-    const retry = () => {
-      try {
-        const r = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
-        if (r && Number(r.busy) > 0 && ++attempts < 5) setTimeout(retry, 20).unref();
-      } catch {
-        // db closed/unavailable between retries -- nothing left to retry against
-      }
-    };
-    setTimeout(retry, 20).unref();
+    if (!_v6WalPendingDbs.has(db)) {
+      _v6WalPendingDbs.add(db);
+      const retry = () => {
+        try {
+          const r = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+          if (r && Number(r.busy) > 0) {
+            setTimeout(retry, 25).unref();
+          } else {
+            _v6WalPendingDbs.delete(db);
+          }
+        } catch {
+          // db closed/unavailable -- nothing left to retry against
+          _v6WalPendingDbs.delete(db);
+        }
+      };
+      setTimeout(retry, 25).unref();
+    }
+  } else {
+    _v6WalPendingDbs.delete(db);
   }
   return pending;
 }

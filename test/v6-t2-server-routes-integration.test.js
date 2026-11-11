@@ -250,7 +250,7 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       assert.deepEqual(json(del1).residual_locations, [], 'TRUNCATE checkpoint leaves nothing to report as residual');
     });
 
-    it('reports walCheckpointPending and a WAL residual while a concurrent reader blocks the TRUNCATE checkpoint, then clears once it releases (ADR 0026 §3.4.4 item 1)', async () => {
+    it('reports walCheckpointPending and a WAL residual while a concurrent reader blocks the TRUNCATE checkpoint, then the server\'s OWN background retry truncates it after the reader releases -- without this test ever calling wal_checkpoint itself (Ruling A589-PR3016-R4-HOLD-RECONCILED)', async () => {
       // This repo's real database runs in SQLite's default rollback-journal
       // mode (nothing anywhere sets journal_mode=WAL), where wal_checkpoint
       // is a harmless always-non-busy no-op -- so this test opts the shared
@@ -259,32 +259,44 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       // today's real deployment hits this path.
       const db = store.getDb();
       db.exec('PRAGMA journal_mode=WAL');
+      const dbPath = path.join(tempDir, 'tangleclaw.db');
+      const walPath = `${dbPath}-wal`;
+      const secretPayload = 'synthetic-original-private-payload-r5';
       try {
         const projectId = await seedProject('b2-wal-pending');
         const sessionId = await seedSession(projectId, 'claude');
         const append = await post(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`, {
-          launchId: 'l1', seq: 1, tier: 'A', adapter: 'claude', role: 'assistant', content: 'x'
+          launchId: 'l1', seq: 1, tier: 'A', adapter: 'claude', role: 'assistant', content: secretPayload
         });
         const { id } = json(append);
 
-        const dbPath = path.join(tempDir, 'tangleclaw.db');
         const reader = new DatabaseSync(dbPath);
         reader.exec('BEGIN');
         reader.prepare('SELECT COUNT(*) AS n FROM conversation_events').get();
-        try {
-          const del1 = await del(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events/${id}`);
-          assert.equal(del1.statusCode, 200, del1.body);
-          const body = json(del1);
-          assert.equal(body.walCheckpointPending, true);
-          assert.ok(body.residual_locations.includes('sqlite:tangleclaw.db-wal'), JSON.stringify(body.residual_locations));
-        } finally {
-          reader.exec('COMMIT');
-          reader.close();
-        }
 
-        await new Promise((r) => setTimeout(r, 150));
-        const confirmCkpt = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').all()[0];
-        assert.equal(confirmCkpt.busy, 0, 'WAL must not stay stuck once the reader releases');
+        const del1 = await del(`/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events/${id}`);
+        assert.equal(del1.statusCode, 200, del1.body);
+        const body = json(del1);
+        assert.equal(body.walCheckpointPending, true);
+        assert.ok(body.residual_locations.includes('sqlite:tangleclaw.db-wal'), JSON.stringify(body.residual_locations));
+
+        // Hold the reader open well past the retry's own tick interval, so
+        // the FIRST few retries are proven to still see busy=1 before we
+        // ever release it -- never calling wal_checkpoint ourselves here.
+        await new Promise((r) => setTimeout(r, 500));
+        reader.exec('COMMIT');
+        reader.close();
+
+        // Give the server's own unref'd background retry (server.js
+        // #_v6WalCheckpointTruncate) a chance to tick again and succeed --
+        // still no wal_checkpoint call from the test itself.
+        await new Promise((r) => setTimeout(r, 200));
+
+        assert.ok(!fs.existsSync(walPath) || fs.statSync(walPath).size === 0,
+          `tangleclaw.db-wal must be truncated once the reader releases (size=${fs.existsSync(walPath) ? fs.statSync(walPath).size : 'missing'})`);
+        if (fs.existsSync(walPath)) {
+          assert.doesNotMatch(fs.readFileSync(walPath, 'latin1'), new RegExp(secretPayload));
+        }
       } finally {
         db.exec('PRAGMA journal_mode=DELETE');
       }
