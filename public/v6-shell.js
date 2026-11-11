@@ -461,14 +461,134 @@
   }
 
   /**
+   * The Settings & Profiles view (v6.1.0, Car V61-W2-ROUTES): the three
+   * operating profiles with their shared safety floor (#2992), the
+   * settings catalog (#2995), the walkthroughs (#3000), and links into the
+   * contextual-help and per-project recovery-console sub-views.
+   * @param {{profiles?: object|null, catalog?: object|null, walkthroughs?: object|null,
+   *   projects?: Array<{id: *, name?: string}>}} view
+   * @returns {string} HTML.
+   */
+  function settingsViewMarkup(view) {
+    const v = view || {};
+    const prof = v.profiles;
+    const profilesHtml = prof && Array.isArray(prof.resolved)
+      ? `<ul class="v6-profile-list">${prof.resolved.filter((r) => r && r.ok).map((r) =>
+        `<li class="v6-profile"><strong>${escapeHtml(r.name)}</strong>
+          <span class="v6-profile-services">${escapeHtml(r.services.length)} services</span>
+          <span class="v6-profile-cadence">telemetry every ${escapeHtml(Math.round(r.telemetryCadenceMs / 1000))}s</span></li>`).join('')}</ul>
+        <p class="v6-safety-floor">Always on, in every profile: ${escapeHtml((prof.safetyFloor || []).join(', '))}</p>`
+      : '<p class="v6-detail-error" role="alert">Could not load the operating profiles.</p>';
+    const catalog = v.catalog && v.catalog.catalog && typeof v.catalog.catalog === 'object' ? v.catalog.catalog : null;
+    const catalogHtml = catalog
+      ? `<dl class="v6-settings-catalog">${Object.keys(catalog).map((key) =>
+        `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(catalog[key] && catalog[key].description)}</dd>`).join('')}</dl>`
+      : '<p class="v6-detail-error" role="alert">Could not load the settings catalog.</p>';
+    const projects = Array.isArray(v.projects) ? v.projects : [];
+    const recoveryHtml = projects.length
+      ? `<ul class="v6-recovery-links">${projects.map((pr) => {
+        const hash = routeHash({ view: 'settings', settingsPath: `recovery/${pr.id}` });
+        return `<li><a href="${escapeHtml(hash)}" data-route="${escapeHtml(hash)}">${escapeHtml(pr.name || pr.id)}</a></li>`;
+      }).join('')}</ul>`
+      : '<p class="v6-detail-empty">No projects yet.</p>';
+    const helpHash = routeHash({ view: 'settings', settingsPath: 'help' });
+    return `<section class="v6-settings" aria-label="Settings and profiles">
+      <h2 class="v6-detail-title">Operating profiles</h2>
+      ${profilesHtml}
+      <h2 class="v6-detail-title">Settings</h2>
+      ${catalogHtml}
+      <h2 class="v6-detail-title">Walkthroughs</h2>
+      ${walkthroughsMarkup(v.walkthroughs)}
+      <h2 class="v6-detail-title">Recovery consoles</h2>
+      ${recoveryHtml}
+      <p><a class="btn btn-secondary" href="${escapeHtml(helpHash)}" data-route="${escapeHtml(helpHash)}">Help for this screen</a></p>
+    </section>`;
+  }
+
+  /**
+   * The walkthrough list (#3000), each with its verification status.
+   * @param {{walkthroughs?: Array<{id: string, title?: string, summary?: string, stepCount?: number,
+   *   verification?: string}>}|null} data
+   * @returns {string} HTML.
+   */
+  function walkthroughsMarkup(data) {
+    const list = data && Array.isArray(data.walkthroughs) ? data.walkthroughs : null;
+    if (!list) return '<p class="v6-detail-error" role="alert">Could not load the walkthroughs.</p>';
+    if (!list.length) return '<p class="v6-detail-empty">No walkthroughs.</p>';
+    return `<ul class="v6-walkthroughs">${list.map((w) =>
+      `<li class="v6-walkthrough"><strong>${escapeHtml(w && w.title)}</strong>
+        <span class="v6-walkthrough-steps">${escapeHtml(w && w.stepCount)} steps</span>
+        <span class="v6-walkthrough-status is-${escapeHtml(w && w.verification)}">${escapeHtml(w && w.verification)}</span>
+        <p class="v6-walkthrough-summary">${escapeHtml(w && w.summary)}</p></li>`).join('')}</ul>`;
+  }
+
+  /**
+   * One project's Recovery Console (#2991): the four-state circuit, open
+   * incidents and recent repair attempts.
+   * @param {{projectId: *, console?: {circuit: object, openIncidents: Array<object>, recentAttempts: Array<object>}|null}} view
+   * @returns {string} HTML.
+   */
+  function recoveryConsoleMarkup(view) {
+    const v = view || {};
+    const c = v.console;
+    if (!c || !c.circuit) {
+      return `<p class="v6-detail-error" role="alert">Could not load the recovery console for project ${escapeHtml(v.projectId)}.</p>`;
+    }
+    const latch = c.circuit.latch
+      ? `<p class="v6-recovery-latch" role="alert">Latched (${escapeHtml(c.circuit.latch.reason)}). An operator must clear it.</p>` : '';
+    const incidents = (c.openIncidents || []).map((i) =>
+      `<li>${escapeHtml(i && i.fingerprint)} <span class="v6-recovery-when">${escapeHtml(i && i.createdAt)}</span></li>`).join('');
+    const attempts = (c.recentAttempts || []).map((a) =>
+      `<li class="is-${escapeHtml(a && a.outcome)}">${escapeHtml(a && a.action)}: ${escapeHtml(a && a.outcome)}
+        <span class="v6-recovery-when">${escapeHtml(a && a.attemptedAt)}</span></li>`).join('');
+    return `<section class="v6-recovery" aria-label="Recovery console, project ${escapeHtml(v.projectId)}">
+      <h2 class="v6-detail-title">Recovery console: project ${escapeHtml(v.projectId)}</h2>
+      <p class="v6-recovery-state is-${escapeHtml(c.circuit.state)}">Circuit: <strong>${escapeHtml(c.circuit.state)}</strong>
+        (${escapeHtml(c.circuit.failures)} consecutive failures)</p>
+      ${latch}
+      <h3>Open incidents</h3>
+      ${incidents ? `<ul class="v6-recovery-incidents">${incidents}</ul>` : '<p class="v6-detail-empty">None.</p>'}
+      <h3>Recent repair attempts</h3>
+      ${attempts ? `<ul class="v6-recovery-attempts">${attempts}</ul>` : '<p class="v6-detail-empty">None.</p>'}
+    </section>`;
+  }
+
+  /**
+   * Contextual help from the built-in knowledge base (#2997): cited
+   * sections from the shipped manual, never generated text.
+   * @param {{results?: Array<{citation?: string, heading?: string, text?: string, pageTitle?: string}>,
+   *   error?: string}|null} help
+   * @returns {string} HTML.
+   */
+  function knowledgeBaseMarkup(help) {
+    const h = help || {};
+    if (!Array.isArray(h.results)) {
+      return `<p class="v6-detail-error" role="alert">${escapeHtml(h.error || 'Could not load help for this screen.')}</p>`;
+    }
+    if (!h.results.length) return '<p class="v6-detail-empty">No help documents this screen yet.</p>';
+    return `<section class="v6-kb" aria-label="Help">
+      <h2 class="v6-detail-title">Help</h2>
+      ${h.results.map((r) => `<article class="v6-kb-result">
+        <h3>${escapeHtml(r && (r.heading || r.pageTitle))}</h3>
+        <p>${escapeHtml(r && r.text)}</p>
+        <p class="v6-kb-citation">${escapeHtml(r && r.citation)}</p>
+      </article>`).join('')}
+    </section>`;
+  }
+
+  /**
    * Render whichever detail the current view carries.
-   * @param {{kind: 'plan', plan: object}|{kind: 'conversation', view: object}|{kind: 'loading'}|null} detail
+   * @param {{kind: 'plan', plan: object}|{kind: 'conversation', view: object}|{kind: 'settings', view: object}|
+   *   {kind: 'recovery', view: object}|{kind: 'knowledge', help: object}|{kind: 'loading'}|null} detail
    * @returns {string} HTML.
    */
   function detailMarkup(detail) {
     if (!detail) return '';
     if (detail.kind === 'plan') return fleetPlanMarkup(detail.plan);
     if (detail.kind === 'conversation') return conversationViewMarkup(detail.view);
+    if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
+    if (detail.kind === 'recovery') return recoveryConsoleMarkup(detail.view);
+    if (detail.kind === 'knowledge') return knowledgeBaseMarkup(detail.help);
     if (detail.kind === 'loading') return '<p class="v6-detail-loading" role="status">Loading…</p>';
     if (detail.kind === 'error') return `<p class="v6-detail-error" role="alert">${escapeHtml(detail.message)}</p>`;
     return '';
@@ -597,6 +717,39 @@
       });
     }
 
+    /**
+     * Load and render a `#/settings/...` route (v6.1.0): `help` is
+     * contextual help for this shell, `recovery/<projectId>` one project's
+     * Recovery Console, and anything else the Settings & Profiles view.
+     * @param {{settingsPath: string}} route
+     * @param {number} mine - The route generation this load belongs to.
+     * @returns {Promise<void>}
+     */
+    async function loadSettings(route, mine) {
+      const shell = getShell();
+      const sub = route.settingsPath || '';
+      if (sub === 'help') {
+        const help = await api('/api/v6/kb/contextual-help?surface=' + encodeURIComponent('public/v6-shell.js'));
+        if (mine !== seq) return;
+        shell.setDetail({ kind: 'knowledge', help: help || { error: 'Could not load help for this screen.' } });
+        return;
+      }
+      const recovery = /^recovery\/(\d+)$/.exec(sub);
+      if (recovery) {
+        const consoleData = await api(`/api/v6/projects/${encodeURIComponent(recovery[1])}/recovery-console`);
+        if (mine !== seq) return;
+        shell.setDetail({ kind: 'recovery', view: { projectId: recovery[1], console: consoleData } });
+        return;
+      }
+      const [profiles, catalog, walkthroughs] = await Promise.all([
+        api('/api/v6/operating-profiles'),
+        api('/api/v6/settings/catalog'),
+        api('/api/v6/walkthroughs')
+      ]);
+      if (mine !== seq) return;
+      shell.setDetail({ kind: 'settings', view: { profiles, catalog, walkthroughs, projects: projects || [] } });
+    }
+
     async function handleRoute(route) {
       // The shell's first render runs inside tcCreateV6Shell itself, before
       // the caller holds the returned handle; leave the route unrecorded so
@@ -627,6 +780,12 @@
           templatesLoaded = true;
           shell.setTemplates(res.templates);
         }
+      }
+      if (route.view === 'settings') {
+        shell.setAttestation(null);
+        shell.setDetail({ kind: 'loading' });
+        await loadSettings(route, mine);
+        return;
       }
       const project = resolveRouteProject(route, projects);
       if (!project) {
@@ -810,6 +969,10 @@
   global.tcV6SynthesizeTreeFromProjects = synthesizeTreeFromProjects;
   global.tcV6FleetPlanMarkup = fleetPlanMarkup;
   global.tcV6ConversationViewMarkup = conversationViewMarkup;
+  global.tcV6SettingsViewMarkup = settingsViewMarkup;
+  global.tcV6WalkthroughsMarkup = walkthroughsMarkup;
+  global.tcV6RecoveryConsoleMarkup = recoveryConsoleMarkup;
+  global.tcV6KnowledgeBaseMarkup = knowledgeBaseMarkup;
   global.tcV6ViewToggleLabel = viewToggleLabel;
   global.tcV6PickAttestation = pickAttestation;
   global.tcV6ResolveRouteProject = resolveRouteProject;
