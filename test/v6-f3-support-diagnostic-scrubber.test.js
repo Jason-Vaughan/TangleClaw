@@ -289,3 +289,43 @@ describe('PRR R1 HOLD regressions (PR #3028): multi-word credential values', () 
     assert.ok(!p.body.includes('horse'));
   });
 });
+
+describe('PRR R2 HOLD regressions (PR #3028): an opening quote that never closes', () => {
+  const CASES = [
+    ["password='unterminated secret tail", "password='[REDACTED]"],
+    ['token="unterminated secret tail', 'token="[REDACTED]'],
+    ['client_secret: "unterminated secret tail', 'client_secret: "[REDACTED]'],
+    ['x \\"password\\": \\"unterminated secret tail', 'x \\"password\\": \\"[REDACTED]'],
+    ['client_secret="a \\"quoted\\" unterminated tail', 'client_secret="[REDACTED]']
+  ];
+
+  for (const [input, expected] of CASES) {
+    it(`redacts from the quote to end of line: ${input}`, () => {
+      assert.equal(scrub(input), expected);
+      // ('secret' is not checked: it is part of the key name client_secret.)
+      for (const word of ['unterminated', 'tail', 'quoted']) assert.ok(!scrub(input).includes(word), word);
+      assert.equal(scrub(scrub(input)), scrub(input), 'idempotent');
+      assert.ok(findSecrets(input).includes('key-value-unterminated'), 'the verifier flags the raw form');
+    });
+  }
+
+  it('buildBundle carries no tail, passes the verifier, and previews stably', () => {
+    const bundle = buildBundle({ logLines: CASES.map(([input]) => input), errorCodes: ['AUTH_FAILED'] }, { includeLogs: true, now: NOW });
+    assert.deepEqual(bundle.logLines, CASES.map(([, expected]) => expected));
+    const json = JSON.stringify(bundle);
+    for (const word of ['unterminated', 'tail']) assert.ok(!json.includes(word), word);
+    assert.deepEqual(findSecrets(json), []);
+    const p = previewIssue(bundle, 'org/repo');
+    assert.equal(scrub(p.body), p.body);
+  });
+
+  it('a truncation that cuts a quoted secret mid-value is still redacted', () => {
+    const line = `${'x'.repeat(MAX_LOG_LINE - 20)} password='correct horse battery staple'`;
+    const [kept] = buildBundle({ logLines: [line] }, { includeLogs: true, now: NOW }).logLines;
+    assert.ok(!/horse|battery|staple|correct/.test(kept), kept.slice(-30));
+  });
+
+  it('a properly closed quoted value keeps the text after its closing quote', () => {
+    assert.equal(scrub("token: 'ok' then"), "token: '[REDACTED]' then");
+  });
+});
