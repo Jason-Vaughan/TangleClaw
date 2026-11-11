@@ -501,6 +501,7 @@ files = [
   "test/v6-b2-conversation-layer.test.js",
   "test/v6-c1-logical-projects.test.js",
   "test/v6-d1-model-attestation.test.js",
+  "test/v6-e1-project-charter-lifecycle.test.js",
   "test/v6-e5-kaizen-ledger.test.js",
   "test/v6-stage1-authority-ledger-incidents.test.js",
   "test/v6-t1-server-routes-integration.test.js",
