@@ -137,11 +137,71 @@ describe('flattenDefaults', () => {
     assert.deepEqual(out.flags, []);
   });
 
+  it('flags an accessor without ever invoking it (PRR-A B2)', () => {
+    const obj = { plain: 1 };
+    Object.defineProperty(obj, 'computed', { enumerable: true, get() { throw new Error('getter must not run'); } });
+    const out = f2.flattenDefaults(obj);
+    assert.deepEqual(out.rows, [{ key: 'plain', value: '1' }]);
+    assert.deepEqual(out.flags.map((x) => x.detail), ['computed is an accessor property']);
+  });
+
+  it('flags an array leaf or symbol key JSON would silently misstate (PRR-A B2)', () => {
+    const out = f2.flattenDefaults({ list: ['a', () => 1], n: [NaN], [Symbol('s')]: 1 });
+    assert.deepEqual(out.flags.map((x) => x.detail).sort(), [
+      '(root) has a symbol key Symbol(s)', 'list is an array holding a value JSON cannot state', 'n is an array holding a value JSON cannot state'
+    ]);
+  });
+
   it('flags a value whose documented default cannot be stated', () => {
     const out = f2.flattenDefaults({ fn: () => 1, u: undefined, when: new Date(0) });
     assert.deepEqual(out.flags.map((x) => `${x.code}:${x.detail}`).sort(), [
       'DYNAMIC_DEFAULT:fn is a function', 'DYNAMIC_DEFAULT:u is a undefined', 'DYNAMIC_DEFAULT:when is not a plain object'
     ]);
+  });
+});
+
+describe('scanDefaultsLiteral (PRR-A B2)', () => {
+  it('accepts a literal built only from literal keys and values', () => {
+    const src = "const D = {\n  a: 'x', 'b': -1, c: true, d: null, e: `t`,\n  f: { g: [1, { h: false }] },\n  i: [],\n};\nconst other = process.env.X;";
+    assert.deepEqual(f2.scanDefaultsLiteral(src, 'D', 'f.js').flags, []);
+  });
+
+  it('flags every dynamic shape with its line', () => {
+    const src = [
+      'const D = {',
+      '  ...base,',
+      '  [key]: 1,',
+      '  short,',
+      '  get g() { return 1; },',
+      '  m() { return 2; },',
+      '  env: process.env.HOME,',
+      '  call: compute(),',
+      '  fn: () => 1,',
+      '  tpl: `${x}`,',
+      '  nested: { deep: other },',
+      '  list: [1, ...more]',
+      '};'
+    ].join('\n');
+    const flags = f2.scanDefaultsLiteral(src, 'D', 'f.js').flags;
+    assert.ok(flags.every((x) => x.code === 'DYNAMIC_DEFAULT' && x.severity === 'blocking' && x.source === 'f.js'));
+    assert.deepEqual(flags.map((x) => `${x.line}:${x.detail}`), [
+      '2:D spreads another object',
+      '3:D has a computed key',
+      '4:short is a shorthand property',
+      '5:g is a getter',
+      '6:m is a method',
+      '7:env is not a literal value',
+      '8:call is not a literal value',
+      '9:fn is not a literal value',
+      '10:tpl is not a literal value',
+      '11:nested.deep is not a literal value',
+      '12:list spreads into an array'
+    ]);
+  });
+
+  it('fails extraction when the declaration is absent or unclosed', () => {
+    assert.throws(() => f2.scanDefaultsLiteral('const E = {};', 'D', 'f.js'), (e) => e.code === 'EXTRACTOR_FAILED');
+    assert.throws(() => f2.scanDefaultsLiteral('const D = { a: 1', 'D', 'f.js'), (e) => e.code === 'EXTRACTOR_FAILED');
   });
 });
 
@@ -208,32 +268,57 @@ describe('renderBlock / compareBlock', () => {
 });
 
 describe('checkParity', () => {
+  const SHA = 'a'.repeat(64);
   const families = () => ({
-    ROUTES: { rows: [{ method: 'GET', path: '/a', file: 'server.js' }], flags: [], sources: ['server.js'] },
+    CLI: { rows: [{ id: 'whoami', usage: 'tc whoami', audience: 'pane', subverbs: '' }], flags: [], sources: ['lib/tc-verbs.js'], sourceDigests: { 'lib/tc-verbs.js': SHA } },
+    ROUTES: { rows: [{ method: 'GET', path: '/a', file: 'server.js' }], flags: [], sources: ['server.js'], sourceDigests: { 'server.js': SHA } },
+    'PROJECT-CONFIG': { rows: [{ key: 'engine', value: 'null' }], flags: [], sources: ['lib/project-config.js'] },
     ENGINES: { rows: [], flags: [{ code: 'ENGINE_PROFILE_FIELD_REVIEW', severity: 'info', source: 'x.json', line: null, detail: 'd' }], sources: [] }
   });
+  /** Docs holding exactly the block each family generates. */
+  const matchingDocs = (fam) => Object.fromEntries(f2.FAMILIES.map((name) => [
+    { CLI: 'docs/tc-cli-reference.md', ROUTES: 'docs/api-reference.md', 'PROJECT-CONFIG': 'docs/configuration-reference.md', ENGINES: 'docs/engine-guide.md' }[name],
+    `prose\n${f2.renderBlock(name, fam[name].rows, fam[name].sources)}\n`
+  ]));
 
-  it('exits 0 when every block matches, still reporting informational flags', () => {
-    const fam = families();
-    const docs = {
-      'docs/api-reference.md': `prose\n${f2.renderBlock('ROUTES', fam.ROUTES.rows, fam.ROUTES.sources)}\n`,
-      'docs/engine-guide.md': f2.renderBlock('ENGINES', [], [])
-    };
-    const out = f2.checkParity(families, docs);
+  it('exits 0 when every block matches, still reporting informational flags and the source digests', () => {
+    const out = f2.checkParity(families, matchingDocs(families()));
     assert.equal(out.exitCode, 0);
     assert.equal(out.ok, true);
     assert.equal(out.schema, f2.REVIEW_SCHEMA);
     assert.deepEqual(out.flags.map((x) => x.code), ['ENGINE_PROFILE_FIELD_REVIEW']);
+    assert.deepEqual(out.sourceDigests, { 'lib/tc-verbs.js': SHA, 'server.js': SHA });
   });
 
   it('exits 1 on drift, a missing marker, or a missing target, never writing a doc', () => {
-    const docs = { 'docs/api-reference.md': 'no markers here' };
+    const docs = matchingDocs(families());
+    docs['docs/api-reference.md'] = 'no markers here';
+    delete docs['docs/engine-guide.md'];
+    docs['docs/tc-cli-reference.md'] = docs['docs/tc-cli-reference.md'].replace('| whoami |', '| whoami-renamed |');
     const frozen = JSON.stringify(docs);
     const out = f2.checkParity(families, docs);
     assert.equal(out.exitCode, 1);
-    assert.deepEqual(out.flags.map((x) => x.code), ['ENGINE_PROFILE_FIELD_REVIEW', 'MISSING_MARKER', 'TARGET_MISSING']);
+    assert.deepEqual(out.flags.map((x) => x.code), ['BLOCK_DRIFT', 'ENGINE_PROFILE_FIELD_REVIEW', 'MISSING_MARKER', 'TARGET_MISSING']);
     assert.equal(JSON.stringify(docs), frozen);
     assert.ok(out.blocks.ROUTES, 'the proposed block is still returned for review');
+  });
+
+  it('fails closed with exit 2 and no blocks when a family is missing or malformed (PRR-A B1)', () => {
+    const cases = {
+      'only CLI': () => ({ CLI: families().CLI }),
+      'nothing at all': () => null,
+      'rows not an array': () => ({ ...families(), ROUTES: { ...families().ROUTES, rows: 'x' } }),
+      'flag without a code': () => ({ ...families(), ENGINES: { ...families().ENGINES, flags: [{ severity: 'info' }] } }),
+      'sources missing': () => ({ ...families(), CLI: { rows: [], flags: [] } }),
+      'malformed digest': () => ({ ...families(), ROUTES: { ...families().ROUTES, sourceDigests: { 'server.js': 'nope' } } })
+    };
+    for (const [label, extract] of Object.entries(cases)) {
+      const out = f2.checkParity(extract, matchingDocs(families()));
+      assert.equal(out.exitCode, 2, label);
+      assert.equal(out.ok, false, label);
+      assert.deepEqual(out.blocks, {}, label);
+      assert.equal(out.error.code, 'FAMILY_INVALID', label);
+    }
   });
 
   it('exits 2 with no blocks at all when any extractor fails', () => {
@@ -268,6 +353,21 @@ describe('extractRepository (this repo, read-only)', () => {
     const fam = f2.extractRepository(ROOT, { engineOmittedFields: omitted });
     assert.deepEqual(fam.ENGINES.flags, []);
     assert.ok(!JSON.stringify(fam.ENGINES.rows).includes('CLAUDE_CODE_ARTIFACT_AUTO_OPEN'), 'launch env never reaches a row');
+  });
+
+  it('digests every source file it read, and the real DEFAULT_PROJECT_CONFIG scans clean', () => {
+    const crypto = require('node:crypto');
+    const fs = require('node:fs');
+    const fam = f2.extractRepository(ROOT);
+    for (const name of f2.FAMILIES) {
+      assert.deepEqual(Object.keys(fam[name].sourceDigests).sort(), [...fam[name].sources].sort(), name);
+      for (const [rel, sha] of Object.entries(fam[name].sourceDigests)) {
+        assert.equal(sha, crypto.createHash('sha256').update(fs.readFileSync(path.join(ROOT, rel), 'utf8')).digest('hex'), rel);
+      }
+    }
+    const out = f2.checkParity(() => fam, {});
+    assert.equal(Object.keys(out.sourceDigests).length, f2.FAMILIES.reduce((n, k) => n + fam[k].sources.length, 0));
+    assert.ok(!out.flags.some((x) => x.code === 'DYNAMIC_DEFAULT'));
   });
 
   it('surfaces computed route registrations instead of claiming a complete table', () => {
