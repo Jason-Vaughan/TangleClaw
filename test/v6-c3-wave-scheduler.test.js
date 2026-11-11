@@ -13,7 +13,7 @@ const { DatabaseSync } = require('node:sqlite');
 const {
   CAR_STATUSES, GATE_TYPES, DEFAULT_MAX_STALL_MS, WaveSchedulerError,
   MemorySchedulerStore, SqliteSchedulerStore, WaveScheduler, ensureSchema,
-  normalizeScope, scopesConflict, scopeWithin, topologicalWaves
+  isValidId, lockKey, normalizeScope, scopesConflict, scopeWithin, topologicalWaves
 } = require('../lib/v6/c3-wave-scheduler');
 
 /**
@@ -165,9 +165,9 @@ describe('dispatchReady — dependencies and file locks', () => {
     scheduler.createRun({ id: 'r1', fleetId: 'f', cars: [{ id: 'a', fileScope: ['lib/**'] }, { id: 'b', fileScope: ['lib/v6/x.js'] }] });
     const first = scheduler.dispatchReady('r1');
     assert.deepEqual(first.dispatched, ['a']);
-    assert.deepEqual(first.conflicts.map((c) => [c.carId, c.heldBy]), [['b', 'r1:a']]);
+    assert.deepEqual(first.conflicts.map((c) => [c.carId, c.heldBy]), [['b', { runId: 'r1', carId: 'a' }]]);
     scheduler.createRun({ id: 'r2', fleetId: 'g', cars: [{ id: 'z', fileScope: ['lib/v6/y.js'] }] });
-    assert.deepEqual(scheduler.dispatchReady('r2').conflicts.map((c) => c.heldBy), ['r1:a']);
+    assert.deepEqual(scheduler.dispatchReady('r2').conflicts.map((c) => c.heldBy), [{ runId: 'r1', carId: 'a' }]);
     scheduler.completeCar('r1', 'a');
     assert.deepEqual(scheduler.dispatchReady('r1').dispatched, ['b']);
     assert.ok(events.some((e) => e.type === 'file-scope-conflict' && e.carId === 'z'));
@@ -178,13 +178,13 @@ describe('dispatchReady — dependencies and file locks', () => {
     scheduler.createRun({ id: 'r', fleetId: 'f', cars: [{ id: 'a', fileScope: ['lib/a.js'] }] });
     let lockedDuringDispatch = null;
     const result = scheduler.dispatchReady('r', () => {
-      lockedDuringDispatch = Boolean(store.read().locks['r:a']);
+      lockedDuringDispatch = Boolean(store.read().locks[lockKey('r', 'a')]);
       throw new Error('pane refused');
     });
     assert.equal(lockedDuringDispatch, true, 'the lock is committed before the side effect runs');
     assert.deepEqual(result.dispatched, []);
     assert.deepEqual(result.failed, [{ carId: 'a', error: 'pane refused' }]);
-    assert.equal(store.read().locks['r:a'], undefined);
+    assert.equal(store.read().locks[lockKey('r', 'a')], undefined);
     assert.equal(scheduler.getRun('r').cars.a.status, 'pending');
     assert.ok(events.some((e) => e.type === 'dispatch-failed'));
     assert.deepEqual(scheduler.dispatchReady('r').dispatched, ['a'], 'it can be retried');
@@ -252,7 +252,7 @@ describe('heartbeat, completion and cancellation', () => {
     scheduler.createRun({ id: 'r', fleetId: 'f', cars: [{ id: 'a', fileScope: ['x'] }, { id: 'b', dependsOn: ['a'], fileScope: ['y'] }] });
     scheduler.dispatchReady('r');
     assert.equal(scheduler.cancelCar('r', 'a', 'operator stop').cancelReason, 'operator stop');
-    assert.equal(store.read().locks['r:a'], undefined);
+    assert.equal(store.read().locks[lockKey('r', 'a')], undefined);
     assert.equal(scheduler.reconcileRun('r').status, 'blocked', 'b can never run');
     throwsCode(() => scheduler.cancelCar('r', 'a'), 'CAR_TERMINAL');
     throwsCode(() => scheduler.cancelCar('r', 'ghost'), 'CAR_NOT_FOUND');
@@ -288,7 +288,7 @@ describe('scanStalls', () => {
     const out = scheduler.scanStalls();
     assert.equal(out[0].decision.action, 'escalate');
     assert.equal(scheduler.getRun('r').cars.a.status, 'stalled');
-    assert.equal(store.read().locks['r:a'], undefined);
+    assert.equal(store.read().locks[lockKey('r', 'a')], undefined);
     assert.equal(scheduler.reconcileRun('r').status, 'blocked');
     assert.ok(events.some((e) => e.type === 'stall-remediated'));
   });
@@ -298,7 +298,7 @@ describe('scanStalls', () => {
     tick(5000);
     scheduler.scanStalls();
     assert.equal(scheduler.getRun('r').cars.a.status, 'pending');
-    assert.equal(store.read().locks['r:a'], undefined);
+    assert.equal(store.read().locks[lockKey('r', 'a')], undefined);
     assert.deepEqual(scheduler.dispatchReady('r').dispatched, ['a']);
     assert.equal(scheduler.getRun('r').cars.a.attempts, 2);
   });
@@ -310,7 +310,7 @@ describe('scanStalls', () => {
     const car = scheduler.getRun('r').cars.a;
     assert.equal(car.status, 'running');
     assert.deepEqual(car.fileScope, ['lib/v6/c3-wave-scheduler.js']);
-    assert.deepEqual(store.read().locks['r:a'].scopes, ['lib/v6/c3-wave-scheduler.js']);
+    assert.deepEqual(store.read().locks[lockKey('r', 'a')].scopes, ['lib/v6/c3-wave-scheduler.js']);
   });
 
   it('a narrow decision that would widen, empty, or corrupt the scope is escalated instead', () => {
@@ -353,9 +353,9 @@ describe('SqliteSchedulerStore', () => {
     scheduler.dispatchReady('r');
     const reopened = new SqliteSchedulerStore(db).read();
     assert.equal(reopened.runs.r.cars.a.status, 'running');
-    assert.deepEqual(reopened.locks['r:a'].scopes, ['lib/a.js']);
+    assert.deepEqual(reopened.locks[lockKey('r', 'a')].scopes, ['lib/a.js']);
     scheduler.completeCar('r', 'a');
-    assert.equal(new SqliteSchedulerStore(db).read().locks['r:a'], undefined);
+    assert.equal(new SqliteSchedulerStore(db).read().locks[lockKey('r', 'a')], undefined);
     scheduler.dispatchReady('r');
     scheduler.completeCar('r', 'b');
     scheduler.completeCar('r', 'c');
@@ -370,11 +370,11 @@ describe('SqliteSchedulerStore', () => {
     const { scheduler } = setup({ store });
     scheduler.createRun({ id: 'r', fleetId: 'f', cars: [{ id: 'a', fileScope: ['x'] }] });
     assert.throws(() => store.transaction((state) => {
-      state.locks['r:a'] = { runId: 'r', carId: 'a', scopes: ['x'] };
+      state.locks[lockKey('r', 'a')] = { runId: 'r', carId: 'a', scopes: ['x'] };
       state.runs.r.cars.a.status = 'running';
       throw new Error('boom');
     }), /boom/);
-    assert.equal(store.read().locks['r:a'], undefined);
+    assert.equal(store.read().locks[lockKey('r', 'a')], undefined);
     assert.equal(store.read().runs.r.cars.a.status, 'pending');
     assert.equal(db.isTransaction, false);
   });
@@ -386,6 +386,63 @@ describe('SqliteSchedulerStore', () => {
     a.createRun({ id: 'r1', fleetId: 'f', cars: [{ id: 'x', fileScope: ['lib/**'] }] });
     a.dispatchReady('r1');
     b.createRun({ fleetId: 'g', cars: [{ id: 'y', fileScope: ['lib/z.js'] }] });
-    assert.deepEqual(b.dispatchReady('r2').conflicts.map((c) => c.heldBy), ['r1:x']);
+    assert.deepEqual(b.dispatchReady('r2').conflicts.map((c) => c.heldBy), [{ runId: 'r1', carId: 'x' }]);
+  });
+});
+
+describe('PRR-B R1 HOLD regressions (PR #3025)', () => {
+  it('an internal "." segment canonicalizes away, so lib/./same.js conflicts with lib/same.js', () => {
+    assert.equal(normalizeScope('lib/./same.js'), 'lib/same.js');
+    assert.equal(normalizeScope('lib/./v6/./**'), 'lib/v6/**');
+    assert.equal(normalizeScope('./lib/././a.js/.'), 'lib/a.js');
+    assert.equal(scopesConflict('lib/./same.js', 'lib/same.js'), true);
+    throwsCode(() => normalizeScope('./.'), 'FILE_SCOPE_INVALID');
+    const { scheduler } = setup();
+    scheduler.createRun({ id: 'r', fleetId: 'f', cars: [{ id: 'a', fileScope: ['lib/same.js'] }, { id: 'b', fileScope: ['lib/./same.js'] }] });
+    const out = scheduler.dispatchReady('r');
+    assert.deepEqual(out.dispatched, ['a']);
+    assert.deepEqual(out.conflicts.map((c) => c.carId), ['b'], 'the alias spelling is held back');
+  });
+
+  it('run "a:b" + car "c" and run "a" + car "b:c" can never share a lock key', () => {
+    assert.notEqual(lockKey('a:b', 'c'), lockKey('a', 'b:c'));
+    const { scheduler } = setup();
+    throwsCode(() => scheduler.createRun({ id: 'a:b', fleetId: 'f', cars: [{ id: 'c', fileScope: ['x.js'] }] }), 'RUN_ID_INVALID');
+    throwsCode(() => scheduler.createRun({ id: 'a', fleetId: 'f', cars: [{ id: 'b:c', fileScope: ['y.js'] }] }), 'CAR_ID_INVALID');
+  });
+
+  it('two live locks in different runs stay two locks, and releasing one keeps the other', () => {
+    const { scheduler, store } = setup();
+    scheduler.createRun({ id: 'a.b', fleetId: 'f', cars: [{ id: 'c', fileScope: ['x.js'] }] });
+    scheduler.createRun({ id: 'a', fleetId: 'f', cars: [{ id: 'b.c', fileScope: ['y.js'] }] });
+    scheduler.dispatchReady('a.b');
+    scheduler.dispatchReady('a');
+    assert.equal(Object.keys(store.read().locks).length, 2);
+    scheduler.completeCar('a', 'b.c');
+    assert.deepEqual(Object.values(store.read().locks).map((l) => [l.runId, l.carId]), [['a.b', 'c']]);
+  });
+
+  it('a car or run named after a built-in property is refused instead of vanishing', () => {
+    const { scheduler } = setup();
+    for (const id of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+      throwsCode(() => scheduler.createRun({ id: 'r', fleetId: 'f', cars: [{ id, fileScope: ['x.js'] }] }), 'CAR_ID_INVALID');
+      throwsCode(() => scheduler.createRun({ id, fleetId: 'f', cars: [{ id: 'a', fileScope: ['x.js'] }] }), 'RUN_ID_INVALID');
+    }
+  });
+
+  it('lookups by a built-in property name find nothing rather than an inherited function', () => {
+    const { scheduler } = setup();
+    scheduler.createRun({ id: 'r', fleetId: 'f', cars: [{ id: 'a', fileScope: ['x.js'] }] });
+    throwsCode(() => scheduler.getRun('constructor'), 'RUN_NOT_FOUND');
+    throwsCode(() => scheduler.heartbeat('r', 'constructor'), 'CAR_NOT_FOUND');
+    throwsCode(() => scheduler.cancelCar('toString', 'a'), 'CAR_NOT_FOUND');
+    throwsCode(() => scheduler.dispatchReady('hasOwnProperty'), 'RUN_NOT_FOUND');
+  });
+
+  it('isValidId accepts ordinary ids and refuses delimiters, paths, empties and built-ins', () => {
+    for (const ok of ['a', 'run-fixed', 'Car_1.2', 'x'.repeat(128)]) assert.equal(isValidId(ok), true, ok);
+    for (const bad of ['', 'a:b', 'a/b', '-lead', ' a', 'x'.repeat(129), '__proto__', 'constructor', 42, null]) {
+      assert.equal(isValidId(bad), false, String(bad));
+    }
   });
 });
