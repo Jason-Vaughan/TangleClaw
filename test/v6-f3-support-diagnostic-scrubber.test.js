@@ -1,0 +1,391 @@
+'use strict';
+
+/*
+ * v6 (#2999, V6-29 / F3, Car V61-W1-D): the support diagnostic bundle
+ * scrubber, redaction verifier, issue preview and consent-gated submission
+ * (`lib/v6/f3-support-diagnostic-scrubber.js`). Small tier: pure logic; the
+ * submission adapter is an injected fake.
+ */
+
+const { describe, it } = require('node:test');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+
+const {
+  BUNDLE_SCHEMA, MAX_LOG_LINES, MAX_LOG_LINE, MAX_CODES, CONSENT_SCOPE, GENERIC_SUBMIT_ERROR, DETECTORS,
+  scrub, findSecrets, buildBundle, previewIssue, submitIssue
+} = require('../lib/v6/f3-support-diagnostic-scrubber');
+
+const NOW = 1_800_000_000_000;
+
+/** Secrets, each paired with the detector expected to catch it. */
+const SECRETS = [
+  ['private-key', '-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----'],
+  ['url-credentials', 'https://alice:hunter2@git.example.com/x'],
+  ['jwt', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U'],
+  ['github-token', 'ghp_abcdefghijklmnopqrstuvwxyz0123456789'],
+  ['github-token', 'github_pat_11ABCDEFG0abcdefghijklmn'],
+  ['api-key', 'sk-ant-api03-abcdefghijklmnop'],
+  ['api-key', 'AKIAIOSFODNN7EXAMPLE'],
+  ['api-key', 'xoxb-1234567890-abcdefghij'],
+  ['bearer', 'Authorization header Bearer abc.def.ghi'],
+  ['key-value', 'password=hunter2'],
+  ['key-value-quoted', '{"token": "s3cr3t-value"}'],
+  ['key-value-quoted', "client_secret: 'abc123'"],
+  ['query-secret', 'GET /cb?code=1&access_token=abc123&x=1'],
+  ['email', 'contact ntehosting@gmail.com today'],
+  ['tailnet-host', 'https://cursatory.tail123678.ts.net:8443/plans'],
+  ['ipv4', 'peer 192.168.1.20 refused'],
+  ['home-path', 'at /Users/jason/Documents/x.js'],
+  ['home-path', 'at C:\\Users\\jason\\x.js'],
+  ['phone', 'call (415) 555-0123']
+];
+
+describe('constants', () => {
+  it('pins the bundle bounds, schema and consent scope', () => {
+    assert.equal(BUNDLE_SCHEMA, 1);
+    assert.equal(MAX_LOG_LINES, 40);
+    assert.equal(MAX_LOG_LINE, 300);
+    assert.equal(MAX_CODES, 30);
+    assert.equal(CONSENT_SCOPE, 'github-issue');
+  });
+
+  it('every detector has a unique name and a global pattern', () => {
+    const names = DETECTORS.map((d) => d.name);
+    assert.equal(new Set(names).size, names.length);
+    assert.ok(DETECTORS.every((d) => d.pattern.global));
+  });
+});
+
+describe('scrub and findSecrets', () => {
+  for (const [detector, text] of SECRETS) {
+    it(`${detector} is found, then scrubbed away: ${text.slice(0, 32)}`, () => {
+      assert.ok(findSecrets(text).includes(detector), `findSecrets(${text}) = ${findSecrets(text)}`);
+      const out = scrub(text);
+      assert.deepEqual(findSecrets(out), [], `left in: ${out}`);
+    });
+  }
+
+  it('removes the secret material itself, not just a label', () => {
+    const out = scrub('{"token": "s3cr3t-value", "password":"hunter2"} ghp_abcdefghijklmnopqrstuvwxyz0123456789');
+    for (const leaked of ['s3cr3t-value', 'hunter2', 'ghp_abc']) assert.ok(!out.includes(leaked), `${leaked} in ${out}`);
+  });
+
+  it('is idempotent', () => {
+    for (const [, text] of SECRETS) assert.equal(scrub(scrub(text)), scrub(text), text);
+  });
+
+  it('leaves ordinary diagnostics alone', () => {
+    const plain = 'version 6.1.0 on darwin arm64; 3 sessions; 2026-11-11T20:59:01.387Z; epoch 1800000000000; PORT_CONFLICT';
+    assert.equal(scrub(plain), plain);
+    assert.deepEqual(findSecrets(plain), []);
+  });
+});
+
+describe('buildBundle', () => {
+  const INPUT = {
+    version: '6.1.0', platform: 'darwin', mode: 'loopback',
+    healthCodes: ['DB_OK', 'bad code', 42, 'PORTHUB_OK'],
+    errorCodes: ['PORT_CONFLICT'],
+    logLines: ['started on /Users/jason/tc', 'token=abc123 refused', 'peer 10.0.0.2'],
+    prompt: 'my private plans', env: { GH_TOKEN: 'ghp_abcdefghijklmnopqrstuvwxyz0123456789' }, config: { secret: 'x' }
+  };
+
+  it('keeps only allowlisted fields and drops malformed codes', () => {
+    const bundle = buildBundle(INPUT, { now: NOW });
+    assert.deepEqual(Object.keys(bundle).sort(), ['createdAt', 'errorCodes', 'healthCodes', 'mode', 'platform', 'schema', 'version']);
+    assert.deepEqual(bundle.healthCodes, ['DB_OK', 'PORTHUB_OK']);
+    assert.equal(bundle.createdAt, new Date(NOW).toISOString());
+    assert.ok(!JSON.stringify(bundle).includes('private plans'));
+    assert.ok(!JSON.stringify(bundle).includes('ghp_'));
+  });
+
+  it('includes scrubbed log lines only when asked', () => {
+    const bundle = buildBundle(INPUT, { includeLogs: true, now: NOW });
+    // An unquoted credential value is redacted to end of line (fail closed).
+    assert.deepEqual(bundle.logLines, ['started on /[HOME]/tc', 'token=[REDACTED]', 'peer [IP]']);
+  });
+
+  it('bounds lines, line length, code count and free-text fields', () => {
+    const bundle = buildBundle({
+      version: 'v'.repeat(1000), mode: 'm'.repeat(1000),
+      healthCodes: Array.from({ length: 100 }, (_, i) => `C${i}`),
+      logLines: Array.from({ length: 100 }, () => 'x'.repeat(5000))
+    }, { includeLogs: true, now: NOW });
+    assert.equal(bundle.version.length, 80);
+    assert.equal(bundle.mode.length, 40);
+    assert.equal(bundle.healthCodes.length, MAX_CODES);
+    assert.equal(bundle.logLines.length, MAX_LOG_LINES);
+    assert.ok(bundle.logLines.every((l) => l.length === MAX_LOG_LINE));
+  });
+
+  it('a secret straddling the length cut is still scrubbed, not left as a short prefix', () => {
+    const line = `${'x'.repeat(MAX_LOG_LINE - 6)} ghp_abcdefghijklmnopqrstuvwxyz0123456789`;
+    const [kept] = buildBundle({ logLines: [line] }, { includeLogs: true, now: NOW }).logLines;
+    assert.ok(!kept.includes('ghp_'), kept.slice(-20));
+  });
+
+  it('defaults missing fields to "unknown" and refuses a non-object', () => {
+    const bundle = buildBundle({}, { now: NOW });
+    assert.equal(bundle.version, 'unknown');
+    assert.deepEqual(bundle.errorCodes, []);
+    assert.throws(() => buildBundle(null), TypeError);
+  });
+
+  it('every built bundle passes the redaction verifier', () => {
+    const lines = SECRETS.map(([, text]) => text);
+    const bundle = buildBundle({ version: SECRETS[3][1], logLines: lines }, { includeLogs: true, now: NOW });
+    assert.deepEqual(findSecrets(JSON.stringify(bundle)), []);
+  });
+});
+
+describe('previewIssue', () => {
+  const bundle = buildBundle({ version: '6.1.0', errorCodes: ['PORT_CONFLICT'] }, { now: NOW });
+
+  it('renders a fenced JSON body, a coded title and a digest over all three', () => {
+    const p = previewIssue(bundle, 'Jason-Vaughan/TangleClaw');
+    assert.equal(p.title, '[Support] PORT_CONFLICT');
+    assert.match(p.body, /^```json\n\{/);
+    const expected = crypto.createHash('sha256').update(`${p.repo}\n${p.title}\n${p.body}`).digest('hex');
+    assert.equal(p.digest, expected);
+    assert.equal(previewIssue({ ...bundle, errorCodes: [] }, 'a/b').title, '[Support] DIAGNOSTIC_REPORT');
+  });
+
+  it('a log line with backticks cannot close the code fence', () => {
+    const tricky = buildBundle({ logLines: ['```\n# Injected heading\n```'] }, { includeLogs: true, now: NOW });
+    const p = previewIssue(tricky, 'a/b');
+    const fence = p.body.match(/^`+/)[0];
+    assert.ok(fence.length > 3, 'the fence grows past the longest inner backtick run');
+    assert.equal(p.body.split('\n').filter((line) => line.startsWith(fence)).length, 2, 'only the opening and closing fence lines');
+  });
+
+  it('refuses a malformed repo or bundle', () => {
+    for (const repo of ['', 'noslash', 'a/b/c', 'a b/c', null]) assert.throws(() => previewIssue(bundle, repo), TypeError, String(repo));
+    assert.throws(() => previewIssue(null, 'a/b'), TypeError);
+  });
+});
+
+describe('submitIssue', () => {
+  const bundle = buildBundle({ version: '6.1.0', errorCodes: ['PORT_CONFLICT'] }, { now: NOW });
+  const preview = previewIssue(bundle, 'org/repo');
+  const consent = { approved: true, scope: 'github-issue', repo: 'org/repo', bundleDigest: preview.digest, expiresAt: NOW + 1000, consentId: 'c1' };
+
+  /** A fake adapter recording every call. */
+  function adapter(result = { issueUrl: 'https://github.com/org/repo/issues/1' }) {
+    const calls = [];
+    const fn = async (issue) => { calls.push(issue); if (result instanceof Error) throw result; return result; };
+    return { fn, calls };
+  }
+
+  it('files exactly the previewed issue with the consent id as the idempotency key', async () => {
+    const a = adapter();
+    const r = await submitIssue({ preview, consent, adapter: a.fn, allowedRepos: ['org/repo'], usedConsentIds: new Set(), now: NOW });
+    assert.deepEqual(r, { ok: true, issueUrl: 'https://github.com/org/repo/issues/1' });
+    assert.deepEqual(a.calls, [{ repo: 'org/repo', title: preview.title, body: preview.body, idempotencyKey: 'c1' }]);
+  });
+
+  it('refuses every consent defect without calling the adapter', async () => {
+    const bad = [
+      null,
+      { ...consent, approved: 'yes' },
+      { ...consent, scope: 'github-pr' },
+      { ...consent, repo: 'org/other' },
+      { ...consent, bundleDigest: 'f'.repeat(64) },
+      { ...consent, expiresAt: NOW },
+      { ...consent, consentId: '' }
+    ];
+    for (const c of bad) {
+      const a = adapter();
+      const r = await submitIssue({ preview, consent: c, adapter: a.fn, allowedRepos: ['org/repo'], usedConsentIds: new Set(), now: NOW });
+      assert.equal(r.code, 'CONSENT_REQUIRED', JSON.stringify(c));
+      assert.equal(a.calls.length, 0);
+    }
+  });
+
+  it('refuses a repository outside the allowlist', async () => {
+    const a = adapter();
+    const r = await submitIssue({ preview, consent, adapter: a.fn, allowedRepos: ['org/elsewhere'], usedConsentIds: new Set(), now: NOW });
+    assert.equal(r.code, 'REPO_NOT_ALLOWED');
+    assert.equal(a.calls.length, 0);
+  });
+
+  it('refuses a preview edited after consent, including one re-hashed around an unscrubbed secret', async () => {
+    const edited = { ...preview, body: preview.body.replace('6.1.0', '6.1.1') };
+    const a = adapter();
+    assert.equal((await submitIssue({ preview: edited, consent, adapter: a.fn, allowedRepos: ['org/repo'], usedConsentIds: new Set(), now: NOW })).code, 'PREVIEW_CHANGED');
+    const body = `${preview.body}\npassword=hunter2`;
+    const digest = crypto.createHash('sha256').update(`org/repo\n${preview.title}\n${body}`).digest('hex');
+    const sneaky = { ...preview, body, digest };
+    const r = await submitIssue({ preview: sneaky, consent: { ...consent, bundleDigest: digest }, adapter: a.fn, allowedRepos: ['org/repo'], usedConsentIds: new Set(), now: NOW });
+    assert.equal(r.code, 'PREVIEW_CHANGED');
+    assert.equal(a.calls.length, 0);
+  });
+
+  it('a consent id files at most once', async () => {
+    const used = new Set();
+    const a = adapter();
+    assert.equal((await submitIssue({ preview, consent, adapter: a.fn, allowedRepos: ['org/repo'], usedConsentIds: used, now: NOW })).ok, true);
+    assert.equal((await submitIssue({ preview, consent, adapter: a.fn, allowedRepos: ['org/repo'], usedConsentIds: used, now: NOW })).code, 'CONSENT_ALREADY_USED');
+    assert.equal(a.calls.length, 1);
+  });
+
+  it('an adapter that throws or returns no URL is a failed submission, with its error scrubbed', async () => {
+    const thrown = await submitIssue({ preview, consent, adapter: adapter(new Error('401 for token=abc123')).fn, allowedRepos: ['org/repo'], usedConsentIds: new Set(), now: NOW });
+    assert.equal(thrown.code, 'SUBMIT_FAILED');
+    assert.ok(!thrown.error.includes('abc123'), thrown.error);
+    const empty = await submitIssue({ preview, consent, adapter: adapter({}).fn, allowedRepos: ['org/repo'], usedConsentIds: new Set(), now: NOW });
+    assert.equal(empty.code, 'SUBMIT_FAILED');
+  });
+
+  it('needs an adapter function, an allowlist array and a used-consent ledger', async () => {
+    await assert.rejects(() => submitIssue({ preview, consent, allowedRepos: [], usedConsentIds: new Set() }), TypeError);
+    await assert.rejects(() => submitIssue({ preview, consent, adapter: async () => ({}), usedConsentIds: new Set() }), TypeError);
+  });
+
+  it('omitting the used-consent ledger refuses rather than allowing a replay (PRR R1 HOLD)', async () => {
+    const a = adapter();
+    await assert.rejects(() => submitIssue({ preview, consent, adapter: a.fn, allowedRepos: ['org/repo'], now: NOW }), /usedConsentIds required/);
+    await assert.rejects(() => submitIssue({ preview, consent, adapter: a.fn, allowedRepos: ['org/repo'], usedConsentIds: {}, now: NOW }), /usedConsentIds required/);
+    assert.equal(a.calls.length, 0);
+  });
+});
+
+describe('PRR R1 HOLD regressions (PR #3028): multi-word credential values', () => {
+  const CASES = [
+    ['password=correct horse battery staple', 'password=[REDACTED]'],
+    ['token: correct horse battery staple', 'token: [REDACTED]'],
+    ['client_secret = correct horse battery staple', 'client_secret = [REDACTED]'],
+    ['{"password":"correct horse battery staple"}', '{"password":"[REDACTED]"}'],
+    ["token: 'correct horse battery staple' then", "token: '[REDACTED]' then"],
+    ['client_secret="a \\"quoted\\" pass" then', 'client_secret="[REDACTED]" then'],
+    ['TOKEN :  spaced  out  ', 'TOKEN :  [REDACTED]']
+  ];
+
+  for (const [input, expected] of CASES) {
+    it(`no tail survives: ${input}`, () => {
+      assert.equal(scrub(input), expected);
+      for (const word of ['horse', 'battery', 'staple', 'quoted', 'spaced']) assert.ok(!scrub(input).includes(word), word);
+      assert.equal(scrub(scrub(input)), scrub(input), 'idempotent');
+    });
+  }
+
+  it('buildBundle output carries no tail and passes the verifier', () => {
+    const bundle = buildBundle({ logLines: CASES.map(([input]) => input) }, { includeLogs: true, now: NOW });
+    assert.deepEqual(bundle.logLines, CASES.map(([, expected]) => expected));
+    const json = JSON.stringify(bundle);
+    for (const word of ['horse', 'battery', 'staple']) assert.ok(!json.includes(word), word);
+    assert.deepEqual(findSecrets(json), []);
+  });
+
+  it('the verifier reports a raw multi-word credential, quoted or not, rather than masking its tail', () => {
+    for (const [input] of CASES) assert.ok(findSecrets(input).some((d) => d.startsWith('key-value')), input);
+    assert.ok(findSecrets('password=[REDACTED] horse battery staple').includes('key-value'), 'a tail after a placeholder is still flagged');
+  });
+
+  it('the issue preview of such a bundle stays scrubbed, so submission does not see it as changed', () => {
+    const bundle = buildBundle({ logLines: CASES.map(([input]) => input), errorCodes: ['AUTH_FAILED'] }, { includeLogs: true, now: NOW });
+    const p = previewIssue(bundle, 'org/repo');
+    assert.equal(scrub(p.body), p.body);
+    assert.ok(!p.body.includes('horse'));
+  });
+});
+
+describe('PRR R2 HOLD regressions (PR #3028): an opening quote that never closes', () => {
+  const CASES = [
+    ["password='unterminated secret tail", "password='[REDACTED]"],
+    ['token="unterminated secret tail', 'token="[REDACTED]'],
+    ['client_secret: "unterminated secret tail', 'client_secret: "[REDACTED]'],
+    ['x \\"password\\": \\"unterminated secret tail', 'x \\"password\\": \\"[REDACTED]'],
+    ['client_secret="a \\"quoted\\" unterminated tail', 'client_secret="[REDACTED]']
+  ];
+
+  for (const [input, expected] of CASES) {
+    it(`redacts from the quote to end of line: ${input}`, () => {
+      assert.equal(scrub(input), expected);
+      // ('secret' is not checked: it is part of the key name client_secret.)
+      for (const word of ['unterminated', 'tail', 'quoted']) assert.ok(!scrub(input).includes(word), word);
+      assert.equal(scrub(scrub(input)), scrub(input), 'idempotent');
+      assert.ok(findSecrets(input).includes('key-value-unterminated'), 'the verifier flags the raw form');
+    });
+  }
+
+  it('buildBundle carries no tail, passes the verifier, and previews stably', () => {
+    const bundle = buildBundle({ logLines: CASES.map(([input]) => input), errorCodes: ['AUTH_FAILED'] }, { includeLogs: true, now: NOW });
+    assert.deepEqual(bundle.logLines, CASES.map(([, expected]) => expected));
+    const json = JSON.stringify(bundle);
+    for (const word of ['unterminated', 'tail']) assert.ok(!json.includes(word), word);
+    assert.deepEqual(findSecrets(json), []);
+    const p = previewIssue(bundle, 'org/repo');
+    assert.equal(scrub(p.body), p.body);
+  });
+
+  it('a truncation that cuts a quoted secret mid-value is still redacted', () => {
+    const line = `${'x'.repeat(MAX_LOG_LINE - 20)} password='correct horse battery staple'`;
+    const [kept] = buildBundle({ logLines: [line] }, { includeLogs: true, now: NOW }).logLines;
+    assert.ok(!/horse|battery|staple|correct/.test(kept), kept.slice(-30));
+  });
+
+  it('a properly closed quoted value keeps the text after its closing quote', () => {
+    assert.equal(scrub("token: 'ok' then"), "token: '[REDACTED]' then");
+  });
+});
+
+describe('PRR R3 HOLD regressions (PR #3028): length cap and doubly escaped quotes', () => {
+  it('a kept log line never exceeds MAX_LOG_LINE, whatever lands at the cut, and is always verifier-clean', () => {
+    const tails = [' password=x', ' token="abc def', " client_secret='abc", ' password=[REDACTED] tail', ' token: ghp_abcdefghijklmnopqrstuvwxyz0123456789', ' mail me@example.com'];
+    for (let pad = MAX_LOG_LINE - 40; pad <= MAX_LOG_LINE + 5; pad++) {
+      for (const tail of tails) {
+        const [kept] = buildBundle({ logLines: ['x'.repeat(pad) + tail] }, { includeLogs: true, now: NOW }).logLines;
+        assert.ok(kept.length <= MAX_LOG_LINE, `pad ${pad} ${tail}: ${kept.length}`);
+        assert.deepEqual(findSecrets(kept), [], `pad ${pad} ${tail}`);
+        assert.deepEqual(findSecrets(JSON.stringify(kept)), [], `pad ${pad} ${tail} (JSON)`);
+        assert.equal(scrub(kept), kept);
+      }
+    }
+  });
+
+  it('PRR-B\'s exact case: 289 characters then password=x stays within the cap', () => {
+    const [kept] = buildBundle({ logLines: [`${'x'.repeat(289)} password=x`] }, { includeLogs: true, now: NOW }).logLines;
+    assert.ok(kept.length <= MAX_LOG_LINE, String(kept.length));
+    assert.deepEqual(findSecrets(kept), []);
+  });
+
+  it('a doubly escaped inner quote cannot close a JSON-embedded credential early', () => {
+    const text = JSON.stringify({ error: 'client_secret="a \\"quoted\\" pass" then' });
+    const out = scrub(text);
+    for (const word of ['quoted', 'pass', 'then']) assert.ok(!out.includes(word), `${word} in ${out}`);
+    assert.deepEqual(findSecrets(out), []);
+    assert.equal(scrub(out), out);
+    assert.ok(findSecrets(text).includes('key-value-quoted'), 'the raw form is flagged');
+  });
+
+  it('JSON escaping applied twice over a credential still redacts all of it', () => {
+    const twice = JSON.stringify(JSON.stringify({ password: 'correct horse "battery" staple' }));
+    const out = scrub(twice);
+    for (const word of ['horse', 'battery', 'staple']) assert.ok(!out.includes(word), `${word} in ${out}`);
+    assert.equal(scrub(out), out);
+  });
+
+  it('an adapter error is reported scrubbed and verifier-clean, or not at all', async () => {
+    const bundle = buildBundle({ version: '6.1.0', errorCodes: ['PORT_CONFLICT'] }, { now: NOW });
+    const preview = previewIssue(bundle, 'org/repo');
+    const consent = { approved: true, scope: 'github-issue', repo: 'org/repo', bundleDigest: preview.digest, expiresAt: NOW + 1000, consentId: 'c9' };
+    const messages = [
+      JSON.stringify({ error: 'client_secret="a \\"quoted\\" pass" then' }),
+      'HTTP 401: password=correct horse battery staple',
+      "token='unterminated secret tail"
+    ];
+    for (const message of messages) {
+      const r = await submitIssue({ preview, consent, allowedRepos: ['org/repo'], usedConsentIds: new Set(), now: NOW,
+        adapter: async () => { throw new Error(message); } });
+      assert.equal(r.code, 'SUBMIT_FAILED');
+      assert.ok(r.error === GENERIC_SUBMIT_ERROR || findSecrets(r.error).length === 0, r.error);
+      for (const word of ['quoted', 'horse', 'battery', 'unterminated']) assert.ok(!r.error.includes(word), `${word} in ${r.error}`);
+    }
+  });
+
+  it('GENERIC_SUBMIT_ERROR names no detail', () => {
+    assert.equal(GENERIC_SUBMIT_ERROR, 'Support issue submission failed');
+    assert.deepEqual(findSecrets(GENERIC_SUBMIT_ERROR), []);
+  });
+});
