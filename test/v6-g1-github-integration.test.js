@@ -19,7 +19,8 @@ const { setLevel } = require('../lib/logger');
 setLevel('error');
 
 const store = require('../lib/store');
-const { createG1Writer, normalizeDraft, WRITE_RULES } = require('../lib/v6/g1-github-integration');
+const { createG1Writer, normalizeDraft, WRITE_RULES, recordWebhookReceipt } = require('../lib/v6/g1-github-integration');
+const { createGithubProvider } = require('../lib/providers/contract');
 
 let tmpDir = null;
 
@@ -49,18 +50,18 @@ function seedProject(db, name) {
  */
 function seedAdmissible(db, {
   projectName, repo = 'acme/widgets', leaseActor = 'builder-1', leaseActions = ['createIssue', 'createMilestone'],
-  withLease = true, approvalFor = null
+  withLease = true, approvalFor = null, probePermissions = ['issues:write']
 } = {}) {
   const projectId = seedProject(db, projectName);
   db.prepare('INSERT INTO v6_bindings (project_id, repo, installation_id, secret_ref) VALUES (?, ?, ?, ?)')
     .run(projectId, repo, 42, 'vault:gh-token');
 
   const probe = {
-    identity: 'app-123', kind: 'app', permissions: ['issues:write'], repositories: [repo],
+    identity: 'app-123', kind: 'app', permissions: probePermissions, repositories: [repo],
     expiresAt: Date.now() + 99999999
   };
   const connection = {
-    repo, epoch: 1, approvedTiers: [2, 3], tokenRef: 'vault:gh-token', identity: 'app-123',
+    repo, installationId: 42, epoch: 1, approvedTiers: [2, 3], tokenRef: 'vault:gh-token', identity: 'app-123',
     expectedFingerprint: JSON.stringify({
       identity: probe.identity, kind: probe.kind, permissions: [...probe.permissions].sort(), repositories: [...probe.repositories].sort()
     })
@@ -349,6 +350,78 @@ describe('admit/execute -- Tier 2 createIssue (#2990 Deliverable 1)', () => {
     }
   });
 
+  it('refuses when the connection\'s installationId disagrees with v6_bindings\' own installation_id (PRR-A R2 item 1)', async () => {
+    const db = freshStore();
+    try {
+      const { projectId, leaseId } = seedAdmissible(db, { projectName: 'g1-installation-mismatch' });
+      db.prepare("UPDATE v6_github_connections SET connection_json = json_set(connection_json, '$.installationId', 99999) WHERE project_id = ?")
+        .run(projectId);
+      const writer = createG1Writer({ db, secretStore: secretStoreOk, fetchImpl: fetchImplOk() });
+      const res = await writer.execute({ projectId, principal: { ...PRINCIPAL, projectId }, admission: ADMISSION, action: 'createIssue', idempotencyKey: 'k', leaseId, draft: { title: 't', body: 'b' } });
+      assert.equal(res.code, 'CONNECTION_INVALID');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('refuses when the connection\'s tokenRef disagrees with v6_bindings\' own secret_ref, and always fetches the credential via the binding\'s secret_ref (PRR-A R2 item 1)', async () => {
+    const db = freshStore();
+    try {
+      const { projectId, leaseId } = seedAdmissible(db, { projectName: 'g1-tokenref-mismatch' });
+      db.prepare("UPDATE v6_github_connections SET connection_json = json_set(connection_json, '$.tokenRef', 'vault:forged-token') WHERE project_id = ?")
+        .run(projectId);
+      const writer = createG1Writer({ db, secretStore: secretStoreOk, fetchImpl: fetchImplOk() });
+      const res = await writer.execute({ projectId, principal: { ...PRINCIPAL, projectId }, admission: ADMISSION, action: 'createIssue', idempotencyKey: 'k', leaseId, draft: { title: 't', body: 'b' } });
+      assert.equal(res.code, 'CONNECTION_INVALID');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('uses binding.secret_ref for the credential lookup even when connection.tokenRef legitimately agrees (defense in depth, not just a happy-path coincidence)', async () => {
+    const db = freshStore();
+    try {
+      const { projectId, leaseId } = seedAdmissible(db, { projectName: 'g1-secret-via-binding' });
+      let seenRef = null;
+      const secretStore = { get: (ref) => { seenRef = ref; return 'x'.repeat(20); } };
+      const writer = createG1Writer({ db, secretStore, fetchImpl: fetchImplOk() });
+      const res = await writer.execute({ projectId, principal: { ...PRINCIPAL, projectId }, admission: ADMISSION, action: 'createIssue', idempotencyKey: 'k', leaseId, draft: { title: 't', body: 'b' } });
+      assert.equal(res.ok, true);
+      assert.equal(seenRef, 'vault:gh-token', 'the binding row\'s own secret_ref, not a copy read from the connection JSON');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('refuses PERMISSION_MISSING when the probe lacks the action\'s required permission even though the tier is approved (PRR-A R2 item 2)', async () => {
+    const db = freshStore();
+    try {
+      // The probe's permission set lacks 'issues:write' from the start, so
+      // its own expectedFingerprint is computed to MATCH it -- no drift,
+      // only an insufficient grant for this specific action.
+      const { projectId, leaseId } = seedAdmissible(db, { projectName: 'g1-permission-missing', probePermissions: ['contents:write'] });
+      const writer = createG1Writer({ db, secretStore: secretStoreOk, fetchImpl: fetchImplOk() });
+      const res = await writer.execute({ projectId, principal: { ...PRINCIPAL, projectId }, admission: ADMISSION, action: 'createIssue', idempotencyKey: 'k', leaseId, draft: { title: 't', body: 'b' } });
+      assert.equal(res.code, 'PERMISSION_MISSING');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('threads a configured apiBase through to the actual outbound fetch URL (PRR-A R2 item 3)', async () => {
+    const db = freshStore();
+    try {
+      const { projectId, leaseId } = seedAdmissible(db, { projectName: 'g1-custom-api-base' });
+      let seenUrl = null;
+      const fetchImpl = async (url) => { seenUrl = url; return { status: 201, json: async () => ({ number: 1, html_url: 'https://github.com/acme/widgets/issues/1' }) }; };
+      const writer = createG1Writer({ db, secretStore: secretStoreOk, fetchImpl, apiBase: 'http://127.0.0.1:4000' });
+      await writer.execute({ projectId, principal: { ...PRINCIPAL, projectId }, admission: ADMISSION, action: 'createIssue', idempotencyKey: 'k', leaseId, draft: { title: 't', body: 'b' } });
+      assert.equal(seenUrl, 'http://127.0.0.1:4000/repos/acme/widgets/issues');
+    } finally {
+      cleanup();
+    }
+  });
+
   it('refuses when the secret store cannot supply a credential', async () => {
     const db = freshStore();
     try {
@@ -494,6 +567,78 @@ describe('outbox state on a GitHub-side failure (#2990 Deliverable 1 -- durable 
       assert.equal(res.code, 'OUTCOME_UNKNOWN');
       const row = db.prepare('SELECT state FROM v6_g1_outbox WHERE project_id = ? AND idempotency_key = ?').get(projectId, 'k');
       assert.equal(row.state, 'unknown');
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('recordWebhookReceipt (#2990 Deliverable 1 webhook-receipt half, PRR-A R2 item 4)', () => {
+  const provider = createGithubProvider();
+  const secret = 'very-long-webhook-secret-p1';
+  const rawBody = JSON.stringify({ action: 'opened' });
+  const signatureHeader = `sha256=${crypto.createHmac('sha256', secret).update(rawBody).digest('hex')}`;
+
+  it('verifies the signature and records a new delivery as not-a-duplicate', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'g1-webhook-new');
+      const res = recordWebhookReceipt(db, {
+        deliveryId: 'd-1', projectId, repo: 'acme/widgets', installationId: 42,
+        rawBody, signatureHeader, secret, outcome: 'applied', provider
+      });
+      assert.equal(res.ok, true);
+      assert.equal(res.duplicate, false);
+      const row = db.prepare('SELECT * FROM v6_webhook_receipts WHERE delivery_id = ?').get('d-1');
+      assert.equal(row.repo, 'acme/widgets');
+      assert.equal(row.outcome, 'applied');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('refuses a bad signature before ever touching v6_webhook_receipts', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'g1-webhook-bad-sig');
+      const res = recordWebhookReceipt(db, {
+        deliveryId: 'd-2', projectId, repo: 'acme/widgets', installationId: 42,
+        rawBody, signatureHeader: 'sha256=0000000000000000000000000000000000000000000000000000000000000000',
+        secret, outcome: 'applied', provider
+      });
+      assert.equal(res.ok, false);
+      assert.equal(res.code, 'BAD_SIGNATURE');
+      assert.equal(db.prepare('SELECT * FROM v6_webhook_receipts WHERE delivery_id = ?').get('d-2'), undefined);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('a replayed delivery with the SAME raw body is reported as a duplicate, not re-inserted', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'g1-webhook-replay');
+      const args = { deliveryId: 'd-3', projectId, repo: 'acme/widgets', installationId: 42, rawBody, signatureHeader, secret, outcome: 'applied', provider };
+      recordWebhookReceipt(db, args);
+      const replay = recordWebhookReceipt(db, args);
+      assert.equal(replay.ok, true);
+      assert.equal(replay.duplicate, true);
+      assert.equal(db.prepare('SELECT COUNT(*) AS n FROM v6_webhook_receipts WHERE delivery_id = ?').get('d-3').n, 1);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('the SAME delivery id with a DIFFERENT body digest is a conflict, never silently accepted as a duplicate', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'g1-webhook-conflict');
+      recordWebhookReceipt(db, { deliveryId: 'd-4', projectId, repo: 'acme/widgets', installationId: 42, rawBody, signatureHeader, secret, outcome: 'applied', provider });
+      const otherBody = JSON.stringify({ action: 'closed' });
+      const otherSig = `sha256=${crypto.createHmac('sha256', secret).update(otherBody).digest('hex')}`;
+      const res = recordWebhookReceipt(db, { deliveryId: 'd-4', projectId, repo: 'acme/widgets', installationId: 42, rawBody: otherBody, signatureHeader: otherSig, secret, outcome: 'applied', provider });
+      assert.equal(res.ok, false);
+      assert.equal(res.code, 'DELIVERY_DIGEST_CONFLICT');
     } finally {
       cleanup();
     }

@@ -106,6 +106,11 @@ describe('createGithubProvider().mapOutboundEvent', () => {
     assert.deepEqual(mapped.body, { title: 't' });
   });
 
+  it('threads a caller-supplied apiBase through the mapped URL (PR #3019 Round 2 item 3)', () => {
+    const mapped = gh.mapOutboundEvent({ action: 'createIssue', repo: 'acme/widgets', draft: { title: 't' }, apiBase: 'http://127.0.0.1:4000' });
+    assert.equal(mapped.url, 'http://127.0.0.1:4000/repos/acme/widgets/issues');
+  });
+
   it('maps createMilestone to repos/<repo>/milestones', () => {
     const mapped = gh.mapOutboundEvent({ action: 'createMilestone', repo: 'acme/widgets', draft: { title: 'M1' } });
     assert.equal(mapped.url, 'https://api.github.com/repos/acme/widgets/milestones');
