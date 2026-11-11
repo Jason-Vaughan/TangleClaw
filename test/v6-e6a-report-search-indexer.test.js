@@ -65,6 +65,51 @@ describe('buildSearchIndex (#2989 deliverable 1)', () => {
     assert.equal(idx.version, null);
     assert.ok(!Number.isNaN(Date.parse(idx.generatedAt)));
   });
+
+  it('builds an anchored pr chunk for a PR #NNNN mention, with the [PR #NNNN] citation label (Ruling A594-PR3018-R1-HOLD-RECONCILED)', () => {
+    const idx = e6a.buildSearchIndex(syntheticReport({
+      overview: 'This window true-merged PR #3016 cleanly into main.'
+    }));
+    const chunk = idx.prChunks.find((c) => c.issue === 3016);
+    assert.ok(chunk, 'a pr chunk for #3016 must exist');
+    assert.equal(chunk.sectionId, 'overview');
+    assert.equal(chunk.anchor, '#overview');
+    assert.equal(chunk.label, '[PR #3016]');
+    assert.match(chunk.passage, /PR #3016/);
+  });
+
+  it('builds an anchored pr chunk for a bare #NNNN mention too, not only the PR-prefixed form', () => {
+    const idx = e6a.buildSearchIndex(syntheticReport({ architecture: 'Closed #3017 as a duplicate.' }));
+    const chunk = idx.prChunks.find((c) => c.issue === 3017);
+    assert.ok(chunk, 'a bare #3017 must still produce a pr chunk');
+    assert.equal(chunk.label, '[PR #3017]');
+  });
+
+  it('builds an anchored kaizen chunk for a KR-ID mention, with the [KR-ID] citation label (Ruling A594-PR3018-R1-HOLD-RECONCILED)', () => {
+    const idx = e6a.buildSearchIndex(syntheticReport({ retro: 'Tracked under KR-01 this cycle.' }));
+    const chunk = idx.kaizenChunks.find((c) => c.krId === 'KR-01');
+    assert.ok(chunk, 'a kaizen chunk for KR-01 must exist');
+    assert.equal(chunk.sectionId, 'retro');
+    assert.equal(chunk.anchor, '#retro');
+    assert.equal(chunk.label, '[KR-01]');
+  });
+
+  it('also matches a KAIZEN-prefixed id, case-insensitively', () => {
+    const idx = e6a.buildSearchIndex(syntheticReport({ retro: 'See kaizen-07 for details.' }));
+    const chunk = idx.kaizenChunks.find((c) => c.krId === 'KAIZEN-07');
+    assert.ok(chunk, 'a lowercase kaizen-07 mention must still produce an uppercased KAIZEN-07 chunk');
+    assert.equal(chunk.label, '[KAIZEN-07]');
+  });
+
+  it('indexes multiple pr/kaizen occurrences across different sections independently, each with its own anchor', () => {
+    const idx = e6a.buildSearchIndex(syntheticReport({
+      overview: 'Shipped PR #100.',
+      'next-sprint': 'Planning PR #100 follow-up and PR #101.'
+    }));
+    const hundredChunks = idx.prChunks.filter((c) => c.issue === 100);
+    assert.equal(hundredChunks.length, 2, 'the SAME PR number mentioned in 2 different sections is 2 separate anchored chunks');
+    assert.deepEqual(hundredChunks.map((c) => c.sectionId).sort(), ['next-sprint', 'overview']);
+  });
 });
 
 describe('citeThisReport (#2989 deliverable 2 -- deterministic, never generates text)', () => {
@@ -111,5 +156,41 @@ describe('citeThisReport (#2989 deliverable 2 -- deterministic, never generates 
     }));
     const results = e6a.citeThisReport(idx, 'shared keyword', { limit: 2 });
     assert.equal(results.length, 2);
+  });
+
+  it('every hit carries a type of section, pr, or kaizen, and a section hit\'s badge is [Section N]', () => {
+    const idx = e6a.buildSearchIndex(syntheticReport({ overview: 'A narrative mention of velocity here.' }));
+    const results = e6a.citeThisReport(idx, 'velocity narrative');
+    assert.ok(results.length > 0);
+    for (const hit of results) assert.ok(['section', 'pr', 'kaizen'].includes(hit.type));
+    const sectionHit = results.find((r) => r.type === 'section' && r.sectionId === 'overview');
+    assert.ok(sectionHit);
+    assert.equal(sectionHit.badge, '[Section 1]', 'overview is CANONICAL_SECTIONS[0]');
+  });
+
+  it('a query for a PR number returns a typed pr hit with the [PR #NNNN] badge (Ruling A594-PR3018-R1-HOLD-RECONCILED)', () => {
+    const idx = e6a.buildSearchIndex(syntheticReport({ overview: 'This window shipped PR #3016 cleanly.' }));
+    const results = e6a.citeThisReport(idx, '3016');
+    const prHit = results.find((r) => r.type === 'pr');
+    assert.ok(prHit, 'a typed pr hit must be present for a PR-number query');
+    assert.equal(prHit.badge, '[PR #3016]');
+    assert.equal(prHit.anchor, '#overview');
+    assert.match(prHit.passage, /PR #3016/);
+  });
+
+  it('a query for a Kaizen ID returns a typed kaizen hit with the [KR-ID] badge (Ruling A594-PR3018-R1-HOLD-RECONCILED)', () => {
+    const idx = e6a.buildSearchIndex(syntheticReport({ retro: 'Tracked under KR-01 this cycle.' }));
+    const results = e6a.citeThisReport(idx, 'KR-01');
+    const kaizenHit = results.find((r) => r.type === 'kaizen');
+    assert.ok(kaizenHit, 'a typed kaizen hit must be present for a Kaizen-ID query');
+    assert.equal(kaizenHit.badge, '[KR-01]');
+    assert.equal(kaizenHit.anchor, '#retro');
+  });
+
+  it('a pr/kaizen hit never carries a heading field (only section hits do)', () => {
+    const idx = e6a.buildSearchIndex(syntheticReport({ overview: 'Shipped PR #3016 and tracked KR-01.' }));
+    const results = e6a.citeThisReport(idx, '3016');
+    const prHit = results.find((r) => r.type === 'pr');
+    assert.equal('heading' in prHit, false);
   });
 });

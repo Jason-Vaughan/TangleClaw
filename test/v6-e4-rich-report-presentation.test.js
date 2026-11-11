@@ -40,7 +40,7 @@ describe('POPOVER_CATALOG / SECTION_PILLAR (#2988 deliverable 1, 2)', () => {
   it('every popover carries all 4 parts, each a non-empty string', () => {
     for (const id of CANONICAL_SECTIONS) {
       const popover = e4.POPOVER_CATALOG[id];
-      for (const part of ['what_it_measures', 'formula', 'inputs_and_window', 'decision_guidance']) {
+      for (const part of ['what_it_means', 'how_measured', 'why_it_matters', 'what_it_does_not_prove']) {
         assert.equal(typeof popover[part], 'string', `${id}.${part} must be a string`);
         assert.ok(popover[part].length > 0, `${id}.${part} must be non-empty`);
       }
