@@ -134,16 +134,43 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
   }
 
   /** A `GET /repos/{repo}` stub reporting push+pull (never admin) access, the shape `_v6ProbeGithubConnection` reads. */
-  function githubRepoProbeStub(repo, perms = { pull: true, push: true, admin: false }, { scopes = 'repo', isPrivate = true, hasIssues = true } = {}) {
+  function githubRepoProbeStub(repo, perms = { pull: true, push: true, admin: false }, { scopes = 'repo', isPrivate = true, hasIssues = true, expirationHeader = null } = {}) {
     return async () => ({
       status: 200,
       // PRR-B 04561f29 (Round 4 item 1): the real route now requires
       // authoritative scope evidence before granting issues/PR/contents
       // write from `perms.push` alone — a classic `x-oauth-scopes: repo`
       // header is exactly that evidence, so the default stub carries one.
-      headers: { get: (name) => (name.toLowerCase() === 'x-oauth-scopes' ? scopes : null) },
+      headers: {
+        get: (name) => {
+          const n = name.toLowerCase();
+          if (n === 'x-oauth-scopes') return scopes;
+          if (n === 'github-authentication-token-expiration') return expirationHeader;
+          return null;
+        }
+      },
       json: async () => ({ full_name: repo, private: isPrivate, has_issues: hasIssues, permissions: perms })
     });
+  }
+
+  /**
+   * A paired `GET /repos/{repo}` + `GET /app/installations/{id}` stub for
+   * the no-`X-OAuth-Scopes` ("app"-kind token) probe path -- GitHub's
+   * documented installation-permission strings live only on the second
+   * endpoint (Architect Ruling A613 item 2 / PRR-B b9633ffb).
+   */
+  function githubAppProbeStub(repo, instPerms, { repoPerms = { pull: true, push: false, admin: false }, hasIssues = true, instStatus = 200 } = {}) {
+    return async (url) => {
+      if (typeof url === 'string' && url.includes('/app/installations/')) {
+        return { status: instStatus, headers: { get: () => null }, json: async () => ({ permissions: instPerms }) };
+      }
+      // No `x-oauth-scopes` header at all -- this is what identifies the
+      // app-kind path rather than a classic PAT.
+      return {
+        status: 200, headers: { get: () => null },
+        json: async () => ({ full_name: repo, private: true, has_issues: hasIssues, permissions: repoPerms })
+      };
+    };
   }
 
   const post = (url, body, opts) => send('POST', url, Object.assign({ body: body || {} }, opts));
@@ -417,6 +444,101 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
         assert.ok(!json(read).probe.permissions.includes('issues:write'), 'has_issues: false must veto issues:write even with full classic push+scope evidence');
         assert.ok(json(read).probe.permissions.includes('pull_requests:write'), 'pull_requests:write is unaffected by the issue-tracker toggle');
         assert.ok(json(read).probe.permissions.includes('contents:write'));
+      } finally {
+        delete process.env.TC_VAULT_GH_TOKEN;
+      }
+    });
+
+    it('derives write permissions from GitHub App installation permissions when no X-OAuth-Scopes header is present (Architect Ruling A613 item 2)', async () => {
+      const projectId = await seedProject('g1-connection-app-kind');
+      await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-app', installationId: 777, secretRef: 'vault:gh-token' });
+      process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
+      try {
+        const conn = await withStubbedFetch(
+          githubAppProbeStub('acme/widgets-app', { contents: 'write', issues: 'write', pull_requests: 'write', administration: 'admin' }),
+          () => post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2, 3] }));
+        assert.equal(conn.statusCode, 201, conn.body);
+        const read = await get(`/api/v6/projects/${projectId}/github/connection`);
+        assert.equal(json(read).probe.kind, 'app');
+        assert.ok(json(read).probe.permissions.includes('contents:write'));
+        assert.ok(json(read).probe.permissions.includes('issues:write'));
+        assert.ok(json(read).probe.permissions.includes('pull_requests:write'));
+        assert.ok(json(read).probe.permissions.includes('administration:write'));
+        assert.ok(json(read).probe.permissions.includes('contents:read'), 'perms.pull on the repo response still grants read');
+      } finally {
+        delete process.env.TC_VAULT_GH_TOKEN;
+      }
+    });
+
+    it('fails closed (PROBE_UNAVAILABLE) when no X-OAuth-Scopes header is present and GET /app/installations/:id does not return a usable permissions object (Architect Ruling A613 item 2)', async () => {
+      const projectId = await seedProject('g1-connection-app-kind-fails');
+      await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-app-fail', installationId: 778, secretRef: 'vault:gh-token' });
+      process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
+      try {
+        // perms.push: true but no x-oauth-scopes header, and the
+        // installation endpoint itself 404s -- there is no authoritative
+        // source left, so this must fail closed rather than fall back to
+        // perms.push alone.
+        const conn = await withStubbedFetch(
+          githubAppProbeStub('acme/widgets-app-fail', {}, { repoPerms: { pull: true, push: true, admin: false }, instStatus: 404 }),
+          () => post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }));
+        assert.equal(conn.statusCode, 503, conn.body);
+        assert.equal(json(conn).code, 'PROBE_UNAVAILABLE');
+      } finally {
+        delete process.env.TC_VAULT_GH_TOKEN;
+      }
+    });
+
+    it('caps probe.expiresAt at 5 minutes even when github-authentication-token-expiration reports a token valid for days (Architect Ruling A613 item 1)', async () => {
+      const projectId = await seedProject('g1-connection-ttl-cap');
+      await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-ttlcap', installationId: 42, secretRef: 'vault:gh-token' });
+      process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
+      try {
+        const sevenDaysOut = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toUTCString();
+        const conn = await withStubbedFetch(
+          githubRepoProbeStub('acme/widgets-ttlcap', { pull: true, push: true, admin: false }, { expirationHeader: sevenDaysOut }),
+          () => post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }));
+        assert.equal(conn.statusCode, 201, conn.body);
+        const read = await get(`/api/v6/projects/${projectId}/github/connection`);
+        assert.ok(json(read).probe.expiresAt <= Date.now() + 5 * 60 * 1000, 'a 5-minute probe TTL cap applies regardless of how long the token itself is valid for');
+        assert.ok(json(read).probe.expiresAt > Date.now(), 'the capped expiry is still in the future, not already expired');
+      } finally {
+        delete process.env.TC_VAULT_GH_TOKEN;
+      }
+    });
+
+    it('re-probes once the capped 5-minute probe window elapses even though the token itself still reports days of life left, and still detects permission drift (Architect Ruling A613 item 1)', async () => {
+      const projectId = await seedProject('g1-connection-ttl-cap-drift');
+      const operator = signInOperator('g1-ttl-cap-drift-operator');
+      process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
+      try {
+        const sevenDaysOut = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toUTCString();
+        await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-ttlcap-drift', installationId: 42, secretRef: 'vault:gh-token' }, operator);
+        const connRes = await withStubbedFetch(
+          githubRepoProbeStub('acme/widgets-ttlcap-drift', { pull: true, push: true, admin: false }, { expirationHeader: sevenDaysOut }),
+          () => post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }, operator));
+        assert.equal(connRes.statusCode, 201, connRes.body);
+        const lease = await post(`/api/v6/projects/${projectId}/g1-leases`,
+          { repo: 'acme/widgets-ttlcap-drift', connectionEpoch: 1, actions: ['createIssue'], ttlMs: 99999 }, operator);
+        const leaseId = json(lease).id;
+
+        // The token's own 7-day life is irrelevant here: the probe's
+        // capped 5-minute TTL is what elapsed, as if admission is
+        // attempted several minutes later.
+        const row = store.getDb().prepare('SELECT probe_json FROM v6_github_connections WHERE project_id = ?').get(projectId);
+        const staleProbe = { ...JSON.parse(row.probe_json), expiresAt: Date.now() - 1000 };
+        store.getDb().prepare('UPDATE v6_github_connections SET probe_json = ? WHERE project_id = ?')
+          .run(JSON.stringify(staleProbe), projectId);
+
+        // GitHub's own access was revoked since the original probe, but
+        // the token itself still reports the same far-future expiration
+        // header.
+        const admit = await withStubbedFetch(
+          githubRepoProbeStub('acme/widgets-ttlcap-drift', { pull: true, push: false, admin: false }, { expirationHeader: sevenDaysOut }),
+          () => post(`/api/v6/projects/${projectId}/github/outbox/admit`,
+            { action: 'createIssue', idempotencyKey: 'k-ttlcap-drift', leaseId, draft: { title: 'hello', body: 'world' } }, operator));
+        assert.equal(admit.statusCode, 403, admit.body);
+        assert.equal(json(admit).code, 'SCOPE_DRIFT', 'the capped TTL forced a re-probe despite the token-reported expiry still being days away, and the re-probe caught the real permission downgrade');
       } finally {
         delete process.env.TC_VAULT_GH_TOKEN;
       }
