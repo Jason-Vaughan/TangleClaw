@@ -10245,9 +10245,31 @@ route('GET', '/api/v6/projects/:id/charter/versions/:versionId/approvals/complet
   if (!operatorProjectCaller(req, res, 'check a charter version\'s approval completeness')) return;
   const projectId = Number(params.id);
   if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'charter.read')) return;
+  // Architect Ruling A609-PR3020-R1-HOLD item 2: versionId named nothing
+  // but itself before this fix — any version id from ANY project's
+  // charter answered 200, letting a caller probe another project's
+  // approval state. e1Charters exports no getCharterByProjectId/
+  // getCharterVersion (verified: the real exports are getCharter, which
+  // already returns every version for the project); checking versionId
+  // against THAT list gives the same ownership guarantee with no new
+  // library function.
+  const versionId = Number(params.versionId);
+  const found = e1Charters.getCharter(v6Db(), { projectId });
+  if (!found || !found.versions.some((v) => v.id === versionId)) {
+    return errorResponse(res, 404, 'No such charter version for this project', 'NOT_FOUND');
+  }
   const query = parseQuery(reqUrl(req).search);
   const requiredRoles = typeof query.requiredRoles === 'string' ? query.requiredRoles.split(',').filter(Boolean) : [];
-  jsonResponse(res, 200, e1Charters.checkApprovalComplete(v6Db(), { versionId: Number(params.versionId), requiredRoles }));
+  // checkApprovalComplete's real shape is {complete, approvedRoles,
+  // missingRoles} on success, or {ok: false, code: 'INVALID_REQUIRED_ROLES', ...}
+  // on a bad requiredRoles list — never the {allowed, code} shape
+  // _v6RespondAllowed expects (which would read `.allowed` as always
+  // undefined and 403 every successful check). Branching on `ok` directly
+  // routes the real failure shape through _v6Respond's own code->status
+  // map instead.
+  const result = e1Charters.checkApprovalComplete(v6Db(), { versionId, requiredRoles });
+  if (result.ok === false) return _v6Respond(res, result);
+  jsonResponse(res, 200, result);
 });
 
 route('POST', '/api/v6/projects/:id/charter/versions/:versionId/activate', (req, res, params, body) => {
@@ -10384,6 +10406,22 @@ route('POST', '/api/v6/projects/:id/github/connection', (req, res, params, body)
   const db = v6Db();
   const binding = db.prepare('SELECT * FROM v6_bindings WHERE project_id = ?').get(projectId);
   if (!binding) return _v6Respond(res, { ok: false, code: 'REPO_NOT_BOUND' });
+  // Architect Ruling A609-PR3020-R1-HOLD item 3: validateConfig below only
+  // checks repo/installationId/tokenRef (all populated from the binding
+  // row, never the caller) — epoch/identity/expectedFingerprint are the
+  // caller's OWN fields and validateConfig never looks at them. An
+  // omitted/malformed epoch would store a connection no real lease could
+  // ever match (JSON.stringify drops an undefined epoch entirely), so
+  // this checks them explicitly before anything is written.
+  if (!Number.isSafeInteger(b.epoch) || b.epoch < 1) {
+    return _v6Respond(res, { ok: false, code: 'CONNECTION_INVALID' });
+  }
+  if (typeof b.identity !== 'string' || b.identity.trim() === '') {
+    return _v6Respond(res, { ok: false, code: 'CONNECTION_INVALID' });
+  }
+  if (typeof b.expectedFingerprint !== 'string' || b.expectedFingerprint.trim() === '') {
+    return _v6Respond(res, { ok: false, code: 'CONNECTION_INVALID' });
+  }
   // installationId/tokenRef are always derived from the binding row, never
   // the request body — the same cross-check g1-github-integration.js#admit
   // enforces at write time, applied here too so a stored connection can
@@ -10452,12 +10490,19 @@ route('POST', '/api/v6/projects/:id/github/outbox/admit', (req, res, params, bod
   const writer = g1Github.createG1Writer({ db: v6Db(), secretStore: _v6GithubSecretStore, provider: _v6GithubProvider });
   // admit() is pure (no network, no outbox row written) — a caller can
   // preview whether a write would be admitted before ever executing it.
-  _v6Respond(res, writer.admit({
+  //
+  // Architect Ruling A609-PR3020-R1-HOLD item 1: a successful admit()
+  // carries the resolved plaintext credential (`token`) so execute() can
+  // use it for the real outbound call — this PREVIEW route only answers
+  // "would this be admitted", never the credential itself, so `token` is
+  // stripped before the result ever reaches a response body.
+  const { token: _omitToken, ...admitted } = writer.admit({
     projectId,
     principal: { verified: true, projectId, role: 'operator', actor: actorIdentity.actor },
     admission: { launchBindingVerified: true, csrfVerified: true },
     action: b.action, idempotencyKey: b.idempotencyKey, leaseId: b.leaseId, approvalId: b.approvalId, draft: b.draft
-  }));
+  });
+  _v6Respond(res, admitted);
 });
 
 route('POST', '/api/v6/projects/:id/github/outbox', async (req, res, params, body) => {

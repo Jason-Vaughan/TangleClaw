@@ -223,6 +223,30 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
       const afterSupersede = await get(`/api/v6/projects/${projectId}/charter`);
       assert.equal(json(afterSupersede).charter.status, 'superseded');
     });
+
+    it('400s approvals/complete for an unknown requiredRoles entry, rather than serving INVALID_REQUIRED_ROLES as a 200 (Ruling A609-PR3020-R1-HOLD item 2)', async () => {
+      const projectId = await seedProject('charter-complete-bad-roles');
+      const creator = signInOperator('charter-complete-bad-roles-op');
+      const created = await post(`/api/v6/projects/${projectId}/charter`, { content: { title: 't' } }, creator);
+      const { versionId } = json(created);
+      const res = await get(`/api/v6/projects/${projectId}/charter/versions/${versionId}/approvals/complete?requiredRoles=auditor`);
+      assert.equal(res.statusCode, 400, res.body);
+      assert.equal(json(res).code, 'INVALID_REQUIRED_ROLES');
+    });
+
+    it('404s approvals/complete for a versionId that belongs to a DIFFERENT project\'s charter (Ruling A609-PR3020-R1-HOLD item 2)', async () => {
+      const projectA = await seedProject('charter-complete-cross-a');
+      const projectB = await seedProject('charter-complete-cross-b');
+      const opA = signInOperator('charter-complete-cross-op-a');
+      const opB = signInOperator('charter-complete-cross-op-b');
+      const createdA = await post(`/api/v6/projects/${projectA}/charter`, { content: { title: 'a' } }, opA);
+      await post(`/api/v6/projects/${projectB}/charter`, { content: { title: 'b' } }, opB);
+      const { versionId: versionIdFromA } = json(createdA);
+
+      // Ask project B's route about project A's own version id.
+      const res = await get(`/api/v6/projects/${projectB}/charter/versions/${versionIdFromA}/approvals/complete`);
+      assert.equal(res.statusCode, 404, res.body);
+    });
   });
 
   describe('E4/E6a: Rich Report Presentation & Search Indexer routes (#2988, #2989)', () => {
@@ -311,6 +335,26 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
       assert.equal(json(read).connection.tokenRef, 'vault:gh-token');
     });
 
+    it('refuses CONNECTION_INVALID when epoch/identity/expectedFingerprint are missing or malformed, before anything is stored (Ruling A609-PR3020-R1-HOLD item 3)', async () => {
+      const projectId = await seedProject('g1-connection-bad-payload');
+      await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-badpayload', installationId: 42, secretRef: 'vault:gh-token' });
+
+      const missingEpoch = await post(`/api/v6/projects/${projectId}/github/connection`, { identity: 'app-1', expectedFingerprint: 'x' });
+      assert.equal(missingEpoch.statusCode, 400, missingEpoch.body);
+      assert.equal(json(missingEpoch).code, 'CONNECTION_INVALID');
+
+      const zeroEpoch = await post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 0, identity: 'app-1', expectedFingerprint: 'x' });
+      assert.equal(zeroEpoch.statusCode, 400, zeroEpoch.body);
+
+      const blankIdentity = await post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, identity: '  ', expectedFingerprint: 'x' });
+      assert.equal(blankIdentity.statusCode, 400, blankIdentity.body);
+
+      const missingFingerprint = await post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, identity: 'app-1' });
+      assert.equal(missingFingerprint.statusCode, 400, missingFingerprint.body);
+
+      assert.equal(store.getDb().prepare('SELECT 1 FROM v6_github_connections WHERE project_id = ?').get(projectId), undefined, 'nothing was ever stored');
+    });
+
     it('refuses a connection when no binding exists yet', async () => {
       const projectId = await seedProject('g1-connection-no-binding');
       const res = await post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1 });
@@ -352,6 +396,7 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
           { action: 'createIssue', idempotencyKey: 'k1', leaseId, draft: { title: 'hello', body: 'world' } }, operator);
         assert.equal(admit.statusCode, 200, admit.body);
         assert.equal(json(admit).ok, true);
+        assert.equal('token' in json(admit), false, 'the resolved plaintext credential must never reach the response body (Ruling A609-PR3020-R1-HOLD item 1)');
         assert.equal(store.getDb().prepare('SELECT 1 FROM v6_g1_outbox WHERE project_id = ?').get(projectId), undefined, 'admit writes nothing');
 
         const realFetch = globalThis.fetch;
