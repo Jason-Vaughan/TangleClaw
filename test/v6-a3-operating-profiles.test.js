@@ -98,7 +98,19 @@ describe('profileOverhead / compareToFull (#2992)', () => {
     assert.equal(minOne.baseline, 'Full');
     assert.ok(minOne.promptTokensP50Delta < 0);
     const noFull = a3.compareToFull(a3.profileOverhead([{ runId: 'r', profile: 'Lean', seats: 4, promptTokens: 1, serviceMs: 1 }]));
-    assert.deepEqual(noFull, [{ profile: 'Lean', seats: 4, baseline: null, promptTokensP50Delta: null, serviceMsP50Delta: null }]);
+    assert.deepEqual(noFull, [{ matchKey: null, profile: 'Lean', seats: 4, baseline: null, promptTokensP50Delta: null, serviceMsP50Delta: null }]);
+  });
+
+  it('matchKey keeps workloads apart and deltas compare only within the same workload (PRR-A R1)', () => {
+    const s = (matchKey, profile, t) => ({ runId: `${matchKey}-${profile}-${t}`, matchKey, profile, seats: 1, promptTokens: t, serviceMs: t });
+    const rows = a3.profileOverhead([s('cold', 'Full', 100), s('warm', 'Full', 10), s('cold', 'Lean', 60), s('warm', 'Lean', 8)]);
+    assert.equal(rows.length, 4);
+    assert.deepEqual(rows.map((r) => [r.matchKey, r.profile, r.promptTokensTotal]), [['cold', 'Full', 100], ['cold', 'Lean', 60], ['warm', 'Full', 10], ['warm', 'Lean', 8]]);
+    const deltas = a3.compareToFull(rows).filter((r) => r.profile === 'Lean');
+    assert.deepEqual(deltas.map((d) => [d.matchKey, d.promptTokensP50Delta]), [['cold', -40], ['warm', -2]]);
+    const orphan = a3.compareToFull(a3.profileOverhead([s('cold', 'Full', 100), s('warm', 'Lean', 8)])).find((r) => r.profile === 'Lean');
+    assert.equal(orphan.baseline, null, 'a warm Lean run must not be compared with a cold Full run');
+    assert.throws(() => a3.profileOverhead([s('  ', 'Full', 1)]), TypeError);
   });
 
   it('an invalid sample throws rather than shrinking a cell', () => {
@@ -127,6 +139,14 @@ describe('measureProfileRun (#2992)', () => {
       clock: () => t
     });
     assert.deepEqual(sample, { profile: 'Lean', seats: 4, runId: 'r', promptTokens: 6, serviceMs: 27 });
+  });
+
+  it('records an optional matchKey on the sample', async () => {
+    const sample = await a3.measureProfileRun({
+      profile: 'Full', seats: 1, runId: 'r', matchKey: 'task-a/claude/cold',
+      buildPrompt: async () => 'x', countTokens: async () => 1, startServices: async () => {}, clock: () => 0
+    });
+    assert.equal(sample.matchKey, 'task-a/claude/cold');
   });
 
   it('has no fallback tokenizer: a missing hook throws', async () => {

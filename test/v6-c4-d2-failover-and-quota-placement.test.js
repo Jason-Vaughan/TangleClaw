@@ -236,6 +236,29 @@ describe('ratifyPolicy / getEffectivePolicy / receipts (#2993)', () => {
     assert.deepEqual([eff.scopeKind, eff.policy.mode], ['project', 'confirm']);
   });
 
+  it('a fleet policy never applies to a non-member project or one added after ratification (PRR-A R1 BLOCKING 1)', () => {
+    const a = seed();
+    const outsider = seed();
+    const fleet = fleetOf(a.projectId);
+    assert.equal(c4.ratifyPolicy(db, { scopeKind: 'fleet', scopeId: fleet, policy: { mode: 'standing-policy' }, expectedVersion: 0, principalId: a.principalId, auth }).code, 'RATIFIED');
+    assert.equal(c4.getEffectivePolicy(db, { projectId: a.projectId, fleetId: fleet }).scopeKind, 'fleet');
+    assert.equal(c4.getEffectivePolicy(db, { projectId: outsider.projectId, fleetId: fleet }), null, 'caller-supplied fleetId of a fleet the project is not in');
+
+    // Move the outsider into the fleet AFTER ratification: still not covered.
+    // (Drop its trigger-made legacy rows child-first, then re-home its
+    // resource in the fleet's own logical project, as a C1 join would.)
+    db.prepare('DELETE FROM v6_legacy_project_map WHERE legacy_project_id = ?').run(outsider.projectId);
+    db.prepare('DELETE FROM v6_checkouts WHERE legacy_project_id = ?').run(outsider.projectId);
+    db.prepare('DELETE FROM v6_resources WHERE legacy_project_id = ?').run(outsider.projectId);
+    db.prepare('INSERT INTO v6_resources (id, logical_project_id, fleet_id, kind, display_name, legacy_project_id) VALUES (?,?,?,?,?,?)')
+      .run(`res-joined-${outsider.projectId}`, `lp-${a.projectId}`, fleet, 'harness', 'joined', outsider.projectId);
+    assert.equal(c4.getEffectivePolicy(db, { projectId: outsider.projectId, fleetId: fleet }), null, 'joined after ratification');
+
+    // A ratified member that has since left the fleet loses it too.
+    db.prepare('UPDATE v6_resources SET fleet_id = NULL WHERE legacy_project_id = ?').run(a.projectId);
+    assert.equal(c4.getEffectivePolicy(db, { projectId: a.projectId, fleetId: fleet }), null, 'left the fleet');
+  });
+
   it('records and lists a receipt carrying the exact trigger reason and requested target', () => {
     const { projectId } = seed();
     const decision = c4.decideFailover({ policy: standing(), role: 'Builder', trigger: 'provider-outage', current: CURRENT, validateTarget: okValidator });
@@ -302,6 +325,18 @@ describe('D2 quota windows and placement (#2993, P04)', () => {
       { engineId: 'b', modelId: 'm1', accountId: 'one', selectable: true, quality: 0.9, capabilities: ['code'] }
     ];
     assert.equal(schedule({ candidates: twins }).selected.modelId, 'm1');
+  });
+
+  it('placeWork auto requires the effort to match the ratified tuple (PRR-A R1 BLOCKING 2)', () => {
+    const quota = [signal('b', 'measured', 10)];
+    const withEffort = candidates.map((c) => (c.engineId === 'b' ? { ...c, effort: 'max' } : c));
+    const base = { mode: 'auto', strategy: 'maximize-useful-allowance', job, catalog, now, quota };
+    const low = standing({ allowedAutoPlacements: [{ engine: 'b', model: 'mb', effort: 'low' }] });
+    assert.equal(c4.placeWork({ ...base, candidates: withEffort, policy: low }).code, 'AUTO_NOT_PERMITTED', 'b/mb/max must not ride a b/mb/low grant');
+    assert.equal(c4.placeWork({ ...base, candidates, policy: low }).code, 'AUTO_NOT_PERMITTED', 'no stated effort must not ride a b/mb/low grant');
+    const max = standing({ allowedAutoPlacements: [{ engine: 'b', model: 'mb', effort: 'max' }] });
+    assert.equal(c4.placeWork({ ...base, candidates: withEffort, policy: max }).code, 'AUTO_APPLIED');
+    assert.equal(c4.placeWork({ ...base, candidates: withEffort, policy: standing() }).code, 'AUTO_NOT_PERMITTED', 'an effort-less grant does not cover b/mb/max');
   });
 
   it('placeWork recommend never auto-applies', () => {
