@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-11 — v6.0.1 release cut (Issue #3022)
+
+<!-- prawduct: type=fixed | scope=v601-release -->
+
+- Promoted the accepted `changelog.d/3022.v6-shell-live-wireup.fixed.md` fragment into `CHANGELOG.md` section `[6.0.1]`. Bumped `version.json`, updated README release pins and the released-section lock, added release notes and Feature Index coverage, and consumed the fragment together.
+
 ## 2026-11-10 — v6.0.0 release cut (Milestone #61)
 
 <!-- prawduct: type=internal | scope=v600-release -->
