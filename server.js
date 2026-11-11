@@ -8233,7 +8233,21 @@ async function handleRequest(req, res) {
   let tcSession = null;
   const gateState = authGate.resolveGateState(_gateConfig, store.authSessions, _gateIngress,
     () => _gateFallback(req.socket));
-  if (!authGate.standsDown(gateState)) {
+  // The external GitHub webhook (#2990) carries no TangleClaw session at
+  // all — its own authentication IS the mandatory HMAC-SHA256 signature
+  // _handleGithubWebhook verifies, never this gate's cookie/CSRF model.
+  // Exempted from the challenge below so a real GitHub delivery reaches
+  // that verification instead of a 401 it could never satisfy (Ruling
+  // A610-PR3020-R1-HOLD-RECONCILED, PRR-A 5039bb93) — scoped to a non-
+  // browser POST at the exact Caddy-canonical path, and only while the
+  // gate is already stood down or merely ARMED (ordinary operation);
+  // LOCKED is deliberately excluded, since that state means the operator
+  // chose to shut even external integrations out.
+  const isGithubWebhookRequest = dispatchMethod === 'POST' && !looksLikeBrowser
+    && caddy.caddyCanonicalPath(req.url) === '/api/v6/webhooks/github';
+  const webhookGateExempt = isGithubWebhookRequest
+    && (authGate.standsDown(gateState) || gateState === authGate.GATE_STATES.ARMED);
+  if (!authGate.standsDown(gateState) && !webhookGateExempt) {
     // Resolved by the helper `handleUpgrade`'s gate also calls, so the two
     // transports judge the same facts — see `_gateIdentity`.
     const identity = _gateIdentity(req, req.socket, pathname);
@@ -8904,6 +8918,77 @@ const _v6GithubSecretStore = {
 };
 
 /**
+ * A stable fingerprint of a probe's identity/kind/permissions/
+ * repositories — `lib/providers/contract.js`'s own `_githubFingerprint`
+ * is not exported (it is private to that module's `testConnection`), so
+ * this reproduces the identical shape rather than reaching into the
+ * module's internals; both must stay byte-for-byte the same comparison
+ * or `testConnection`'s drift check below would disagree with what this
+ * route itself just computed.
+ * @param {{identity: string, kind: string, permissions: string[], repositories: string[]}} probe
+ * @returns {string}
+ */
+function _v6GithubProbeFingerprint(probe) {
+  return JSON.stringify({
+    identity: probe.identity, kind: probe.kind,
+    permissions: [...probe.permissions].sort(), repositories: [...probe.repositories].sort()
+  });
+}
+
+/**
+ * Server-side capability probe against the REAL GitHub API, using the
+ * bound credential — never the caller's own claimed `body.probe`
+ * (Ruling A610-PR3020-R1-HOLD-RECONCILED item 3 / PRR-B 7c377db9: "do not
+ * trust caller-supplied b.probe.permissions/expectedFingerprint").
+ * `GET /repos/{repo}` returns a `permissions` object describing the
+ * AUTHENTICATED caller's own access level on that exact repo — real,
+ * verified scope, not a self-report. The mapping from GitHub's classic
+ * `pull`/`push`/`admin` booleans to this module's fine-grained
+ * `contents:read`/`contents:write`/`issues:write`/`pull_requests:write`/
+ * `administration:write` vocabulary is a deliberately conservative
+ * best-effort correspondence (a fine-grained GitHub App installation
+ * token's own per-permission read needs a different endpoint this car's
+ * envelope has no occasion to call) — honest about what it verifies
+ * (repo-level read/write/admin access), not a claim of reading a GitHub
+ * App's exact installation permission set.
+ * @param {string} token
+ * @param {string} repo
+ * @returns {Promise<{identity: string, kind: string, permissions: string[], repositories: string[], expiresAt: number}|null>}
+ *   `null` on any probe failure — the caller fails closed on that.
+ */
+async function _v6ProbeGithubConnection(token, repo) {
+  let response;
+  try {
+    response = await fetch(`https://api.github.com/repos/${repo}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'TangleClaw-v6' },
+      signal: AbortSignal.timeout(15000)
+    });
+  } catch {
+    return null;
+  }
+  if (response.status !== 200) return null;
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    return null;
+  }
+  const perms = body && body.permissions;
+  if (!perms || typeof perms !== 'object') return null;
+  const permissions = [];
+  if (perms.pull) permissions.push('contents:read', 'checks:read');
+  if (perms.push) permissions.push('contents:write', 'issues:write', 'pull_requests:write');
+  if (perms.admin) permissions.push('administration:write');
+  return {
+    identity: typeof body.full_name === 'string' ? body.full_name : repo,
+    kind: 'classic',
+    permissions: Array.from(new Set(permissions)),
+    repositories: [repo],
+    expiresAt: Date.now() + 5 * 60 * 1000
+  };
+}
+
+/**
  * External GitHub webhook ingress (#2990 Deliverable 1's webhook-receipt
  * half). Handled OUTSIDE the generic `route()`/`matchRoute()`/`parseBody()`
  * dispatch on purpose: `parseBody` always decodes a body via a lossy
@@ -8944,16 +9029,36 @@ async function _handleGithubWebhook(req, res) {
   // Strict UTF-8 decode BEFORE anything else touches the bytes, so two
   // distinct invalid-byte payloads can never collide under a later lossy
   // String(rawBuf) — `fatal: true` throws rather than substituting U+FFFD.
+  // `ignoreBOM: true` (PRR-A 5039bb93): WITHOUT it, TextDecoder silently
+  // drops a leading UTF-8 BOM, which would make this string re-encode to
+  // fewer bytes than GitHub actually signed — the HMAC below is computed
+  // over `rawText`, so a dropped BOM would make a genuinely-signed
+  // BOM-prefixed delivery fail verification for a reason that has
+  // nothing to do with the signature itself. The explicit round-trip
+  // check just below is the general form of the same guarantee: whatever
+  // the decoder did, re-encoding `rawText` must reproduce the EXACT bytes
+  // received, or HMAC verification is being run against something other
+  // than what was actually sent.
   let rawText;
   try {
-    rawText = new TextDecoder('utf-8', { fatal: true }).decode(rawBuf);
+    rawText = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(rawBuf);
   } catch {
     return errorResponse(res, 400, 'Webhook body is not valid UTF-8', 'INVALID_UTF8');
   }
+  if (!Buffer.from(rawText, 'utf8').equals(rawBuf)) {
+    return errorResponse(res, 400, 'Webhook body did not decode losslessly', 'INVALID_UTF8');
+  }
 
+  // A leading BOM is stripped ONLY for JSON parsing (RFC 8259 says a
+  // receiver MAY ignore one; V8's JSON.parse does not, so a genuinely
+  // BOM-prefixed delivery would otherwise fail here for a reason that has
+  // nothing to do with its content) — `rawText` itself, BOM intact, is
+  // still what gets hashed/HMAC-verified below, since that is the exact
+  // bytes GitHub actually signed.
+  const jsonText = rawText.charCodeAt(0) === 0xfeff ? rawText.slice(1) : rawText;
   let payload;
   try {
-    payload = JSON.parse(rawText);
+    payload = JSON.parse(jsonText);
   } catch {
     return errorResponse(res, 400, 'Webhook body is not valid JSON', 'INVALID_REQUEST');
   }
@@ -10398,7 +10503,7 @@ route('GET', '/api/v6/projects/:id/github/binding', (req, res, params) => {
   jsonResponse(res, 200, binding);
 });
 
-route('POST', '/api/v6/projects/:id/github/connection', (req, res, params, body) => {
+route('POST', '/api/v6/projects/:id/github/connection', async (req, res, params, body) => {
   if (!operatorProjectCaller(req, res, 'set a project\'s GitHub connection')) return;
   const projectId = Number(params.id);
   if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'github.bind')) return;
@@ -10406,9 +10511,7 @@ route('POST', '/api/v6/projects/:id/github/connection', (req, res, params, body)
   const db = v6Db();
   const binding = db.prepare('SELECT * FROM v6_bindings WHERE project_id = ?').get(projectId);
   if (!binding) return _v6Respond(res, { ok: false, code: 'REPO_NOT_BOUND' });
-  // Architect Ruling A609-PR3020-R1-HOLD item 3: validateConfig below only
-  // checks repo/installationId/tokenRef (all populated from the binding
-  // row, never the caller) — epoch/identity/expectedFingerprint are the
+  // Architect Ruling A609/A610 item 3: epoch/approvedTiers are the
   // caller's OWN fields and validateConfig never looks at them. An
   // omitted/malformed epoch would store a connection no real lease could
   // ever match (JSON.stringify drops an undefined epoch entirely), so
@@ -10416,24 +10519,41 @@ route('POST', '/api/v6/projects/:id/github/connection', (req, res, params, body)
   if (!Number.isSafeInteger(b.epoch) || b.epoch < 1) {
     return _v6Respond(res, { ok: false, code: 'CONNECTION_INVALID' });
   }
-  if (typeof b.identity !== 'string' || b.identity.trim() === '') {
+  if (!Array.isArray(b.approvedTiers) || b.approvedTiers.length === 0
+    || !b.approvedTiers.every((t) => Number.isSafeInteger(t) && [1, 2, 3].includes(t))) {
     return _v6Respond(res, { ok: false, code: 'CONNECTION_INVALID' });
   }
-  if (typeof b.expectedFingerprint !== 'string' || b.expectedFingerprint.trim() === '') {
-    return _v6Respond(res, { ok: false, code: 'CONNECTION_INVALID' });
-  }
+
+  const token = _v6GithubSecretStore.get(binding.secret_ref);
+  if (typeof token !== 'string') return _v6Respond(res, { ok: false, code: 'CREDENTIAL_UNAVAILABLE' });
+
+  // PRR-B 7c377db9 / Ruling A610 item 3: `b.probe`/`b.identity`/
+  // `b.expectedFingerprint` are NEVER read here — a caller claiming
+  // permissions it does not actually hold must not be able to store that
+  // claim as this connection's own baseline. The probe, identity, and
+  // fingerprint are all derived from a REAL authenticated call against
+  // the bound token instead.
+  const probe = await _v6ProbeGithubConnection(token, binding.repo);
+  if (!probe) return _v6Respond(res, { ok: false, code: 'PROBE_UNAVAILABLE' });
+
   // installationId/tokenRef are always derived from the binding row, never
   // the request body — the same cross-check g1-github-integration.js#admit
   // enforces at write time, applied here too so a stored connection can
   // never start out already disagreeing with its own binding.
   const connection = {
     repo: binding.repo, installationId: binding.installation_id, tokenRef: binding.secret_ref,
-    epoch: b.epoch, approvedTiers: Array.isArray(b.approvedTiers) ? b.approvedTiers : [],
-    identity: b.identity, expectedFingerprint: b.expectedFingerprint, revokedAt: null
+    epoch: b.epoch, approvedTiers: b.approvedTiers,
+    identity: probe.identity, expectedFingerprint: _v6GithubProbeFingerprint(probe), revokedAt: null
   };
-  const probe = b.probe && typeof b.probe === 'object' ? b.probe : {};
   const configCheck = _v6GithubProvider.validateConfig(connection);
   if (!configCheck.ok) return _v6Respond(res, { ok: false, code: configCheck.code || 'CONNECTION_INVALID' });
+  // Sanity proof, not a meaningful drift check here (connection and probe
+  // are both derived from the SAME just-fetched probe by construction) —
+  // this is what later admit() calls re-run against a FRESH probe, and a
+  // non-null result here would mean this route's own invariant broke.
+  const drift = _v6GithubProvider.testConnection({ connection, probe, now: Date.now() });
+  if (drift) return _v6Respond(res, { ok: false, code: drift });
+
   const existing = db.prepare('SELECT project_id FROM v6_github_connections WHERE project_id = ?').get(projectId);
   if (existing) {
     db.prepare('UPDATE v6_github_connections SET connection_json = ?, probe_json = ? WHERE project_id = ?')

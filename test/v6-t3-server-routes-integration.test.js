@@ -102,16 +102,40 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
    * @param {Record<string, string>} [headers]
    * @returns {Promise<object>}
    */
-  async function sendWebhook(rawBodyBuf, headers = {}) {
+  async function sendWebhook(rawBodyBuf, headers = {}, { remoteAddress = '127.0.0.1' } = {}) {
     const req = {
       url: '/api/v6/webhooks/github', method: 'POST',
       headers: Object.assign({ host: 'localhost:3102' }, headers),
-      socket: { remoteAddress: '127.0.0.1' },
+      socket: { remoteAddress },
       [Symbol.asyncIterator]: async function* () { yield rawBodyBuf; }
     };
     const res = mockRes();
     await handleRequest(req, res);
     return res;
+  }
+
+  /**
+   * Stub `globalThis.fetch` for the duration of `fn`, so a route's own
+   * server-side GitHub probe (`_v6ProbeGithubConnection`) or outbound
+   * write (`g1-github-integration.js#execute`) never reaches the real
+   * network. Always restores the original, even if `fn` throws.
+   * @param {Function} impl
+   * @param {() => Promise<*>} fn
+   * @returns {Promise<*>}
+   */
+  async function withStubbedFetch(impl, fn) {
+    const real = globalThis.fetch;
+    globalThis.fetch = impl;
+    try {
+      return await fn();
+    } finally {
+      globalThis.fetch = real;
+    }
+  }
+
+  /** A `GET /repos/{repo}` stub reporting push+pull (never admin) access, the shape `_v6ProbeGithubConnection` reads. */
+  function githubRepoProbeStub(repo, perms = { pull: true, push: true, admin: false }) {
+    return async () => ({ status: 200, json: async () => ({ full_name: repo, permissions: perms }) });
   }
 
   const post = (url, body, opts) => send('POST', url, Object.assign({ body: body || {} }, opts));
@@ -322,43 +346,81 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
       assert.equal(store.getDb().prepare('SELECT 1 FROM v6_bindings WHERE project_id = ?').get(projectId), undefined);
     });
 
-    it('sets a connection using the BINDING\'s own installationId/secretRef, ignoring any caller-supplied ones', async () => {
+    it('sets a connection using the BINDING\'s own installationId/secretRef and a SERVER-PROBED identity/fingerprint, ignoring any caller-supplied ones', async () => {
       const projectId = await seedProject('g1-connection');
       await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-conn', installationId: 42, secretRef: 'vault:gh-token' });
-      const conn = await post(`/api/v6/projects/${projectId}/github/connection`, {
-        epoch: 1, approvedTiers: [2], identity: 'app-1',
-        expectedFingerprint: 'whatever', probe: { identity: 'app-1', kind: 'app', permissions: ['issues:write'], repositories: ['acme/widgets-conn'], expiresAt: Date.now() + 99999 }
-      });
-      assert.equal(conn.statusCode, 201, conn.body);
+      process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
+      try {
+        const conn = await withStubbedFetch(githubRepoProbeStub('acme/widgets-conn'), () => post(`/api/v6/projects/${projectId}/github/connection`, {
+          epoch: 1, approvedTiers: [2],
+          // Forged claims: a real admin grant, a spoofed identity, and a
+          // caller-chosen fingerprint — none of this may reach storage.
+          identity: 'spoofed-identity', expectedFingerprint: 'spoofed-fingerprint',
+          probe: { identity: 'spoofed-identity', kind: 'app', permissions: ['administration:write'], repositories: ['acme/widgets-conn'], expiresAt: Date.now() + 99999 }
+        }));
+        assert.equal(conn.statusCode, 201, conn.body);
+      } finally {
+        delete process.env.TC_VAULT_GH_TOKEN;
+      }
       const read = await get(`/api/v6/projects/${projectId}/github/connection`);
       assert.equal(json(read).connection.installationId, 42);
       assert.equal(json(read).connection.tokenRef, 'vault:gh-token');
+      assert.equal(json(read).connection.identity, 'acme/widgets-conn', 'identity is the SERVER-probed repo full_name, never the caller\'s claim');
+      assert.notEqual(json(read).connection.expectedFingerprint, 'spoofed-fingerprint');
+      assert.ok(!json(read).probe.permissions.includes('administration:write'), 'a caller-claimed admin grant the real probe (pull+push only) never reported must never reach storage');
     });
 
-    it('refuses CONNECTION_INVALID when epoch/identity/expectedFingerprint are missing or malformed, before anything is stored (Ruling A609-PR3020-R1-HOLD item 3)', async () => {
+    it('refuses CONNECTION_INVALID when epoch/approvedTiers are missing or malformed, before any probe or write (Ruling A609/A610 item 3)', async () => {
       const projectId = await seedProject('g1-connection-bad-payload');
       await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-badpayload', installationId: 42, secretRef: 'vault:gh-token' });
+      let fetchCalls = 0;
+      await withStubbedFetch(async (...args) => { fetchCalls++; return githubRepoProbeStub('acme/widgets-badpayload')(...args); }, async () => {
+        const missingEpoch = await post(`/api/v6/projects/${projectId}/github/connection`, { approvedTiers: [2] });
+        assert.equal(missingEpoch.statusCode, 400, missingEpoch.body);
+        assert.equal(json(missingEpoch).code, 'CONNECTION_INVALID');
 
-      const missingEpoch = await post(`/api/v6/projects/${projectId}/github/connection`, { identity: 'app-1', expectedFingerprint: 'x' });
-      assert.equal(missingEpoch.statusCode, 400, missingEpoch.body);
-      assert.equal(json(missingEpoch).code, 'CONNECTION_INVALID');
+        const zeroEpoch = await post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 0, approvedTiers: [2] });
+        assert.equal(zeroEpoch.statusCode, 400, zeroEpoch.body);
 
-      const zeroEpoch = await post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 0, identity: 'app-1', expectedFingerprint: 'x' });
-      assert.equal(zeroEpoch.statusCode, 400, zeroEpoch.body);
+        const missingTiers = await post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1 });
+        assert.equal(missingTiers.statusCode, 400, missingTiers.body);
 
-      const blankIdentity = await post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, identity: '  ', expectedFingerprint: 'x' });
-      assert.equal(blankIdentity.statusCode, 400, blankIdentity.body);
-
-      const missingFingerprint = await post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, identity: 'app-1' });
-      assert.equal(missingFingerprint.statusCode, 400, missingFingerprint.body);
-
+        const badTier = await post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [4] });
+        assert.equal(badTier.statusCode, 400, badTier.body);
+      });
+      assert.equal(fetchCalls, 0, 'validation must refuse before the server-side probe ever runs');
       assert.equal(store.getDb().prepare('SELECT 1 FROM v6_github_connections WHERE project_id = ?').get(projectId), undefined, 'nothing was ever stored');
+    });
+
+    it('refuses CREDENTIAL_UNAVAILABLE when the bound secret_ref has no real secret, before any probe runs', async () => {
+      const projectId = await seedProject('g1-connection-no-secret');
+      await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-nosecret', installationId: 42, secretRef: 'vault:does-not-exist' });
+      let fetchCalls = 0;
+      const res = await withStubbedFetch(async () => { fetchCalls++; return { status: 200, json: async () => ({}) }; }, () =>
+        post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }));
+      assert.equal(res.statusCode, 503, res.body);
+      assert.equal(json(res).code, 'CREDENTIAL_UNAVAILABLE');
+      assert.equal(fetchCalls, 0);
+    });
+
+    it('refuses PROBE_UNAVAILABLE when the GitHub API itself denies the bound credential', async () => {
+      const projectId = await seedProject('g1-connection-probe-fails');
+      await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-probefail', installationId: 42, secretRef: 'vault:gh-token' });
+      process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
+      try {
+        const res = await withStubbedFetch(async () => ({ status: 401, json: async () => ({ message: 'Bad credentials' }) }), () =>
+          post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }));
+        assert.equal(res.statusCode, 503, res.body);
+        assert.equal(json(res).code, 'PROBE_UNAVAILABLE');
+      } finally {
+        delete process.env.TC_VAULT_GH_TOKEN;
+      }
     });
 
     it('refuses a connection when no binding exists yet', async () => {
       const projectId = await seedProject('g1-connection-no-binding');
-      const res = await post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1 });
-      assert.equal(res.code === undefined ? res.statusCode : res.statusCode, 404, res.body);
+      const res = await post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] });
+      assert.equal(res.statusCode, 404, res.body);
     });
 
     it('lists an empty milestone set for a project with none bound', async () => {
@@ -378,20 +440,17 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
     it('previews an admission without writing an outbox row, then executes it for real with a stubbed fetch', async () => {
       const projectId = await seedProject('g1-outbox-full');
       const operator = signInOperator('g1-outbox-operator');
-      await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-outbox', installationId: 42, secretRef: 'vault:gh-token' }, operator);
-      const probe = { identity: 'app-1', kind: 'app', permissions: ['issues:write'], repositories: ['acme/widgets-outbox'], expiresAt: Date.now() + 99999 };
-      await post(`/api/v6/projects/${projectId}/github/connection`, {
-        epoch: 1, approvedTiers: [2], identity: 'app-1',
-        expectedFingerprint: JSON.stringify({ identity: 'app-1', kind: 'app', permissions: ['issues:write'], repositories: ['acme/widgets-outbox'] }),
-        probe
-      }, operator);
-      const lease = await post(`/api/v6/projects/${projectId}/g1-leases`,
-        { repo: 'acme/widgets-outbox', connectionEpoch: 1, actions: ['createIssue'], ttlMs: 99999 }, operator);
-      assert.equal(lease.statusCode, 201, lease.body);
-      const leaseId = json(lease).id;
-
       process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
       try {
+        await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-outbox', installationId: 42, secretRef: 'vault:gh-token' }, operator);
+        const connRes = await withStubbedFetch(githubRepoProbeStub('acme/widgets-outbox'), () =>
+          post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }, operator));
+        assert.equal(connRes.statusCode, 201, connRes.body);
+        const lease = await post(`/api/v6/projects/${projectId}/g1-leases`,
+          { repo: 'acme/widgets-outbox', connectionEpoch: 1, actions: ['createIssue'], ttlMs: 99999 }, operator);
+        assert.equal(lease.statusCode, 201, lease.body);
+        const leaseId = json(lease).id;
+
         const admit = await post(`/api/v6/projects/${projectId}/github/outbox/admit`,
           { action: 'createIssue', idempotencyKey: 'k1', leaseId, draft: { title: 'hello', body: 'world' } }, operator);
         assert.equal(admit.statusCode, 200, admit.body);
@@ -471,6 +530,63 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
         assert.equal(JSON.parse(res.body).code, 'BAD_SIGNATURE');
       } finally {
         delete process.env.TC_VAULT_BADSIG_SECRET;
+      }
+    });
+
+    it('reaches the webhook handler from a remote, proxied, signed-out caller even while the auth gate is ARMED (PRR-A 5039bb93, Ruling A610 item 2)', async () => {
+      store.users.create('webhook-armed-gate-user', 'correct-horse-battery');
+      const cfg = store.config.load();
+      cfg.authEnabled = true;
+      cfg.basicAuthUser = null;
+      cfg.basicAuthHash = null;
+      store.config.save(cfg);
+
+      const projectId = await seedProject('g1-webhook-armed');
+      store.getDb().prepare('INSERT INTO v6_bindings (project_id, repo, installation_id, secret_ref) VALUES (?, ?, ?, ?)')
+        .run(projectId, 'acme/widgets-armed', 999, 'vault:armed-secret');
+      process.env.TC_VAULT_ARMED_SECRET = 'q'.repeat(20);
+      try {
+        const payload = JSON.stringify({ repository: { full_name: 'acme/widgets-armed' }, installation: { id: 999 } });
+        const sig = `sha256=${crypto.createHmac('sha256', 'q'.repeat(20)).update(payload).digest('hex')}`;
+        // A real GitHub delivery: no tc_session cookie, a non-loopback
+        // remote address (behind the real reverse proxy), and the
+        // X-Forwarded-For header a proxy adds -- none of which carry any
+        // TangleClaw identity, since HMAC is this request's ENTIRE
+        // authentication.
+        const res = await sendWebhook(Buffer.from(payload), {
+          'content-type': 'application/json', 'x-github-delivery': 'd-armed-1', 'x-github-event': 'pull_request',
+          'x-hub-signature-256': sig, 'x-forwarded-for': '203.0.113.7'
+        }, { remoteAddress: '203.0.113.7' });
+        assert.equal(res.statusCode, 202, res.body);
+        assert.equal(JSON.parse(res.body).ok, true);
+      } finally {
+        delete process.env.TC_VAULT_ARMED_SECRET;
+      }
+    });
+
+    it('preserves a leading UTF-8 BOM through decode so HMAC verifies against the exact bytes received (PRR-A 5039bb93)', async () => {
+      const projectId = await seedProject('g1-webhook-bom');
+      store.getDb().prepare('INSERT INTO v6_bindings (project_id, repo, installation_id, secret_ref) VALUES (?, ?, ?, ?)')
+        .run(projectId, 'acme/widgets-bom', 1000, 'vault:bom-secret');
+      process.env.TC_VAULT_BOM_SECRET = 'b'.repeat(20);
+      try {
+        const payloadText = JSON.stringify({ repository: { full_name: 'acme/widgets-bom' }, installation: { id: 1000 } });
+        const rawWithBom = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(payloadText)]);
+        // Signed over the EXACT bytes GitHub would have sent, BOM included.
+        const sig = `sha256=${crypto.createHmac('sha256', 'b'.repeat(20)).update(rawWithBom).digest('hex')}`;
+        const res = await sendWebhook(rawWithBom, {
+          'content-type': 'application/json', 'x-github-delivery': 'd-bom-1', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig
+        });
+        // The BOM is stripped for JSON parsing only; the signature is
+        // verified against `rawText` BOM intact -- the exact bytes
+        // actually signed. A BOM genuinely dropped before hashing (the
+        // bug this test exists to catch) would make this signature
+        // verification fail instead, since it was computed over 3 MORE
+        // bytes than a BOM-stripped hash would cover.
+        assert.equal(res.statusCode, 202, res.body);
+        assert.equal(JSON.parse(res.body).ok, true);
+      } finally {
+        delete process.env.TC_VAULT_BOM_SECRET;
       }
     });
   });
