@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 
 const {
-  BUNDLE_SCHEMA, MAX_LOG_LINES, MAX_LOG_LINE, MAX_CODES, CONSENT_SCOPE, DETECTORS,
+  BUNDLE_SCHEMA, MAX_LOG_LINES, MAX_LOG_LINE, MAX_CODES, CONSENT_SCOPE, GENERIC_SUBMIT_ERROR, DETECTORS,
   scrub, findSecrets, buildBundle, previewIssue, submitIssue
 } = require('../lib/v6/f3-support-diagnostic-scrubber');
 
@@ -327,5 +327,65 @@ describe('PRR R2 HOLD regressions (PR #3028): an opening quote that never closes
 
   it('a properly closed quoted value keeps the text after its closing quote', () => {
     assert.equal(scrub("token: 'ok' then"), "token: '[REDACTED]' then");
+  });
+});
+
+describe('PRR R3 HOLD regressions (PR #3028): length cap and doubly escaped quotes', () => {
+  it('a kept log line never exceeds MAX_LOG_LINE, whatever lands at the cut, and is always verifier-clean', () => {
+    const tails = [' password=x', ' token="abc def', " client_secret='abc", ' password=[REDACTED] tail', ' token: ghp_abcdefghijklmnopqrstuvwxyz0123456789', ' mail me@example.com'];
+    for (let pad = MAX_LOG_LINE - 40; pad <= MAX_LOG_LINE + 5; pad++) {
+      for (const tail of tails) {
+        const [kept] = buildBundle({ logLines: ['x'.repeat(pad) + tail] }, { includeLogs: true, now: NOW }).logLines;
+        assert.ok(kept.length <= MAX_LOG_LINE, `pad ${pad} ${tail}: ${kept.length}`);
+        assert.deepEqual(findSecrets(kept), [], `pad ${pad} ${tail}`);
+        assert.deepEqual(findSecrets(JSON.stringify(kept)), [], `pad ${pad} ${tail} (JSON)`);
+        assert.equal(scrub(kept), kept);
+      }
+    }
+  });
+
+  it('PRR-B\'s exact case: 289 characters then password=x stays within the cap', () => {
+    const [kept] = buildBundle({ logLines: [`${'x'.repeat(289)} password=x`] }, { includeLogs: true, now: NOW }).logLines;
+    assert.ok(kept.length <= MAX_LOG_LINE, String(kept.length));
+    assert.deepEqual(findSecrets(kept), []);
+  });
+
+  it('a doubly escaped inner quote cannot close a JSON-embedded credential early', () => {
+    const text = JSON.stringify({ error: 'client_secret="a \\"quoted\\" pass" then' });
+    const out = scrub(text);
+    for (const word of ['quoted', 'pass', 'then']) assert.ok(!out.includes(word), `${word} in ${out}`);
+    assert.deepEqual(findSecrets(out), []);
+    assert.equal(scrub(out), out);
+    assert.ok(findSecrets(text).includes('key-value-quoted'), 'the raw form is flagged');
+  });
+
+  it('JSON escaping applied twice over a credential still redacts all of it', () => {
+    const twice = JSON.stringify(JSON.stringify({ password: 'correct horse "battery" staple' }));
+    const out = scrub(twice);
+    for (const word of ['horse', 'battery', 'staple']) assert.ok(!out.includes(word), `${word} in ${out}`);
+    assert.equal(scrub(out), out);
+  });
+
+  it('an adapter error is reported scrubbed and verifier-clean, or not at all', async () => {
+    const bundle = buildBundle({ version: '6.1.0', errorCodes: ['PORT_CONFLICT'] }, { now: NOW });
+    const preview = previewIssue(bundle, 'org/repo');
+    const consent = { approved: true, scope: 'github-issue', repo: 'org/repo', bundleDigest: preview.digest, expiresAt: NOW + 1000, consentId: 'c9' };
+    const messages = [
+      JSON.stringify({ error: 'client_secret="a \\"quoted\\" pass" then' }),
+      'HTTP 401: password=correct horse battery staple',
+      "token='unterminated secret tail"
+    ];
+    for (const message of messages) {
+      const r = await submitIssue({ preview, consent, allowedRepos: ['org/repo'], usedConsentIds: new Set(), now: NOW,
+        adapter: async () => { throw new Error(message); } });
+      assert.equal(r.code, 'SUBMIT_FAILED');
+      assert.ok(r.error === GENERIC_SUBMIT_ERROR || findSecrets(r.error).length === 0, r.error);
+      for (const word of ['quoted', 'horse', 'battery', 'unterminated']) assert.ok(!r.error.includes(word), `${word} in ${r.error}`);
+    }
+  });
+
+  it('GENERIC_SUBMIT_ERROR names no detail', () => {
+    assert.equal(GENERIC_SUBMIT_ERROR, 'Support issue submission failed');
+    assert.deepEqual(findSecrets(GENERIC_SUBMIT_ERROR), []);
   });
 });
