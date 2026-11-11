@@ -505,6 +505,38 @@
   }
 
   /**
+   * The legacy project a route's detail pane should show (#3022 deliverable
+   * e). A conversation route, or a project route naming a real project id,
+   * resolves to that project directly. A synthesized Logical Project route
+   * (`#/projects/tc-lane`, where the toolbar toggle lands) or a fleet route
+   * (`#/projects/tc-lane/fleets/tc-lane`) resolves through the synthesized
+   * tree to one of its members: the first whose session is live, else the
+   * first that is a real project — so every route the sidebar or the toggle
+   * produces has a project behind it.
+   * @param {{view: string|null, projectId?: string, fleetId?: string, resourceId?: string}|null} route
+   * @param {Array<{id: *, name?: string, session?: {active?: *}|null}>|null} projects - `GET /api/projects`' `projects`.
+   * @returns {object|null} The project row, or null when the route names none.
+   */
+  function resolveRouteProject(route, projects) {
+    const rows = Array.isArray(projects) ? projects : [];
+    const byId = (id) => (id == null ? null : rows.find((p) => p && String(p.id) === String(id)) || null);
+    if (!route) return null;
+    if (route.view === 'conversation') return byId(route.resourceId);
+    if (route.view !== 'project' && route.view !== 'fleet') return null;
+    if (route.view === 'project') {
+      const direct = byId(route.projectId);
+      if (direct) return direct;
+    }
+    const node = synthesizeTreeFromProjects(rows).find((lp) => String(lp.id) === String(route.projectId));
+    if (!node) return null;
+    const fleets = route.view === 'fleet'
+      ? node.fleets.filter((f) => String(f.id) === String(route.fleetId))
+      : node.fleets;
+    const members = fleets.flatMap((f) => f.members.map((m) => byId(m.seatId)).filter(Boolean));
+    return members.find((p) => p.session && p.session.active === true) || members[0] || null;
+  }
+
+  /**
    * Wire a mounted shell to the live server (#3022 deliverables b–e): the
    * synthesized hierarchy tree, the B4 telemetry bar, the C2 template list
    * and plan preview, and per-route B2 conversation / D1 attestation
@@ -538,11 +570,6 @@
       const data = await api('/api/projects');
       if (data && Array.isArray(data.projects)) projects = data.projects;
       return projects;
-    }
-
-    function findProject(id) {
-      if (id == null || !Array.isArray(projects)) return null;
-      return projects.find((p) => p && String(p.id) === String(id)) || null;
     }
 
     async function loadConversation(project, mine) {
@@ -601,9 +628,7 @@
           shell.setTemplates(res.templates);
         }
       }
-      const resourceId = route.view === 'conversation' ? route.resourceId
-        : (route.view === 'project' ? route.projectId : null);
-      const project = findProject(resourceId);
+      const project = resolveRouteProject(route, projects);
       if (!project) {
         shell.setAttestation(null);
         shell.setDetail(route.view === 'conversation'
@@ -787,6 +812,7 @@
   global.tcV6ConversationViewMarkup = conversationViewMarkup;
   global.tcV6ViewToggleLabel = viewToggleLabel;
   global.tcV6PickAttestation = pickAttestation;
+  global.tcV6ResolveRouteProject = resolveRouteProject;
   global.tcV6CreateLiveController = createLiveController;
   global.tcCreateV6Shell = tcCreateV6Shell;
 })(typeof window !== 'undefined' ? window : globalThis);
