@@ -227,7 +227,7 @@ describe('extractEngines', () => {
   it('flags a field neither projected nor listed as omitted, instead of silently dropping it', () => {
     const out = f2.extractEngines([{ file: 'data/engines/alpha.json', profile: profile({ brandNew: 1 }) }], { omittedFields: ['launch'] });
     assert.deepEqual(out.flags.map((x) => `${x.code}:${x.severity}:${x.detail}`),
-      ['ENGINE_PROFILE_FIELD_REVIEW:info:profile field "brandNew" is neither projected nor listed as deliberately omitted']);
+      ['ENGINE_PROFILE_FIELD_REVIEW:blocking:profile field "brandNew" is neither projected nor listed as deliberately omitted']);
   });
 
   it('fails extraction on an id/filename mismatch or a missing field', () => {
@@ -271,9 +271,9 @@ describe('checkParity', () => {
   const SHA = 'a'.repeat(64);
   const families = () => ({
     CLI: { rows: [{ id: 'whoami', usage: 'tc whoami', audience: 'pane', subverbs: '' }], flags: [], sources: ['lib/tc-verbs.js'], sourceDigests: { 'lib/tc-verbs.js': SHA } },
-    ROUTES: { rows: [{ method: 'GET', path: '/a', file: 'server.js' }], flags: [], sources: ['server.js'], sourceDigests: { 'server.js': SHA } },
+    ROUTES: { rows: [{ method: 'GET', path: '/a', file: 'server.js' }], flags: [{ code: 'DECLARATION_UNUSED', severity: 'info', source: 'server.js', line: 9, detail: 'd' }], sources: ['server.js'], sourceDigests: { 'server.js': SHA } },
     'PROJECT-CONFIG': { rows: [{ key: 'engine', value: 'null' }], flags: [], sources: ['lib/project-config.js'] },
-    ENGINES: { rows: [], flags: [{ code: 'ENGINE_PROFILE_FIELD_REVIEW', severity: 'info', source: 'x.json', line: null, detail: 'd' }], sources: [] }
+    ENGINES: { rows: [], flags: [], sources: [] }
   });
   /** Docs holding exactly the block each family generates. */
   const matchingDocs = (fam) => Object.fromEntries(f2.FAMILIES.map((name) => [
@@ -286,7 +286,7 @@ describe('checkParity', () => {
     assert.equal(out.exitCode, 0);
     assert.equal(out.ok, true);
     assert.equal(out.schema, f2.REVIEW_SCHEMA);
-    assert.deepEqual(out.flags.map((x) => x.code), ['ENGINE_PROFILE_FIELD_REVIEW']);
+    assert.deepEqual(out.flags.map((x) => x.code), ['DECLARATION_UNUSED']);
     assert.deepEqual(out.sourceDigests, { 'lib/tc-verbs.js': SHA, 'server.js': SHA });
   });
 
@@ -298,7 +298,7 @@ describe('checkParity', () => {
     const frozen = JSON.stringify(docs);
     const out = f2.checkParity(families, docs);
     assert.equal(out.exitCode, 1);
-    assert.deepEqual(out.flags.map((x) => x.code), ['BLOCK_DRIFT', 'ENGINE_PROFILE_FIELD_REVIEW', 'MISSING_MARKER', 'TARGET_MISSING']);
+    assert.deepEqual(out.flags.map((x) => x.code), ['BLOCK_DRIFT', 'DECLARATION_UNUSED', 'MISSING_MARKER', 'TARGET_MISSING']);
     assert.equal(JSON.stringify(docs), frozen);
     assert.ok(out.blocks.ROUTES, 'the proposed block is still returned for review');
   });
@@ -341,18 +341,38 @@ describe('extractRepository (this repo, read-only)', () => {
     assert.ok(fam.ROUTES.rows.some((r) => r.method === 'GET' && r.path === '/api/health'));
     assert.ok(fam['PROJECT-CONFIG'].rows.some((r) => r.key === 'engine'));
     assert.deepEqual(fam.ENGINES.rows.map((r) => r.id), ['aider', 'antigravity', 'claude', 'codex', 'openclaw']);
-    assert.ok(fam.ENGINES.flags.length > 0 && fam.ENGINES.flags.every((x) => x.code === 'ENGINE_PROFILE_FIELD_REVIEW' && x.severity === 'info'),
-      'with no omission list, every unprojected profile field is surfaced for review, never silently dropped');
+    assert.deepEqual(f2.extractRepository(ROOT, { engineOmittedFields: [] }).ENGINES.flags.map((x) => x.severity).filter((v, i, a) => a.indexOf(v) === i), ['blocking'],
+      'an explicitly empty omission list makes every unprojected profile field fail closed, never silently dropped');
     assert.deepEqual(fam['PROJECT-CONFIG'].flags, []);
   });
 
-  it('clears the engine review flags once the reviewed omission list names every unprojected field', () => {
-    const omitted = ['command', 'configFormat', 'coAuthorFormat', 'commands', 'install', 'detection', 'launch',
-      'persistent', 'statusPage', 'silentPrimeScript', 'silentRulesScript', 'models', 'effort',
-      'errorPatterns', 'pickerHidden', 'remote'];
-    const fam = f2.extractRepository(ROOT, { engineOmittedFields: omitted });
+  it('reads the reviewed omission list from data/, so the real profiles pass clean (PRR-B)', () => {
+    const fam = f2.extractRepository(ROOT);
     assert.deepEqual(fam.ENGINES.flags, []);
+    assert.ok(fam.ENGINES.sources.includes('data/doc-parity/engine-omitted-fields.json'));
     assert.ok(!JSON.stringify(fam.ENGINES.rows).includes('CLAUDE_CODE_ARTIFACT_AUTO_OPEN'), 'launch env never reaches a row');
+  });
+
+  it('fails closed (exit 1) when a profile gains a field nobody has reviewed (PRR-B)', () => {
+    const fs = require('node:fs');
+    const readFile = (p) => {
+      const text = fs.readFileSync(p, 'utf8');
+      return p.endsWith(path.join('data', 'engines', 'claude.json')) ? JSON.stringify({ ...JSON.parse(text), brandNewField: 1 }) : text;
+    };
+    const out = f2.checkParity(() => f2.extractRepository(ROOT, { readFile }), {});
+    assert.equal(out.exitCode, 1);
+    const review = out.flags.filter((x) => x.code === 'ENGINE_PROFILE_FIELD_REVIEW');
+    assert.deepEqual(review.map((x) => `${x.severity}:${x.source}`), ['blocking:data/engines/claude.json']);
+  });
+
+  it('fails extraction on a malformed omission list rather than treating it as empty', () => {
+    const fs = require('node:fs');
+    for (const bad of ['not json', '{"schema":"other","fields":[]}', '{"schema":"tc.doc-parity-engine-omitted/v1","fields":["a","a"]}']) {
+      const readFile = (p) => (p.endsWith('engine-omitted-fields.json') ? bad : fs.readFileSync(p, 'utf8'));
+      const out = f2.checkParity(() => f2.extractRepository(ROOT, { readFile }), {});
+      assert.equal(out.exitCode, 2, bad);
+      assert.deepEqual(out.blocks, {}, bad);
+    }
   });
 
   it('digests every source file it read, and the real DEFAULT_PROJECT_CONFIG scans clean', () => {

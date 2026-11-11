@@ -1,0 +1,22 @@
+{
+  "schema": "tc.doc-parity-engine-omitted/v1",
+  "why": "Engine profile fields deliberately left out of the generated ENGINES reference table (lib/v6/f2-code-doc-parity.js). Launch argv, launch env, install commands and engine-internal hints are operational detail, and launch.env may carry values that must never be published. A profile field that is neither projected nor listed here fails the parity check (ENGINE_PROFILE_FIELD_REVIEW) until someone decides, in review, whether to document it or add it here. Kept as data rather than code so naming these fields is not mistaken for a code read of them (test/engine-capability-reads.test.js).",
+  "fields": [
+    "coAuthorFormat",
+    "command",
+    "commands",
+    "configFormat",
+    "detection",
+    "effort",
+    "errorPatterns",
+    "install",
+    "launch",
+    "models",
+    "persistent",
+    "pickerHidden",
+    "remote",
+    "silentPrimeScript",
+    "silentRulesScript",
+    "statusPage"
+  ]
+}
