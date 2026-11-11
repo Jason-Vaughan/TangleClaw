@@ -17,6 +17,10 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.0.1 — Live Fleet Shell data, conversation detail, and Classic View switching
+
+- **Live v6 Fleet Shell wire-up** (#3022) — `public/v6-shell.js#tcV6CreateLiveController` and `public/ui.js`'s `#v6ViewToggleBtn` connect the Fleet Shell to live project/session data, synthesize Logical Project → Fleet → Member navigation from `/api/projects`, resolve logical and fleet routes to a real member project, replay conversation events, show model attestations and Open Hood terminal links, render live B4 telemetry with confidence labels, preview C2 fleet-template seat plans, and provide one-click Fleet Shell (v6) / Classic View switching; `GET /api/v6/projects/:id/telemetry` supplies the live telemetry payload.
+
 ## v6.0.0 — Unified v6 platform: project/fleet hierarchy, native conversation layer, closed-loop Kaizen, fleet-first UI shell, project charters, rich reports & search, and guided GitHub integration
 
 - **Ratify the Native Conversation Layer and Open Hood Contract** (#2976) — `docs/adr/0026-native-conversation-layer-and-open-hood-contract.md` (amending ADR 0008 Decision 6), with its own contract test `test/adr-0026-contract.test.js`; no runtime behavior change on its own.

@@ -4,6 +4,18 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.0.1] - 2026-11-11
+
+### Fixed
+- The v6 Fleet Shell now shows live data: a "Fleet Shell (v6)" / "Classic View"
+  button in the dashboard toolbar switches between the two views in one click,
+  the sidebar lists every project (lanes grouped by shared name prefix, the rest
+  under Workspace Projects) with each one linking to its conversation view, the
+  telemetry bar reports live session count, health and running version, the
+  starter fleet templates load and preview their seat plan, and a project's
+  conversation view replays its recorded events, shows its model attestation and
+  links to the live terminal (#3022).
+
 ## [6.0.0] - 2026-11-10
 
 ### Added
