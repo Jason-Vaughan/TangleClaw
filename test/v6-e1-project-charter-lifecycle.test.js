@@ -46,6 +46,11 @@ describe('vocabulary constants (#2126)', () => {
     assert.deepEqual(e1.STATUSES, ['draft', 'approved', 'active', 'amended', 'superseded']);
   });
 
+  it('MINIMUM_REQUIRED_ROLES is exactly sponsor+pm, and both are valid APPROVER_ROLES', () => {
+    assert.deepEqual(e1.MINIMUM_REQUIRED_ROLES, ['sponsor', 'pm']);
+    for (const role of e1.MINIMUM_REQUIRED_ROLES) assert.ok(e1.APPROVER_ROLES.includes(role));
+  });
+
   it('APPROVER_ROLES matches recordApproval\'s own accepted values', () => {
     assert.deepEqual(e1.APPROVER_ROLES, ['sponsor', 'pm', 'other']);
     const db = freshStore();
@@ -254,6 +259,79 @@ describe('recordApproval / revokeApproval / checkApprovalComplete (#2126 require
       cleanup();
     }
   });
+
+  it('requiredRoles: [] can never report complete on zero approvals -- sponsor+pm is always the floor (Ruling A592-PR3017-R1-HOLD-RECONCILED item 1)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'charter-empty-required');
+      const created = e1.createDraftCharter(db, { projectId, content: { title: 'v1' } });
+      const check = e1.checkApprovalComplete(db, { versionId: created.versionId, requiredRoles: [] });
+      assert.equal(check.complete, false);
+      assert.deepEqual(check.missingRoles.sort(), ['pm', 'sponsor']);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('an unknown role in requiredRoles is refused, not silently ignored (Ruling A592-PR3017-R1-HOLD-RECONCILED item 1)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'charter-unknown-role');
+      const created = e1.createDraftCharter(db, { projectId, content: { title: 'v1' } });
+      const check = e1.checkApprovalComplete(db, { versionId: created.versionId, requiredRoles: ['auditor'] });
+      assert.equal(check.ok, false);
+      assert.equal(check.code, 'INVALID_REQUIRED_ROLES');
+      assert.equal(check.complete, false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('a caller-supplied requiredRoles beyond the minimum still adds to, never replaces, sponsor+pm', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'charter-extra-role');
+      const created = e1.createDraftCharter(db, { projectId, content: { title: 'v1' } });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'sponsor', approverActor: 'carol' });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'pm', approverActor: 'dave' });
+      const check = e1.checkApprovalComplete(db, { versionId: created.versionId, requiredRoles: ['other'] });
+      assert.equal(check.complete, false);
+      assert.deepEqual(check.missingRoles, ['other']);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('recording the final required sign-off moves status from draft to approved (Ruling A592-PR3017-R1-HOLD-RECONCILED item 3)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'charter-approved-transition');
+      const created = e1.createDraftCharter(db, { projectId, content: { title: 'v1' } });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'sponsor', approverActor: 'carol' });
+      assert.equal(e1.getCharter(db, { projectId }).charter.status, 'draft', 'still draft with only 1 of 2 required sign-offs');
+
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'pm', approverActor: 'dave' });
+      assert.equal(e1.getCharter(db, { projectId }).charter.status, 'approved', 'both minimum sign-offs now present');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('revoking a sign-off that drops an approved charter below complete reverts it to draft (version 1) or amended (a later version)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'charter-revert-on-revoke');
+      const created = e1.createDraftCharter(db, { projectId, content: { title: 'v1' } });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'sponsor', approverActor: 'carol' });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'pm', approverActor: 'dave' });
+      assert.equal(e1.getCharter(db, { projectId }).charter.status, 'approved');
+
+      e1.revokeApproval(db, { projectId, versionId: created.versionId, approverRole: 'pm', approverActor: 'dave' });
+      assert.equal(e1.getCharter(db, { projectId }).charter.status, 'draft', 'reverts to draft -- this was version 1');
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 describe('activateCharter (#2126 requirement 4, 6)', () => {
@@ -334,6 +412,25 @@ describe('supersedeCharter (#2126 requirement 1 terminal state)', () => {
       const second = e1.supersedeCharter(db, { projectId });
       assert.equal(second.ok, false);
       assert.equal(second.code, 'NOT_FOUND');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('clears the active pointer, so an active charter cannot be read back as active after being superseded (Ruling A592-PR3017-R1-HOLD-RECONCILED item 2)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'charter-supersede-clears-active');
+      const created = e1.createDraftCharter(db, { projectId, content: { title: 'v1' } });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'sponsor', approverActor: 'carol' });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'pm', approverActor: 'dave' });
+      e1.activateCharter(db, { projectId, versionId: created.versionId, requiredRoles: [] });
+      assert.ok(e1.getActiveCharter(db, { projectId }), 'precondition: it really is active first');
+
+      e1.supersedeCharter(db, { projectId });
+      assert.equal(e1.getActiveCharter(db, { projectId }), null);
+      assert.equal(e1.getStartupSummary(db, { projectId }), null);
+      assert.equal(e1.getCharter(db, { projectId }).charter.active_version_id, null);
     } finally {
       cleanup();
     }
@@ -442,6 +539,32 @@ describe('checkResourceDrift (#2126 requirement 9 -- narrow comparison only)', (
       const projectId = seedProject(db, 'charter-drift-no-active');
       e1.createDraftCharter(db, { projectId, content: { title: 'draft only' } });
       assert.equal(e1.checkResourceDrift(db, { projectId, actual: {} }), null);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('detects drift when a team member and a resource are swapped between categories (Ruling A592-PR3017-R1-HOLD-RECONCILED item 4)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'charter-drift-swap');
+      const created = e1.createDraftCharter(db, {
+        projectId, content: { title: 'v1', coreTeam: ['alice'], requiredResources: ['db-prod'] }
+      });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'sponsor', approverActor: 'carol' });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'pm', approverActor: 'dave' });
+      e1.activateCharter(db, { projectId, versionId: created.versionId, requiredRoles: [] });
+
+      // 'alice' and 'db-prod' are the SAME two values the charter declares,
+      // just reported under the OPPOSITE category -- a pooled-set
+      // comparison would see an identical overall set and report no
+      // drift; a category-separated one must not.
+      const drift = e1.checkResourceDrift(db, {
+        projectId, actual: { coreTeam: ['db-prod'], requiredResources: ['alice'] }
+      });
+      assert.equal(drift.drift, true);
+      assert.ok(drift.missing.includes('alice'), 'alice is missing from the TEAM category specifically');
+      assert.ok(drift.missing.includes('db-prod'), 'db-prod is missing from the RESOURCES category specifically');
     } finally {
       cleanup();
     }
