@@ -220,6 +220,18 @@ const e1Charters = require('./lib/v6/e1-project-charter-lifecycle');
 const e4Reports = require('./lib/v6/e4-rich-report-presentation');
 const e6aReports = require('./lib/v6/e6a-report-search-indexer');
 const g1Github = require('./lib/v6/g1-github-integration');
+const a2bRecovery = require('./lib/v6/a2b-self-healing-remediator');
+const a3Profiles = require('./lib/v6/a3-operating-profiles');
+const c4d2Failover = require('./lib/v6/c4-d2-failover-and-quota-placement');
+const c3Waves = require('./lib/v6/c3-wave-scheduler');
+const d3Openweight = require('./lib/v6/d3-openweight-qualification');
+const b3Settings = require('./lib/v6/b3-settings-assistant');
+const e6bAsk = require('./lib/v6/e6b-report-narrative-synthesizer');
+const f1Kb = require('./lib/v6/f1-knowledge-base');
+const f2Parity = require('./lib/v6/f2-code-doc-parity');
+const f3Support = require('./lib/v6/f3-support-diagnostic-scrubber');
+const h2Walkthroughs = require('./lib/v6/h2-educational-walkthroughs');
+const productManual = require('./lib/product-manual');
 const providerContract = require('./lib/providers/contract');
 const transcript = require('./lib/transcript');
 const v6Crypto = require('node:crypto');
@@ -8817,7 +8829,32 @@ const V6_STATUS_BY_CODE = {
   ALREADY_BOUND: 409,
   // Route-layer code (this car): the webhook's raw body failed strict
   // UTF-8 decoding before recordWebhookReceipt was ever called.
-  INVALID_UTF8: 400
+  INVALID_UTF8: 400,
+
+  // ── v6.1.0 Wave 2 (Car V61-W2-ROUTES) ── grep -n "code: '" over
+  // lib/v6/a2b-*.js, a3-*.js, c4-d2-*.js, f1-*.js, e6b-*.js.
+  LATCHED: 409,
+  NOT_LATCHED: 409,
+  OPERATOR_REQUIRED: 403,
+  REASON_REQUIRED: 400,
+  VERSION_CONFLICT: 409,
+  SCOPE_INVALID: 400,
+  FLEET_HAS_NO_MEMBER_PROJECTS: 409,
+  UNKNOWN_PROFILE: 400,
+  UNKNOWN_SERVICE: 400,
+  SAFETY_FLOOR_IMMUTABLE: 403,
+  UNKNOWN_PLACEMENT_MODE: 400,
+  UNKNOWN_STRATEGY: 400,
+  NO_APPROVED_WORK: 409,
+  NO_ELIGIBLE_PLACEMENT: 409,
+  VERSION_INVALID: 400,
+  VERSION_NOT_COVERED: 404,
+  SECTION_NOT_FOUND: 404,
+  // Route-layer codes (this car).
+  KB_UNAVAILABLE: 503,
+  INVALID_SAMPLES: 400,
+  RUN_NOT_IN_PROJECT: 404,
+  UNPUBLISHED_WALKTHROUGH: 409
 };
 
 /**
@@ -10764,6 +10801,539 @@ route('POST', '/api/v6/projects/:id/github/outbox', async (req, res, params, bod
     action: b.action, idempotencyKey: b.idempotencyKey, leaseId: b.leaseId, approvalId: b.approvalId, draft: b.draft
   });
   _v6Respond(res, result, 201);
+});
+
+// ── v6.1.0 Wave 2: Recovery, Profiles, Failover, Waves, Settings, Knowledge (Car V61-W2-ROUTES) ──
+//
+// Live wiring for the eleven v6.1.0 Wave 1 modules (#1886, #2991..#3000).
+// Every route here is OPERATOR-ONLY (`operatorProjectCaller`), GETs
+// included, for the same reason the Stage 1 section above gives: these are
+// new primitives with no established project-scoped caller yet.
+//
+// Three places deliberately do NOT pass the request body straight through:
+// - placement: `placeWork`'s `auto` mode trusts the `policy` it is handed,
+//   so the route loads the Operator-RATIFIED policy server-side and ignores
+//   any `body.policy` — otherwise a caller could hand itself an allowlist
+//   and get `autoApply: true`.
+// - support preview: `previewIssue` renders whatever bundle it is given
+//   without re-scrubbing it, so the route always builds the bundle itself
+//   through the scrubber and never accepts a client-supplied `body.bundle`.
+// - latch reset: who cleared the latch is the signed-in operator's own
+//   identity, never a body field (P08).
+
+/**
+ * Parse `params.id` as a project id, answering 400/404 itself.
+ * @param {http.ServerResponse} res
+ * @param {object} params
+ * @returns {number|null} `null` once this has already answered.
+ */
+function _v6RequireProjectId(res, params) {
+  const projectId = Number(params.id);
+  if (!Number.isSafeInteger(projectId) || projectId <= 0) {
+    errorResponse(res, 400, 'project id must be a positive integer', 'INVALID_REQUEST');
+    return null;
+  }
+  if (!v6Db().prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId)) {
+    errorResponse(res, 404, `Project "${projectId}" not found`, 'PROJECT_NOT_FOUND');
+    return null;
+  }
+  return projectId;
+}
+
+/**
+ * Answer a thrown library error as a 4xx with its own `code` (and its own
+ * `status` when it carries one, as `WaveSchedulerError` does). Anything
+ * without a `code` is a 400 `INVALID_REQUEST`.
+ * @param {http.ServerResponse} res
+ * @param {Error} err
+ * @returns {void}
+ */
+function _v6RespondThrown(res, err) {
+  const code = (err && typeof err.code === 'string') ? err.code : 'INVALID_REQUEST';
+  const status = (err && Number.isInteger(err.status) && err.status >= 400 && err.status < 500)
+    ? err.status : (V6_STATUS_BY_CODE[code] || 400);
+  errorResponse(res, status, `v6 request refused: ${err && err.message ? err.message : code}`, code);
+}
+
+/** Optional positive-integer query/body value, else `undefined`. */
+function _v6OptionalInt(value) {
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n > 0 ? n : undefined;
+}
+
+// ── A2b: Recovery Console & circuit (#2991) ──
+
+route('GET', '/api/v6/projects/:id/recovery-console', (req, res, params) => {
+  const query = parseQuery(reqUrl(req).search);
+  if (!operatorProjectCaller(req, res, 'read a project\'s recovery console')) return;
+  const projectId = _v6RequireProjectId(res, params);
+  if (projectId === null) return;
+  jsonResponse(res, 200, a2bRecovery.recoveryConsole(v6Db(), projectId, { limit: _v6OptionalInt(query && query.limit) }));
+});
+
+route('GET', '/api/v6/projects/:id/recovery/circuit', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a project\'s recovery circuit')) return;
+  const projectId = _v6RequireProjectId(res, params);
+  if (projectId === null) return;
+  a2bRecovery.ensureSchema(v6Db());
+  jsonResponse(res, 200, a2bRecovery.circuitState(v6Db(), projectId));
+});
+
+route('POST', '/api/v6/projects/:id/recovery/operator-reset', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'clear a project\'s recovery latch')) return;
+  const projectId = _v6RequireProjectId(res, params);
+  if (projectId === null) return;
+  const actorIdentity = _v6RequireSignedInActor(req);
+  if (!actorIdentity) return errorResponse(res, 403, 'Clearing a recovery latch requires a signed-in operator', 'SIGNED_IN_OPERATOR_REQUIRED');
+  const b = _v6Body(body);
+  if (typeof b.reason !== 'string' || !b.reason.trim()) return errorResponse(res, 400, 'reason is required', 'REASON_REQUIRED');
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'project.writePolicy');
+  if (!authz) return;
+  // The latch table records the authorizing principal as `cleared_by`; the
+  // human who acted rides in the durable reason, from the signed-in session.
+  const remediator = a2bRecovery.createRemediator(v6Db(), authz.auth);
+  _v6Respond(res, remediator.clearLatch({
+    principalId: authz.principalId, projectId, reason: `${actorIdentity.actor}: ${b.reason.trim()}`
+  }));
+});
+
+// ── A3: Operating profiles (#2992) ──
+
+route('GET', '/api/v6/operating-profiles', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'read the operating profiles')) return;
+  jsonResponse(res, 200, {
+    profiles: a3Profiles.PROFILES, safetyFloor: a3Profiles.SAFETY_FLOOR, optionalServices: a3Profiles.OPTIONAL_SERVICES,
+    resolved: a3Profiles.PROFILES.map((name) => a3Profiles.resolveProfile(name))
+  });
+});
+
+route('POST', '/api/v6/operating-profiles/resolve', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'resolve an operating profile')) return;
+  const b = _v6Body(body);
+  _v6Respond(res, a3Profiles.resolveProfile(b.profile, _v6Body(b.overrides)));
+});
+
+route('POST', '/api/v6/operating-profiles/overhead', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'aggregate operating-profile benchmark samples')) return;
+  const b = _v6Body(body);
+  let rows;
+  try {
+    rows = a3Profiles.profileOverhead(Array.isArray(b.samples) ? b.samples : []);
+  } catch (err) {
+    return errorResponse(res, 400, `v6 request refused: ${err.message}`, 'INVALID_SAMPLES');
+  }
+  jsonResponse(res, 200, { rows, deltas: a3Profiles.compareToFull(rows) });
+});
+
+// ── C4+D2: Standing failover policy & quota-aware placement (#2993) ──
+
+route('GET', '/api/v6/projects/:id/failover-policy', (req, res, params) => {
+  const query = parseQuery(reqUrl(req).search);
+  if (!operatorProjectCaller(req, res, 'read a project\'s failover policy')) return;
+  const projectId = _v6RequireProjectId(res, params);
+  if (projectId === null) return;
+  const fleetId = query && typeof query.fleetId === 'string' && query.fleetId ? query.fleetId : null;
+  const effective = c4d2Failover.getEffectivePolicy(v6Db(), { projectId, fleetId });
+  jsonResponse(res, 200, effective
+    ? { ...effective, posture: effective.policy.mode }
+    : { policy: null, version: 0, scopeKind: null, posture: 'confirm' });
+});
+
+route('PUT', '/api/v6/projects/:id/failover-policy', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'ratify a project\'s failover policy')) return;
+  const projectId = _v6RequireProjectId(res, params);
+  if (projectId === null) return;
+  const b = _v6Body(body);
+  const authz = _v6RequireOperatorAuthz(res, v6Db(), projectId, 'project.writePolicy');
+  if (!authz) return;
+  _v6Respond(res, c4d2Failover.ratifyPolicy(v6Db(), {
+    scopeKind: 'project', scopeId: String(projectId), policy: b.policy, expectedVersion: b.expectedVersion,
+    principalId: authz.principalId, auth: authz.auth
+  }));
+});
+
+route('PUT', '/api/v6/fleets/:fleetId/failover-policy', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'ratify a fleet\'s failover policy')) return;
+  const b = _v6Body(body);
+  const db = v6Db();
+  // ratifyPolicy authorizes on EVERY member project; the proven operator
+  // vouches for each of them through the same per-project grant.
+  const members = db.prepare('SELECT DISTINCT legacy_project_id AS id FROM v6_resources WHERE fleet_id = ? AND legacy_project_id IS NOT NULL')
+    .all(params.fleetId).map((r) => r.id);
+  let authz = null;
+  for (const id of members) {
+    authz = _v6OperatorAuthorize(db, id, 'project.writePolicy');
+    if (!authz) return errorResponse(res, 404, `Project "${id}" not found`, 'PROJECT_NOT_FOUND');
+  }
+  if (!authz) return errorResponse(res, 409, `Fleet "${params.fleetId}" has no member projects`, 'FLEET_HAS_NO_MEMBER_PROJECTS');
+  // One workspace's operator principal per call: members in different
+  // workspaces would need different principals, which ratifyPolicy's
+  // single principalId cannot express, so it refuses rather than guesses.
+  _v6Respond(res, c4d2Failover.ratifyPolicy(db, {
+    scopeKind: 'fleet', scopeId: params.fleetId, policy: b.policy, expectedVersion: b.expectedVersion,
+    principalId: authz.principalId, auth: authz.auth
+  }));
+});
+
+route('GET', '/api/v6/projects/:id/failover-receipts', (req, res, params) => {
+  const query = parseQuery(reqUrl(req).search);
+  if (!operatorProjectCaller(req, res, 'read a project\'s failover receipts')) return;
+  const projectId = _v6RequireProjectId(res, params);
+  if (projectId === null) return;
+  jsonResponse(res, 200, { receipts: c4d2Failover.listFailoverReceipts(v6Db(), projectId, { limit: _v6OptionalInt(query && query.limit) }) });
+});
+
+route('POST', '/api/v6/placement/recommend', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'recommend a model placement')) return;
+  const b = _v6Body(body);
+  let policy = null;
+  if (b.mode === 'auto') {
+    const projectId = Number(b.projectId);
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) {
+      return errorResponse(res, 400, 'auto placement needs projectId, whose ratified policy decides what may auto-apply', 'INVALID_REQUEST');
+    }
+    const effective = c4d2Failover.getEffectivePolicy(v6Db(), { projectId, fleetId: typeof b.fleetId === 'string' ? b.fleetId : null });
+    policy = effective ? effective.policy : null;
+  }
+  if (!Array.isArray(b.candidates) || !Array.isArray(b.catalog)) {
+    return errorResponse(res, 400, 'candidates and catalog must be arrays', 'INVALID_REQUEST');
+  }
+  _v6Respond(res, c4d2Failover.placeWork({
+    mode: b.mode, strategy: b.strategy, job: _v6Body(b.job), candidates: b.candidates, catalog: b.catalog,
+    quota: Array.isArray(b.quota) ? b.quota : [], now: Date.now(), policy
+  }));
+});
+
+// ── C3: Wave scheduler (#1886) ──
+
+route('POST', '/api/v6/wave-scheduler/topological-waves', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'plan scheduler waves')) return;
+  const b = _v6Body(body);
+  try {
+    jsonResponse(res, 200, { waves: c3Waves.topologicalWaves(Array.isArray(b.cars) ? b.cars : []) });
+  } catch (err) {
+    _v6RespondThrown(res, err);
+  }
+});
+
+route('POST', '/api/v6/projects/:id/wave-runs', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'create a wave run')) return;
+  const projectId = _v6RequireProjectId(res, params);
+  if (projectId === null) return;
+  const b = _v6Body(body);
+  try {
+    const scheduler = new c3Waves.WaveScheduler({ store: new c3Waves.SqliteSchedulerStore(v6Db()) });
+    const run = scheduler.createRun({
+      id: b.id, fleetId: b.fleetId, cars: Array.isArray(b.cars) ? b.cars : [],
+      metadata: { ..._v6Body(b.metadata), projectId }
+    });
+    jsonResponse(res, 201, run);
+  } catch (err) {
+    _v6RespondThrown(res, err);
+  }
+});
+
+route('GET', '/api/v6/projects/:id/wave-runs/:runId', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a wave run')) return;
+  const projectId = _v6RequireProjectId(res, params);
+  if (projectId === null) return;
+  try {
+    const run = new c3Waves.WaveScheduler({ store: new c3Waves.SqliteSchedulerStore(v6Db()) }).getRun(params.runId);
+    if (!run.metadata || run.metadata.projectId !== projectId) {
+      return errorResponse(res, 404, `Run "${params.runId}" not found for this project`, 'RUN_NOT_IN_PROJECT');
+    }
+    jsonResponse(res, 200, run);
+  } catch (err) {
+    _v6RespondThrown(res, err);
+  }
+});
+
+// ── D3: Open-weight qualification (#2994) ──
+
+route('GET', '/api/v6/openweight/catalog', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'read the open-weight qualification catalog')) return;
+  jsonResponse(res, 200, { roles: d3Openweight.ROLES, providers: d3Openweight.PROVIDERS, tools: d3Openweight.TOOLS, gates: d3Openweight.GATES });
+});
+
+route('POST', '/api/v6/openweight/evaluate-probe', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'evaluate an open-weight probe')) return;
+  const b = _v6Body(body);
+  try {
+    jsonResponse(res, 200, d3Openweight.evaluateProbe(b.probe, b.observation, _v6Body(b.options)));
+  } catch (err) {
+    _v6RespondThrown(res, err);
+  }
+});
+
+// ── B3: Settings assistant (#2995) ──
+
+route('GET', '/api/v6/settings/catalog', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'read the settings catalog')) return;
+  jsonResponse(res, 200, { catalog: b3Settings.CATALOG, scopeKinds: b3Settings.SCOPE_KINDS });
+});
+
+route('GET', '/api/v6/settings/explain/:key', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'explain a setting')) return;
+  try {
+    jsonResponse(res, 200, b3Settings.explainSetting(decodeURIComponent(params.key)));
+  } catch (err) {
+    if (err && err.code === 'UNKNOWN_SETTING') return errorResponse(res, 404, `Unknown setting "${params.key}"`, 'UNKNOWN_SETTING');
+    _v6RespondThrown(res, err);
+  }
+});
+
+route('POST', '/api/v6/settings/inspect-overrides', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'inspect a setting\'s overrides')) return;
+  const b = _v6Body(body);
+  try {
+    jsonResponse(res, 200, b3Settings.inspectOverrides(b.key, Array.isArray(b.chain) ? b.chain : []));
+  } catch (err) {
+    _v6RespondThrown(res, err);
+  }
+});
+
+route('POST', '/api/v6/settings/validate-patch', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'validate a settings patch')) return;
+  const b = _v6Body(body);
+  try {
+    jsonResponse(res, 200, { ok: true, keys: b3Settings.validatePatch(b.kind, b.patch) });
+  } catch (err) {
+    _v6RespondThrown(res, err);
+  }
+});
+
+// ── E6b: Grounded report Q&A (#2996) ──
+
+route('POST', '/api/v6/reports/ask', async (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'ask a question of a report')) return;
+  const b = _v6Body(body);
+  // No `synthesize` adapter is wired here: the answer is retrieval-only
+  // (cited, grounded excerpts), never a model call from this route.
+  try {
+    const result = await e6bAsk.askReport({
+      reports: b.reports, question: b.question, budgetTokens: b.budgetTokens, limitPerReport: b.limitPerReport
+    });
+    _v6Respond(res, result);
+  } catch (err) {
+    _v6RespondThrown(res, err);
+  }
+});
+
+// ── F1: Built-in knowledge base (#2997) ──
+
+/** @type {{snapshots: Array<object>}|null} Built once per process from the shipped manual. */
+let _v6KnowledgeBase = null;
+
+/**
+ * The knowledge base for the RUNNING version, built lazily from the
+ * repo's own validated manual manifest (`docs/manual-manifest.json`) and
+ * the pages it names — the same source `lib/product-manual.js` checks for
+ * doc/code parity, so the help it serves is the documentation this build
+ * ships. A page that cannot be read is listed in `missingPages`, never
+ * indexed as empty.
+ * @returns {{snapshots: Array<object>}|null} `null` when the manifest cannot be read.
+ */
+function _v6GetKnowledgeBase() {
+  if (_v6KnowledgeBase) return _v6KnowledgeBase;
+  try {
+    const manifest = productManual.readManualManifest(path.join(__dirname, 'docs', 'manual-manifest.json'));
+    const contents = {};
+    for (const page of manifest.pages) {
+      try {
+        contents[page.path] = fs.readFileSync(path.join(__dirname, page.path), 'utf8');
+      } catch {
+        // missing page: buildSnapshot reports it in missingPages
+      }
+    }
+    const version = /^\d+\.\d+\.\d+$/.test(String(_getVersion())) ? String(_getVersion()) : '0.0.0';
+    _v6KnowledgeBase = f1Kb.createKnowledgeBase([f1Kb.buildSnapshot(manifest, contents, version)]);
+  } catch (err) {
+    log.warn('v6 knowledge base unavailable', { error: err.message });
+    return null;
+  }
+  return _v6KnowledgeBase;
+}
+
+/**
+ * The shared retrieval context from query params: audience `human` unless
+ * `nhe` is asked for, a budget (default 1024 tokens), and an optional version.
+ * @param {object} query
+ * @returns {{audience: string, budgetTokens: number, version?: string}}
+ */
+function _v6KbContext(query) {
+  const q = query || {};
+  const ctx = { audience: q.audience === 'nhe' ? 'nhe' : 'human', budgetTokens: _v6OptionalInt(q.budgetTokens) || 1024 };
+  if (typeof q.version === 'string' && q.version && q.version !== 'latest') ctx.version = q.version;
+  return ctx;
+}
+
+route('GET', '/api/v6/kb/search', (req, res, _params) => {
+  const query = parseQuery(reqUrl(req).search);
+  if (!operatorProjectCaller(req, res, 'search the knowledge base')) return;
+  const kb = _v6GetKnowledgeBase();
+  if (!kb) return errorResponse(res, 503, 'The knowledge base could not be built from docs/manual-manifest.json', 'KB_UNAVAILABLE');
+  _v6Respond(res, f1Kb.search(kb, (query && query.q) || '', _v6KbContext(query)));
+});
+
+route('GET', '/api/v6/kb/contextual-help', (req, res, _params) => {
+  const query = parseQuery(reqUrl(req).search);
+  if (!operatorProjectCaller(req, res, 'read contextual help')) return;
+  const kb = _v6GetKnowledgeBase();
+  if (!kb) return errorResponse(res, 503, 'The knowledge base could not be built from docs/manual-manifest.json', 'KB_UNAVAILABLE');
+  _v6Respond(res, f1Kb.contextualHelp(kb, (query && query.surface) || '', _v6KbContext(query)));
+});
+
+// ── F2: Code-to-doc parity (#2998) ──
+
+route('GET', '/api/v6/doc-parity/families', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'read the doc-parity families')) return;
+  jsonResponse(res, 200, { schema: f2Parity.REVIEW_SCHEMA, families: f2Parity.FAMILIES });
+});
+
+/**
+ * The four target docs `lib/v6/f2-code-doc-parity.js` checks by default.
+ * That module's own `DEFAULT_TARGETS` is not exported, so this mirrors it;
+ * `test/v6-v610-server-routes-integration.test.js` asserts the two agree.
+ * @type {Readonly<Record<string, string>>}
+ */
+const _V6_PARITY_DEFAULT_TARGETS = Object.freeze({
+  CLI: 'docs/tc-cli-reference.md',
+  ROUTES: 'docs/api-reference.md',
+  'PROJECT-CONFIG': 'docs/configuration-reference.md',
+  ENGINES: 'docs/engine-guide.md'
+});
+
+/**
+ * The target docs `checkParity` compares against, read from this checkout:
+ * target path -> current text, `undefined` when the file is absent (the
+ * shape `checkParity` expects for a missing target).
+ * @param {Record<string, string>} targets
+ * @returns {Record<string, string|undefined>}
+ */
+function _v6ReadParityDocs(targets) {
+  const root = serverInfo.getRepoRoot();
+  const docs = {};
+  for (const rel of Object.values(targets)) {
+    try {
+      docs[rel] = fs.readFileSync(path.join(root, rel), 'utf8');
+    } catch {
+      docs[rel] = undefined;
+    }
+  }
+  return docs;
+}
+
+route('POST', '/api/v6/doc-parity/check', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'check code-to-doc parity')) return;
+  // Everything is derived server-side from this checkout (PRR-A R1, PR
+  // #3030): the extraction, the target list and the docs themselves. No
+  // body field is read — a caller-chosen `targets` would let this route
+  // read any file it names, and a caller-supplied extraction or docs text
+  // would make the parity verdict say whatever the caller wanted.
+  const extract = () => f2Parity.extractRepository(serverInfo.getRepoRoot());
+  try {
+    jsonResponse(res, 200, f2Parity.checkParity(extract, _v6ReadParityDocs(_V6_PARITY_DEFAULT_TARGETS), { targets: _V6_PARITY_DEFAULT_TARGETS }));
+  } catch (err) {
+    _v6RespondThrown(res, err);
+  }
+});
+
+// ── F3: Support diagnostic bundle (#2999) ──
+
+route('POST', '/api/v6/support/diagnostic-bundle', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'build a support diagnostic bundle')) return;
+  const b = _v6Body(body);
+  try {
+    jsonResponse(res, 200, f3Support.buildBundle(_v6Body(b.input), { includeLogs: Boolean(b.includeLogs) }));
+  } catch (err) {
+    _v6RespondThrown(res, err);
+  }
+});
+
+route('POST', '/api/v6/support/preview-issue', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'preview a support issue')) return;
+  const b = _v6Body(body);
+  try {
+    // Always scrubbed here: a client-supplied `bundle` is never accepted.
+    const bundle = f3Support.buildBundle(_v6Body(b.input), { includeLogs: Boolean(b.includeLogs) });
+    jsonResponse(res, 200, f3Support.previewIssue(bundle, typeof b.repo === 'string' ? b.repo : 'Jason-Vaughan/TangleClaw'));
+  } catch (err) {
+    _v6RespondThrown(res, err);
+  }
+});
+
+// ── H2: Walkthroughs & glossary (#3000) ──
+
+/**
+ * Run H2's publication gate for the running build (PRR-B R1, PR #3030).
+ * `confirmedSurfaces` comes only from the caller and defaults to none: a
+ * walkthrough never confirms its own surfaces, or the gate would pass
+ * everything it exists to hold back.
+ * @param {object} walkthrough - From `getWalkthrough` (it carries `steps`).
+ * @param {string[]} confirmedSurfaces
+ * @returns {{publishable: boolean, reasons: string[]}}
+ */
+function _v6WalkthroughGate(walkthrough, confirmedSurfaces) {
+  return h2Walkthroughs.publicationGate(walkthrough, { buildVersion: String(_getVersion()), confirmedSurfaces });
+}
+
+/**
+ * `?confirmedSurfaces=a,b` as a list, else none.
+ * @param {object} query
+ * @returns {string[]}
+ */
+function _v6ConfirmedSurfaces(query) {
+  const raw = query && typeof query.confirmedSurfaces === 'string' ? query.confirmedSurfaces : '';
+  return raw.split(',').map((x) => x.trim()).filter(Boolean);
+}
+
+route('GET', '/api/v6/walkthroughs', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'list the walkthroughs')) return;
+  const query = parseQuery(reqUrl(req).search);
+  const includeUnverified = query.includeUnverified === '1';
+  const confirmed = _v6ConfirmedSurfaces(query);
+  const walkthroughs = h2Walkthroughs.listWalkthroughs()
+    .map((w) => ({ ...w, publication: _v6WalkthroughGate(h2Walkthroughs.getWalkthrough(w.id), confirmed) }))
+    .filter((w) => includeUnverified || w.publication.publishable);
+  jsonResponse(res, 200, { walkthroughs, includeUnverified, glossary: h2Walkthroughs.GLOSSARY });
+});
+
+route('GET', '/api/v6/walkthroughs/:walkthroughId', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a walkthrough')) return;
+  const query = parseQuery(reqUrl(req).search);
+  const walkthrough = h2Walkthroughs.getWalkthrough(params.walkthroughId);
+  if (!walkthrough) return errorResponse(res, 404, `Walkthrough "${params.walkthroughId}" not found`, 'NOT_FOUND');
+  const publication = _v6WalkthroughGate(walkthrough, _v6ConfirmedSurfaces(query));
+  if (!publication.publishable && query.includeUnverified !== '1') {
+    return errorResponse(res, 409, `Walkthrough "${params.walkthroughId}" is not publishable for this build`,
+      'UNPUBLISHED_WALKTHROUGH', { reasons: publication.reasons });
+  }
+  jsonResponse(res, 200, { ...walkthrough, publication });
+});
+
+route('POST', '/api/v6/walkthroughs/:walkthroughId/publication-gate', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'check a walkthrough\'s publication gate')) return;
+  const walkthrough = h2Walkthroughs.getWalkthrough(params.walkthroughId);
+  if (!walkthrough) return errorResponse(res, 404, `Walkthrough "${params.walkthroughId}" not found`, 'NOT_FOUND');
+  const b = _v6Body(body);
+  const confirmed = Array.isArray(b.confirmedSurfaces) ? b.confirmedSurfaces.filter((x) => typeof x === 'string') : [];
+  jsonResponse(res, 200, h2Walkthroughs.publicationGate(walkthrough, {
+    buildVersion: typeof b.buildVersion === 'string' && b.buildVersion ? b.buildVersion : String(_getVersion()),
+    confirmedSurfaces: confirmed
+  }));
+});
+
+route('GET', '/api/v6/glossary/:term', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a glossary term')) return;
+  let term;
+  try {
+    term = decodeURIComponent(params.term);
+  } catch {
+    return errorResponse(res, 400, 'term is not valid URI encoding', 'INVALID_REQUEST');
+  }
+  const entry = h2Walkthroughs.glossaryTerm(term);
+  if (!entry) return errorResponse(res, 404, `Glossary term "${term}" not found`, 'NOT_FOUND');
+  jsonResponse(res, 200, entry);
 });
 
 // ── Server Creation ──
