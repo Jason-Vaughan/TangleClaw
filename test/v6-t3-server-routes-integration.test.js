@@ -134,8 +134,16 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
   }
 
   /** A `GET /repos/{repo}` stub reporting push+pull (never admin) access, the shape `_v6ProbeGithubConnection` reads. */
-  function githubRepoProbeStub(repo, perms = { pull: true, push: true, admin: false }) {
-    return async () => ({ status: 200, json: async () => ({ full_name: repo, permissions: perms }) });
+  function githubRepoProbeStub(repo, perms = { pull: true, push: true, admin: false }, { scopes = 'repo', isPrivate = true } = {}) {
+    return async () => ({
+      status: 200,
+      // PRR-B 04561f29 (Round 4 item 1): the real route now requires
+      // authoritative scope evidence before granting issues/PR/contents
+      // write from `perms.push` alone — a classic `x-oauth-scopes: repo`
+      // header is exactly that evidence, so the default stub carries one.
+      headers: { get: (name) => (name.toLowerCase() === 'x-oauth-scopes' ? scopes : null) },
+      json: async () => ({ full_name: repo, private: isPrivate, permissions: perms })
+    });
   }
 
   const post = (url, body, opts) => send('POST', url, Object.assign({ body: body || {} }, opts));
@@ -370,6 +378,31 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
       assert.ok(!json(read).probe.permissions.includes('administration:write'), 'a caller-claimed admin grant the real probe (pull+push only) never reported must never reach storage');
     });
 
+    it('perms.push: true ALONE, with no x-oauth-scopes: repo and no explicit fine-grained write field, never grants issues:write/pull_requests:write/contents:write (PRR-B 04561f29 Round 4 item 1)', async () => {
+      const projectId = await seedProject('g1-connection-push-only');
+      await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-pushonly', installationId: 42, secretRef: 'vault:gh-token' });
+      process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
+      try {
+        // push: true, but NO x-oauth-scopes header and no explicit
+        // issues/pull_requests/contents field -- a fine-grained token
+        // shape with an unrelated `push` grant, not classic repo scope.
+        const noScopeStub = async () => ({
+          status: 200, headers: { get: () => null },
+          json: async () => ({ full_name: 'acme/widgets-pushonly', private: true, permissions: { pull: true, push: true, admin: false } })
+        });
+        const conn = await withStubbedFetch(noScopeStub, () =>
+          post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }));
+        assert.equal(conn.statusCode, 201, conn.body);
+        const read = await get(`/api/v6/projects/${projectId}/github/connection`);
+        assert.ok(!json(read).probe.permissions.includes('issues:write'), 'push alone, with no scope evidence, must not imply issues:write');
+        assert.ok(!json(read).probe.permissions.includes('pull_requests:write'));
+        assert.ok(!json(read).probe.permissions.includes('contents:write'));
+        assert.ok(json(read).probe.permissions.includes('contents:read'), 'pull: true still grants read');
+      } finally {
+        delete process.env.TC_VAULT_GH_TOKEN;
+      }
+    });
+
     it('refuses CONNECTION_INVALID when epoch/approvedTiers are missing or malformed, before any probe or write (Ruling A609/A610 item 3)', async () => {
       const projectId = await seedProject('g1-connection-bad-payload');
       await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-badpayload', installationId: 42, secretRef: 'vault:gh-token' });
@@ -472,6 +505,69 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
         const row = await get(`/api/v6/projects/${projectId}/github/outbox/k1`);
         assert.equal(row.statusCode, 200, row.body);
         assert.equal(json(row).state, 'succeeded');
+      } finally {
+        delete process.env.TC_VAULT_GH_TOKEN;
+      }
+    });
+
+    it('re-probes and persists a fresh connection probe when the stored one has expired, before admitting (PRR-B 04561f29 Round 4 item 2)', async () => {
+      const projectId = await seedProject('g1-outbox-probe-refresh');
+      const operator = signInOperator('g1-probe-refresh-operator');
+      process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
+      try {
+        await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-refresh', installationId: 42, secretRef: 'vault:gh-token' }, operator);
+        const connRes = await withStubbedFetch(githubRepoProbeStub('acme/widgets-refresh'), () =>
+          post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }, operator));
+        assert.equal(connRes.statusCode, 201, connRes.body);
+        const lease = await post(`/api/v6/projects/${projectId}/g1-leases`,
+          { repo: 'acme/widgets-refresh', connectionEpoch: 1, actions: ['createIssue'], ttlMs: 99999 }, operator);
+        const leaseId = json(lease).id;
+
+        // Force the stored probe to read as expired, as if >5 minutes had
+        // genuinely passed since it was last probed.
+        const row = store.getDb().prepare('SELECT probe_json FROM v6_github_connections WHERE project_id = ?').get(projectId);
+        const staleProbe = { ...JSON.parse(row.probe_json), expiresAt: Date.now() - 1000 };
+        store.getDb().prepare('UPDATE v6_github_connections SET probe_json = ? WHERE project_id = ?')
+          .run(JSON.stringify(staleProbe), projectId);
+
+        let fetchCalls = 0;
+        const admit = await withStubbedFetch(async (...args) => { fetchCalls++; return githubRepoProbeStub('acme/widgets-refresh')(...args); }, () =>
+          post(`/api/v6/projects/${projectId}/github/outbox/admit`,
+            { action: 'createIssue', idempotencyKey: 'k-refresh', leaseId, draft: { title: 'hello', body: 'world' } }, operator));
+        assert.equal(admit.statusCode, 200, admit.body);
+        assert.equal(json(admit).ok, true, 'admission succeeds because the expired probe was refreshed first');
+        assert.equal(fetchCalls, 1, 'exactly one re-probe call was made');
+
+        const refreshedRow = store.getDb().prepare('SELECT probe_json FROM v6_github_connections WHERE project_id = ?').get(projectId);
+        assert.ok(JSON.parse(refreshedRow.probe_json).expiresAt > Date.now(), 'the stale probe was persisted as refreshed, not left stale');
+      } finally {
+        delete process.env.TC_VAULT_GH_TOKEN;
+      }
+    });
+
+    it('fails closed (stale PROBE_EXPIRED) when the stored probe is expired AND the re-probe attempt itself fails', async () => {
+      const projectId = await seedProject('g1-outbox-probe-refresh-fails');
+      const operator = signInOperator('g1-probe-refresh-fail-operator');
+      process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
+      try {
+        await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-refresh-fail', installationId: 42, secretRef: 'vault:gh-token' }, operator);
+        await withStubbedFetch(githubRepoProbeStub('acme/widgets-refresh-fail'), () =>
+          post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }, operator));
+        const lease = await post(`/api/v6/projects/${projectId}/g1-leases`,
+          { repo: 'acme/widgets-refresh-fail', connectionEpoch: 1, actions: ['createIssue'], ttlMs: 99999 }, operator);
+        const leaseId = json(lease).id;
+
+        const row = store.getDb().prepare('SELECT probe_json FROM v6_github_connections WHERE project_id = ?').get(projectId);
+        const staleProbe = { ...JSON.parse(row.probe_json), expiresAt: Date.now() - 1000 };
+        store.getDb().prepare('UPDATE v6_github_connections SET probe_json = ? WHERE project_id = ?')
+          .run(JSON.stringify(staleProbe), projectId);
+
+        // The re-probe attempt itself fails (GitHub unreachable/rejects).
+        const admit = await withStubbedFetch(async () => { throw new Error('network down'); }, () =>
+          post(`/api/v6/projects/${projectId}/github/outbox/admit`,
+            { action: 'createIssue', idempotencyKey: 'k-refresh-fail', leaseId, draft: { title: 'hello', body: 'world' } }, operator));
+        assert.equal(admit.statusCode, 403, admit.body);
+        assert.equal(json(admit).code, 'PROBE_EXPIRED', 'fails closed on the still-stale probe rather than fabricating a fresh one');
       } finally {
         delete process.env.TC_VAULT_GH_TOKEN;
       }
@@ -587,6 +683,45 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
         assert.equal(JSON.parse(res.body).ok, true);
       } finally {
         delete process.env.TC_VAULT_BOM_SECRET;
+      }
+    });
+
+    it('challenges with 401 when the gate is LOCKED, unlike an ARMED gate which admits the same signed delivery (PRR-B 04561f29 Round 4 item 3)', async () => {
+      // This test runs last in the file: every earlier test's signed-in
+      // operator left a live, enabled account behind, so disabling only a
+      // freshly-created one would leave the install still ARMED. Disable
+      // every account that exists so far instead, so `loginable` is
+      // actually false -- the one fact that distinguishes LOCKED from ARMED.
+      store.users.create('webhook-locked-gate-user', 'correct-horse-battery');
+      for (const user of store.users.list()) {
+        store.users.disable(user.username);
+      }
+      const cfg = store.config.load();
+      cfg.authEnabled = true;
+      cfg.basicAuthUser = null;
+      cfg.basicAuthHash = null;
+      store.config.save(cfg);
+
+      assert.equal(store.authSessions.accountPresence().loginable, false, 'every account is disabled, so the gate reads LOCKED, not ARMED');
+
+      const projectId = await seedProject('g1-webhook-locked');
+      store.getDb().prepare('INSERT INTO v6_bindings (project_id, repo, installation_id, secret_ref) VALUES (?, ?, ?, ?)')
+        .run(projectId, 'acme/widgets-locked', 1001, 'vault:locked-secret');
+      process.env.TC_VAULT_LOCKED_SECRET = 'l'.repeat(20);
+      try {
+        const payload = JSON.stringify({ repository: { full_name: 'acme/widgets-locked' }, installation: { id: 1001 } });
+        const sig = `sha256=${crypto.createHmac('sha256', 'l'.repeat(20)).update(payload).digest('hex')}`;
+        // Same well-formed, correctly-HMAC-signed, remote, non-browser
+        // delivery shape that admits under ARMED above -- the only
+        // difference is gate state, which must be the sole reason this
+        // one is refused before ever reaching the webhook handler.
+        const res = await sendWebhook(Buffer.from(payload), {
+          'content-type': 'application/json', 'x-github-delivery': 'd-locked-1', 'x-github-event': 'pull_request',
+          'x-hub-signature-256': sig, 'x-forwarded-for': '203.0.113.7'
+        }, { remoteAddress: '203.0.113.7' });
+        assert.equal(res.statusCode, 401, res.body);
+      } finally {
+        delete process.env.TC_VAULT_LOCKED_SECRET;
       }
     });
   });

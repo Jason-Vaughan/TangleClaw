@@ -8975,17 +8975,79 @@ async function _v6ProbeGithubConnection(token, repo) {
   }
   const perms = body && body.permissions;
   if (!perms || typeof perms !== 'object') return null;
+
+  // PRR-B 04561f29: `perms.push` alone (the classic repo API's boolean) is
+  // not authoritative evidence of write access to issues/PRs/contents
+  // specifically — a fine-grained token can hold `push` for a reason
+  // unrelated to those three, or none of these granular grants at all.
+  // Classic OAuth evidence (the `x-oauth-scopes` response header naming
+  // `repo`, or `public_repo` for a public repo) legitimately bundles
+  // issues/PR/contents write together; a fine-grained/installation token
+  // instead names each permission explicitly, and ONLY an explicit
+  // write/admin value for that exact permission counts there.
+  const scopesHeader = (typeof response.headers?.get === 'function' && response.headers.get('x-oauth-scopes')) || '';
+  const scopes = scopesHeader.split(',').map((s) => s.trim()).filter(Boolean);
+  const hasClassicWriteScope = scopes.includes('repo') || (body.private === false && scopes.includes('public_repo'));
+  const classicWrite = perms.push === true && hasClassicWriteScope;
+  const explicitWrite = (field) => perms[`${field}:write`] === true || perms[field] === 'write' || perms[field] === 'admin';
+
   const permissions = [];
   if (perms.pull) permissions.push('contents:read', 'checks:read');
-  if (perms.push) permissions.push('contents:write', 'issues:write', 'pull_requests:write');
+  if (classicWrite || explicitWrite('contents')) permissions.push('contents:write');
+  if (classicWrite || explicitWrite('issues')) permissions.push('issues:write');
+  if (classicWrite || explicitWrite('pull_requests')) permissions.push('pull_requests:write');
   if (perms.admin) permissions.push('administration:write');
+
+  // Honor the token's OWN real expiry when GitHub reports one (fine-
+  // grained PATs and installation tokens do); fall back to a conservative
+  // 5-minute default otherwise, re-probed by _v6RefreshGithubProbeIfExpired
+  // before every admission.
+  const expirationHeader = typeof response.headers?.get === 'function' ? response.headers.get('github-authentication-token-expiration') : null;
+  const headerExpiresAt = expirationHeader ? Date.parse(expirationHeader) : NaN;
+  const expiresAt = Number.isFinite(headerExpiresAt) && headerExpiresAt > Date.now() ? headerExpiresAt : Date.now() + 5 * 60 * 1000;
+
   return {
     identity: typeof body.full_name === 'string' ? body.full_name : repo,
     kind: 'classic',
     permissions: Array.from(new Set(permissions)),
     repositories: [repo],
-    expiresAt: Date.now() + 5 * 60 * 1000
+    expiresAt
   };
+}
+
+/**
+ * Re-probe and persist a project's GitHub connection if its stored probe
+ * has expired, so an otherwise-valid connection does not become
+ * permanently unusable once its probe's own expiry passes (PRR-B
+ * 04561f29 Round 4 item 2) — without this, `admit()`'s own
+ * `testConnection` drift check would fail closed with `PROBE_EXPIRED`
+ * forever, since nothing else ever refreshes `v6_github_connections`'
+ * stored probe. Called before every admission; a no-op when the stored
+ * probe is still fresh, and a silent no-op (leaving the stale probe for
+ * `admit()` to fail closed on, honestly) when the re-probe itself fails —
+ * never fabricates a fresh-looking probe from a failed attempt.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {number} projectId
+ * @returns {Promise<void>}
+ */
+async function _v6RefreshGithubProbeIfExpired(db, projectId) {
+  const row = db.prepare('SELECT * FROM v6_github_connections WHERE project_id = ?').get(projectId);
+  if (!row) return;
+  let connection, probe;
+  try {
+    connection = JSON.parse(row.connection_json);
+    probe = JSON.parse(row.probe_json);
+  } catch {
+    return;
+  }
+  if (Number.isFinite(probe.expiresAt) && probe.expiresAt > Date.now()) return;
+  const token = _v6GithubSecretStore.get(connection.tokenRef);
+  if (typeof token !== 'string') return;
+  const freshProbe = await _v6ProbeGithubConnection(token, connection.repo);
+  if (!freshProbe) return;
+  const refreshedConnection = { ...connection, expectedFingerprint: _v6GithubProbeFingerprint(freshProbe) };
+  db.prepare('UPDATE v6_github_connections SET connection_json = ?, probe_json = ? WHERE project_id = ?')
+    .run(JSON.stringify(refreshedConnection), JSON.stringify(freshProbe), projectId);
 }
 
 /**
@@ -10600,12 +10662,16 @@ route('GET', '/api/v6/projects/:id/github/outbox/:idempotencyKey', (req, res, pa
   jsonResponse(res, 200, row);
 });
 
-route('POST', '/api/v6/projects/:id/github/outbox/admit', (req, res, params, body) => {
+route('POST', '/api/v6/projects/:id/github/outbox/admit', async (req, res, params, body) => {
   if (!operatorProjectCaller(req, res, 'preview a GitHub write admission')) return;
   const projectId = Number(params.id);
   if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'github.write')) return;
   const actorIdentity = _v6RequireSignedInActor(req);
   if (!actorIdentity) return _v6Respond(res, { ok: false, code: 'SIGNED_IN_OPERATOR_REQUIRED' });
+  // PRR-B 04561f29 Round 4 item 2: an otherwise-valid connection must not
+  // become permanently unusable once its stored probe's own expiry
+  // passes — re-probe and persist a fresh one first, same as /outbox below.
+  await _v6RefreshGithubProbeIfExpired(v6Db(), projectId);
   const b = _v6Body(body);
   const writer = g1Github.createG1Writer({ db: v6Db(), secretStore: _v6GithubSecretStore, provider: _v6GithubProvider });
   // admit() is pure (no network, no outbox row written) — a caller can
@@ -10631,6 +10697,9 @@ route('POST', '/api/v6/projects/:id/github/outbox', async (req, res, params, bod
   if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'github.write')) return;
   const actorIdentity = _v6RequireSignedInActor(req);
   if (!actorIdentity) return _v6Respond(res, { ok: false, code: 'SIGNED_IN_OPERATOR_REQUIRED' });
+  // PRR-B 04561f29 Round 4 item 2: same probe-freshness guarantee as
+  // /outbox/admit above — this route calls admit() internally too.
+  await _v6RefreshGithubProbeIfExpired(v6Db(), projectId);
   const b = _v6Body(body);
   const writer = g1Github.createG1Writer({ db: v6Db(), secretStore: _v6GithubSecretStore, provider: _v6GithubProvider });
   // launchBindingVerified/csrfVerified: this route's own dispatch already
