@@ -744,7 +744,7 @@
       const [profiles, catalog, walkthroughs] = await Promise.all([
         api('/api/v6/operating-profiles'),
         api('/api/v6/settings/catalog'),
-        api('/api/v6/walkthroughs')
+        api('/api/v6/walkthroughs?includeUnverified=1')
       ]);
       if (mine !== seq) return;
       shell.setDetail({ kind: 'settings', view: { profiles, catalog, walkthroughs, projects: projects || [] } });

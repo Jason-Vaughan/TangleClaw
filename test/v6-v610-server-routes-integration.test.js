@@ -327,10 +327,51 @@ describe('v6.1.0 Wave 2 server routes (#1886, #2991..#3000)', () => {
       assert.ok(json(await get('/api/v6/doc-parity/families')).families);
     });
 
-    it('lists walkthroughs, reads one, and 404s an unknown walkthrough or term', async () => {
-      const list = json(await get('/api/v6/walkthroughs'));
-      const id = list.walkthroughs[0].id;
-      assert.equal(json(await get(`/api/v6/walkthroughs/${id}`)).id, id);
+    it('checks parity against this checkout, server-side, ignoring every body field (PRR-A R1)', async () => {
+      const repo = await post('/api/v6/doc-parity/check', {});
+      assert.equal(repo.statusCode, 200, repo.body);
+      assert.ok([0, 1].includes(json(repo).exitCode), `a real extraction finishes (0 clean / 1 drift): ${repo.body.slice(0, 300)}`);
+      const forged = await post('/api/v6/doc-parity/check', {
+        extract: { routes: 'forged' }, docs: { 'docs/api-reference.md': 'forged' },
+        options: { targets: { ROUTES: '../../../../etc/hosts' } }
+      });
+      assert.equal(forged.statusCode, 200, forged.body);
+      assert.deepEqual(json(forged), json(repo), 'a forged extraction, docs or target list changes nothing');
+      assert.ok(!forged.body.includes('localhost'), 'no file outside the fixed targets is read');
+    });
+
+    it('the server mirror of the F2 default targets matches the module', () => {
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'v6', 'f2-code-doc-parity.js'), 'utf8');
+      const block = src.slice(src.indexOf('const DEFAULT_TARGETS'), src.indexOf('});', src.indexOf('const DEFAULT_TARGETS')));
+      const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+      for (const target of block.match(/'docs\/[^']+'/g)) assert.ok(serverSrc.includes(target), `server.js mirrors ${target}`);
+    });
+
+    it('hides unpublishable walkthroughs by default and serves them only on includeUnverified=1 (PRR-B R1)', async () => {
+      const hidden = json(await get('/api/v6/walkthroughs'));
+      assert.ok(hidden.walkthroughs.every((w) => w.publication.publishable), 'the default list holds only publishable walkthroughs');
+      const all = json(await get('/api/v6/walkthroughs?includeUnverified=1'));
+      assert.ok(all.walkthroughs.length > 0);
+      const unpublishable = all.walkthroughs.find((w) => !w.publication.publishable);
+      assert.ok(unpublishable, 'the shipped walkthroughs are unverified today');
+      const blocked = await get(`/api/v6/walkthroughs/${unpublishable.id}`);
+      assert.deepEqual([blocked.statusCode, json(blocked).code], [409, 'UNPUBLISHED_WALKTHROUGH']);
+      assert.ok(json(blocked).reasons.includes('NOT_VERIFIED'));
+      const opened = json(await get(`/api/v6/walkthroughs/${unpublishable.id}?includeUnverified=1`));
+      assert.equal(opened.id, unpublishable.id);
+      assert.equal(opened.publication.publishable, false);
+    });
+
+    it('the publication gate never lets a walkthrough confirm its own surfaces', async () => {
+      const gate = json(await post('/api/v6/walkthroughs/install-to-first-chat/publication-gate', {}));
+      assert.equal(gate.publishable, false);
+      assert.ok(gate.reasons.some((r) => r.startsWith('SURFACES_UNSHIPPED')), 'an unconfirmed proposed surface still blocks');
+      const confirmed = json(await post('/api/v6/walkthroughs/install-to-first-chat/publication-gate', { confirmedSurfaces: ['conversationTimeline'] }));
+      assert.ok(!confirmed.reasons.some((r) => r.startsWith('SURFACES_UNSHIPPED')), 'a caller-confirmed surface clears that blocker');
+      assert.equal((await post('/api/v6/walkthroughs/no-such/publication-gate', {})).statusCode, 404);
+    });
+
+    it('reads the glossary and 404s an unknown walkthrough or term', async () => {
       assert.equal((await get('/api/v6/walkthroughs/no-such')).statusCode, 404);
       assert.equal((await get(`/api/v6/glossary/${encodeURIComponent('Fleet')}`)).statusCode, 200);
       assert.equal((await get('/api/v6/glossary/NotATerm')).statusCode, 404);
@@ -417,7 +458,7 @@ describe('v6.1.0 Wave 2 server routes (#1886, #2991..#3000)', () => {
         if (url === '/api/projects') return { projects: [{ id: 7, name: 'demo' }] };
         if (url === '/api/v6/operating-profiles') return { resolved: [], safetyFloor: [] };
         if (url === '/api/v6/settings/catalog') return { catalog: {} };
-        if (url === '/api/v6/walkthroughs') return { walkthroughs: [] };
+        if (url === '/api/v6/walkthroughs?includeUnverified=1') return { walkthroughs: [] };
         if (url.startsWith('/api/v6/kb/contextual-help')) return { results: [] };
         if (url.startsWith('/api/v6/projects/7/recovery-console')) return { circuit: { state: 'closed', failures: 0 }, openIncidents: [], recentAttempts: [] };
         return null;
@@ -429,7 +470,7 @@ describe('v6.1.0 Wave 2 server routes (#1886, #2991..#3000)', () => {
 
     it('#/settings/ loads profiles, catalog and walkthroughs into a settings detail', async () => {
       const { details, calls } = await driveSettings('#/settings/');
-      assert.ok(['/api/v6/operating-profiles', '/api/v6/settings/catalog', '/api/v6/walkthroughs'].every((u) => calls.includes(u)));
+      assert.ok(['/api/v6/operating-profiles', '/api/v6/settings/catalog', '/api/v6/walkthroughs?includeUnverified=1'].every((u) => calls.includes(u)));
       const last = details[details.length - 1];
       assert.equal(last.kind, 'settings');
       assert.equal(last.view.projects[0].name, 'demo');

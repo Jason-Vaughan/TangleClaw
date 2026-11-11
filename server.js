@@ -8853,7 +8853,8 @@ const V6_STATUS_BY_CODE = {
   // Route-layer codes (this car).
   KB_UNAVAILABLE: 503,
   INVALID_SAMPLES: 400,
-  RUN_NOT_IN_PROJECT: 404
+  RUN_NOT_IN_PROJECT: 404,
+  UNPUBLISHED_WALKTHROUGH: 409
 };
 
 /**
@@ -11189,11 +11190,49 @@ route('GET', '/api/v6/doc-parity/families', (req, res) => {
   jsonResponse(res, 200, { schema: f2Parity.REVIEW_SCHEMA, families: f2Parity.FAMILIES });
 });
 
-route('POST', '/api/v6/doc-parity/check', (req, res, _params, body) => {
+/**
+ * The four target docs `lib/v6/f2-code-doc-parity.js` checks by default.
+ * That module's own `DEFAULT_TARGETS` is not exported, so this mirrors it;
+ * `test/v6-v610-server-routes-integration.test.js` asserts the two agree.
+ * @type {Readonly<Record<string, string>>}
+ */
+const _V6_PARITY_DEFAULT_TARGETS = Object.freeze({
+  CLI: 'docs/tc-cli-reference.md',
+  ROUTES: 'docs/api-reference.md',
+  'PROJECT-CONFIG': 'docs/configuration-reference.md',
+  ENGINES: 'docs/engine-guide.md'
+});
+
+/**
+ * The target docs `checkParity` compares against, read from this checkout:
+ * target path -> current text, `undefined` when the file is absent (the
+ * shape `checkParity` expects for a missing target).
+ * @param {Record<string, string>} targets
+ * @returns {Record<string, string|undefined>}
+ */
+function _v6ReadParityDocs(targets) {
+  const root = serverInfo.getRepoRoot();
+  const docs = {};
+  for (const rel of Object.values(targets)) {
+    try {
+      docs[rel] = fs.readFileSync(path.join(root, rel), 'utf8');
+    } catch {
+      docs[rel] = undefined;
+    }
+  }
+  return docs;
+}
+
+route('POST', '/api/v6/doc-parity/check', (req, res) => {
   if (!operatorProjectCaller(req, res, 'check code-to-doc parity')) return;
-  const b = _v6Body(body);
+  // Everything is derived server-side from this checkout (PRR-A R1, PR
+  // #3030): the extraction, the target list and the docs themselves. No
+  // body field is read — a caller-chosen `targets` would let this route
+  // read any file it names, and a caller-supplied extraction or docs text
+  // would make the parity verdict say whatever the caller wanted.
+  const extract = () => f2Parity.extractRepository(serverInfo.getRepoRoot());
   try {
-    jsonResponse(res, 200, f2Parity.checkParity(b.extract, b.docs, _v6Body(b.options)));
+    jsonResponse(res, 200, f2Parity.checkParity(extract, _v6ReadParityDocs(_V6_PARITY_DEFAULT_TARGETS), { targets: _V6_PARITY_DEFAULT_TARGETS }));
   } catch (err) {
     _v6RespondThrown(res, err);
   }
@@ -11225,16 +11264,63 @@ route('POST', '/api/v6/support/preview-issue', (req, res, _params, body) => {
 
 // ── H2: Walkthroughs & glossary (#3000) ──
 
+/**
+ * Run H2's publication gate for the running build (PRR-B R1, PR #3030).
+ * `confirmedSurfaces` comes only from the caller and defaults to none: a
+ * walkthrough never confirms its own surfaces, or the gate would pass
+ * everything it exists to hold back.
+ * @param {object} walkthrough - From `getWalkthrough` (it carries `steps`).
+ * @param {string[]} confirmedSurfaces
+ * @returns {{publishable: boolean, reasons: string[]}}
+ */
+function _v6WalkthroughGate(walkthrough, confirmedSurfaces) {
+  return h2Walkthroughs.publicationGate(walkthrough, { buildVersion: String(_getVersion()), confirmedSurfaces });
+}
+
+/**
+ * `?confirmedSurfaces=a,b` as a list, else none.
+ * @param {object} query
+ * @returns {string[]}
+ */
+function _v6ConfirmedSurfaces(query) {
+  const raw = query && typeof query.confirmedSurfaces === 'string' ? query.confirmedSurfaces : '';
+  return raw.split(',').map((x) => x.trim()).filter(Boolean);
+}
+
 route('GET', '/api/v6/walkthroughs', (req, res) => {
   if (!operatorProjectCaller(req, res, 'list the walkthroughs')) return;
-  jsonResponse(res, 200, { walkthroughs: h2Walkthroughs.listWalkthroughs(), glossary: h2Walkthroughs.GLOSSARY });
+  const query = parseQuery(reqUrl(req).search);
+  const includeUnverified = query.includeUnverified === '1';
+  const confirmed = _v6ConfirmedSurfaces(query);
+  const walkthroughs = h2Walkthroughs.listWalkthroughs()
+    .map((w) => ({ ...w, publication: _v6WalkthroughGate(h2Walkthroughs.getWalkthrough(w.id), confirmed) }))
+    .filter((w) => includeUnverified || w.publication.publishable);
+  jsonResponse(res, 200, { walkthroughs, includeUnverified, glossary: h2Walkthroughs.GLOSSARY });
 });
 
 route('GET', '/api/v6/walkthroughs/:walkthroughId', (req, res, params) => {
   if (!operatorProjectCaller(req, res, 'read a walkthrough')) return;
+  const query = parseQuery(reqUrl(req).search);
   const walkthrough = h2Walkthroughs.getWalkthrough(params.walkthroughId);
   if (!walkthrough) return errorResponse(res, 404, `Walkthrough "${params.walkthroughId}" not found`, 'NOT_FOUND');
-  jsonResponse(res, 200, walkthrough);
+  const publication = _v6WalkthroughGate(walkthrough, _v6ConfirmedSurfaces(query));
+  if (!publication.publishable && query.includeUnverified !== '1') {
+    return errorResponse(res, 409, `Walkthrough "${params.walkthroughId}" is not publishable for this build`,
+      'UNPUBLISHED_WALKTHROUGH', { reasons: publication.reasons });
+  }
+  jsonResponse(res, 200, { ...walkthrough, publication });
+});
+
+route('POST', '/api/v6/walkthroughs/:walkthroughId/publication-gate', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'check a walkthrough\'s publication gate')) return;
+  const walkthrough = h2Walkthroughs.getWalkthrough(params.walkthroughId);
+  if (!walkthrough) return errorResponse(res, 404, `Walkthrough "${params.walkthroughId}" not found`, 'NOT_FOUND');
+  const b = _v6Body(body);
+  const confirmed = Array.isArray(b.confirmedSurfaces) ? b.confirmedSurfaces.filter((x) => typeof x === 'string') : [];
+  jsonResponse(res, 200, h2Walkthroughs.publicationGate(walkthrough, {
+    buildVersion: typeof b.buildVersion === 'string' && b.buildVersion ? b.buildVersion : String(_getVersion()),
+    confirmedSurfaces: confirmed
+  }));
 });
 
 route('GET', '/api/v6/glossary/:term', (req, res, params) => {
