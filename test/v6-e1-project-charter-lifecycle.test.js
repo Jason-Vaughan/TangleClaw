@@ -412,6 +412,35 @@ describe('recordApproval / revokeApproval / checkApprovalComplete (#2126 require
       cleanup();
     }
   });
+
+  it('deactivating an older ACTIVE version whose amendment (v2) is already fully approved surfaces v2\'s real state as approved, not a blind draft/amended reset (PRR-A R4 follow-up)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'charter-deactivate-with-approved-amendment');
+      const created = e1.createDraftCharter(db, { projectId, content: { title: 'v1' } });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'sponsor', approverActor: 'carol' });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'pm', approverActor: 'dave' });
+      e1.activateCharter(db, { projectId, versionId: created.versionId, requiredRoles: [] });
+      assert.equal(e1.getCharter(db, { projectId }).charter.status, 'active');
+
+      // Amend while active: v2 lands (status -> amended, active_version_id still v1),
+      // then v2 itself clears the minimum bar (status -> approved, active_version_id STILL v1).
+      const saved = e1.saveDraftVersion(db, { projectId, content: { title: 'v2' } });
+      e1.recordApproval(db, { projectId, versionId: saved.versionId, approverRole: 'sponsor', approverActor: 'carol' });
+      e1.recordApproval(db, { projectId, versionId: saved.versionId, approverRole: 'pm', approverActor: 'dave' });
+      assert.equal(e1.getCharter(db, { projectId }).charter.status, 'approved', 'precondition: v2 is now fully approved while v1 is still the active pointer');
+
+      // Deactivate the stale v1 pointer by revoking its own sign-off.
+      e1.revokeApproval(db, { projectId, versionId: created.versionId, approverRole: 'pm', approverActor: 'dave' });
+
+      const found = e1.getCharter(db, { projectId });
+      assert.equal(found.charter.active_version_id, null, 'the stale v1 pointer is cleared');
+      assert.equal(found.charter.status, 'approved', 'status reflects v2 (latest), which is still fully approved -- not reset to draft/amended');
+      assert.equal(e1.getActiveCharter(db, { projectId }), null, 'nothing is active again until activateCharter is called for v2');
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 describe('activateCharter (#2126 requirement 4, 6)', () => {
