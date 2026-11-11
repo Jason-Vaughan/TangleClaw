@@ -8986,6 +8986,11 @@ async function _v6ProbeGithubConnection(token, repo) {
   const rawScopes = typeof response.headers?.get === 'function' ? response.headers.get('x-oauth-scopes') : null;
   if (typeof rawScopes !== 'string') return null;
   const scopes = rawScopes.split(',').map((s) => s.trim()).filter(Boolean);
+  // GitHub sends `X-OAuth-Scopes: ""` (present, but empty) on fine-
+  // grained/App token responses — the header's mere PRESENCE is not
+  // enough to prove this is a classic PAT; it must actually name scopes
+  // (Ruling A614 correction, PRR-A c143e69d / PRR-B 7d3aeb87).
+  if (scopes.length === 0) return null;
   const hasClassicWriteScope = scopes.includes('repo') || (body.private === false && scopes.includes('public_repo'));
   const classicWrite = perms.push === true && hasClassicWriteScope;
   // A repo can have its issue tracker disabled entirely (`has_issues:
@@ -9018,8 +9023,13 @@ async function _v6ProbeGithubConnection(token, repo) {
   const now = Date.now();
   const ttlCap = now + 5 * 60 * 1000;
   let expiresAt = ttlCap;
-  if (expirationHeader) {
-    const headerExpiresAt = Date.parse(expirationHeader);
+  // A truthy check here would silently accept a PRESENT-but-empty
+  // `github-authentication-token-expiration: ""` header as "absent" and
+  // fall through to the 5-minute default, the same presence-vs-content
+  // gap just fixed for `X-OAuth-Scopes` above — an empty value must fail
+  // closed too, not be treated as no claim at all.
+  if (expirationHeader !== null && expirationHeader !== undefined) {
+    const headerExpiresAt = Date.parse(String(expirationHeader).trim());
     if (!Number.isFinite(headerExpiresAt) || headerExpiresAt <= now) return null;
     expiresAt = Math.min(headerExpiresAt, ttlCap);
   }

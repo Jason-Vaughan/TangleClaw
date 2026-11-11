@@ -432,6 +432,25 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
       }
     });
 
+    it('fails closed (PROBE_UNAVAILABLE) when X-OAuth-Scopes is present but empty/whitespace/comma-only, not merely absent (PRR-A c143e69d / PRR-B 7d3aeb87 Round 6)', async () => {
+      const projectId = await seedProject('g1-connection-empty-scopes');
+      await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-emptyscopes', installationId: 42, secretRef: 'vault:gh-token' });
+      process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
+      try {
+        // GitHub sends X-OAuth-Scopes: "" (present, but naming nothing)
+        // on fine-grained/App token responses -- the header's mere
+        // presence proved nothing by itself; it must actually carry a
+        // scope to be classic-PAT evidence.
+        const conn = await withStubbedFetch(
+          githubRepoProbeStub('acme/widgets-emptyscopes', { pull: true, push: true, admin: false }, { scopes: ' , ' }),
+          () => post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }));
+        assert.equal(conn.statusCode, 503, conn.body);
+        assert.equal(json(conn).code, 'PROBE_UNAVAILABLE');
+      } finally {
+        delete process.env.TC_VAULT_GH_TOKEN;
+      }
+    });
+
     it('classic push+repo-scope never grants issues:write when the repo has its issue tracker disabled (Architect Ruling A612 item 1)', async () => {
       const projectId = await seedProject('g1-connection-no-issue-tracker');
       await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-noissues', installationId: 42, secretRef: 'vault:gh-token' });
@@ -478,6 +497,25 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
         const alreadyPast = new Date(Date.now() - 60 * 1000).toUTCString();
         const conn = await withStubbedFetch(
           githubRepoProbeStub('acme/widgets-ttlexpired', { pull: true, push: true, admin: false }, { expirationHeader: alreadyPast }),
+          () => post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }));
+        assert.equal(conn.statusCode, 503, conn.body);
+        assert.equal(json(conn).code, 'PROBE_UNAVAILABLE');
+      } finally {
+        delete process.env.TC_VAULT_GH_TOKEN;
+      }
+    });
+
+    it('fails closed (PROBE_UNAVAILABLE) when github-authentication-token-expiration is present but empty, not merely absent (PRR-A c143e69d / PRR-B 7d3aeb87 Round 6)', async () => {
+      const projectId = await seedProject('g1-connection-ttl-empty');
+      await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-ttlempty', installationId: 42, secretRef: 'vault:gh-token' });
+      process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
+      try {
+        // Present but empty must fail closed the same way absent-vs-
+        // present-but-empty X-OAuth-Scopes does above -- a truthy check
+        // on the header value would silently treat "" as "no claim" and
+        // fall back to the 5-minute default instead of failing closed.
+        const conn = await withStubbedFetch(
+          githubRepoProbeStub('acme/widgets-ttlempty', { pull: true, push: true, admin: false }, { expirationHeader: '' }),
           () => post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }));
         assert.equal(conn.statusCode, 503, conn.body);
         assert.equal(json(conn).code, 'PROBE_UNAVAILABLE');
