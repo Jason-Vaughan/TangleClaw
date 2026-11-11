@@ -332,6 +332,58 @@ describe('recordApproval / revokeApproval / checkApprovalComplete (#2126 require
       cleanup();
     }
   });
+
+  it('saving a new UNSIGNED version on an approved charter reverts status, and approving an OLDER (non-latest) version never re-triggers approved (Ruling A596-PR3017-R2-HOLD-RECONCILED item 1)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'charter-approved-then-new-version');
+      const created = e1.createDraftCharter(db, { projectId, content: { title: 'v1' } });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'sponsor', approverActor: 'carol' });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'pm', approverActor: 'dave' });
+      assert.equal(e1.getCharter(db, { projectId }).charter.status, 'approved');
+
+      const saved = e1.saveDraftVersion(db, { projectId, content: { title: 'v2' } });
+      assert.equal(
+        e1.getCharter(db, { projectId }).charter.status, 'draft',
+        'a fresh, zero-approval version must never leave the charter reading approved'
+      );
+
+      // v1 (the now-OLDER version) is still fully approved; a NEW approval
+      // on it (a role nobody signed yet) must not resurrect 'approved' --
+      // only the charter's current LATEST version (v2) can do that.
+      const res = e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'other', approverActor: 'eve' });
+      assert.equal(res.ok, true);
+      assert.equal(
+        e1.getCharter(db, { projectId }).charter.status, 'draft',
+        'approving an older, non-latest version must never transition the charter to approved'
+      );
+      assert.notEqual(saved.versionId, created.versionId);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('revoking a sign-off on the charter\'s ACTIVE version immediately deactivates it -- getActiveCharter/getStartupSummary stop exposing it (Ruling A596-PR3017-R2-HOLD-RECONCILED item 2)', () => {
+    const db = freshStore();
+    try {
+      const projectId = seedProject(db, 'charter-revoke-active');
+      const created = e1.createDraftCharter(db, { projectId, content: { title: 'v1' } });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'sponsor', approverActor: 'carol' });
+      e1.recordApproval(db, { projectId, versionId: created.versionId, approverRole: 'pm', approverActor: 'dave' });
+      e1.activateCharter(db, { projectId, versionId: created.versionId, requiredRoles: [] });
+      assert.ok(e1.getActiveCharter(db, { projectId }), 'precondition: it really is active first');
+
+      e1.revokeApproval(db, { projectId, versionId: created.versionId, approverRole: 'pm', approverActor: 'dave' });
+
+      assert.equal(e1.getActiveCharter(db, { projectId }), null, 'must stop reading as active the instant its own active version loses a required sign-off');
+      assert.equal(e1.getStartupSummary(db, { projectId }), null);
+      const found = e1.getCharter(db, { projectId });
+      assert.equal(found.charter.active_version_id, null);
+      assert.equal(found.charter.status, 'draft', 'version 1 reverts to draft, not amended');
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 describe('activateCharter (#2126 requirement 4, 6)', () => {
