@@ -4,6 +4,183 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.0.0] - 2026-11-10
+
+### Added
+- v6 Stage 1: the server-pinned project authority registry
+  (`lib/v6/authority-service.js`) is now reachable over HTTP —
+  `GET`/`PUT /api/v6/projects/:id/authority/:key`, `POST .../authority/
+  backfill`, `GET .../authority-drift`, and the G1 lease/approval
+  mint/revoke routes (#1149).
+- v6: the 4-Plane Documentation Model (`lib/v6/e1-doc-planes-context-
+  compiler.js`) is now reachable over HTTP — `GET /api/v6/doc-planes/
+  classify`, `POST .../write-boundary`, `POST .../context-bundle`,
+  `POST .../ssot-index/sync`, `GET .../ssot-index/validate`,
+  `POST /api/v6/doc-planes/car-dependency-admission`, and
+  `POST /api/v6/doc-planes/webhook-state-advance` (#1151).
+- v6: the 4-Plane Documentation Model (`lib/v6/e1-doc-planes-context-compiler.js`) —
+  a deterministic path classifier into product/maintainer/operational-memory/
+  historical-archive, a canonical write-boundary guard, a token-budgeted
+  context-assembly compiler with a sha256 provenance manifest, a Project SSOT
+  Index generator/validator, and two sprint/wave tracker helpers (#1151).
+- v6 Stage 1: the Unified Logical Project → Fleet → Resource Module /
+  Checkout / Role Lease / Shared Asset hierarchy
+  (`lib/v6/c1-logical-projects.js`) is now reachable over HTTP — 20
+  routes under `/api/v6/logical-projects`, `/api/v6/fleets`,
+  `/api/v6/resources`, `/api/v6/checkouts`, `/api/v6/role-leases`,
+  `/api/v6/shared-assets`, `/api/v6/asset-grants`,
+  `/api/v6/authority-grants`, and `/api/v6/legacy-projects` (#2118).
+- v6: Native Configurable Project Charters (`lib/v6/e1-project-charter-
+  lifecycle.js`) — draft/approve/activate/amend/supersede lifecycle,
+  immutable version snapshots, role-scoped sign-off (sponsor/PM/other),
+  bounded startup summary, Markdown/JSON export, and a narrow declared-
+  vs-actual resource drift check (#2126).
+- v6 Stage 1: the replay-safe runtime transition ledger
+  (`lib/v6/transition-ledger.js`) is now reachable over HTTP —
+  `POST /api/v6/projects/:id/transitions`, `POST .../transitions/:id/
+  settle`, and `POST .../reconcile` (#2977).
+- v6 Stage 1: the unified runtime incident and recovery registry
+  (`lib/v6/incident-registry.js`) is now reachable over HTTP —
+  `POST /api/v6/projects/:id/incidents` (#2978).
+- v6 Stage 1: the Sprint Report Contract v3.0.0 validator
+  (`lib/v6/sprint-report-validator-v3.js`) is now reachable over HTTP —
+  `POST /api/v6/sprint-reports/validate` (#2979).
+- Sprint Report Contract v3.0.0: a ten-rule deterministic validator (`lib/v6/sprint-report-validator-v3.js`, spec at `docs/SPRINT_REPORT_CONTRACT.md`) for Individual Sprint Reports and Multi-Version Retrospectives, closing the two intra-document/cross-source contradictions that shipped past v2.1.0 — including historical-errata remediation (`--remediate <range>`) for the real `v5.57.0-v5.61.0` PR-count/duration contradiction and the real `v5.68.0-v5.71.0` scrambled `#next-sprint` citations (#2979).
+- v6 Stage 1: the Closed-Loop Kaizen Ledger (`lib/v6/e5-kaizen-ledger.js`)
+  is now reachable over HTTP — `POST`/`GET /api/v6/kaizen/items`,
+  `PATCH .../items/:id/state`, `POST .../items/:id/measurements`,
+  `POST .../items/:id/evaluate-effectiveness`, `POST .../items/:id/
+  mark-regressed`, `POST .../items/:id/gate0-disposition`, and
+  `GET /api/v6/kaizen/gate0-feed` (#2980).
+- v6: the Fleet-First route-based application shell (`public/v6-shell.js`)
+  — client-side hash routing for `/projects/:id`, `/projects/:id/fleets/:fleetId`,
+  `/resources/:id/conversation`, and `/settings/*`, a collapsible Logical
+  Project → Fleet → Member sidebar, a mobile drawer, and render hooks for
+  the B4 telemetry header, the C2 fleet-template wizard, the D1 model
+  attestation indicator, and the H1 watermark footer. Mounted additively
+  alongside the existing dashboard, preserving every `#2188` engine/model
+  picker and control untouched (#2981).
+- v6: the Native Conversation Layer's ledger (`conversation_events`,
+  SCHEMA_VERSION 82, `lib/v6/b2-conversation-layer.js`) — append/replay/
+  soft-delete for Tier-A structured adapters (`claude`, `codex`,
+  `antigravity`) and the Tier-B pane-derived fallback (`aider`), deduped
+  on `(launch_id, pane_cursor_watermark, rolling_line_sha256)` across
+  reconnects, plus the engine-verified interrupt-support decision (#2982).
+- v6: the Native Conversation Layer (`lib/v6/b2-conversation-layer.js`)
+  is now reachable over HTTP — `POST`/`GET /api/v6/projects/:id/sessions/
+  :sessionId/conversation/events`, `DELETE .../events/:eventId`,
+  `POST /api/v6/projects/:id/conversation/interrupt`, and
+  `GET /api/v6/conversation/adapter-tier/:adapter` (#2982).
+- v6: the Global & Fleet/Project Telemetry Header's data model
+  (`lib/v6/b4-telemetry-header.js`) — a bar-assembly function carrying
+  `observed`/`estimated`/`unavailable` confidence per metric, and a
+  visibility controller that structurally guarantees HIDE means HIDE,
+  never DISABLE: no setter it exposes can ever stop background collection
+  (#2983).
+- v6: the Telemetry Header's bar-assembly (`lib/v6/b4-telemetry-header.js`)
+  is now reachable over HTTP — `GET /api/v6/projects/:id/telemetry`
+  (#2983). Real collector wiring remains future work; every metric reads
+  `unavailable` until it lands.
+- v6: the Starter Fleet Template Catalog (`lib/v6/c2-fleet-templates.js`) —
+  three versioned templates (Small 4-Seat, Recommended 10-Role Full
+  Software Development Fleet, Large Configurable) and a guided apply-wizard
+  planner that starts only the supervisory PM seat on launch, deferring
+  every worker/reviewer/observer seat until woken on demand (#2984).
+- v6: the Starter Fleet Template Catalog (`lib/v6/c2-fleet-templates.js`)
+  is now reachable over HTTP — `GET /api/v6/fleet-templates`,
+  `GET /api/v6/fleet-templates/:templateId`,
+  `POST .../plan`, and `POST .../admit` (#2984).
+- v6: durable cross-generation model/effort selection attestation
+  (`model_selection_attestations`, SCHEMA_VERSION 82,
+  `lib/v6/d1-model-attestation.js`) — one record per session generation,
+  carrying the requested and observed model plus a source and confidence
+  badge, updated in place as the observation resolves (#2985).
+- v6: model/effort selection attestation (`lib/v6/d1-model-attestation.js`)
+  is now reachable over HTTP — `POST`/`GET /api/v6/projects/:id/sessions/
+  :sessionId/attestations` and `GET .../attestations/:generation` (#2985).
+- v6: default-on Medusa communication and the mandatory Project/Fleet
+  switchboard isolation check (`lib/v6/g3-medusa-isolation.js`) — new
+  projects default to `medusaEnabled`/`medusaWake: true`, and a cross-
+  project switchboard reach is refused `MEDUSA_CROSS_PROJECT_DENIED`
+  unless an explicit link admits it (#2986).
+- v6: the Medusa switchboard cross-project ACL (`lib/v6/g3-medusa-
+  isolation.js`) is now reachable over HTTP —
+  `POST /api/v6/projects/:id/medusa-access-check` (#2986).
+- v6: the Three-Surface Split Branding & Attribution Policy
+  (`lib/v6/h1-branding-policy.js`) — three independent keys
+  (`branding.uiWatermark`, `branding.gitCommitTrailer`,
+  `branding.generatedDocAttribution`) with their defaults, and two
+  hard locks enforced at read time: a git commit trailer that is always
+  `false` on a `Client / External` repo regardless of stored value, and
+  generated-doc attribution that is always `false` outside
+  `.tangleclaw/`/TangleClaw-generated reports (#2987).
+- v6: the branding & attribution policy's decision functions
+  (`lib/v6/h1-branding-policy.js`) are now reachable over HTTP —
+  `GET /api/v6/branding/default-policy`, `GET .../classify`,
+  `POST .../effective`, and `POST .../validate-change` (#2987).
+- v6: Dual-Format Rich Report Presentation (`lib/v6/e4-rich-report-
+  presentation.js`) — 12 4-part explainable metric popovers (one per
+  canonical report section), a 3-pillar (delivery/quality/governance)
+  progressive-disclosure switcher view-model, and a deterministic
+  Print/PDF stylesheet, built over the existing Sprint Report Contract
+  v3.0.0 HTML shape (#2988).
+- v6: report search indexer and "Ask This Report" citation drawer
+  (`lib/v6/e6a-report-search-indexer.js`) — builds a `report-search-
+  index.json`-shaped section/anchor/token index from a report's HTML
+  and answers a query with exact, verbatim cited passages and section
+  anchor links, deterministic lexical matching only, no model call
+  (#2989).
+- v6: guided 3-tier scoped GitHub integration (`lib/v6/g1-github-
+  integration.js`) — Tier 1 read/observe, Tier 2 role-lease branch/PR/
+  issue write, Tier 3 distinct-operator-approved milestone/merge/
+  release — with a durable idempotent outbox (pending/succeeded/
+  failed/unknown) and the canonical provider adapter contract
+  (`lib/providers/contract.js`, G2a) its first implementation (GitHub)
+  satisfies. Schema v82 -> v83 adds the 5 tables this car needs
+  (`v6_bindings`, `v6_github_connections`, `v6_g1_outbox`,
+  `v6_g1_milestone_bindings`, `v6_webhook_receipts`) plus the 3 Native
+  Project Charter tables (#2126) (#2990).
+- v6: Train 3's three modules are now reachable over HTTP —
+  `lib/v6/e1-project-charter-lifecycle.js` under
+  `/api/v6/projects/:id/charter` (and `/versions`, `/approvals`,
+  `/activate`, `/supersede`, `/drift-check`, `/startup-summary`,
+  `/export`), `lib/v6/e4-rich-report-presentation.js` and
+  `lib/v6/e6a-report-search-indexer.js` under `/api/v6/reports/present`,
+  `/popovers`, `/print-view`, `/search-index`, and `/cite`, and
+  `lib/v6/g1-github-integration.js` / `lib/providers/contract.js` under
+  `/api/v6/projects/:id/github/binding`, `/connection`, `/milestones`,
+  `/outbox` (and `/admit`), `/api/v6/providers/github/capabilities`, and
+  the external `POST /api/v6/webhooks/github` ingress (#2126, #2988,
+  #2989, #2990).
+
+### Internal
+- v6 Stage 1 foundation: added `project_authority_policies` and the trusted
+  workspace/principal/membership/grant tables, with a default-deny
+  `AuthorizationService` and the lease/approval surface for the future G1
+  GitHub writer (`lib/v6/authority-service.js`). Not yet wired into any
+  route — a schema and library foundation only (#1149).
+- v6 Stage 1 (BRIDGE-1b): added the Unified Logical Project → Fleet →
+  Resource Module / Checkout / Role Lease / Shared Asset hierarchy schema
+  and service (`lib/v6/c1-logical-projects.js`), with CAS-guarded fleet/
+  resource lifecycle transitions, role-lease conflict guards, shared-asset
+  grants, and `v6_authority_grants` mint/revoke checked against a fleet's
+  live policy revision. Not yet wired into any route — a schema and
+  library foundation only (#2118).
+- Ratify ADR 0026 (Native Conversation Layer and Open Hood Contract), amending ADR 0008 Decision 6; adds the ADR's own contract test (`test/adr-0026-contract.test.js`) with no runtime behavior change yet (#2976).
+- v6 Stage 1 foundation: added a replay-safe runtime transition ledger
+  (`runtime_transitions`, `operation_idempotency`) and a read-only
+  cross-plane reconciler across SQLite, tmux, Git, PortHub and Medusa
+  (`lib/v6/transition-ledger.js`). Not yet wired into any route (#2977).
+- v6 Stage 1 foundation: added a unified runtime failure taxonomy with
+  secret-redacted incident evidence capture and a bounded, circuit-broken
+  recovery budget (`lib/v6/incident-registry.js`). Not yet wired into any
+  route (#2978).
+- v6 Stage 1 (BRIDGE-1b): added the Closed-Loop Kaizen Ledger schema and
+  service (`lib/v6/e5-kaizen-ledger.js`) — a 9-stage finding lifecycle,
+  the 4-Class Evidence-Based Verification Matrix's proof rules, and the
+  non-binding Gate 0 planning feed. Not yet wired into any route or the
+  sprint charter compiler — a schema and library foundation only (#2980).
+
 ## [5.74.0] - 2026-11-09
 
 ### Added
