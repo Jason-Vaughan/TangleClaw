@@ -216,6 +216,11 @@ const d1 = require('./lib/v6/d1-model-attestation');
 const e1 = require('./lib/v6/e1-doc-planes-context-compiler');
 const g3 = require('./lib/v6/g3-medusa-isolation');
 const h1 = require('./lib/v6/h1-branding-policy');
+const e1Charters = require('./lib/v6/e1-project-charter-lifecycle');
+const e4Reports = require('./lib/v6/e4-rich-report-presentation');
+const e6aReports = require('./lib/v6/e6a-report-search-indexer');
+const g1Github = require('./lib/v6/g1-github-integration');
+const providerContract = require('./lib/providers/contract');
 const transcript = require('./lib/transcript');
 const v6Crypto = require('node:crypto');
 
@@ -8291,6 +8296,15 @@ async function handleRequest(req, res) {
     return _serveAuthPage(res, 200, 'recover.html');
   }
 
+  // External GitHub webhook ingress (#2990): handled before the generic
+  // route()/parseBody() dispatch, which always JSON-decodes a body via a
+  // lossy Buffer.toString('utf8') before any handler sees it — see
+  // _handleGithubWebhook's own doc comment for why that is incompatible
+  // with exact HMAC verification and the strict UTF-8 check this needs.
+  if (dispatchMethod === 'POST' && pathname === '/api/v6/webhooks/github') {
+    return _handleGithubWebhook(req, res);
+  }
+
   // API routes
   if (pathname.startsWith('/api/')) {
 
@@ -8746,7 +8760,50 @@ const V6_STATUS_BY_CODE = {
   // ── lib/v6/h1-branding-policy.js (#2987) ──
   UNKNOWN_BRANDING_KEY: 400,
   GIT_COMMIT_TRAILER_LOCKED_CLIENT_EXTERNAL: 403,
-  DOC_ATTRIBUTION_FORBIDDEN_ON_APPLICATION_PATH: 403
+  DOC_ATTRIBUTION_FORBIDDEN_ON_APPLICATION_PATH: 403,
+
+  // ── lib/v6/e1-project-charter-lifecycle.js (#2126) ──
+  ALREADY_EXISTS: 409,
+  VERSION_NOT_FOUND: 404,
+  CHARTER_SUPERSEDED: 409,
+  APPROVALS_INCOMPLETE: 409,
+  INVALID_REQUIRED_ROLES: 400,
+
+  // ── lib/v6/g1-github-integration.js / lib/providers/contract.js (#2990) ──
+  CALLER_NOT_ADMITTED: 403,
+  ACTION_NOT_ALLOWED: 400,
+  BAD_IDEMPOTENCY_KEY: 400,
+  BAD_DRAFT: 400,
+  REPO_NOT_BOUND: 404,
+  CONNECTION_MISSING: 404,
+  CONNECTION_INVALID: 400,
+  CONNECTION_REVOKED: 403,
+  PROBE_UNAVAILABLE: 503,
+  PROBE_EXPIRED: 403,
+  IDENTITY_CHANGED: 403,
+  REPOSITORY_ACCESS_LOST: 403,
+  SCOPE_DRIFT: 403,
+  TIER_NOT_APPROVED: 403,
+  PERMISSION_MISSING: 403,
+  ROLE_LEASE_REQUIRED: 403,
+  MILESTONE_NOT_BOUND: 404,
+  OPERATOR_APPROVAL_REQUIRED: 403,
+  CREDENTIAL_UNAVAILABLE: 503,
+  OUTCOME_UNKNOWN: 503,
+  PREVIOUSLY_FAILED: 409,
+  GITHUB_REJECTED: 422,
+  BAD_SIGNATURE: 403,
+  DELIVERY_DIGEST_CONFLICT: 409,
+  REPO_INVALID: 400,
+  INSTALLATION_ID_INVALID: 400,
+  TOKEN_REF_INVALID: 400,
+  BAD_DELIVERY_ID: 400,
+  BAD_IDENTITY: 400,
+  SECRET_UNAVAILABLE: 503,
+  ALREADY_BOUND: 409,
+  // Route-layer code (this car): the webhook's raw body failed strict
+  // UTF-8 decoding before recordWebhookReceipt was ever called.
+  INVALID_UTF8: 400
 };
 
 /**
@@ -8794,6 +8851,135 @@ function _v6RespondAllowed(res, result, successStatus = 200) {
 }
 
 const v6Db = () => store.getDb();
+
+/**
+ * Resolve the CALLING operator's own identity, the same fallback
+ * `POST /api/v6/projects/:id/g1-approvals` already established: never a
+ * client-supplied body field (that would let any caller claim to be
+ * anyone), always the real signed-in session. Shared here because the
+ * charter approval/revocation routes and the G1 outbox route need the
+ * identical P08-adjacent guarantee — "this project records WHO acted,
+ * and that identity is never a request-body claim."
+ * @param {http.IncomingMessage} req
+ * @returns {{actor: string}|null} `null` when no signed-in operator session exists.
+ */
+function _v6RequireSignedInActor(req) {
+  const session = req.tcSession || _gateIdentity(req, req.socket, '/api/v6/projects').session;
+  if (!session || session.userId == null) return null;
+  return { actor: String(session.username || session.userId) };
+}
+
+/**
+ * This car's one concrete provider adapter, constructed once rather than
+ * per-request -- `createGithubProvider()` holds no per-call state, so a
+ * singleton is strictly an allocation saving, never a correctness
+ * concern (contrast with `createG1Writer`, which closes over `db`/
+ * `secretStore` and is deliberately constructed fresh per call below).
+ */
+const _v6GithubProvider = providerContract.createGithubProvider();
+
+/**
+ * Minimal environment-variable-backed secret reference resolver for the
+ * G1 writer (#2990's `secretStore` dependency). No dedicated secret-store
+ * module exists anywhere in this codebase yet (confirmed: nothing else
+ * matches `secretStore`/`secret_ref` outside this car's own new files) —
+ * rather than invent one as a NEW file (out of this car's server.js-only
+ * envelope) or silently fabricate a credential, this resolves a
+ * `vault:<name>` reference to `process.env.TC_VAULT_<NAME>` (dashes and
+ * dots folded to underscores, uppercased), which an operator sets through
+ * their own process environment exactly as they already do for every
+ * other credential this server reads from `process.env`. A future car
+ * can replace this with a real file-backed/vault-backed store without
+ * changing `lib/v6/g1-github-integration.js`'s own `{get(ref)}` contract
+ * at all.
+ * @type {{get(ref: string): string|null}}
+ */
+const _v6GithubSecretStore = {
+  get(ref) {
+    if (typeof ref !== 'string' || !/^vault:[A-Za-z0-9_-]+$/.test(ref)) return null;
+    const envName = `TC_VAULT_${ref.slice('vault:'.length).toUpperCase().replace(/[.-]/g, '_')}`;
+    const value = process.env[envName];
+    return typeof value === 'string' && value.length >= 16 ? value : null;
+  }
+};
+
+/**
+ * External GitHub webhook ingress (#2990 Deliverable 1's webhook-receipt
+ * half). Handled OUTSIDE the generic `route()`/`matchRoute()`/`parseBody()`
+ * dispatch on purpose: `parseBody` always decodes a body via a lossy
+ * `Buffer.toString('utf8')` (silently substituting U+FFFD for invalid
+ * bytes) before any route handler ever sees it, and always `JSON.parse`s
+ * it before a route-specific check can run — both of which make exact
+ * HMAC verification over the TRUE raw bytes, and the strict UTF-8 check
+ * PRR-A's review specifically asked for, impossible through that path
+ * (PRR-A f6ad8229: "validate that the raw webhook body is valid UTF-8...
+ * BEFORE calling recordWebhookReceipt so distinct invalid-UTF8 byte
+ * payloads can never collide under String(rawBody)"). This function reads
+ * the exact raw bytes itself, decodes them strictly, and only then
+ * verifies/dedupes via `lib/v6/g1-github-integration.js#recordWebhookReceipt`
+ * and `lib/providers/contract.js`'s own pure functions.
+ *
+ * No launch-binding/CSRF/session gate applies here — GitHub is an
+ * external caller with no TangleClaw session at all; its OWN
+ * authentication is the HMAC signature this function verifies.
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @returns {Promise<void>}
+ */
+async function _handleGithubWebhook(req, res) {
+  const MAX_WEBHOOK_BYTES = 1024 * 1024;
+  const chunks = [];
+  let size = 0;
+  try {
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > MAX_WEBHOOK_BYTES) return errorResponse(res, 413, 'Webhook body too large', 'BODY_TOO_LARGE');
+      chunks.push(chunk);
+    }
+  } catch {
+    return errorResponse(res, 400, 'Failed to read webhook body', 'BAD_BODY');
+  }
+  const rawBuf = Buffer.concat(chunks);
+
+  // Strict UTF-8 decode BEFORE anything else touches the bytes, so two
+  // distinct invalid-byte payloads can never collide under a later lossy
+  // String(rawBuf) — `fatal: true` throws rather than substituting U+FFFD.
+  let rawText;
+  try {
+    rawText = new TextDecoder('utf-8', { fatal: true }).decode(rawBuf);
+  } catch {
+    return errorResponse(res, 400, 'Webhook body is not valid UTF-8', 'INVALID_UTF8');
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(rawText);
+  } catch {
+    return errorResponse(res, 400, 'Webhook body is not valid JSON', 'INVALID_REQUEST');
+  }
+
+  const identity = _v6GithubProvider.normalizeInboundEvent({ headers: req.headers, payload });
+  if (!identity.ok) {
+    return errorResponse(res, V6_STATUS_BY_CODE[identity.code] || 400, `v6 request refused: ${identity.code}`, identity.code);
+  }
+
+  const binding = v6Db().prepare('SELECT * FROM v6_bindings WHERE repo = ? AND installation_id = ?')
+    .get(identity.repo, identity.installationId);
+  if (!binding) return errorResponse(res, 403, 'No project is bound to this repo/installation', 'REPO_NOT_BOUND');
+
+  const secret = _v6GithubSecretStore.get(binding.secret_ref);
+  if (typeof secret !== 'string') return errorResponse(res, 503, 'Webhook secret unavailable', 'SECRET_UNAVAILABLE');
+
+  const result = g1Github.recordWebhookReceipt(v6Db(), {
+    deliveryId: identity.deliveryId, projectId: binding.project_id, repo: identity.repo,
+    installationId: identity.installationId, rawBody: rawText, signatureHeader: req.headers['x-hub-signature-256'],
+    secret, outcome: identity.eventType || 'received', provider: _v6GithubProvider
+  });
+  if (!result.ok) {
+    return errorResponse(res, V6_STATUS_BY_CODE[result.code] || 400, `v6 request refused: ${result.code}`, result.code);
+  }
+  jsonResponse(res, 202, result);
+}
 
 /**
  * Verify `(params.sessionId, params.id)` names a real session belonging to
@@ -9968,6 +10154,332 @@ route('POST', '/api/v6/branding/validate-change', (req, res, _params, body) => {
   if (!operatorProjectCaller(req, res, 'validate a branding policy change')) return;
   const b = _v6Body(body);
   _v6RespondAllowed(res, h1.validateBrandingPolicyChange(b.key, b.value, { repoClassification: b.repoClassification, targetPath: b.targetPath }));
+});
+
+// ── E1: Native Configurable Project Charter Lifecycle (#2126, BRIDGE-2c) ──
+//
+// Every mutating route derives its `actor`/`approverActor` from the real
+// signed-in session (`_v6RequireSignedInActor`), never a request-body
+// field — the same P08-adjacent guarantee `POST /api/v6/projects/:id/
+// g1-approvals` already established: a client-supplied identity string is
+// a claim, not proof, and letting one through would let any caller record
+// an approval/edit under any name it chooses.
+
+route('POST', '/api/v6/projects/:id/charter', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'create a project charter')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'charter.create')) return;
+  const actorIdentity = _v6RequireSignedInActor(req);
+  if (!actorIdentity) return _v6Respond(res, { ok: false, code: 'SIGNED_IN_OPERATOR_REQUIRED' });
+  const b = _v6Body(body);
+  _v6Respond(res, e1Charters.createDraftCharter(v6Db(), {
+    projectId, content: b.content, templateId: b.templateId, sectionConfig: b.sectionConfig, actor: actorIdentity.actor
+  }), 201);
+});
+
+route('GET', '/api/v6/projects/:id/charter', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a project charter')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'charter.read')) return;
+  const found = e1Charters.getCharter(v6Db(), { projectId });
+  if (!found) return errorResponse(res, 404, 'No charter exists for this project', 'NOT_FOUND');
+  jsonResponse(res, 200, found);
+});
+
+route('GET', '/api/v6/projects/:id/charter/active', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a project\'s active charter')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'charter.read')) return;
+  const active = e1Charters.getActiveCharter(v6Db(), { projectId });
+  if (!active) return errorResponse(res, 404, 'No active charter for this project', 'NOT_FOUND');
+  jsonResponse(res, 200, active);
+});
+
+route('GET', '/api/v6/projects/:id/charter/startup-summary', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a project\'s charter startup summary')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'charter.read')) return;
+  const summary = e1Charters.getStartupSummary(v6Db(), { projectId });
+  if (!summary) return errorResponse(res, 404, 'No active charter for this project', 'NOT_FOUND');
+  jsonResponse(res, 200, summary);
+});
+
+route('POST', '/api/v6/projects/:id/charter/versions', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'save a new charter version')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'charter.edit')) return;
+  const actorIdentity = _v6RequireSignedInActor(req);
+  if (!actorIdentity) return _v6Respond(res, { ok: false, code: 'SIGNED_IN_OPERATOR_REQUIRED' });
+  const b = _v6Body(body);
+  _v6Respond(res, e1Charters.saveDraftVersion(v6Db(), {
+    projectId, content: b.content, sectionConfig: b.sectionConfig, actor: actorIdentity.actor
+  }), 201);
+});
+
+route('POST', '/api/v6/projects/:id/charter/versions/:versionId/approvals', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'record a charter approval')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'charter.approve')) return;
+  const actorIdentity = _v6RequireSignedInActor(req);
+  if (!actorIdentity) return _v6Respond(res, { ok: false, code: 'SIGNED_IN_OPERATOR_REQUIRED' });
+  const b = _v6Body(body);
+  _v6Respond(res, e1Charters.recordApproval(v6Db(), {
+    projectId, versionId: Number(params.versionId), approverRole: b.approverRole, approverActor: actorIdentity.actor
+  }), 201);
+});
+
+route('DELETE', '/api/v6/projects/:id/charter/versions/:versionId/approvals/:approverRole', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'revoke a charter approval')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'charter.approve')) return;
+  const actorIdentity = _v6RequireSignedInActor(req);
+  if (!actorIdentity) return _v6Respond(res, { ok: false, code: 'SIGNED_IN_OPERATOR_REQUIRED' });
+  // A caller revokes only ITS OWN prior approval — approverActor is the
+  // signed-in identity, never a path/body claim naming someone else's.
+  _v6Respond(res, e1Charters.revokeApproval(v6Db(), {
+    projectId, versionId: Number(params.versionId), approverRole: params.approverRole, approverActor: actorIdentity.actor
+  }));
+});
+
+route('GET', '/api/v6/projects/:id/charter/versions/:versionId/approvals/complete', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'check a charter version\'s approval completeness')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'charter.read')) return;
+  const query = parseQuery(reqUrl(req).search);
+  const requiredRoles = typeof query.requiredRoles === 'string' ? query.requiredRoles.split(',').filter(Boolean) : [];
+  jsonResponse(res, 200, e1Charters.checkApprovalComplete(v6Db(), { versionId: Number(params.versionId), requiredRoles }));
+});
+
+route('POST', '/api/v6/projects/:id/charter/versions/:versionId/activate', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'activate a charter version')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'charter.activate')) return;
+  const b = _v6Body(body);
+  const requiredRoles = Array.isArray(b.requiredRoles) ? b.requiredRoles : [];
+  _v6Respond(res, e1Charters.activateCharter(v6Db(), { projectId, versionId: Number(params.versionId), requiredRoles }));
+});
+
+route('POST', '/api/v6/projects/:id/charter/supersede', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'supersede a project charter')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'charter.supersede')) return;
+  _v6Respond(res, e1Charters.supersedeCharter(v6Db(), { projectId }));
+});
+
+route('GET', '/api/v6/projects/:id/charter/export', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'export a project charter')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'charter.read')) return;
+  const exported = e1Charters.exportCharterJson(v6Db(), { projectId });
+  if (!exported) return errorResponse(res, 404, 'No charter exists for this project', 'NOT_FOUND');
+  jsonResponse(res, 200, { ...exported, markdown: e1Charters.exportCharterMarkdown(v6Db(), { projectId }) });
+});
+
+route('POST', '/api/v6/projects/:id/charter/drift-check', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'check a project charter\'s resource drift')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'charter.read')) return;
+  const b = _v6Body(body);
+  const drift = e1Charters.checkResourceDrift(v6Db(), { projectId, actual: b.actual || {} });
+  if (!drift) return errorResponse(res, 404, 'No active charter for this project', 'NOT_FOUND');
+  jsonResponse(res, 200, drift);
+});
+
+// ── E4/E6a: Rich Report Presentation & Search Indexer (#2988, #2989, BRIDGE-2c) ──
+//
+// Stateless over caller-supplied report HTML — no project scoping, no
+// persistence (the actual report file lives wherever a future car writes
+// it; these routes only transform HTML the caller already has in hand).
+
+route('POST', '/api/v6/reports/present', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'build a report presentation view-model')) return;
+  const b = _v6Body(body);
+  if (typeof b.html !== 'string') return errorResponse(res, 400, 'html must be a string', 'INVALID_REQUEST');
+  const viewModel = e4Reports.buildReportViewModel(b.html, { excerptChars: b.excerptChars });
+  jsonResponse(res, 200, { ...viewModel, pillars: e4Reports.buildPillarSwitcherModel(viewModel) });
+});
+
+route('GET', '/api/v6/reports/popovers', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'read the report popover catalog')) return;
+  jsonResponse(res, 200, { pillars: e4Reports.PILLARS, sectionPillar: e4Reports.SECTION_PILLAR, popovers: e4Reports.POPOVER_CATALOG });
+});
+
+route('POST', '/api/v6/reports/print-view', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'build a report print view')) return;
+  const b = _v6Body(body);
+  if (typeof b.html !== 'string') return errorResponse(res, 400, 'html must be a string', 'INVALID_REQUEST');
+  jsonResponse(res, 200, { html: e4Reports.buildPrintView(b.html) });
+});
+
+route('POST', '/api/v6/reports/search-index', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'build a report search index')) return;
+  const b = _v6Body(body);
+  if (typeof b.html !== 'string') return errorResponse(res, 400, 'html must be a string', 'INVALID_REQUEST');
+  jsonResponse(res, 200, e6aReports.buildSearchIndex(b.html, { version: b.version }));
+});
+
+route('POST', '/api/v6/reports/cite', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'cite a report via its search index')) return;
+  const b = _v6Body(body);
+  if (!b.index || typeof b.index !== 'object') {
+    return errorResponse(res, 400, 'index must be an object (from POST /api/v6/reports/search-index)', 'INVALID_REQUEST');
+  }
+  if (typeof b.query !== 'string') return errorResponse(res, 400, 'query must be a string', 'INVALID_REQUEST');
+  jsonResponse(res, 200, { results: e6aReports.citeThisReport(b.index, b.query, { limit: b.limit, contextChars: b.contextChars }) });
+});
+
+// ── G1/G2a: Guided 3-Tier GitHub Integration, Durable Outbox & Provider Contract (#2990, BRIDGE-2c) ──
+//
+// The actual webhook ingress route is `POST /api/v6/webhooks/github`,
+// handled OUTSIDE this route() dispatch entirely — see
+// `_handleGithubWebhook`'s own doc comment for why.
+
+route('GET', '/api/v6/providers/github/capabilities', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'read the GitHub provider\'s capabilities')) return;
+  jsonResponse(res, 200, _v6GithubProvider.capabilities());
+});
+
+route('POST', '/api/v6/projects/:id/github/binding', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'bind a project to a GitHub repo')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'github.bind')) return;
+  const b = _v6Body(body);
+  const configCheck = _v6GithubProvider.validateConfig({ repo: b.repo, installationId: b.installationId, tokenRef: b.secretRef });
+  if (!configCheck.ok) return _v6Respond(res, { ok: false, code: configCheck.code || 'CONNECTION_INVALID' });
+  const db = v6Db();
+  const existing = db.prepare('SELECT project_id FROM v6_bindings WHERE project_id = ?').get(projectId);
+  try {
+    if (existing) {
+      db.prepare('UPDATE v6_bindings SET repo = ?, installation_id = ?, secret_ref = ? WHERE project_id = ?')
+        .run(b.repo, b.installationId, b.secretRef, projectId);
+    } else {
+      db.prepare('INSERT INTO v6_bindings (project_id, repo, installation_id, secret_ref) VALUES (?, ?, ?, ?)')
+        .run(projectId, b.repo, b.installationId, b.secretRef);
+    }
+  } catch {
+    // A UNIQUE constraint on repo (one project per repo) or the project_id
+    // primary key already holding a DIFFERENT repo for an UPDATE collision.
+    return _v6Respond(res, { ok: false, code: 'ALREADY_BOUND' });
+  }
+  _v6Respond(res, { ok: true, code: existing ? 'UPDATED' : 'BOUND' }, existing ? 200 : 201);
+});
+
+route('GET', '/api/v6/projects/:id/github/binding', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a project\'s GitHub binding')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'github.read')) return;
+  // secret_ref is an opaque pointer, never the secret value itself —
+  // safe to return, matching this route's own "never expose raw secret
+  // values" requirement.
+  const binding = v6Db().prepare('SELECT project_id, repo, installation_id, secret_ref FROM v6_bindings WHERE project_id = ?').get(projectId);
+  if (!binding) return errorResponse(res, 404, 'No GitHub binding for this project', 'NOT_FOUND');
+  jsonResponse(res, 200, binding);
+});
+
+route('POST', '/api/v6/projects/:id/github/connection', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'set a project\'s GitHub connection')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'github.bind')) return;
+  const b = _v6Body(body);
+  const db = v6Db();
+  const binding = db.prepare('SELECT * FROM v6_bindings WHERE project_id = ?').get(projectId);
+  if (!binding) return _v6Respond(res, { ok: false, code: 'REPO_NOT_BOUND' });
+  // installationId/tokenRef are always derived from the binding row, never
+  // the request body — the same cross-check g1-github-integration.js#admit
+  // enforces at write time, applied here too so a stored connection can
+  // never start out already disagreeing with its own binding.
+  const connection = {
+    repo: binding.repo, installationId: binding.installation_id, tokenRef: binding.secret_ref,
+    epoch: b.epoch, approvedTiers: Array.isArray(b.approvedTiers) ? b.approvedTiers : [],
+    identity: b.identity, expectedFingerprint: b.expectedFingerprint, revokedAt: null
+  };
+  const probe = b.probe && typeof b.probe === 'object' ? b.probe : {};
+  const configCheck = _v6GithubProvider.validateConfig(connection);
+  if (!configCheck.ok) return _v6Respond(res, { ok: false, code: configCheck.code || 'CONNECTION_INVALID' });
+  const existing = db.prepare('SELECT project_id FROM v6_github_connections WHERE project_id = ?').get(projectId);
+  if (existing) {
+    db.prepare('UPDATE v6_github_connections SET connection_json = ?, probe_json = ? WHERE project_id = ?')
+      .run(JSON.stringify(connection), JSON.stringify(probe), projectId);
+  } else {
+    db.prepare('INSERT INTO v6_github_connections (project_id, connection_json, probe_json) VALUES (?, ?, ?)')
+      .run(projectId, JSON.stringify(connection), JSON.stringify(probe));
+  }
+  _v6Respond(res, { ok: true, code: existing ? 'UPDATED' : 'CONNECTED' }, existing ? 200 : 201);
+});
+
+route('GET', '/api/v6/projects/:id/github/connection', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a project\'s GitHub connection')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'github.read')) return;
+  const row = v6Db().prepare('SELECT connection_json, probe_json FROM v6_github_connections WHERE project_id = ?').get(projectId);
+  if (!row) return errorResponse(res, 404, 'No GitHub connection for this project', 'NOT_FOUND');
+  let connection, probe;
+  try {
+    connection = JSON.parse(row.connection_json);
+    probe = JSON.parse(row.probe_json);
+  } catch {
+    return errorResponse(res, 409, 'Stored connection is malformed', 'CONNECTION_INVALID');
+  }
+  // tokenRef is an opaque pointer (never the secret value), safe to
+  // return — same reasoning as the binding route's secret_ref.
+  jsonResponse(res, 200, { connection, probe });
+});
+
+route('GET', '/api/v6/projects/:id/github/milestones', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'list a project\'s bound GitHub milestones')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'github.read')) return;
+  const milestones = v6Db().prepare('SELECT number, title FROM v6_g1_milestone_bindings WHERE project_id = ? ORDER BY number ASC').all(projectId);
+  jsonResponse(res, 200, { milestones });
+});
+
+route('GET', '/api/v6/projects/:id/github/outbox/:idempotencyKey', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'read a GitHub outbox row')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'github.read')) return;
+  const row = v6Db().prepare('SELECT * FROM v6_g1_outbox WHERE project_id = ? AND idempotency_key = ?').get(projectId, params.idempotencyKey);
+  if (!row) return errorResponse(res, 404, 'No outbox row for that idempotency key', 'NOT_FOUND');
+  jsonResponse(res, 200, row);
+});
+
+route('POST', '/api/v6/projects/:id/github/outbox/admit', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'preview a GitHub write admission')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'github.write')) return;
+  const actorIdentity = _v6RequireSignedInActor(req);
+  if (!actorIdentity) return _v6Respond(res, { ok: false, code: 'SIGNED_IN_OPERATOR_REQUIRED' });
+  const b = _v6Body(body);
+  const writer = g1Github.createG1Writer({ db: v6Db(), secretStore: _v6GithubSecretStore, provider: _v6GithubProvider });
+  // admit() is pure (no network, no outbox row written) — a caller can
+  // preview whether a write would be admitted before ever executing it.
+  _v6Respond(res, writer.admit({
+    projectId,
+    principal: { verified: true, projectId, role: 'operator', actor: actorIdentity.actor },
+    admission: { launchBindingVerified: true, csrfVerified: true },
+    action: b.action, idempotencyKey: b.idempotencyKey, leaseId: b.leaseId, approvalId: b.approvalId, draft: b.draft
+  }));
+});
+
+route('POST', '/api/v6/projects/:id/github/outbox', async (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'admit and execute a GitHub write')) return;
+  const projectId = Number(params.id);
+  if (!_v6RequireOperatorAuthz(res, v6Db(), projectId, 'github.write')) return;
+  const actorIdentity = _v6RequireSignedInActor(req);
+  if (!actorIdentity) return _v6Respond(res, { ok: false, code: 'SIGNED_IN_OPERATOR_REQUIRED' });
+  const b = _v6Body(body);
+  const writer = g1Github.createG1Writer({ db: v6Db(), secretStore: _v6GithubSecretStore, provider: _v6GithubProvider });
+  // launchBindingVerified/csrfVerified: this route's own dispatch already
+  // ran the launch-binding floor and the cross-site/CSRF guards ahead of
+  // every mutating request, the same "the route's own gate IS the proof"
+  // reasoning authorityService.setPolicy's operatorProof: true already
+  // rests on elsewhere in this file.
+  const result = await writer.execute({
+    projectId,
+    principal: { verified: true, projectId, role: 'operator', actor: actorIdentity.actor },
+    admission: { launchBindingVerified: true, csrfVerified: true },
+    action: b.action, idempotencyKey: b.idempotencyKey, leaseId: b.leaseId, approvalId: b.approvalId, draft: b.draft
+  });
+  _v6Respond(res, result, 201);
 });
 
 // ── Server Creation ──
