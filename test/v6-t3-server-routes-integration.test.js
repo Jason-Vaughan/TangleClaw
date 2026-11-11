@@ -432,20 +432,24 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
       }
     });
 
-    it('fails closed (PROBE_UNAVAILABLE) when X-OAuth-Scopes is present but empty/whitespace/comma-only, not merely absent (PRR-A c143e69d / PRR-B 7d3aeb87 Round 6)', async () => {
-      const projectId = await seedProject('g1-connection-empty-scopes');
-      await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-emptyscopes', installationId: 42, secretRef: 'vault:gh-token' });
+    it('fails closed (PROBE_UNAVAILABLE) when X-OAuth-Scopes is present but empty/whitespace/comma-only, not merely absent (Architect Ruling A616 / PRR-A c143e69d / PRR-B 7d3aeb87 Round 6)', async () => {
       process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
       try {
         // GitHub sends X-OAuth-Scopes: "" (present, but naming nothing)
         // on fine-grained/App token responses -- the header's mere
         // presence proved nothing by itself; it must actually carry a
-        // scope to be classic-PAT evidence.
-        const conn = await withStubbedFetch(
-          githubRepoProbeStub('acme/widgets-emptyscopes', { pull: true, push: true, admin: false }, { scopes: ' , ' }),
-          () => post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }));
-        assert.equal(conn.statusCode, 503, conn.body);
-        assert.equal(json(conn).code, 'PROBE_UNAVAILABLE');
+        // scope to be classic-PAT evidence. Both the literal empty
+        // string and a whitespace/comma-only value must fail the same
+        // way (Ruling A616 names both explicitly).
+        for (const [label, scopes] of [['empty string', ''], ['whitespace/comma-only', ' , ']]) {
+          const projectId = await seedProject(`g1-connection-empty-scopes-${label.replace(/[^a-z0-9]+/gi, '-')}`);
+          await post(`/api/v6/projects/${projectId}/github/binding`, { repo: `acme/widgets-emptyscopes-${label.replace(/[^a-z0-9]+/gi, '-')}`, installationId: 42, secretRef: 'vault:gh-token' });
+          const conn = await withStubbedFetch(
+            githubRepoProbeStub(`acme/widgets-emptyscopes-${label.replace(/[^a-z0-9]+/gi, '-')}`, { pull: true, push: true, admin: false }, { scopes }),
+            () => post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }));
+          assert.equal(conn.statusCode, 503, `${label}: ${conn.body}`);
+          assert.equal(json(conn).code, 'PROBE_UNAVAILABLE', label);
+        }
       } finally {
         delete process.env.TC_VAULT_GH_TOKEN;
       }
