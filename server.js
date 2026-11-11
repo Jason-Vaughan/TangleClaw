@@ -8989,12 +8989,18 @@ async function _v6ProbeGithubConnection(token, repo) {
   const scopes = scopesHeader.split(',').map((s) => s.trim()).filter(Boolean);
   const hasClassicWriteScope = scopes.includes('repo') || (body.private === false && scopes.includes('public_repo'));
   const classicWrite = perms.push === true && hasClassicWriteScope;
+  // A repo can have its issue tracker disabled entirely (`has_issues:
+  // false`); classic `push` never implies `issues:write` in that case,
+  // since there is no tracker for the token to write to (Ruling A612
+  // item 1). Fine-grained/App permissions are unaffected -- an explicit
+  // `issues: "write"` grant already means the tracker exists.
+  const classicIssuesWrite = classicWrite && body.has_issues !== false;
   const explicitWrite = (field) => perms[`${field}:write`] === true || perms[field] === 'write' || perms[field] === 'admin';
 
   const permissions = [];
   if (perms.pull) permissions.push('contents:read', 'checks:read');
   if (classicWrite || explicitWrite('contents')) permissions.push('contents:write');
-  if (classicWrite || explicitWrite('issues')) permissions.push('issues:write');
+  if (classicIssuesWrite || explicitWrite('issues')) permissions.push('issues:write');
   if (classicWrite || explicitWrite('pull_requests')) permissions.push('pull_requests:write');
   if (perms.admin) permissions.push('administration:write');
 
@@ -9040,14 +9046,21 @@ async function _v6RefreshGithubProbeIfExpired(db, projectId) {
   } catch {
     return;
   }
+  if (connection.revokedAt) return;
   if (Number.isFinite(probe.expiresAt) && probe.expiresAt > Date.now()) return;
   const token = _v6GithubSecretStore.get(connection.tokenRef);
   if (typeof token !== 'string') return;
   const freshProbe = await _v6ProbeGithubConnection(token, connection.repo);
   if (!freshProbe) return;
-  const refreshedConnection = { ...connection, expectedFingerprint: _v6GithubProbeFingerprint(freshProbe) };
-  db.prepare('UPDATE v6_github_connections SET connection_json = ?, probe_json = ? WHERE project_id = ?')
-    .run(JSON.stringify(refreshedConnection), JSON.stringify(freshProbe), projectId);
+  // `connection.expectedFingerprint` is deliberately left untouched: it is
+  // the ONLY record of what was approved when the connection was created,
+  // and `admit()`'s own `testConnection` drift check compares the freshly
+  // re-probed permissions against it. Overwriting it here would make a
+  // permission downgrade since approval invisible forever (Architect
+  // Ruling A612 item 2) -- only probe_json, the live capability reading,
+  // is refreshed.
+  db.prepare('UPDATE v6_github_connections SET probe_json = ? WHERE project_id = ?')
+    .run(JSON.stringify(freshProbe), projectId);
 }
 
 /**

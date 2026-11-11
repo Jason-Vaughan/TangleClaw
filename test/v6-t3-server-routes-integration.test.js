@@ -134,7 +134,7 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
   }
 
   /** A `GET /repos/{repo}` stub reporting push+pull (never admin) access, the shape `_v6ProbeGithubConnection` reads. */
-  function githubRepoProbeStub(repo, perms = { pull: true, push: true, admin: false }, { scopes = 'repo', isPrivate = true } = {}) {
+  function githubRepoProbeStub(repo, perms = { pull: true, push: true, admin: false }, { scopes = 'repo', isPrivate = true, hasIssues = true } = {}) {
     return async () => ({
       status: 200,
       // PRR-B 04561f29 (Round 4 item 1): the real route now requires
@@ -142,7 +142,7 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
       // write from `perms.push` alone — a classic `x-oauth-scopes: repo`
       // header is exactly that evidence, so the default stub carries one.
       headers: { get: (name) => (name.toLowerCase() === 'x-oauth-scopes' ? scopes : null) },
-      json: async () => ({ full_name: repo, private: isPrivate, permissions: perms })
+      json: async () => ({ full_name: repo, private: isPrivate, has_issues: hasIssues, permissions: perms })
     });
   }
 
@@ -403,6 +403,25 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
       }
     });
 
+    it('classic push+repo-scope never grants issues:write when the repo has its issue tracker disabled (Architect Ruling A612 item 1)', async () => {
+      const projectId = await seedProject('g1-connection-no-issue-tracker');
+      await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-noissues', installationId: 42, secretRef: 'vault:gh-token' });
+      process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
+      try {
+        // Full classic write evidence (push: true, x-oauth-scopes: repo)
+        // -- but has_issues: false means there is no tracker to write to.
+        const conn = await withStubbedFetch(githubRepoProbeStub('acme/widgets-noissues', { pull: true, push: true, admin: false }, { hasIssues: false }), () =>
+          post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }));
+        assert.equal(conn.statusCode, 201, conn.body);
+        const read = await get(`/api/v6/projects/${projectId}/github/connection`);
+        assert.ok(!json(read).probe.permissions.includes('issues:write'), 'has_issues: false must veto issues:write even with full classic push+scope evidence');
+        assert.ok(json(read).probe.permissions.includes('pull_requests:write'), 'pull_requests:write is unaffected by the issue-tracker toggle');
+        assert.ok(json(read).probe.permissions.includes('contents:write'));
+      } finally {
+        delete process.env.TC_VAULT_GH_TOKEN;
+      }
+    });
+
     it('refuses CONNECTION_INVALID when epoch/approvedTiers are missing or malformed, before any probe or write (Ruling A609/A610 item 3)', async () => {
       const projectId = await seedProject('g1-connection-bad-payload');
       await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-badpayload', installationId: 42, secretRef: 'vault:gh-token' });
@@ -568,6 +587,40 @@ describe('v6 Train 3 server routes (#2126, #2988, #2989, #2990, BRIDGE-2c)', () 
             { action: 'createIssue', idempotencyKey: 'k-refresh-fail', leaseId, draft: { title: 'hello', body: 'world' } }, operator));
         assert.equal(admit.statusCode, 403, admit.body);
         assert.equal(json(admit).code, 'PROBE_EXPIRED', 'fails closed on the still-stale probe rather than fabricating a fresh one');
+      } finally {
+        delete process.env.TC_VAULT_GH_TOKEN;
+      }
+    });
+
+    it('detects SCOPE_DRIFT when a re-probe of an expired connection comes back with fewer permissions than were approved (Architect Ruling A612 item 2)', async () => {
+      const projectId = await seedProject('g1-outbox-probe-refresh-drift');
+      const operator = signInOperator('g1-probe-refresh-drift-operator');
+      process.env.TC_VAULT_GH_TOKEN = 'x'.repeat(20);
+      try {
+        await post(`/api/v6/projects/${projectId}/github/binding`, { repo: 'acme/widgets-drift', installationId: 42, secretRef: 'vault:gh-token' }, operator);
+        const connRes = await withStubbedFetch(githubRepoProbeStub('acme/widgets-drift'), () =>
+          post(`/api/v6/projects/${projectId}/github/connection`, { epoch: 1, approvedTiers: [2] }, operator));
+        assert.equal(connRes.statusCode, 201, connRes.body);
+        const lease = await post(`/api/v6/projects/${projectId}/g1-leases`,
+          { repo: 'acme/widgets-drift', connectionEpoch: 1, actions: ['createIssue'], ttlMs: 99999 }, operator);
+        const leaseId = json(lease).id;
+
+        const row = store.getDb().prepare('SELECT probe_json FROM v6_github_connections WHERE project_id = ?').get(projectId);
+        const staleProbe = { ...JSON.parse(row.probe_json), expiresAt: Date.now() - 1000 };
+        store.getDb().prepare('UPDATE v6_github_connections SET probe_json = ? WHERE project_id = ?')
+          .run(JSON.stringify(staleProbe), projectId);
+
+        // GitHub's own access was revoked/downgraded since the original
+        // probe (push: false now) -- the re-probe succeeds (fresh
+        // expiresAt), so this must surface as SCOPE_DRIFT, not PROBE_EXPIRED.
+        const admit = await withStubbedFetch(githubRepoProbeStub('acme/widgets-drift', { pull: true, push: false, admin: false }), () =>
+          post(`/api/v6/projects/${projectId}/github/outbox/admit`,
+            { action: 'createIssue', idempotencyKey: 'k-refresh-drift', leaseId, draft: { title: 'hello', body: 'world' } }, operator));
+        assert.equal(admit.statusCode, 403, admit.body);
+        assert.equal(json(admit).code, 'SCOPE_DRIFT', 'a refreshed probe with fewer permissions than connection.expectedFingerprint recorded must fail closed, not silently re-approve itself');
+
+        const refreshedRow = store.getDb().prepare('SELECT probe_json FROM v6_github_connections WHERE project_id = ?').get(projectId);
+        assert.ok(JSON.parse(refreshedRow.probe_json).expiresAt > Date.now(), 'probe_json was still refreshed even though it then fails the drift check');
       } finally {
         delete process.env.TC_VAULT_GH_TOKEN;
       }
