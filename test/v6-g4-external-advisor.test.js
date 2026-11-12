@@ -129,14 +129,60 @@ describe('readRepoFile — read-only, contained, scrubbed', () => {
   });
 
   it('a file replaced by a different file between check and open is refused', () => {
+    // Deterministic: a sibling written beforehand is renamed over the
+    // target, so the original inode is still live when the replacement's is
+    // allocated — no reliance on the filesystem reusing (or not reusing) an
+    // inode number. Same size, so only identity can tell them apart.
     const target = path.join(repo, 'README.md');
+    const sibling = path.join(repo, '.replacement');
+    fs.writeFileSync(sibling, 'HELLO ADVISOR\n');
     const realOpen = fs.openSync;
     let swapped = false;
     fs.openSync = function replaceThenOpen(p, ...rest) {
       if (!swapped && p === target) {
         swapped = true;
-        fs.rmSync(target);
-        fs.writeFileSync(target, 'replaced');
+        fs.renameSync(sibling, target);
+      }
+      return realOpen.call(fs, p, ...rest);
+    };
+    try {
+      throwsCode(() => read('README.md'), 'FILE_CHANGED');
+    } finally {
+      fs.openSync = realOpen;
+    }
+  });
+
+  it('inode reuse cannot pass the identity check: same dev and ino, different file', () => {
+    // Simulates what Linux did in CI run 43131139450: the replacement got
+    // the old inode number. lstat reports the original; fstat is made to
+    // report the same dev/ino with the replacement's other fields.
+    const target = path.join(repo, 'README.md');
+    const realFstat = fs.fstatSync;
+    const original = fs.lstatSync(target, { bigint: true });
+    fs.fstatSync = function reusedInode(fd, opts) {
+      const st = realFstat.call(fs, fd, opts);
+      if (!opts || !opts.bigint) return st;
+      return Object.assign(Object.create(Object.getPrototypeOf(st)), st, {
+        dev: original.dev, ino: original.ino, size: original.size, ctimeNs: original.ctimeNs + 1n
+      });
+    };
+    try {
+      throwsCode(() => read('README.md'), 'FILE_CHANGED');
+    } finally {
+      fs.fstatSync = realFstat;
+    }
+  });
+
+  it('a file rewritten in place with the same size between check and open is refused', () => {
+    const target = path.join(repo, 'README.md');
+    const realOpen = fs.openSync;
+    let rewritten = false;
+    fs.openSync = function rewriteThenOpen(p, ...rest) {
+      if (!rewritten && p === target) {
+        rewritten = true;
+        const later = new Date(Date.now() + 5000);
+        fs.writeFileSync(target, 'HELLO ADVISOR\n');
+        fs.utimesSync(target, later, later);
       }
       return realOpen.call(fs, p, ...rest);
     };
