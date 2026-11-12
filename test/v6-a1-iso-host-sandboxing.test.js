@@ -56,7 +56,7 @@ describe('separate_unix_uid', () => {
   it('admits an unprivileged uid distinct from the host and passes only allowlisted env', () => {
     const plan = planIsolation(profile, HOST);
     assert.equal(plan.ok, true);
-    assert.deepEqual(plan.launch, { kind: 'spawn', options: { uid: 1600, gid: 1600, cwd: '/srv/fleet/s1',
+    assert.deepEqual(plan.launch, { kind: 'spawn', clearSupplementaryGroups: true, options: { uid: 1600, gid: 1600, cwd: '/srv/fleet/s1',
       env: { PATH: '/usr/bin', LANG: 'en_US.UTF-8', HOME: '/srv/fleet/s1' } } });
     assert.equal(plan.attestation.isolated, true);
     assert.equal(plan.attestation.network, 'shared', 'honest: uid separation does not isolate the network');
@@ -232,5 +232,12 @@ describe('PRR-B R1 HOLD regressions (PR #3033): host group access', () => {
 
   it('currentHostFacts reports the host supplementary groups', () => {
     assert.deepEqual(currentHostFacts().groups, process.getgroups());
+  });
+});
+
+describe('PRR-B R1 HOLD regressions (PR #3033): supplementary groups in the launch spec', () => {
+  it('a separate-uid launch tells the launcher to clear supplementary groups', () => {
+    const plan = planIsolation({ mode: 'separate_unix_uid', requireIsolation: true, uid: 1600, gid: 1600 }, HOST);
+    assert.equal(plan.launch.clearSupplementaryGroups, true);
   });
 });

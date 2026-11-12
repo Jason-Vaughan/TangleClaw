@@ -332,3 +332,27 @@ describe('PRR-B R1 HOLD regressions (PR #3033)', () => {
     throwsCode(() => resolveWorkspace({ tenantId: 't', repoSlug: 'r', root: fileRoot }), 'ROOT_SYMLINK_DENIED');
   });
 });
+
+describe('PRR-B R1 HOLD regressions (PR #3033): advisor root ancestors', () => {
+  it('a symlinked ancestor of the advisor root is refused and nothing is created through it', () => {
+    const linkParent = path.join(tmp, 'parent-link');
+    fs.symlinkSync(outside, linkParent);
+    fs.mkdirSync(path.join(outside, 'advisor'));
+    throwsCode(() => resolveWorkspace({ tenantId: 't', repoSlug: 'r', root: path.join(linkParent, 'advisor'), create: true }), 'ROOT_SYMLINK_DENIED');
+    assert.equal(fs.existsSync(path.join(outside, 'advisor', 't')), false);
+  });
+});
+
+describe('PRR-B R1 HOLD regressions (PR #3033): nothing is created through a symlinked ancestor', () => {
+  it('a not-yet-existing root under a symlinked parent is refused before mkdir runs', () => {
+    const linkParent = path.join(tmp, 'parent-link-2');
+    fs.symlinkSync(outside, linkParent);
+    throwsCode(() => resolveWorkspace({ tenantId: 't', repoSlug: 'r', root: path.join(linkParent, 'new-root', 'advisor'), create: true }), 'ROOT_SYMLINK_DENIED');
+    assert.equal(fs.existsSync(path.join(outside, 'new-root')), false, 'mkdir did not create anything at the symlink target');
+  });
+
+  it('a plain not-yet-existing root is still created', () => {
+    const root = path.join(tmp, 'fresh', 'advisor');
+    assert.equal(resolveWorkspace({ tenantId: 't', repoSlug: 'r', root, create: true }), path.join(root, 't', 'r'));
+  });
+});
