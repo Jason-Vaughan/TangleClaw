@@ -4,10 +4,15 @@
 // The reference prototype (Builders-A-D/v6-stage1-to-5-full-stack-soak-and-chaos-suite.md)
 // models a standalone stand-in server it says is "not a production server";
 // this suite instead drives the REAL lib/v6 modules on ONE real node:sqlite
-// store, under volume, concurrency and injected faults, against the same
-// invariants: migration is idempotent, concurrency cannot exceed a hard
-// limit, waves are dependency-aware, Medusa is lossless and fails closed,
-// chaos is recoverable, and hostile probes never widen authority.
+// store, under volume, repeated contention and injected faults, against the
+// same invariants: migration is idempotent, a hard cap holds under repeated
+// contention, waves are dependency-aware, Medusa is lossless and fails
+// closed, chaos is recoverable, and hostile probes never widen authority.
+//
+// Scope, stated rather than implied: node:sqlite is synchronous, so writes in
+// one process run back to back and never truly overlap. Contention here is
+// sequential and verifies each operation's own transaction (BEGIN IMMEDIATE)
+// and rollback; it does not exercise multi-process or multi-thread writers.
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -259,7 +264,7 @@ describe('Full-stack soak and chaos', () => {
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM v6_medusa_v2_messages').get().n, before + 1);
   });
 
-  it('an advisor ledger under 50 requests never exceeds its rate cap', () => {
+  it('an advisor ledger admits exactly its cap across 50 back-to-back reservations (sequential)', () => {
     const ledger = g4.createAdvisorLedger(db, { maxRequests: 7, windowMs: 60_000, dailyTokens: 1_000_000, dailyUsd: 100 });
     const now = Date.UTC(2026, 10, 12, 1);
     const results = Array.from({ length: 50 }, () => ledger.reserve({ tenantId: 'soak-tenant', tokens: 1, usd: 0, now }));

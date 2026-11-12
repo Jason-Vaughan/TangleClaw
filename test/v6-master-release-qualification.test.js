@@ -27,6 +27,7 @@ const { setLevel } = require('../lib/logger');
 
 setLevel('error');
 
+const { DatabaseSync } = require('node:sqlite');
 const store = require('../lib/store');
 const f2 = require('../lib/v6/f2-code-doc-parity');
 
@@ -35,14 +36,12 @@ const V6_DIR = path.join(ROOT, 'lib', 'v6');
 const MODULES = fs.readdirSync(V6_DIR).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)).sort();
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-/** Helpers a handler may call BEFORE its caller check, because they only read the request. */
+/** The only helpers a handler may call BEFORE its caller check: they only parse the request URL. Any other call first (a response, a body read, a database touch) fails the check. */
 const PRE_GUARD_READS = new Set(['parseQuery', 'reqUrl']);
 
 /** Keywords followed by `(` that are control flow, not calls. */
 const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'function', 'await', 'new']);
 
-/** Calls that mean a handler has started acting: responding, reading the body, or touching the database. */
-const ACTIONS = new Set(['jsonResponse', 'errorResponse', '_v6Respond', '_v6RespondThrown', '_v6Body', 'v6Db', 'getDb']);
 
 describe('module inventory', () => {
   it('finds the v6 module tree', () => {
@@ -106,24 +105,55 @@ describe('module-owned schema', () => {
   const tables = () => new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name));
   const version = () => db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v;
 
-  it('each module creates only v6_-prefixed tables, owned by exactly one module', () => {
+  /**
+   * The tables a module's ensureSchema creates, discovered on its OWN fresh
+   * database, so a module that also runs CREATE TABLE IF NOT EXISTS on
+   * another module's table cannot hide behind whichever ran first.
+   * @param {string} m
+   * @returns {string[]}
+   */
+  function isolatedTables(m) {
+    const iso = new DatabaseSync(':memory:');
+    try {
+      require(`../lib/v6/${m}`).ensureSchema(iso);
+      return iso.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all().map((r) => r.name).sort();
+    } finally {
+      iso.close();
+    }
+  }
+
+  it('each module, alone on a fresh database, creates only v6_-prefixed tables, and no two modules share one', () => {
     assert.ok(owners.length > 0);
-    const ownerOf = new Map();
-    for (const m of owners) {
-      const before = tables();
-      require(`../lib/v6/${m}`).ensureSchema(db);
-      const created = [...tables()].filter((t) => !before.has(t));
-      for (const t of created) {
-        assert.match(t, /^v6_/, `${m} created non-v6 table ${t}`);
-        assert.ok(!ownerOf.has(t), `${t} created by both ${ownerOf.get(t)} and ${m}`);
-        ownerOf.set(t, m);
+    const sets = owners.map((m) => ({ m, tables: isolatedTables(m) }));
+    for (const { m, tables: ts } of sets) {
+      assert.ok(ts.length > 0, `${m}'s ensureSchema created no table`);
+      for (const t of ts) assert.match(t, /^v6_/, `${m} created non-v6 table ${t}`);
+    }
+    for (let i = 0; i < sets.length; i++) {
+      for (let j = i + 1; j < sets.length; j++) {
+        const shared = sets[i].tables.filter((t) => sets[j].tables.includes(t));
+        assert.deepEqual(shared, [], `${sets[i].m} and ${sets[j].m} both create ${shared.join(', ')}`);
       }
     }
+  });
+
+  it('detects shared ownership that sequential discovery would miss (regression)', () => {
+    const a = new DatabaseSync(':memory:');
+    const b = new DatabaseSync(':memory:');
+    const ownA = (d) => d.exec('CREATE TABLE IF NOT EXISTS v6_x (id INTEGER)');
+    const ownB = (d) => { d.exec('CREATE TABLE IF NOT EXISTS v6_x (id INTEGER)'); d.exec('CREATE TABLE IF NOT EXISTS v6_y (id INTEGER)'); };
+    ownA(a);
+    ownB(b);
+    const names = (d) => d.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name);
+    assert.deepEqual(names(a).filter((t) => names(b).includes(t)), ['v6_x'], 'isolated discovery sees the shared table');
+    a.close();
+    b.close();
   });
 
   it('ensureSchema is idempotent and never moves the core schema version', () => {
     const v = version();
     assert.equal(v, store.CURRENT_SCHEMA_VERSION);
+    for (const m of owners) require(`../lib/v6/${m}`).ensureSchema(db);
     const snapshot = [...tables()].sort();
     for (let round = 0; round < 3; round++) for (const m of owners) require(`../lib/v6/${m}`).ensureSchema(db);
     assert.deepEqual([...tables()].sort(), snapshot);
@@ -134,51 +164,122 @@ describe('module-owned schema', () => {
 
 describe('route security', () => {
   /**
-   * Every /api/v6 route registration in server.js with the identifiers its
-   * handler calls, in order, up to the handler's closing brace.
-   * @returns {Array<{route: string, calls: string[]}>}
+   * The index just past the parenthesised group that opens at `open`.
+   * @param {Array<object>} t
+   * @param {number} open - Index of a `(` token.
+   * @returns {number}
    */
-  function v6Routes() {
-    const t = f2.tokenizeJs(read('server.js'), 'server.js');
-    const out = [];
-    for (let k = 0; k < t.length; k++) {
-      const x = t[k];
-      if (x.type !== 'ident' || x.value !== 'route' || !t[k + 1] || t[k + 1].value !== '(') continue;
-      if (t[k - 1] && (t[k - 1].value === 'function' || t[k - 1].value === '.')) continue;
-      const method = t[k + 2];
-      const pathTok = t[k + 4];
-      if (!pathTok || pathTok.type !== 'string' || !pathTok.value.startsWith('/api/v6')) continue;
-      let j = k + 5;
-      while (j < t.length && !(t[j].type === 'punct' && t[j].value === '{')) j++;
-      let depth = 0;
-      const calls = [];
-      for (; j < t.length; j++) {
-        const tok = t[j];
-        if (tok.type === 'punct' && tok.value === '{') depth++;
-        else if (tok.type === 'punct' && tok.value === '}') {
-          depth--;
-          if (depth === 0) break;
-        } else if (tok.type === 'ident' && !KEYWORDS.has(tok.value) && t[j + 1] && t[j + 1].value === '(') calls.push(tok.value);
-      }
-      out.push({ route: `${method.value} ${pathTok.value}`, calls });
+  function pastParens(t, open) {
+    let depth = 0;
+    for (let j = open; j < t.length; j++) {
+      if (t[j].type !== 'punct') continue;
+      if (t[j].value === '(') depth++;
+      else if (t[j].value === ')' && --depth === 0) return j + 1;
     }
-    return out;
+    return t.length;
   }
 
+  /** @returns {boolean} */
+  const isP = (tok, v) => !!tok && tok.type === 'punct' && tok.value === v;
+  /** @returns {boolean} */
+  const isI = (tok, v) => !!tok && tok.type === 'ident' && (v === undefined || tok.value === v);
+
+  /**
+   * Whether the `…Caller(` call at index `k` is used fail-closed, in one of
+   * the two shapes this codebase uses: `if (!xCaller(...)) return` or
+   * `const c = xCaller(...); if (!c) return`. A call whose result is ignored,
+   * or tested the wrong way round, is not a guard.
+   * @param {Array<object>} t
+   * @param {number} k
+   * @returns {boolean}
+   */
+  function failClosed(t, k) {
+    const after = pastParens(t, k + 1);
+    if (isI(t[k - 3], 'if') && isP(t[k - 2], '(') && isP(t[k - 1], '!')) {
+      return isP(t[after], ')') && isI(t[after + 1], 'return');
+    }
+    if (isP(t[k - 1], '=') && isI(t[k - 2]) && ['const', 'let'].includes(t[k - 3] && t[k - 3].value)) {
+      const name = t[k - 2].value;
+      let j = after;
+      if (isP(t[j], ';')) j++;
+      return isI(t[j], 'if') && isP(t[j + 1], '(') && isP(t[j + 2], '!') && isI(t[j + 3], name)
+        && isP(t[j + 4], ')') && isI(t[j + 5], 'return');
+    }
+    return false;
+  }
+
+  /**
+   * The /api/v6 routes in `source` that do not check their caller,
+   * fail-closed, before their first response, body read or database access.
+   * Only `parseQuery`/`reqUrl` may be called before the guard.
+   * @param {string} source - server.js text.
+   * @returns {{routes: number, unguarded: string[]}}
+   */
+  function unguardedV6Routes(source) {
+    const t = f2.tokenizeJs(source, 'server.js');
+    let routes = 0;
+    const unguarded = [];
+    for (let k = 0; k < t.length; k++) {
+      if (!isI(t[k], 'route') || !isP(t[k + 1], '(')) continue;
+      if (t[k - 1] && (t[k - 1].value === 'function' || t[k - 1].value === '.')) continue;
+      const pathTok = t[k + 4];
+      if (!pathTok || pathTok.type !== 'string' || !pathTok.value.startsWith('/api/v6')) continue;
+      routes++;
+      let j = k + 5;
+      while (j < t.length && !isP(t[j], '{')) j++;
+      let depth = 0;
+      let guarded = false;
+      let ok = true;
+      for (; j < t.length; j++) {
+        const tok = t[j];
+        if (isP(tok, '{')) depth++;
+        else if (isP(tok, '}')) {
+          if (--depth === 0) break;
+        } else if (isI(tok) && !KEYWORDS.has(tok.value) && isP(t[j + 1], '(')) {
+          if (/Caller$/.test(tok.value)) {
+            if (!failClosed(t, j)) ok = false;
+            guarded = guarded || failClosed(t, j);
+            j = pastParens(t, j + 1) - 1;
+          } else if (!guarded && !PRE_GUARD_READS.has(tok.value)) {
+            ok = false;
+          }
+        }
+      }
+      if (!ok || !guarded) unguarded.push(`${t[k + 2].value} ${pathTok.value}`);
+    }
+    return { routes, unguarded };
+  }
+
+  const server = read('server.js');
+  const KB_GUARD = "  if (!operatorProjectCaller(req, res, 'search the knowledge base')) return;\n";
+
   it('finds the v6 routes', () => {
-    assert.ok(v6Routes().length >= 134, 'fewer /api/v6 routes than v6.2.0 shipped');
+    assert.ok(unguardedV6Routes(server).routes >= 134, 'fewer /api/v6 routes than v6.2.0 shipped');
   });
 
-  it('every /api/v6 route checks its caller before responding, reading the body or touching the database', () => {
-    const unguarded = [];
-    for (const { route, calls } of v6Routes()) {
-      const guard = calls.findIndex((c) => /Caller$/.test(c));
-      const firstAction = calls.findIndex((c) => ACTIONS.has(c));
-      const before = guard === -1 ? calls : calls.slice(0, guard);
-      const ok = guard !== -1 && (firstAction === -1 || guard < firstAction) && before.every((c) => PRE_GUARD_READS.has(c));
-      if (!ok) unguarded.push(route);
-    }
-    assert.deepEqual(unguarded, []);
+  it('every /api/v6 route checks its caller, fail-closed, before responding, reading the body or touching the database', () => {
+    assert.deepEqual(unguardedV6Routes(server).unguarded, []);
+  });
+
+  it('flags a route whose guard is removed, ignored, inverted, or placed after the body read (mutation regression)', () => {
+    assert.ok(server.includes(KB_GUARD), 'mutation anchor missing from server.js');
+    const flagged = (src) => unguardedV6Routes(src).unguarded;
+    assert.deepEqual(flagged(server.replace(KB_GUARD, '')), ['GET /api/v6/kb/search'], 'guard removed');
+    assert.deepEqual(flagged(server.replace(KB_GUARD, "  operatorProjectCaller(req, res, 'search the knowledge base');\n")),
+      ['GET /api/v6/kb/search'], 'result ignored');
+    assert.deepEqual(flagged(server.replace(KB_GUARD, "  if (operatorProjectCaller(req, res, 'search the knowledge base')) return;\n")),
+      ['GET /api/v6/kb/search'], 'test inverted');
+    assert.deepEqual(flagged(server.replace(KB_GUARD,
+      "  const ok = operatorProjectCaller(req, res, 'search the knowledge base');\n  if (ok) return;\n")),
+    ['GET /api/v6/kb/search'], 'const form inverted');
+    assert.deepEqual(flagged(server.replace(KB_GUARD,
+      "  const ok = operatorProjectCaller(req, res, 'search the knowledge base');\n  if (!ok) return;\n")),
+    [], 'the const fail-closed form is accepted');
+    const create = "  if (!operatorProjectCaller(req, res, 'create a logical project')) return;\n  const b = _v6Body(body);\n";
+    assert.ok(server.includes(create), 'mutation anchor missing from server.js');
+    assert.deepEqual(flagged(server.replace(create,
+      "  const b = _v6Body(body);\n  if (!operatorProjectCaller(req, res, 'create a logical project')) return;\n")),
+    ['POST /api/v6/logical-projects'], 'guard after the body read');
   });
 });
 
