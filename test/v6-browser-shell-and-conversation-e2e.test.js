@@ -15,10 +15,12 @@
 // tier's guard forbids starting one, so this file is declared one tier
 // slower than its static scan, as test/tiers.json allows.
 //
-// Not covered here, deliberately: the conversation route's session-status
-// lookup needs a live tmux session (a subprocess this medium-tier file may
-// not start), so the conversation journey drives the real event routes and
-// renders their real output through the shell's own conversation markup.
+// The conversation journey deep-links the MOUNTED shell to
+// `#/resources/:id/conversation`, so the live controller runs its whole
+// path: project list -> GET /api/sessions/:name/status -> conversation
+// events + attestations -> setDetail. The session is seeded as an active
+// `webui` session, which the status route answers from SQLite without
+// probing tmux, so no tmux session is needed.
 
 const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -286,6 +288,35 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.match(html, /plan the change/);
       assert.match(html, /ship it/);
       assert.match(html, /Open Hood/);
+    });
+
+    it('a conversation deep link runs the mounted shell\'s live controller end to end (PRR-B R1)', async () => {
+      const projectId = seedProject('e2e-conversation-live');
+      const sessionId = store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(projectId).lastInsertRowid;
+      const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
+      assert.equal((await send('POST', base, { body: event(1, 'what changed?', 'user') })).statusCode, 201);
+      assert.equal((await send('POST', base, { body: event(2, 'the landing race is fixed') })).statusCode, 201);
+
+      const { root, calls, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      assert.ok(calls.includes('GET /api/projects'));
+      assert.ok(calls.includes('GET /api/sessions/e2e-conversation-live/status'), JSON.stringify(calls));
+      assert.ok(calls.includes(`GET ${base}`), 'the controller fetched the live events');
+      assert.ok(calls.includes(`GET /api/v6/projects/${projectId}/sessions/${sessionId}/attestations`));
+      assert.match(root.innerHTML, /what changed\?/);
+      assert.match(root.innerHTML, /the landing race is fixed/);
+      assert.match(root.innerHTML, /Open Hood/);
+    });
+
+    it('a conversation deep link for a project with no live session renders the honest empty state', async () => {
+      const projectId = seedProject('e2e-conversation-idle');
+      const { root, calls, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      assert.ok(calls.includes('GET /api/sessions/e2e-conversation-idle/status'));
+      assert.ok(!calls.some((c) => c.includes('/conversation/events')), 'no session, so no event fetch');
+      assert.match(root.innerHTML, /e2e-conversation-idle/);
     });
 
     it('refuses a reused sequence number rather than reordering the conversation', async () => {
