@@ -208,3 +208,29 @@ describe('attestation receipts', () => {
     assert.throws(() => recordAttestation(db, { sessionId: 's', profile: {} }), TypeError);
   });
 });
+
+describe('PRR-B R1 HOLD regressions (PR #3033): host group access', () => {
+  const sep = { mode: 'separate_unix_uid', requireIsolation: true, uid: 1600, gid: 1600 };
+
+  it('separate_unix_uid refuses the host primary gid and any host supplementary group', () => {
+    assert.equal(planIsolation({ ...sep, gid: 20 }, HOST).code, 'SAME_GID');
+    assert.equal(planIsolation({ ...sep, gid: 80 }, { ...HOST, groups: [12, 80] }).code, 'SAME_GID');
+    assert.equal(planIsolation(sep, { ...HOST, groups: [12, 80] }).ok, true, 'a gid outside every host group is admitted');
+  });
+
+  it('an unreadable host gid fails closed', () => {
+    assert.equal(planIsolation(sep, { ...HOST, gid: null }).code, 'HOST_GID_UNKNOWN');
+    assert.equal(planIsolation(CONTAINER, { ...HOST, gid: undefined }).code, 'HOST_GID_UNKNOWN');
+  });
+
+  it('the same rule holds for containers: no host uid, gid or supplementary group', () => {
+    assert.equal(planIsolation({ ...CONTAINER, uid: 501 }, HOST).code, 'SAME_UID');
+    assert.equal(planIsolation({ ...CONTAINER, gid: 20 }, HOST).code, 'SAME_GID');
+    assert.equal(planIsolation({ ...CONTAINER, gid: 80 }, { ...HOST, groups: [80] }).code, 'SAME_GID');
+    assert.equal(planIsolation(CONTAINER, { ...HOST, uid: null }).code, 'HOST_UID_UNKNOWN');
+  });
+
+  it('currentHostFacts reports the host supplementary groups', () => {
+    assert.deepEqual(currentHostFacts().groups, process.getgroups());
+  });
+});

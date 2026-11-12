@@ -292,3 +292,43 @@ describe('advise — the projectless entrypoint', () => {
     assert.equal(advise(null, deps()).code, 'REPO_SLUG_INVALID');
   });
 });
+
+describe('PRR-B R1 HOLD regressions (PR #3033)', () => {
+  it('a regular hard link to a protected file is refused, before and after open', () => {
+    fs.writeFileSync(path.join(protectedRoot, 'internal', 'secret.txt'), 'PROTECTED SECRET');
+    fs.linkSync(path.join(protectedRoot, 'internal', 'secret.txt'), path.join(repo, 'hl.txt'));
+    throwsCode(() => read('hl.txt'), 'HARDLINK_DENIED');
+    const out = advise({ tenantId: 'acme', repoSlug: 'widget', repoRoot: repo, relativePath: 'hl.txt', estimate: { tokens: 1, usd: 0 } },
+      { ledger: createAdvisorLedger(new DatabaseSync(':memory:')), protectedRoots: [protectedRoot], now: Date.UTC(2026, 10, 12) });
+    assert.deepEqual(out, { ok: false, code: 'HARDLINK_DENIED' });
+  });
+
+  it('a file that gains a hard link between check and open is refused', () => {
+    const target = path.join(repo, 'README.md');
+    const realOpen = fs.openSync;
+    let linked = false;
+    fs.openSync = function linkThenOpen(p, ...rest) {
+      if (!linked && p === target) { linked = true; fs.linkSync(target, path.join(outside, 'alias.md')); }
+      return realOpen.call(fs, p, ...rest);
+    };
+    try {
+      throwsCode(() => read('README.md'), 'HARDLINK_DENIED');
+    } finally {
+      fs.openSync = realOpen;
+    }
+  });
+
+  it('a symlinked advisor root is refused and nothing is created at its target', () => {
+    const linkRoot = path.join(tmp, 'advisor-link');
+    fs.symlinkSync(outside, linkRoot);
+    throwsCode(() => resolveWorkspace({ tenantId: 't', repoSlug: 'r', root: linkRoot, create: true }), 'ROOT_SYMLINK_DENIED');
+    assert.equal(fs.existsSync(path.join(outside, 't')), false);
+    throwsCode(() => resolveWorkspace({ tenantId: 't', repoSlug: 'r', root: linkRoot }), 'ROOT_SYMLINK_DENIED');
+  });
+
+  it('an advisor root that is a file is refused', () => {
+    const fileRoot = path.join(tmp, 'advisor-file');
+    fs.writeFileSync(fileRoot, 'x');
+    throwsCode(() => resolveWorkspace({ tenantId: 't', repoSlug: 'r', root: fileRoot }), 'ROOT_SYMLINK_DENIED');
+  });
+});
