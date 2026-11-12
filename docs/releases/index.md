@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.2.0 — Multi-train simulator, external providers, Advisor, Medusa v2 compact wire and OS sandboxing](v6.2.0.md)
+- [v6.2.1 — Full-stack soak, adversarial chaos and browser E2E qualification, and the dashboard startup fix](v6.2.1.md)
 
 ## Recent releases
+
+- [v6.2.0 — Multi-train simulator, external providers, Advisor, Medusa v2 compact wire and OS sandboxing](v6.2.0.md)
 
 - [v6.1.0 — Bounded self-healing, operating profiles, wave scheduler, grounded assistants and knowledge base](v6.1.0.md)
 

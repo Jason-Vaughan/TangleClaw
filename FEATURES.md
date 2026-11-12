@@ -17,6 +17,12 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.2.1 — Full-stack soak, adversarial chaos and browser E2E qualification, and the dashboard startup fix
+
+- **Dashboard startup fix** (#3029) — `public/landing.js#whenPageScriptsLoaded` and `#wrapRenderCardWithHeldWakeBadge`: startup waits for every page script before wrapping `renderCard`, and a missing `renderCard` is skipped with a warning.
+- **Report route body limits** (#3041) — `server.js`'s `/api/v6/reports/*` routes: 1 MiB for `present`/`print-view`/`search-index`, 2 MiB for `cite`, 8 MiB for `ask`; larger bodies still get 413.
+- **v6 qualification suites** (#3037, #3038, #3039, #3044) — `test/v6-full-stack-soak-and-chaos.test.js`, `test/v6-master-release-qualification.test.js`, `test/v6-browser-shell-and-conversation-e2e.test.js`, `test/v6-fleet-wave-and-report-e2e.test.js` and `test/v6-adversarial-security-boundary-torture.test.js`.
+
 ## v6.2.0 — Multi-train simulator, external providers, Advisor, Medusa v2 compact wire and OS sandboxing
 
 - **Multi-train what-if simulator** (#3001) — `lib/v6/e3b-whatif-simulator.js#simulate` and `#compareScenarios`: cross-train scheduling with critical path, bottlenecks and named unschedulable reasons; `POST /api/v6/whatif/simulate`, `POST /api/v6/whatif/compare`.

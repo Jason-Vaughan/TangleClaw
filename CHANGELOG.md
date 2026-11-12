@@ -4,6 +4,33 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.2.1] - 2026-11-12
+
+### Fixed
+- The dashboard no longer fails to start with `ReferenceError: renderCard is not defined` (#3029). `landing.js` loads before `ui.js` and assumed the parser had already run `ui.js` by the time its first network requests finished; on a fast loopback or a service-worker cache hit they could finish first, and the error aborted the rest of startup (project loading, banners, polling). Startup now waits until every page script has run before installing the held-wake card badge, and a missing `renderCard` is skipped with a console warning instead of halting the page.
+- Report presentation, search, cite and grounded ask now accept a real report over HTTP (#3041). The five `/api/v6/reports/*` routes carry a whole report or its search index, and the 10 KB default request limit refused every real one: published v6 Sprint Reports are 120-190 KB of HTML and v6.2.0's search index is 376 KB. `present`, `print-view` and `search-index` now accept up to 1 MiB, `cite` up to 2 MiB, and `ask` (up to 12 report indexes) up to 8 MiB; larger requests are still refused with 413.
+
+### Internal
+- v6 full-stack soak, chaos and master release-qualification suites (#3037). The soak suite drives
+  the real `lib/v6` modules on one SQLite store under volume, repeated (sequential) contention and
+  injected faults:
+  idempotent schema setup across restarts, a 100-car dependency graph, multi-train simulation,
+  105 Medusa messages and 1000 coalesced completions, a 50-delta Merkle chain with missed-delta
+  recovery, budgeted search, path-escape and isolation probes, secret scrubbing, write-conflict
+  rollback, and a rate-capped advisor ledger. The qualification suite checks every `lib/v6` module
+  (loads, documents its exports, has a test, owns only `v6_` tables, none shared), that every
+  `/api/v6` route checks its caller fail-closed before acting, and that the release record (version, sections, lock, notes,
+  README pins) agrees with itself, and that no released section says a shipped module cannot be reached over HTTP.
+- Browser end-to-end qualification suites for v6 (#3038): `test/v6-browser-shell-and-conversation-e2e.test.js` and `test/v6-fleet-wave-and-report-e2e.test.js` drive the real request handler over a real SQLite store and render through the real Fleet Shell. They cover shell navigation and deep links, the Settings, Platform, Help, recovery and what-if views, conversation events (a deep link through the mounted shell's live controller, ordering, cursor replay, redaction, soft delete and cross-project refusal), the logical-project hierarchy, fleet templates and fleet state, wave runs and what-if comparison, and report presentation, print, search, cite and grounded ask. The suites found that a real report's search index was too large for the 10 KB route body limit on cite and ask (#3041), fixed in the same change; they now cite and ask against a full 12-section report and a real-size one over HTTP, and check that an over-limit body is still refused.
+- v6.2.1 Stage 5 boundary-validation qualification suite
+  (`test/v6-adversarial-security-boundary-torture.test.js`): 36 defensive unit tests run against
+  the real v6 modules, confirming each trust boundary refuses input outside its contract — A1
+  authorization (server-side principals only, scoped and non-transitive grants), F3 diagnostic
+  scrubbing and consent-bound submission, G4 external-advisor path containment and
+  point-of-use workspace verification, G3 switchboard isolation and compact-wire integrity
+  checks, and A1-Iso host-only mount policy with isolation that never downgrades (#3039).
+- The master release-qualification suite's route-guard check now holds every `/api/v6` handler to a closed-world grammar (#3044). The handler must be an inline arrow block, so an expression body or a function reference cannot borrow the next route's guard. The fail-closed caller check must be the handler's first statement, or follow only `const q = parseQuery(reqUrl(req).search);`, must pass exactly `(req, res, '<action>')`, and must end in a bare `return;` so nothing runs for a refused caller. The previous scanner searched for a guard anywhere in the handler, and a guard on one branch (with or without braces) or in a callback, a body read, or a call in any spelling before or inside it could pass. Nothing can now run first: no body or property read, call, branch, block or callback. Mutation regressions cover each case. The malformed-fragment assertion is renamed to say what it checks.
+
 ## [6.2.0] - 2026-11-11
 
 ### Added
