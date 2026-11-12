@@ -321,13 +321,38 @@ describe('G4 advisor: reads stay inside the target and workspace identity is ver
     throwsCode(() => g4.resolveRepoRoot(alias, [protectedRoot]), 'PROTECTED_ROOT');
   });
 
-  it('a request naming any internal identity is refused before any read', () => {
+  it('a request naming any internal identity is refused before any read is attempted', () => {
+    // Instrumented: count every fs read-path call during advise(). The
+    // control proves the same request WOULD read the (readable) file once
+    // the identity field is removed, so zero reads below means the identity
+    // check really runs first, not that the read happened to fail.
     const { DatabaseSync } = require('node:sqlite');
-    const ledger = g4.createAdvisorLedger(new DatabaseSync(':memory:'));
+    const deps = () => ({ ledger: g4.createAdvisorLedger(new DatabaseSync(':memory:')), protectedRoots: [protectedRoot], now: Date.UTC(2026, 10, 12) });
+    const base = { tenantId: 'acme', repoSlug: 'w', repoRoot: repo, relativePath: 'src/a.js', estimate: { tokens: 1, usd: 0 } };
+    const watched = ['openSync', 'readSync', 'readFileSync', 'realpathSync', 'lstatSync'];
+    const counting = (fn) => {
+      const originals = {};
+      const counts = {};
+      for (const name of watched) {
+        originals[name] = fs[name];
+        counts[name] = 0;
+        fs[name] = function counted(...a) { counts[name]++; return originals[name].apply(fs, a); };
+      }
+      try {
+        return { result: fn(), counts };
+      } finally {
+        for (const name of watched) fs[name] = originals[name];
+      }
+    };
+    const control = counting(() => g4.advise(base, deps()));
+    assert.equal(control.result.ok, true, 'control: the file is readable');
+    assert.ok(control.counts.openSync >= 1 && control.counts.readSync >= 1, `control read the file: ${JSON.stringify(control.counts)}`);
     for (const field of g4.INTERNAL_SCOPE_FIELDS) {
-      const out = g4.advise({ tenantId: 'acme', repoSlug: 'w', repoRoot: repo, relativePath: 'src/a.js', estimate: { tokens: 1, usd: 0 }, [field]: 'x' },
-        { ledger, protectedRoots: [protectedRoot], now: Date.UTC(2026, 10, 12) });
-      assert.equal(out.code, 'PROJECT_SCOPE_DENIED', field);
+      for (const value of ['x', 0, '', null, false]) {
+        const run = counting(() => g4.advise({ ...base, [field]: value }, deps()));
+        assert.equal(run.result.code, 'PROJECT_SCOPE_DENIED', `${field}=${JSON.stringify(value)}`);
+        assert.deepEqual(run.counts, Object.fromEntries(watched.map((n) => [n, 0])), `${field}=${JSON.stringify(value)} touched the filesystem`);
+      }
     }
   });
 
@@ -376,10 +401,20 @@ describe('G3 / R-MED-1: switchboard isolation is default-deny and the compact wi
     assert.equal(g3.checkMedusaCrossProjectAccess('p2', 'p1', { crossProjectLinks: [link] }).code, 'MEDUSA_CROSS_PROJECT_DENIED', 'one-way');
   });
 
-  it('blank, missing or non-scalar project ids are denied', () => {
-    for (const [a, b] of [['', 'p1'], ['p1', ''], [null, 'p1'], [undefined, undefined], ['  ', '  ']]) {
-      assert.equal(g3.checkMedusaCrossProjectAccess(a, b).allowed, false, JSON.stringify([a, b]));
+  it('blank, missing or non-scalar project ids are denied without coercion or throwing', () => {
+    const blank = [['', 'p1'], ['p1', ''], [null, 'p1'], [undefined, undefined], ['  ', '  ']];
+    const nonScalar = [
+      [{}, {}], [[], []], [true, true], [false, false], [() => 1, () => 1], [Symbol('p'), Symbol('p')],
+      // Values that would MATCH if coerced to strings: still refused.
+      [{ toString: () => 'p1' }, 'p1'], [['p1'], 'p1'], ['p1', ['p1']], [{ valueOf: () => 7 }, 7]
+    ];
+    for (const [a, b] of [...blank, ...nonScalar]) {
+      let verdict;
+      assert.doesNotThrow(() => { verdict = g3.checkMedusaCrossProjectAccess(a, b); }, `${typeof a}/${typeof b}`);
+      assert.deepEqual(verdict, { allowed: false, code: 'MEDUSA_CROSS_PROJECT_DENIED' }, `${typeof a}/${typeof b}`);
     }
+    const link = { fromProjectId: {}, toProjectId: {} };
+    assert.equal(g3.checkMedusaCrossProjectAccess({}, {}, { crossProjectLinks: [link] }).allowed, false, 'a link cannot admit non-scalar ids');
   });
 
   it('the compact wire is negotiated only with a peer that advertises it', () => {
