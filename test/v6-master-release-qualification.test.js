@@ -219,8 +219,10 @@ describe('route security', () => {
    * body read or database access. "Body read" means ANY reference to the
    * handler's `body` (a call such as `_v6Body(body)` or a property read such
    * as `body.x`); "response" and "database access" are any other call. Only
-   * `parseQuery`/`reqUrl` may be called before the guard, and that includes
-   * inside the guard's own argument list, which runs before the guard does.
+   * `parseQuery`/`reqUrl` may be called before the guard, in any spelling of
+   * a call (`x()`, `(x)()`, `o[k]()`, `x?.()`, `new X`, a tagged template).
+   * The guard's own arguments run before it does, so they must be exactly
+   * `(req, res, '<action>')`, the only shape the v6 routes use.
    * @param {string} source - server.js text.
    * @returns {{routes: number, unguarded: string[]}}
    */
@@ -248,25 +250,27 @@ describe('route security', () => {
           // #3044 N1: a property read of the body before the guard is a body
           // read too, not only a call that takes it.
           ok = false;
-        } else if (isI(tok) && !KEYWORDS.has(tok.value) && isP(t[j + 1], '(')) {
-          if (/Caller$/.test(tok.value)) {
-            // Only a fail-closed guard at the handler's top level counts: one
-            // nested in a branch or a callback runs only sometimes, if at all.
-            // The guard's own arguments are evaluated before it runs, so a
-            // body read or another call among them happens unguarded.
-            const end = pastParens(t, j + 1);
-            let argsClean = true;
-            for (let a = j + 2; a < end - 1; a++) {
-              if (isI(t[a], 'body')) argsClean = false;
-              else if (isI(t[a]) && !KEYWORDS.has(t[a].value) && isP(t[a + 1], '(')
-                && !PRE_GUARD_READS.has(t[a].value)) argsClean = false;
-            }
-            if (!argsClean || !failClosed(t, j) || depth !== 1) ok = false;
-            guarded = guarded || (argsClean && depth === 1 && failClosed(t, j));
-            j = end - 1;
-          } else if (!guarded && !PRE_GUARD_READS.has(tok.value)) {
-            ok = false;
-          }
+        } else if (isI(tok) && /Caller$/.test(tok.value) && isP(t[j + 1], '(')) {
+          // Closed world: every guard passes exactly (req, res, '<action>').
+          // Its arguments run before it does, so anything else there (a body
+          // read, a call in any spelling) would run unguarded.
+          const end = pastParens(t, j + 1);
+          const argsClean = end === j + 8 && isI(t[j + 2], 'req') && isP(t[j + 3], ',')
+            && isI(t[j + 4], 'res') && isP(t[j + 5], ',') && !!t[j + 6] && t[j + 6].type === 'string';
+          // Only a fail-closed guard at the handler's top level counts: one
+          // nested in a branch or a callback runs only sometimes, if at all.
+          if (!argsClean || !failClosed(t, j) || depth !== 1) ok = false;
+          guarded = guarded || (argsClean && depth === 1 && failClosed(t, j));
+          j = end - 1;
+        } else if (!guarded && isP(tok, '(')) {
+          // Before the guard, a `(` may only open an `if` condition or an
+          // approved read's arguments. Any other is a call or a grouping in
+          // some spelling: `x()`, `(x)()`, `o[k]()`, `x?.()`.
+          const prev = t[j - 1];
+          if (!(isI(prev, 'if') || (isI(prev) && PRE_GUARD_READS.has(prev.value)))) ok = false;
+        } else if (!guarded && (isI(tok, 'new') || tok.type === 'template')) {
+          // The two calls with no `(`: `new X` and a tagged template.
+          ok = false;
         }
       }
       if (!ok || !guarded) unguarded.push(`${t[k + 2].value} ${pathTok.value}`);
@@ -319,6 +323,17 @@ describe('route security', () => {
     assert.deepEqual(flagged(server.replace(KB_GUARD,
       "  if (!operatorProjectCaller(req, res, _v6Lookup(req))) return;\n")),
     ['GET /api/v6/kb/search'], 'another call inside the guard call itself');
+    for (const [label, guard] of [
+      ['a parenthesised callee inside the guard call', "  if (!operatorProjectCaller(req, res, (_v6Lookup)())) return;\n"],
+      ['a non-literal action inside the guard call', "  if (!operatorProjectCaller(req, res, action)) return;\n"],
+      ['a parenthesised callee before the guard', "  (_v6Lookup)();\n" + KB_GUARD],
+      ['a computed callee before the guard', "  _v6[name]();\n" + KB_GUARD],
+      ['an optional call before the guard', "  _v6Lookup?.();\n" + KB_GUARD],
+      ['a construction without parentheses before the guard', "  const x = new _V6Thing;\n" + KB_GUARD],
+      ['a tagged template before the guard', "  _v6Lookup`q`;\n" + KB_GUARD]
+    ]) {
+      assert.deepEqual(flagged(server.replace(KB_GUARD, guard)), ['GET /api/v6/kb/search'], label);
+    }
     assert.deepEqual(flagged(server.replace(create,
       "  const b = _v6Body(body);\n  if (!operatorProjectCaller(req, res, 'create a logical project')) return;\n")),
     ['POST /api/v6/logical-projects'], 'guard after the body read');
