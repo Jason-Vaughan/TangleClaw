@@ -356,3 +356,95 @@ describe('PRR-B R1 HOLD regressions (PR #3033): nothing is created through a sym
     assert.equal(resolveWorkspace({ tenantId: 't', repoSlug: 'r', root, create: true }), path.join(root, 't', 'r'));
   });
 });
+
+describe('PRR-B R3 HOLD regressions (PR #3033): root swapped mid-walk', () => {
+  /**
+   * Run resolveWorkspace with `hook` patched onto one fs function, restoring it after.
+   * @returns {{error: AdvisorError|null, result: string|null}}
+   */
+  function withHook(name, hook, args) {
+    const real = fs[name];
+    fs[name] = function hooked(...a) { return hook(real, ...a); };
+    try {
+      return { result: resolveWorkspace(args), error: null };
+    } catch (error) {
+      return { result: null, error };
+    } finally {
+      fs[name] = real;
+    }
+  }
+  const swap = (dir) => { fs.rmSync(dir, { recursive: true }); fs.symlinkSync(outside, dir); };
+
+  it('PRR-B\'s exact case: root swapped for a symlink right after realpathSync(root) returns', () => {
+    const root = path.join(tmp, 'advisor');
+    fs.mkdirSync(root);
+    let calls = 0;
+    const out = withHook('realpathSync', (real, p, ...r) => {
+      const v = real.call(fs, p, ...r);
+      if (p === root && ++calls === 2) swap(root);
+      return v;
+    }, { tenantId: 't', repoSlug: 'r', root, create: true });
+    assert.equal(out.result, null, 'never returns a path');
+    assert.equal(out.error.code, 'ROOT_SYMLINK_DENIED');
+    assert.equal(fs.existsSync(path.join(outside, 't')), false, 'nothing created outside');
+  });
+
+  it('a swap at any realpath or lstat the walk makes is refused; only the final pre-mkdir check can leak one empty dir', () => {
+    // The walk can close every window except the one between its last
+    // identity check and the mkdir call (Node has no mkdirat). The sweep
+    // proves exactly that: every position refuses and never returns a
+    // path, and at most one position — that final lstat — creates
+    // anything at the swap target.
+    const leaks = [];
+    for (const fn of ['realpathSync', 'lstatSync']) {
+      for (let at = 1; at <= 8; at++) {
+        const root = path.join(tmp, `advisor-${fn}-${at}`);
+        fs.mkdirSync(root);
+        let calls = 0;
+        let swapped = false;
+        const out = withHook(fn, (real, p, ...r) => {
+          const v = real.call(fs, p, ...r);
+          if (!swapped && p === root && ++calls === at) { swapped = true; swap(root); }
+          return v;
+        }, { tenantId: 't', repoSlug: 'r', root, create: true });
+        if (swapped) {
+          assert.equal(out.result, null, `${fn}#${at} returned ${out.result}`);
+          assert.ok(out.error instanceof AdvisorError, `${fn}#${at}`);
+          if (fs.existsSync(path.join(outside, 't'))) {
+            leaks.push(`${fn}#${at}`);
+            fs.rmSync(path.join(outside, 't'), { recursive: true });
+          }
+        }
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+    assert.ok(leaks.length <= 1, `leaked at ${leaks}`);
+    assert.ok(leaks.every((l) => l.startsWith('lstatSync')), `only the final identity check may leak: ${leaks}`);
+  });
+
+  it('a tenant directory swapped mid-walk is refused', () => {
+    const root = path.join(tmp, 'advisor');
+    fs.mkdirSync(path.join(root, 't'), { recursive: true });
+    const tenant = path.join(root, 't');
+    let calls = 0;
+    const out = withHook('realpathSync', (real, p, ...r) => {
+      const v = real.call(fs, p, ...r);
+      if (p === tenant && ++calls === 1) swap(tenant);
+      return v;
+    }, { tenantId: 't', repoSlug: 'r', root, create: true });
+    assert.equal(out.error && out.error.code, 'SYMLINK_DENIED');
+    assert.equal(fs.existsSync(path.join(outside, 'r')), false);
+  });
+
+  it('the residual window (swap inside mkdir itself) still never returns a path outside', () => {
+    const root = path.join(tmp, 'advisor');
+    fs.mkdirSync(root);
+    let swapped = false;
+    const out = withHook('mkdirSync', (real, p, ...r) => {
+      if (!swapped && path.dirname(p) === root) { swapped = true; swap(root); }
+      return real.call(fs, p, ...r);
+    }, { tenantId: 't', repoSlug: 'r', root, create: true });
+    assert.equal(out.result, null, 'never returns a path');
+    assert.ok(['ROOT_SYMLINK_DENIED', 'SYMLINK_DENIED'].includes(out.error.code), out.error.code);
+  });
+});
