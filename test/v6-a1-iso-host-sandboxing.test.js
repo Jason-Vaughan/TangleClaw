@@ -15,15 +15,18 @@ const { DatabaseSync } = require('node:sqlite');
 
 const {
   ISOLATION_MODES, CONTAINER_RUNTIMES, ARGV_RUNTIMES, ENV_ALLOWLIST, FORBIDDEN_MOUNT_TARGETS, DEFAULT_PIDS_LIMIT,
+  SENSITIVE_SYSTEM_DIRS, SENSITIVE_HOME_DIRS, sensitiveSource,
   profileDigest, validateMounts, planIsolation, ensureSchema, recordAttestation, listAttestations, currentHostFacts
 } = require('../lib/v6/a1-iso-host-sandboxing');
 
 const HOST = { uid: 501, gid: 20, runtimes: { docker: true, podman: false }, canSwitchUid: true,
   env: { PATH: '/usr/bin', LANG: 'en_US.UTF-8', GH_TOKEN: 'ghp_secret', HOME: '/Users/op' },
-  realpath: (p) => (p.includes('link') ? '/elsewhere' : path.resolve(p)) };
+  realpath: (p) => (p.includes('link') ? '/elsewhere' : path.resolve(p)),
+  // Mount policy is the host's, never the profile's (TC-Lane-C B1, Ruling A658).
+  mountRoots: ['/srv/fleet'], writableRoots: ['/srv/fleet/work'], home: '/Users/op', protectedRoots: ['/srv/tc'] };
 
 const CONTAINER = { mode: 'container', requireIsolation: true, runtime: 'docker', image: 'ghcr.io/acme/agent@sha256:abc',
-  command: ['node', 'agent.js'], uid: 1500, gid: 1500, mountRoots: ['/srv/fleet'], writableRoots: ['/srv/fleet/work'],
+  command: ['node', 'agent.js'], uid: 1500, gid: 1500,
   mounts: [{ source: '/srv/fleet/repo', target: '/repo' }, { source: '/srv/fleet/work/a', target: '/work', readOnly: false }] };
 
 describe('constants', () => {
@@ -113,10 +116,10 @@ describe('container', () => {
 });
 
 describe('validateMounts', () => {
-  const opts = { mountRoots: ['/srv/fleet'], writableRoots: ['/srv/fleet/work'], realpath: HOST.realpath };
+  const opts = { mountRoots: ['/srv/fleet'], writableRoots: ['/srv/fleet/work'], realpath: HOST.realpath, home: '/Users/op' };
 
   it('refuses a source outside the roots, a writable mount outside the writable roots, and a symlinked source', () => {
-    assert.equal(validateMounts([{ source: '/etc', target: '/x' }], opts).code, 'MOUNT_NOT_ALLOWED');
+    assert.equal(validateMounts([{ source: '/opt/data', target: '/x' }], opts).code, 'MOUNT_NOT_ALLOWED');
     assert.equal(validateMounts([{ source: '/srv/fleetx/a', target: '/x' }], opts).code, 'MOUNT_NOT_ALLOWED', 'a prefix-sharing sibling is outside');
     assert.equal(validateMounts([{ source: '/srv/fleet/repo', target: '/x', readOnly: false }], opts).code, 'MOUNT_WRITE_DENIED');
     assert.equal(validateMounts([{ source: '/srv/fleet/link', target: '/x' }], opts).code, 'MOUNT_SYMLINK_DENIED');
@@ -239,5 +242,72 @@ describe('PRR-B R1 HOLD regressions (PR #3033): supplementary groups in the laun
   it('a separate-uid launch tells the launcher to clear supplementary groups', () => {
     const plan = planIsolation({ mode: 'separate_unix_uid', requireIsolation: true, uid: 1600, gid: 1600 }, HOST);
     assert.equal(plan.launch.clearSupplementaryGroups, true);
+  });
+});
+
+describe('TC-Lane-C B1 regressions (PR #3033, Ruling A658): mount policy is the host\'s', () => {
+  it('TC-Lane-C\'s repro: a profile granting itself / read-write is refused, not attested isolated', () => {
+    const evil = { ...CONTAINER, mountRoots: ['/'], writableRoots: ['/'], mounts: [{ source: '/', target: '/host', readOnly: false }] };
+    const plan = planIsolation(evil, HOST);
+    assert.equal(plan.ok, false);
+    assert.equal(plan.code, 'MOUNT_POLICY_FROM_PROFILE');
+    assert.equal(plan.launch, undefined);
+  });
+
+  it('a profile supplying only writableRoots is refused too', () => {
+    assert.equal(planIsolation({ ...CONTAINER, writableRoots: ['/srv/fleet'] }, HOST).code, 'MOUNT_POLICY_FROM_PROFILE');
+  });
+
+  it('/ is refused as a source even when the HOST policy lists it', () => {
+    const lax = { ...HOST, mountRoots: ['/'], writableRoots: ['/'] };
+    const plan = planIsolation({ ...CONTAINER, mounts: [{ source: '/', target: '/host', readOnly: false }] }, lax);
+    assert.equal(plan.code, 'MOUNT_SOURCE_SENSITIVE');
+  });
+
+  it('the host home, its credential dot-directories, and anything containing home are refused', () => {
+    const lax = { ...HOST, mountRoots: ['/'], writableRoots: ['/'] };
+    for (const source of ['/Users/op', '/Users', '/Users/op/.ssh', '/Users/op/.ssh/keys', '/Users/op/.aws', '/Users/op/.tangleclaw']) {
+      const plan = planIsolation({ ...CONTAINER, mounts: [{ source, target: '/m', readOnly: false }] }, lax);
+      assert.equal(plan.code, 'MOUNT_SOURCE_SENSITIVE', source);
+    }
+  });
+
+  it('a project subdirectory inside home is still mountable when host policy allows it', () => {
+    const plan = planIsolation({ ...CONTAINER, mounts: [{ source: '/Users/op/projects/app', target: '/app' }] },
+      { ...HOST, mountRoots: ['/Users/op/projects'] });
+    assert.equal(plan.ok, true, JSON.stringify(plan));
+  });
+
+  it('system directories and protected roots are refused, inside or containing', () => {
+    const lax = { ...HOST, mountRoots: ['/'], writableRoots: ['/'] };
+    for (const source of ['/etc', '/etc/ssh', '/var/run', '/proc/1', '/srv/tc', '/srv/tc/internal']) {
+      assert.equal(planIsolation({ ...CONTAINER, mounts: [{ source, target: '/m' }] }, lax).code, 'MOUNT_SOURCE_SENSITIVE', source);
+    }
+    assert.equal(planIsolation({ ...CONTAINER, mounts: [{ source: '/srv', target: '/m' }] }, lax).code, 'MOUNT_SOURCE_SENSITIVE', 'a source containing a protected root');
+  });
+
+  it('with no host mount policy, no mount is allowed', () => {
+    const plan = planIsolation(CONTAINER, { ...HOST, mountRoots: undefined, writableRoots: undefined });
+    assert.equal(plan.code, 'MOUNT_NOT_ALLOWED');
+  });
+
+  it('macOS real paths of system directories are refused; /private itself is not a blanket refusal', () => {
+    const lax = { ...HOST, mountRoots: ['/'], writableRoots: ['/'] };
+    for (const source of ['/private/etc', '/private/etc/ssl', '/private/var/db']) {
+      assert.equal(planIsolation({ ...CONTAINER, mounts: [{ source, target: '/m' }] }, lax).code, 'MOUNT_SOURCE_SENSITIVE', source);
+    }
+    assert.equal(planIsolation({ ...CONTAINER, mounts: [{ source: '/private', target: '/m' }] }, lax).code, 'MOUNT_SOURCE_SENSITIVE', 'containing /private/etc');
+    assert.equal(sensitiveSource('/private/tmp/build', {}), null, 'a non-system /private path is not refused by itself');
+  });
+
+  it('/ is matched only exactly: an ordinary path is not refused as "inside the root"', () => {
+    assert.equal(sensitiveSource('/srv/fleet/repo', {}), null);
+  });
+
+  it('sensitiveSource names the reason, and passes an ordinary project path', () => {
+    assert.equal(sensitiveSource('/', {}), 'the filesystem root');
+    assert.match(sensitiveSource('/Users/op', { home: '/Users/op' }), /home/);
+    assert.equal(sensitiveSource('/srv/fleet/repo', { home: '/Users/op', protectedRoots: ['/srv/tc'] }), null);
+    assert.ok(SENSITIVE_SYSTEM_DIRS.includes('/etc') && SENSITIVE_HOME_DIRS.includes('.ssh'));
   });
 });

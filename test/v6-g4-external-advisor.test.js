@@ -15,7 +15,7 @@ const { DatabaseSync } = require('node:sqlite');
 
 const {
   DEFAULT_ADVISOR_ROOT, SLUG_PATTERN, DEFAULT_MAX_FILE_BYTES, DEFAULT_LIMITS, INTERNAL_SCOPE_FIELDS, AdvisorError,
-  ensureSchema, readRepoFile, resolveRepoRoot, resolveWorkspace, createAdvisorLedger, advise
+  ensureSchema, readRepoFile, resolveRepoRoot, resolveWorkspace, pinWorkspace, verifyWorkspace, createAdvisorLedger, advise
 } = require('../lib/v6/g4-external-advisor');
 
 /**
@@ -661,5 +661,91 @@ describe('PRR-A R7 HOLD regressions (PR #3033): approved root replaced by anothe
       assert.equal(out.result, null, `realpathSync#${at} returned ${out.result && out.result.text}`);
     }
     assert.ok(later >= 1, `exercised ${later} post-approval realpath positions`);
+  });
+});
+
+describe('PRR-B R8 HOLD regressions (PR #3033, Rulings A656 and A658): the returned workspace identity', () => {
+  /** Pre-create root/t/r and return its paths. */
+  function precreate() {
+    const root = path.join(tmp, 'advisor');
+    const finalDir = path.join(root, 't', 'r');
+    fs.mkdirSync(finalDir, { recursive: true });
+    return { root, finalDir };
+  }
+  const swapFinal = (finalDir) => { fs.rmSync(finalDir, { recursive: true }); fs.symlinkSync(outside, finalDir); };
+
+  it('PRR-B\'s exact case: final component swapped after its second lstat is refused, not returned', () => {
+    const { root, finalDir } = precreate();
+    const realL = fs.lstatSync;
+    let calls = 0;
+    fs.lstatSync = function hooked(p, ...r) {
+      const v = realL.call(fs, p, ...r);
+      if (p === finalDir && ++calls === 2) swapFinal(finalDir);
+      return v;
+    };
+    try {
+      throwsCode(() => resolveWorkspace({ tenantId: 't', repoSlug: 'r', root, create: true }), 'SYMLINK_DENIED');
+    } finally {
+      fs.lstatSync = realL;
+    }
+  });
+
+  it('a swap of the final directory at any lstat or realpath is refused by pinWorkspace or by verifyWorkspace at use', () => {
+    let positions = 0;
+    for (const fn of ['lstatSync', 'realpathSync']) {
+      for (let at = 1; at <= 8; at++) {
+        fs.rmSync(path.join(tmp, 'advisor'), { recursive: true, force: true });
+        const { root, finalDir } = precreate();
+        const real = fs[fn];
+        let calls = 0;
+        let swapped = false;
+        fs[fn] = function hooked(p, ...r) {
+          const v = real.call(fs, p, ...r);
+          if (!swapped && p === finalDir && ++calls === at) { swapped = true; swapFinal(finalDir); }
+          return v;
+        };
+        let handle = null;
+        let refusedAtPin = false;
+        try {
+          handle = pinWorkspace({ tenantId: 't', repoSlug: 'r', root, create: true });
+        } catch (error) {
+          assert.ok(error instanceof AdvisorError, `${fn}#${at}: ${error}`);
+          refusedAtPin = true;
+        } finally {
+          fs[fn] = real;
+        }
+        if (!swapped) continue;
+        positions++;
+        if (!refusedAtPin) throwsCode(() => verifyWorkspace(handle), 'SYMLINK_DENIED');
+      }
+    }
+    assert.ok(positions >= 3, `exercised ${positions} positions`);
+  });
+
+  it('verifyWorkspace passes an unchanged handle and refuses one swapped after it was returned', () => {
+    const { root, finalDir } = precreate();
+    const handle = pinWorkspace({ tenantId: 't', repoSlug: 'r', root });
+    assert.equal(verifyWorkspace(handle), finalDir);
+    assert.equal(resolveWorkspace({ tenantId: 't', repoSlug: 'r', root }), finalDir, 'resolveWorkspace still returns the path');
+    swapFinal(finalDir);
+    throwsCode(() => verifyWorkspace(handle), 'SYMLINK_DENIED');
+  });
+
+  it('a tenant directory replaced by another plain directory after pinning is refused at use', () => {
+    const { root } = precreate();
+    const handle = pinWorkspace({ tenantId: 't', repoSlug: 'r', root });
+    fs.renameSync(path.join(root, 't'), path.join(tmp, 't-moved'));
+    fs.mkdirSync(path.join(root, 't', 'r'), { recursive: true });
+    throwsCode(() => verifyWorkspace(handle), 'SYMLINK_DENIED');
+  });
+
+  it('a handle for a workspace that did not exist, or a non-handle, is refused', () => {
+    const root = path.join(tmp, 'advisor-none');
+    fs.mkdirSync(root);
+    const handle = pinWorkspace({ tenantId: 't', repoSlug: 'r', root });
+    assert.equal(handle.exists, false);
+    throwsCode(() => verifyWorkspace(handle), 'WORKSPACE_MISSING');
+    assert.throws(() => verifyWorkspace({ path: 'x' }), TypeError);
+    assert.throws(() => verifyWorkspace(null), TypeError);
   });
 });
