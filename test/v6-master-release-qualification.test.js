@@ -188,12 +188,17 @@ describe('route security', () => {
    * Whether the `…Caller(` call at index `k` is used fail-closed, in one of
    * the two shapes this codebase uses: `if (!xCaller(...)) return` or
    * `const c = xCaller(...); if (!c) return`. A call whose result is ignored,
-   * or tested the wrong way round, is not a guard.
+   * or tested the wrong way round, is not a guard. The guard must also be a
+   * statement of its own: the token before its `if`/`const` has to end one
+   * (`{`, `;`, `}`), so a brace-less branch such as `if (req) if (!xCaller(...))`
+   * or `else if (!xCaller(...))`, which brace depth cannot see, is rejected.
    * @param {Array<object>} t
    * @param {number} k
    * @returns {boolean}
    */
   function failClosed(t, k) {
+    const prev = t[k - 4];
+    if (!(isP(prev, '{') || isP(prev, ';') || isP(prev, '}'))) return false;
     const after = pastParens(t, k + 1);
     if (isI(t[k - 3], 'if') && isP(t[k - 2], '(') && isP(t[k - 1], '!')) {
       return isP(t[after], ')') && isI(t[after + 1], 'return');
@@ -292,6 +297,12 @@ describe('route security', () => {
     assert.deepEqual(flagged(server.replace(KB_GUARD,
       "  [0].forEach(() => { if (!operatorProjectCaller(req, res, 'search the knowledge base')) return; });\n")),
     ['GET /api/v6/kb/search'], 'guard nested in a callback');
+    assert.deepEqual(flagged(server.replace(KB_GUARD,
+      "  if (req) if (!operatorProjectCaller(req, res, 'search the knowledge base')) return;\n")),
+    ['GET /api/v6/kb/search'], 'guard in a brace-less branch');
+    assert.deepEqual(flagged(server.replace(KB_GUARD,
+      "  if (req) ; else if (!operatorProjectCaller(req, res, 'search the knowledge base')) return;\n")),
+    ['GET /api/v6/kb/search'], 'guard in a brace-less else branch');
     assert.deepEqual(flagged(server.replace(create,
       "  const b = _v6Body(body);\n  if (!operatorProjectCaller(req, res, 'create a logical project')) return;\n")),
     ['POST /api/v6/logical-projects'], 'guard after the body read');
