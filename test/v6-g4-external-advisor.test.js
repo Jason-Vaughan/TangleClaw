@@ -448,3 +448,73 @@ describe('PRR-B R3 HOLD regressions (PR #3033): root swapped mid-walk', () => {
     assert.ok(['ROOT_SYMLINK_DENIED', 'SYMLINK_DENIED'].includes(out.error.code), out.error.code);
   });
 });
+
+describe('PRR-A R5 HOLD regressions (PR #3033): repo root or directory swapped mid-read', () => {
+  /** Lay out a decoy: an outside tree with the same relative file. */
+  function decoy() {
+    fs.mkdirSync(path.join(outside, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(outside, 'src', 'config.js'), 'OUTSIDE SECRET');
+  }
+
+  it('PRR-A\'s case: the repo root swapped for a symlink after resolveRepoRoot is refused, outside never read', () => {
+    decoy();
+    const realL = fs.lstatSync;
+    let done = false;
+    fs.lstatSync = function swapRoot(p, ...r) {
+      if (!done && p === path.join(repo, 'src')) {
+        done = true;
+        fs.renameSync(repo, path.join(tmp, 'repo-moved'));
+        fs.symlinkSync(outside, repo);
+      }
+      return realL.call(fs, p, ...r);
+    };
+    try {
+      throwsCode(() => read('src/config.js'), 'SYMLINK_DENIED');
+    } finally {
+      fs.lstatSync = realL;
+    }
+  });
+
+  it('a swap of the root or an intermediate directory at ANY fs call of the read never returns outside content', () => {
+    let swaps = 0;
+    for (const victim of ['root', 'dir']) {
+      for (const fn of ['lstatSync', 'realpathSync', 'openSync', 'fstatSync']) {
+        for (let at = 1; at <= 6; at++) {
+          fs.rmSync(repo, { recursive: true, force: true });
+          fs.rmSync(path.join(tmp, 'moved'), { recursive: true, force: true });
+          fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+          fs.writeFileSync(path.join(repo, 'src', 'config.js'), 'inside');
+          decoy();
+          const victimPath = victim === 'root' ? repo : path.join(repo, 'src');
+          const victimTarget = victim === 'root' ? outside : path.join(outside, 'src');
+          const real = fs[fn];
+          let calls = 0;
+          let swapped = false;
+          fs[fn] = function hooked(...a) {
+            const v = real.apply(fs, a);
+            if (!swapped && ++calls === at) {
+              swapped = true;
+              fs.renameSync(victimPath, path.join(tmp, 'moved'));
+              fs.symlinkSync(victimTarget, victimPath);
+            }
+            return v;
+          };
+          let result = null;
+          try {
+            result = read('src/config.js');
+          } catch (error) {
+            assert.ok(error instanceof AdvisorError, `${victim} ${fn}#${at}: ${error}`);
+          } finally {
+            fs[fn] = real;
+          }
+          if (swapped) {
+            swaps++;
+            assert.ok(!result || !result.text.includes('OUTSIDE'), `${victim} ${fn}#${at} read outside content`);
+          }
+          fs.rmSync(repo, { recursive: true, force: true });
+        }
+      }
+    }
+    assert.ok(swaps > 20, `the sweep exercised ${swaps} swap positions`);
+  });
+});
