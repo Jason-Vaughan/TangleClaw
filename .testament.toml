@@ -527,6 +527,7 @@ files = [
   "test/v6-t2-server-routes-integration.test.js",
   "test/v6-t3-server-routes-integration.test.js",
   "test/v6-v610-server-routes-integration.test.js",
+  "test/v6-v620-server-routes-integration.test.js",
   "test/version-bump-fail-closed.test.js",
   "test/version-bump-fragments.test.js",
   "test/version-bump-package-json.test.js",

@@ -231,6 +231,11 @@ const f1Kb = require('./lib/v6/f1-knowledge-base');
 const f2Parity = require('./lib/v6/f2-code-doc-parity');
 const f3Support = require('./lib/v6/f3-support-diagnostic-scrubber');
 const h2Walkthroughs = require('./lib/v6/h2-educational-walkthroughs');
+const e3bWhatIf = require('./lib/v6/e3b-whatif-simulator');
+const g2bProviders = require('./lib/v6/g2b-provider-adapters');
+const g4Advisor = require('./lib/v6/g4-external-advisor');
+const medusaV2 = require('./lib/v6/medusa-v2-compact-sync');
+const a1Iso = require('./lib/v6/a1-iso-host-sandboxing');
 const productManual = require('./lib/product-manual');
 const providerContract = require('./lib/providers/contract');
 const transcript = require('./lib/transcript');
@@ -8854,7 +8859,15 @@ const V6_STATUS_BY_CODE = {
   KB_UNAVAILABLE: 503,
   INVALID_SAMPLES: 400,
   RUN_NOT_IN_PROJECT: 404,
-  UNPUBLISHED_WALKTHROUGH: 409
+  UNPUBLISHED_WALKTHROUGH: 409,
+
+  // ── v6.2.0 Wave 2 (Car V62-W2-ROUTES): lib/v6/g4-external-advisor.js refusals.
+  RATE_LIMIT: 429,
+  DAILY_BUDGET: 429,
+  PROJECT_SCOPE_DENIED: 403,
+  PROTECTED_ROOT: 403,
+  SYMLINK_DENIED: 403,
+  HARDLINK_DENIED: 403
 };
 
 /**
@@ -11334,6 +11347,254 @@ route('GET', '/api/v6/glossary/:term', (req, res, params) => {
   const entry = h2Walkthroughs.glossaryTerm(term);
   if (!entry) return errorResponse(res, 404, `Glossary term "${term}" not found`, 'NOT_FOUND');
   jsonResponse(res, 200, entry);
+});
+
+// ── v6.2.0 Wave 2: What-If, Providers, Advisor, Medusa v2, Sandboxing (Car V62-W2-ROUTES) ──
+//
+// Live wiring for the five v6.2.0 Wave 1 modules (#3001..#3005). Every route
+// is OPERATOR-ONLY (`operatorProjectCaller`), GETs included, like the v6.1
+// section above. The security invariants the dispatch set (Ruling A658,
+// TC-Lane-C N1/N2, KZ-V610-01), each enforced here rather than trusted:
+// - G4 advisor: the server owns the repository root, the protected roots,
+//   the limits and the clock. A body naming any of them is refused, and the
+//   tenant's usage is checked against the caps BEFORE any file is read.
+// - A1-Iso: host facts are entirely server-derived; a body carrying `host`
+//   or `profile.mountRoots`/`writableRoots` is refused, and the server's
+//   environment is never returned.
+// - Medusa v2: the compact route is pure (encode/parse/diff). It records
+//   no message or wake, since those carry a sender identity an HTTP body
+//   could forge.
+// - G2b: adapters are exercised offline only; no route here makes an
+//   outbound call to a provider.
+
+/**
+ * Create the v6.2 module tables (each `ensureSchema` is idempotent).
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @returns {void}
+ */
+function _v6EnsureV620Schemas(db) {
+  e3bWhatIf.ensureSchema(db);
+  g4Advisor.ensureSchema(db);
+  medusaV2.ensureSchema(db);
+  a1Iso.ensureSchema(db);
+}
+
+/**
+ * `true` (after answering 400) when `body` carries any of `fields`.
+ * @param {http.ServerResponse} res
+ * @param {object} body
+ * @param {string[]} fields
+ * @param {string} code
+ * @returns {boolean}
+ */
+function _v6RefuseFields(res, body, fields, code) {
+  const present = fields.filter((f) => body[f] !== undefined);
+  if (!present.length) return false;
+  errorResponse(res, 400, `These fields are server-owned and may not be supplied: ${present.join(', ')}`, code);
+  return true;
+}
+
+// ── E3b: What-if simulator (#3001) ──
+
+route('POST', '/api/v6/whatif/simulate', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'run a what-if simulation')) return;
+  const b = _v6Body(body);
+  try {
+    jsonResponse(res, 200, e3bWhatIf.simulate(b.scenario));
+  } catch (err) {
+    errorResponse(res, 400, `v6 request refused: ${err.message}`, 'SCENARIO_INVALID');
+  }
+});
+
+route('POST', '/api/v6/whatif/compare', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'compare what-if scenarios')) return;
+  const b = _v6Body(body);
+  try {
+    jsonResponse(res, 200, e3bWhatIf.compareScenarios(b.baseline, b.variants));
+  } catch (err) {
+    errorResponse(res, 400, `v6 request refused: ${err.message}`, 'SCENARIO_INVALID');
+  }
+});
+
+// ── G2b: Non-GitHub provider adapters (#3002) ──
+
+route('GET', '/api/v6/providers/g2b', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'list the G2b provider adapters')) return;
+  jsonResponse(res, 200, {
+    providers: g2bProviders.PROVIDERS.map((name) => ({ name, ...g2bProviders.createProviderAdapter(name).capabilities() })),
+    contract: g2bProviders.verifyContract()
+  });
+});
+
+route('POST', '/api/v6/providers/g2b/normalize', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'exercise a G2b provider adapter offline')) return;
+  const b = _v6Body(body);
+  const adapter = typeof b.provider === 'string' ? g2bProviders.createProviderAdapter(b.provider) : null;
+  if (!adapter) return errorResponse(res, 400, `Unknown provider "${b.provider}"`, 'UNKNOWN_PROVIDER');
+  // Offline only: these three are pure functions of their input. Nothing
+  // here performs the request mapOutboundEvent describes.
+  if (b.op === 'validateConfig') return jsonResponse(res, 200, adapter.validateConfig(b.config));
+  if (b.op === 'normalizeInboundEvent') return jsonResponse(res, 200, adapter.normalizeInboundEvent({ headers: _v6Body(b.headers), payload: _v6Body(b.payload) }));
+  if (b.op === 'mapOutboundEvent') {
+    const args = { action: b.action, repo: b.repo, draft: b.draft };
+    if (typeof b.apiBase === 'string') args.apiBase = b.apiBase;
+    return jsonResponse(res, 200, adapter.mapOutboundEvent(args));
+  }
+  errorResponse(res, 400, 'op must be validateConfig, normalizeInboundEvent or mapOutboundEvent', 'UNKNOWN_OP');
+});
+
+// ── G4: Hardened external project advisor (#3003) ──
+
+/** Per-read byte cap for the HTTP advisor, and the token charge it implies. */
+const _V6_ADVISOR_MAX_BYTES = 32 * 1024;
+const _V6_ADVISOR_READ_TOKENS = Math.ceil(_V6_ADVISOR_MAX_BYTES / 4);
+
+/**
+ * The roots the advisor may never read inside, all server-owned.
+ * @returns {string[]}
+ */
+function _v6AdvisorProtectedRoots() {
+  return [serverInfo.getRepoRoot(), os.homedir(), path.join(os.homedir(), '.tangleclaw'),
+    '/etc', '/var', '/private/etc', '/private/var', g4Advisor.DEFAULT_ADVISOR_ROOT];
+}
+
+/**
+ * The server-configured root of approved advisor repositories
+ * (`TANGLECLAW_ADVISOR_REPOS_ROOT`), or null when unset or unusable. It
+ * must be absolute and sit outside every protected root, since
+ * `resolveRepoRoot` refuses anything inside one.
+ * @returns {string|null}
+ */
+function _v6AdvisorReposRoot() {
+  const raw = process.env.TANGLECLAW_ADVISOR_REPOS_ROOT;
+  if (typeof raw !== 'string' || !path.isAbsolute(raw)) return null;
+  try {
+    return fs.realpathSync(raw);
+  } catch {
+    return null;
+  }
+}
+
+route('GET', '/api/v6/advisor/usage', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'read advisor usage')) return;
+  const query = parseQuery(reqUrl(req).search);
+  const tenantId = typeof query.tenantId === 'string' ? query.tenantId : '';
+  if (!g4Advisor.SLUG_PATTERN.test(tenantId)) return errorResponse(res, 400, 'tenantId must be a slug', 'TENANT_INVALID');
+  _v6EnsureV620Schemas(v6Db());
+  jsonResponse(res, 200, { tenantId, limits: g4Advisor.DEFAULT_LIMITS, usage: g4Advisor.createAdvisorLedger(v6Db()).usage(tenantId, Date.now()) });
+});
+
+route('POST', '/api/v6/advisor/advise', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'serve an external advisor read')) return;
+  const b = _v6Body(body);
+  if (_v6RefuseFields(res, b, ['repoRoot', 'protectedRoots', 'advisorRoot', 'limits', 'now', 'estimate', 'maxBytes'], 'SERVER_OWNED_FIELD')) return;
+  // The route forwards only selected fields to `advise`, so its own
+  // internal-identity refusal would never see these: check them here.
+  if (g4Advisor.INTERNAL_SCOPE_FIELDS.some((f) => b[f] !== undefined)) {
+    return errorResponse(res, 403, 'The external advisor never acts on an internal project, workspace, session or Medusa identity', 'PROJECT_SCOPE_DENIED');
+  }
+  const reposRoot = _v6AdvisorReposRoot();
+  if (!reposRoot) return errorResponse(res, 503, 'No approved advisor repositories root is configured (TANGLECLAW_ADVISOR_REPOS_ROOT)', 'ADVISOR_REPOS_UNCONFIGURED');
+  if (typeof b.tenantId !== 'string' || !g4Advisor.SLUG_PATTERN.test(b.tenantId)) return errorResponse(res, 400, 'tenantId must be a slug', 'TENANT_INVALID');
+  if (typeof b.repoSlug !== 'string' || !g4Advisor.SLUG_PATTERN.test(b.repoSlug)) return errorResponse(res, 400, 'repoSlug must be a slug', 'REPO_SLUG_INVALID');
+  const db = v6Db();
+  _v6EnsureV620Schemas(db);
+  const ledger = g4Advisor.createAdvisorLedger(db);
+  const now = Date.now();
+  // N1: the caps are checked before any file is opened. `advise` still
+  // reserves atomically after the read, so this is the early refusal, not
+  // the only one.
+  const usage = ledger.usage(b.tenantId, now);
+  const limits = g4Advisor.DEFAULT_LIMITS;
+  if (usage.requestsInWindow >= limits.maxRequests) return errorResponse(res, 429, 'Advisor request rate exceeded', 'RATE_LIMIT');
+  if (usage.tokens + _V6_ADVISOR_READ_TOKENS > limits.dailyTokens) return errorResponse(res, 429, 'Advisor daily budget exceeded', 'DAILY_BUDGET');
+  const result = g4Advisor.advise({
+    tenantId: b.tenantId, repoSlug: b.repoSlug, relativePath: b.relativePath,
+    repoRoot: path.join(reposRoot, b.tenantId, b.repoSlug),
+    estimate: { tokens: _V6_ADVISOR_READ_TOKENS, usd: 0 }
+  }, { ledger, protectedRoots: _v6AdvisorProtectedRoots(), now, maxBytes: _V6_ADVISOR_MAX_BYTES });
+  _v6Respond(res, result);
+});
+
+// ── R-MED-1: Medusa v2 compact wire, Merkle delta sync, wake coalescer (#3004) ──
+
+route('GET', '/api/v6/medusa-v2/status', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'read Medusa v2 status')) return;
+  const db = v6Db();
+  _v6EnsureV620Schemas(db);
+  const count = (table) => {
+    try {
+      return db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
+    } catch {
+      return null;
+    }
+  };
+  let latestRoot = null;
+  try {
+    // Snapshots are content-addressed with no timestamp, so the most
+    // recently inserted row is the latest one saved.
+    const row = db.prepare('SELECT hash FROM v6_medusa_v2_snapshots ORDER BY rowid DESC LIMIT 1').get();
+    latestRoot = row ? row.hash : null;
+  } catch {
+    latestRoot = null;
+  }
+  jsonResponse(res, 200, {
+    capability: medusaV2.CAPABILITY,
+    storedMessages: count('v6_medusa_v2_messages'),
+    pendingWakes: medusaV2.pendingWakes(db).length,
+    latestSnapshotRoot: latestRoot,
+    benchmark: { available: false, reason: 'lib/v6/medusa-v2-compact-sync.js exports no benchmark' }
+  });
+});
+
+route('POST', '/api/v6/medusa-v2/compact', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'encode, parse or diff a Medusa v2 compact frame')) return;
+  const b = _v6Body(body);
+  try {
+    if (b.op === 'project') return jsonResponse(res, 200, { card: medusaV2.projectCard(b.envelope) });
+    if (b.op === 'parse') return jsonResponse(res, 200, medusaV2.parseCard(b.card));
+    if (b.op === 'merkleRoot') return jsonResponse(res, 200, { root: medusaV2.merkleRoot(b.graph) });
+    if (b.op === 'diff') return jsonResponse(res, 200, medusaV2.diffGraphs(b.base, b.target));
+  } catch (err) {
+    return _v6RespondThrown(res, err);
+  }
+  errorResponse(res, 400, 'op must be project, parse, merkleRoot or diff', 'UNKNOWN_OP');
+});
+
+// ── A1-Iso: Host sandboxing (#3005) ──
+
+/**
+ * The trusted host facts and policy `planIsolation` takes — all server-
+ * derived: the running process's ids, no probed runtime or uid switching
+ * (unknown means unavailable, so planning fails closed), and server-owned
+ * mount policy (no mount roots: no bind mount is admitted over HTTP).
+ * @returns {object}
+ */
+function _v6ServerHostFacts() {
+  const facts = a1Iso.currentHostFacts();
+  return { ...facts, home: os.homedir(), mountRoots: [], writableRoots: [], protectedRoots: _v6AdvisorProtectedRoots() };
+}
+
+route('GET', '/api/v6/sandboxing/status', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'read host sandboxing status')) return;
+  const facts = a1Iso.currentHostFacts();
+  // The environment is deliberately omitted: it carries the server's secrets.
+  jsonResponse(res, 200, {
+    modes: a1Iso.ISOLATION_MODES, runtimes: a1Iso.CONTAINER_RUNTIMES,
+    host: { uid: facts.uid, gid: facts.gid, runtimes: facts.runtimes, canSwitchUid: facts.canSwitchUid },
+    defaultPlan: a1Iso.planIsolation({ mode: 'shared_uid' }, _v6ServerHostFacts())
+  });
+});
+
+route('POST', '/api/v6/sandboxing/plan', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'plan a session isolation profile')) return;
+  const b = _v6Body(body);
+  if (_v6RefuseFields(res, b, ['host', 'home', 'protectedRoots', 'mountRoots', 'writableRoots'], 'SERVER_OWNED_FIELD')) return;
+  const profile = _v6Body(b.profile);
+  if (_v6RefuseFields(res, profile, ['mountRoots', 'writableRoots', 'home', 'protectedRoots'], 'SERVER_OWNED_FIELD')) return;
+  const plan = a1Iso.planIsolation(profile, _v6ServerHostFacts());
+  if (plan.ok && plan.launch && plan.launch.env) plan.launch.env = Object.keys(plan.launch.env).sort();
+  _v6Respond(res, plan);
 });
 
 // ── Server Creation ──

@@ -492,6 +492,7 @@
       }).join('')}</ul>`
       : '<p class="v6-detail-empty">No projects yet.</p>';
     const helpHash = routeHash({ view: 'settings', settingsPath: 'help' });
+    const platformHash = routeHash({ view: 'settings', settingsPath: 'platform' });
     return `<section class="v6-settings" aria-label="Settings and profiles">
       <h2 class="v6-detail-title">Operating profiles</h2>
       ${profilesHtml}
@@ -501,7 +502,8 @@
       ${walkthroughsMarkup(v.walkthroughs)}
       <h2 class="v6-detail-title">Recovery consoles</h2>
       ${recoveryHtml}
-      <p><a class="btn btn-secondary" href="${escapeHtml(helpHash)}" data-route="${escapeHtml(helpHash)}">Help for this screen</a></p>
+      <p><a class="btn btn-secondary" href="${escapeHtml(helpHash)}" data-route="${escapeHtml(helpHash)}">Help for this screen</a>
+        <a class="btn btn-secondary" href="${escapeHtml(platformHash)}" data-route="${escapeHtml(platformHash)}">Platform (v6.2)</a></p>
     </section>`;
   }
 
@@ -577,6 +579,73 @@
   }
 
   /**
+   * The v6.2 Platform view (Car V62-W2-ROUTES): provider adapters and their
+   * contract check (#3002), Medusa v2 status (#3004), host sandboxing
+   * (#3005), and a link that runs a sample what-if simulation (#3001).
+   * @param {{providers?: object|null, medusa?: object|null, sandboxing?: object|null}} view
+   * @returns {string} HTML.
+   */
+  function platformViewMarkup(view) {
+    const v = view || {};
+    const p = v.providers;
+    const providersHtml = p && Array.isArray(p.providers)
+      ? `<p class="v6-contract is-${p.contract && p.contract.ok ? 'ok' : 'failed'}">Provider contract: ${p.contract && p.contract.ok ? 'every adapter conforms' : 'an adapter does not conform'}</p>
+        <ul class="v6-provider-list">${p.providers.map((x) => `<li class="v6-provider"><strong>${escapeHtml(x && x.name)}</strong>
+          <span class="v6-provider-actions">${escapeHtml(Object.keys((x && x.actions) || {}).join(', ') || 'no actions')}</span>
+          ${x && Array.isArray(x.unsupported) && x.unsupported.length ? `<span class="v6-provider-unsupported">unsupported: ${escapeHtml(x.unsupported.join(', '))}</span>` : ''}</li>`).join('')}</ul>`
+      : '<p class="v6-detail-error" role="alert">Could not load the provider adapters.</p>';
+    const m = v.medusa;
+    const medusaHtml = m && typeof m === 'object' && m.capability !== undefined
+      ? `<dl class="v6-medusa-status"><dt>Wire</dt><dd>${escapeHtml(m.capability)}</dd>
+          <dt>Stored messages</dt><dd>${escapeHtml(m.storedMessages)}</dd>
+          <dt>Pending wakes</dt><dd>${escapeHtml(m.pendingWakes)}</dd>
+          <dt>Latest snapshot</dt><dd>${escapeHtml(m.latestSnapshotRoot || 'none')}</dd></dl>`
+      : '<p class="v6-detail-error" role="alert">Could not load Medusa v2 status.</p>';
+    const s = v.sandboxing;
+    const sandboxHtml = s && s.host
+      ? `<dl class="v6-sandbox-status"><dt>Modes</dt><dd>${escapeHtml((s.modes || []).join(', '))}</dd>
+          <dt>Container runtime available</dt><dd>${escapeHtml(Object.values(s.host.runtimes || {}).some(Boolean) ? 'yes' : 'no')}</dd>
+          <dt>Can switch uid</dt><dd>${escapeHtml(s.host.canSwitchUid ? 'yes' : 'no')}</dd>
+          <dt>Default plan</dt><dd>${escapeHtml(s.defaultPlan && s.defaultPlan.ok ? s.defaultPlan.mode : (s.defaultPlan && s.defaultPlan.code) || 'unknown')}</dd></dl>`
+      : '<p class="v6-detail-error" role="alert">Could not load host sandboxing status.</p>';
+    const whatIfHash = routeHash({ view: 'settings', settingsPath: 'whatif' });
+    return `<section class="v6-platform" aria-label="Platform">
+      <h2 class="v6-detail-title">Provider adapters</h2>
+      ${providersHtml}
+      <h2 class="v6-detail-title">Medusa v2</h2>
+      ${medusaHtml}
+      <h2 class="v6-detail-title">Host sandboxing</h2>
+      ${sandboxHtml}
+      <p><a class="btn btn-secondary" href="${escapeHtml(whatIfHash)}" data-route="${escapeHtml(whatIfHash)}">Run a sample what-if simulation</a></p>
+    </section>`;
+  }
+
+  /**
+   * A what-if simulation result (#3001): makespan, whether every car could
+   * be scheduled, the critical path, bottlenecks and unschedulable cars.
+   * @param {{result?: object|null, error?: string}} view
+   * @returns {string} HTML.
+   */
+  function whatIfMarkup(view) {
+    const r = view && view.result;
+    if (!r || typeof r.makespan !== 'number') {
+      return `<p class="v6-detail-error" role="alert">${escapeHtml((view && view.error) || 'Could not run the simulation.')}</p>`;
+    }
+    const bottlenecks = Object.entries(r.bottlenecks || {}).map(([role, w]) =>
+      `<li>${escapeHtml(role)}: lane ${escapeHtml(w.laneWait)}, file ${escapeHtml(w.fileWait)}, quota ${escapeHtml(w.quotaWait)}</li>`).join('');
+    const unschedulable = (r.unschedulable || []).map((u) => `<li>${escapeHtml(u.carId)}: ${escapeHtml(u.reason)}</li>`).join('');
+    return `<section class="v6-whatif" aria-label="What-if simulation">
+      <h2 class="v6-detail-title">What-if simulation</h2>
+      <p class="v6-whatif-makespan">Makespan: <strong>${escapeHtml(r.makespan)}</strong>${r.complete ? '' : ' (incomplete: some cars could not be scheduled)'}</p>
+      <p class="v6-whatif-critical">Critical path: ${escapeHtml((r.criticalPath && r.criticalPath.carIds || []).join(' → ') || 'none')}</p>
+      <h3>Bottlenecks</h3>
+      ${bottlenecks ? `<ul class="v6-whatif-bottlenecks">${bottlenecks}</ul>` : '<p class="v6-detail-empty">None.</p>'}
+      <h3>Unschedulable</h3>
+      ${unschedulable ? `<ul class="v6-whatif-unschedulable">${unschedulable}</ul>` : '<p class="v6-detail-empty">None.</p>'}
+    </section>`;
+  }
+
+  /**
    * Render whichever detail the current view carries.
    * @param {{kind: 'plan', plan: object}|{kind: 'conversation', view: object}|{kind: 'settings', view: object}|
    *   {kind: 'recovery', view: object}|{kind: 'knowledge', help: object}|{kind: 'loading'}|null} detail
@@ -589,6 +658,8 @@
     if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
     if (detail.kind === 'recovery') return recoveryConsoleMarkup(detail.view);
     if (detail.kind === 'knowledge') return knowledgeBaseMarkup(detail.help);
+    if (detail.kind === 'platform') return platformViewMarkup(detail.view);
+    if (detail.kind === 'whatif') return whatIfMarkup(detail.view);
     if (detail.kind === 'loading') return '<p class="v6-detail-loading" role="status">Loading…</p>';
     if (detail.kind === 'error') return `<p class="v6-detail-error" role="alert">${escapeHtml(detail.message)}</p>`;
     return '';
@@ -677,6 +748,21 @@
    * @returns {{handleRoute: (route: object) => Promise<void>, launchTemplate: (templateId: string) => Promise<void>,
    *   enterHash: () => Promise<string>, getProjects: () => Array<object>|null}}
    */
+  /**
+   * The built-in what-if scenario the Platform view's action runs: two
+   * trains on a two-lane Builder pool and one Reviewer, with a cross-train
+   * dependency chain, so its result shows a critical path that spans both
+   * trains (schema → api → view → review).
+   */
+  const SAMPLE_WHATIF_SCENARIO = Object.freeze({
+    trains: [
+      { id: 'core', cars: [{ id: 'schema', effort: 3, files: ['lib/store.js'] }, { id: 'api', effort: 2, files: ['server.js'], dependsOn: ['schema'] }] },
+      { id: 'ui', cars: [{ id: 'view', effort: 2, files: ['public/app.js'], dependsOn: ['api'] }, { id: 'hotfix', effort: 1, files: ['server.js'] },
+        { id: 'review', effort: 1, role: 'Reviewer', dependsOn: ['view'] }] }
+    ],
+    rolePools: { Builder: 2, Reviewer: 1 }
+  });
+
   function createLiveController(deps) {
     const getShell = deps.getShell;
     const api = deps.api;
@@ -732,6 +818,20 @@
         const help = await api('/api/v6/kb/contextual-help?surface=' + encodeURIComponent('public/v6-shell.js'));
         if (mine !== seq) return;
         shell.setDetail({ kind: 'knowledge', help: help || { error: 'Could not load help for this screen.' } });
+        return;
+      }
+      if (sub === 'platform') {
+        const [providers, medusa, sandboxing] = await Promise.all([
+          api('/api/v6/providers/g2b'), api('/api/v6/medusa-v2/status'), api('/api/v6/sandboxing/status')
+        ]);
+        if (mine !== seq) return;
+        shell.setDetail({ kind: 'platform', view: { providers, medusa, sandboxing } });
+        return;
+      }
+      if (sub === 'whatif') {
+        const result = await apiMutate('/api/v6/whatif/simulate', 'POST', { scenario: SAMPLE_WHATIF_SCENARIO });
+        if (mine !== seq) return;
+        shell.setDetail({ kind: 'whatif', view: result ? { result } : { error: 'Could not run the simulation.' } });
         return;
       }
       const recovery = /^recovery\/(\d+)$/.exec(sub);
@@ -973,6 +1073,8 @@
   global.tcV6WalkthroughsMarkup = walkthroughsMarkup;
   global.tcV6RecoveryConsoleMarkup = recoveryConsoleMarkup;
   global.tcV6KnowledgeBaseMarkup = knowledgeBaseMarkup;
+  global.tcV6PlatformViewMarkup = platformViewMarkup;
+  global.tcV6WhatIfMarkup = whatIfMarkup;
   global.tcV6ViewToggleLabel = viewToggleLabel;
   global.tcV6PickAttestation = pickAttestation;
   global.tcV6ResolveRouteProject = resolveRouteProject;
