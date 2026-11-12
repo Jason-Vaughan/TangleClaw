@@ -45,7 +45,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=internal | scope=v621-release -->
 
-- Compiled 6 accepted `changelog.d/` fragments (#3029, #3037, #3038, #3039, #3041, #3044) from PRs #3040, #3042 and #3043 into `CHANGELOG.md` section `[6.2.1]` (Fixed + Internal, patch tier) using the wrap's own compile/splice/promote functions. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap coverage, and consumed the fragments together.
+- Compiled 6 accepted `changelog.d/` fragments (#3029, #3037, #3038, #3039, #3041, #3044) from PRs #3040, #3042 and #3043 into `CHANGELOG.md` section `[6.2.1]` (Fixed + Internal, patch tier) using the wrap's own compile/splice/promote functions. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap coverage, and consumed the fragments together. The #3037 entry's wording was changed during the cut: it had quoted the phrase "not yet reachable" while describing the KZ-V610-02 check, which made the release-record check in `test/v6-master-release-qualification.test.js` fail on this section; it now describes the check without quoting the phrase, and the 6.2.1 lock line was regenerated.
 
 ## 2026-11-11 — v6.2.0 release cut (Milestone #64)
 
