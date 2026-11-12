@@ -118,6 +118,18 @@ describe('simulate — quota and unschedulable reasons (#3001)', () => {
     assert.deepEqual(r.schedule.map((x) => x.carId), ['ok']);
   });
 
+  it('an inherited property name is never a role: role "constructor" is NO_LANE_FOR_ROLE, not a hang (PRR-A R1)', () => {
+    for (const role of ['constructor', 'toString', 'hasOwnProperty', 'valueOf']) {
+      const r = e3b.simulate({ trains: [{ id: 't', cars: [car('a', 1, { role }), car('b', 1)] }], rolePools: { Builder: 1 } });
+      assert.deepEqual(r.unschedulable, [{ carId: 'a', reason: 'NO_LANE_FOR_ROLE' }], role);
+      assert.equal(r.complete, false);
+    }
+    assert.throws(() => e3b.simulate({ trains: [{ id: 't', cars: [car('a', 1)] }], rolePools: { Builder: 1 }, quotaUnits: { constructor: 3 } }), /quotaUnits/);
+    const pooled = e3b.simulate({ trains: [{ id: 't', cars: [car('a', 2, { role: 'constructor' }), car('b', 2, { role: 'constructor' })] }], rolePools: { constructor: 1 } });
+    assert.equal(pooled.makespan, 4, 'a role genuinely pooled under an inherited name still schedules');
+    assert.equal(pooled.bottlenecks.constructor.laneWait, 2, 'and its wait is counted, never NaN');
+  });
+
   it('rejects malformed scenarios with a named TypeError rather than guessing', () => {
     assert.throws(() => e3b.simulate({ trains: [], rolePools: {} }), /trains/);
     assert.throws(() => e3b.simulate({ trains: [{ id: 't', cars: [car('a', 0)] }], rolePools: { Builder: 1 } }), /effort/);
@@ -135,6 +147,23 @@ describe('critical path and scenario comparison (#3001)', () => {
     ],
     rolePools: { Builder: 1 }
   };
+
+  it('the critical path covers only cars that ran, never a quota-starved one (PRR-A R1)', () => {
+    const r = e3b.simulate({ trains: [{ id: 't', cars: [car('p', 5), car('q', 1)] }], rolePools: { Builder: 1 }, quotaUnits: { Builder: 4 } });
+    assert.deepEqual(r.unschedulable, [{ carId: 'p', reason: 'QUOTA_EXHAUSTED' }]);
+    assert.deepEqual(r.criticalPath, { carIds: ['q'], effort: 1 });
+    assert.ok(r.criticalPath.effort <= r.makespan, 'the path never claims more than actually ran');
+  });
+
+  it('a partial variant never outranks a complete one, and reports no comparable critical-path shift (PRR-A R1)', () => {
+    const complete = { trains: [{ id: 't', cars: [car('p', 5), car('q', 1)] }], rolePools: { Builder: 1 } };
+    const starved = { ...complete, quotaUnits: { Builder: 4 } };
+    const out = e3b.compareScenarios(complete, [{ name: 'starved', scenario: starved }, { name: 'same', scenario: complete }]);
+    assert.deepEqual(out.variants.map((v) => [v.name, v.complete, v.makespan]), [['same', true, 6], ['starved', false, 1]],
+      'the 1-unit partial run must not outrank the 6-unit complete one');
+    assert.equal(out.variants.find((v) => v.name === 'starved').criticalPathShifted, null);
+    assert.equal(out.variants.find((v) => v.name === 'same').criticalPathShifted, false);
+  });
 
   it('reports the longest effort-weighted chain', () => {
     assert.deepEqual(e3b.simulate(base).criticalPath, { carIds: ['c', 'd'], effort: 7 });
