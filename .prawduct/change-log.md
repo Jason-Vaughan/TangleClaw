@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-12 — v6.2.1 release cut (Milestone #68)
+
+<!-- prawduct: type=internal | scope=v621-release -->
+
+- Compiled 6 accepted `changelog.d/` fragments (#3029, #3037, #3038, #3039, #3041, #3044) from PRs #3040, #3042 and #3043 into `CHANGELOG.md` section `[6.2.1]` (Fixed + Internal, patch tier) using the wrap's own compile/splice/promote functions. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap coverage, and consumed the fragments together.
+
 ## 2026-11-11 — v6.2.0 release cut (Milestone #64)
 
 <!-- prawduct: type=internal | scope=v620-release -->
