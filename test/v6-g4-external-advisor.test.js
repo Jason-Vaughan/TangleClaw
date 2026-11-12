@@ -564,3 +564,102 @@ describe('PRR-A R5 HOLD regressions (PR #3033): repo root or directory swapped m
     assert.ok(swaps > 20, `the sweep exercised ${swaps} swap positions`);
   });
 });
+
+describe('PRR-A R7 HOLD regressions (PR #3033): approved root replaced by another plain directory', () => {
+  /** Rebuild repo + a same-shaped replacement directory. */
+  function layout() {
+    for (const d of [repo, path.join(tmp, 'alt'), path.join(tmp, 'repo-moved')]) fs.rmSync(d, { recursive: true, force: true });
+    fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'src', 'config.js'), 'approved');
+    fs.mkdirSync(path.join(tmp, 'alt', 'src'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'alt', 'src', 'config.js'), 'REPLACEMENT DIR');
+  }
+  const replaceRoot = () => { fs.renameSync(repo, path.join(tmp, 'repo-moved')); fs.renameSync(path.join(tmp, 'alt'), repo); };
+
+  /** Swap the root after the `at`th call to fs[fn] on the root path; return {swapped, result, error}. */
+  function sweepOnce(fn, at) {
+    layout();
+    const real = fs[fn];
+    let calls = 0;
+    let swapped = false;
+    fs[fn] = function hooked(p, ...r) {
+      const v = real.call(fs, p, ...r);
+      if (!swapped && p === repo && ++calls === at) { swapped = true; replaceRoot(); }
+      return v;
+    };
+    // Run the read BEFORE reading `swapped`: an object literal evaluates its
+    // properties in order, so `{ swapped, result: read() }` captured the
+    // pre-read `false` and silently skipped every swap that SUCCEEDED in
+    // escaping — exactly the outcome this sweep exists to catch.
+    try {
+      const result = read('src/config.js');
+      return { swapped, result, error: null };
+    } catch (error) {
+      return { swapped, result: null, error };
+    } finally {
+      fs[fn] = real;
+    }
+  }
+
+  it('PRR-A\'s case: replaced right after approval finishes, before readRepoFile looks at it', () => {
+    // Approval's last act is resolving the protected roots; swapping the
+    // repo root there lands exactly in the handoff, in old and new code alike.
+    layout();
+    const realRp = fs.realpathSync;
+    let swapped = false;
+    fs.realpathSync = function hooked(p, ...r) {
+      const v = realRp.call(fs, p, ...r);
+      if (!swapped && p === protectedRoot) { swapped = true; replaceRoot(); }
+      return v;
+    };
+    let out = null;
+    try {
+      out = read('src/config.js');
+    } catch (error) {
+      assert.equal(error.code, 'FILE_CHANGED');
+    } finally {
+      fs.realpathSync = realRp;
+    }
+    assert.ok(swapped, 'the handoff swap ran');
+    assert.equal(out, null, `read the replacement: ${out && out.text}`);
+  });
+
+  it('a replacement after any stat-family call on the approved root is refused', () => {
+    let positions = 0;
+    for (const fn of ['statSync', 'lstatSync']) {
+      for (let at = 1; at <= 6; at++) {
+        const out = sweepOnce(fn, at);
+        if (!out.swapped) continue;
+        positions++;
+        assert.equal(out.result, null, `${fn}#${at} returned ${out.result && out.result.text}`);
+      }
+    }
+    assert.ok(positions >= 2, `exercised ${positions} stat positions`);
+  });
+
+  it('every lstat of the root comes at or after the approval pin, so a replacement after any of them is refused', () => {
+    let positions = 0;
+    for (let at = 1; at <= 6; at++) {
+      const out = sweepOnce('lstatSync', at);
+      if (!out.swapped) continue;
+      positions++;
+      assert.equal(out.result, null, `lstatSync#${at} returned ${out.result && out.result.text}`);
+      assert.ok(out.error instanceof AdvisorError, `lstatSync#${at}`);
+    }
+    assert.ok(positions >= 2, `exercised ${positions} lstat positions`);
+  });
+
+  it('a replacement during approval is what gets approved; any later realpath swap is refused', () => {
+    // realpath #1 (resolving the caller's path) and #2 (the pin's own
+    // realpath) run before the pin's lstat: a directory swapped in there IS
+    // the approved root. From #3 on, the approved identity is held.
+    let later = 0;
+    for (let at = 1; at <= 8; at++) {
+      const out = sweepOnce('realpathSync', at);
+      if (!out.swapped || at <= 2) continue;
+      later++;
+      assert.equal(out.result, null, `realpathSync#${at} returned ${out.result && out.result.text}`);
+    }
+    assert.ok(later >= 1, `exercised ${later} post-approval realpath positions`);
+  });
+});
