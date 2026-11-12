@@ -210,8 +210,11 @@ describe('route security', () => {
 
   /**
    * The /api/v6 routes in `source` that do not check their caller,
-   * fail-closed, before their first response, body read or database access.
-   * Only `parseQuery`/`reqUrl` may be called before the guard.
+   * fail-closed and at the handler's top level, before their first response,
+   * body read or database access. "Body read" means ANY reference to the
+   * handler's `body` (a call such as `_v6Body(body)` or a property read such
+   * as `body.x`); "response" and "database access" are any other call. Only
+   * `parseQuery`/`reqUrl` may be called before the guard.
    * @param {string} source - server.js text.
    * @returns {{routes: number, unguarded: string[]}}
    */
@@ -235,10 +238,16 @@ describe('route security', () => {
         if (isP(tok, '{')) depth++;
         else if (isP(tok, '}')) {
           if (--depth === 0) break;
+        } else if (!guarded && isI(tok, 'body')) {
+          // #3044 N1: a property read of the body before the guard is a body
+          // read too, not only a call that takes it.
+          ok = false;
         } else if (isI(tok) && !KEYWORDS.has(tok.value) && isP(t[j + 1], '(')) {
           if (/Caller$/.test(tok.value)) {
-            if (!failClosed(t, j)) ok = false;
-            guarded = guarded || failClosed(t, j);
+            // Only a fail-closed guard at the handler's top level counts: one
+            // nested in a branch or a callback runs only sometimes, if at all.
+            if (!failClosed(t, j) || depth !== 1) ok = false;
+            guarded = guarded || (depth === 1 && failClosed(t, j));
             j = pastParens(t, j + 1) - 1;
           } else if (!guarded && !PRE_GUARD_READS.has(tok.value)) {
             ok = false;
@@ -261,7 +270,7 @@ describe('route security', () => {
     assert.deepEqual(unguardedV6Routes(server).unguarded, []);
   });
 
-  it('flags a route whose guard is removed, ignored, inverted, or placed after the body read (mutation regression)', () => {
+  it('flags a route whose guard is removed, ignored, inverted, nested, or placed after the body read (mutation regression)', () => {
     assert.ok(server.includes(KB_GUARD), 'mutation anchor missing from server.js');
     const flagged = (src) => unguardedV6Routes(src).unguarded;
     assert.deepEqual(flagged(server.replace(KB_GUARD, '')), ['GET /api/v6/kb/search'], 'guard removed');
@@ -277,9 +286,18 @@ describe('route security', () => {
     [], 'the const fail-closed form is accepted');
     const create = "  if (!operatorProjectCaller(req, res, 'create a logical project')) return;\n  const b = _v6Body(body);\n";
     assert.ok(server.includes(create), 'mutation anchor missing from server.js');
+    assert.deepEqual(flagged(server.replace(KB_GUARD,
+      "  if (req) {\n  if (!operatorProjectCaller(req, res, 'search the knowledge base')) return;\n  }\n")),
+    ['GET /api/v6/kb/search'], 'guard nested in a branch');
+    assert.deepEqual(flagged(server.replace(KB_GUARD,
+      "  [0].forEach(() => { if (!operatorProjectCaller(req, res, 'search the knowledge base')) return; });\n")),
+    ['GET /api/v6/kb/search'], 'guard nested in a callback');
     assert.deepEqual(flagged(server.replace(create,
       "  const b = _v6Body(body);\n  if (!operatorProjectCaller(req, res, 'create a logical project')) return;\n")),
     ['POST /api/v6/logical-projects'], 'guard after the body read');
+    assert.deepEqual(flagged(server.replace(create,
+      "  const peek = body && body.displayName;\n" + create)),
+    ['POST /api/v6/logical-projects'], 'a body property read before the guard (#3044 N1)');
   });
 });
 
@@ -322,7 +340,7 @@ describe('release record', () => {
     assert.doesNotMatch(v6Text, /not yet reachable/i);
   });
 
-  it('no changelog fragment is left pending after the cut', () => {
+  it('no changelog fragment is malformed', () => {
     const { readFragments } = require('../lib/changelog-fragments');
     const r = readFragments(ROOT);
     assert.deepEqual(r.refused, []);
