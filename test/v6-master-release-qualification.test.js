@@ -36,12 +36,6 @@ const V6_DIR = path.join(ROOT, 'lib', 'v6');
 const MODULES = fs.readdirSync(V6_DIR).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)).sort();
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-/** The only helpers a handler may call BEFORE its caller check: they only parse the request URL. Any other call first (a response, a body read, a database touch) fails the check. */
-const PRE_GUARD_READS = new Set(['parseQuery', 'reqUrl']);
-
-/** Keywords followed by `(` that are control flow, not calls. */
-const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'function', 'await', 'new']);
-
 
 describe('module inventory', () => {
   it('finds the v6 module tree', () => {
@@ -163,55 +157,91 @@ describe('module-owned schema', () => {
 });
 
 describe('route security', () => {
-  /**
-   * The index just past the parenthesised group that opens at `open`.
-   * @param {Array<object>} t
-   * @param {number} open - Index of a `(` token.
-   * @returns {number}
-   */
-  function pastParens(t, open) {
-    let depth = 0;
-    for (let j = open; j < t.length; j++) {
-      if (t[j].type !== 'punct') continue;
-      if (t[j].value === '(') depth++;
-      else if (t[j].value === ')' && --depth === 0) return j + 1;
-    }
-    return t.length;
-  }
-
   /** @returns {boolean} */
   const isP = (tok, v) => !!tok && tok.type === 'punct' && tok.value === v;
   /** @returns {boolean} */
   const isI = (tok, v) => !!tok && tok.type === 'ident' && (v === undefined || tok.value === v);
 
   /**
-   * Whether the `…Caller(` call at index `k` is used fail-closed, in one of
-   * the two shapes this codebase uses: `if (!xCaller(...)) return` or
-   * `const c = xCaller(...); if (!c) return`. A call whose result is ignored,
-   * or tested the wrong way round, is not a guard.
+   * Whether the tokens at `p` are exactly `const <name> = parseQuery(reqUrl(req).search);`,
+   * the one statement a v6 handler may run before its guard: it only parses
+   * the request URL.
    * @param {Array<object>} t
-   * @param {number} k
+   * @param {number} p
    * @returns {boolean}
    */
-  function failClosed(t, k) {
-    const after = pastParens(t, k + 1);
-    if (isI(t[k - 3], 'if') && isP(t[k - 2], '(') && isP(t[k - 1], '!')) {
-      return isP(t[after], ')') && isI(t[after + 1], 'return');
+  function isQueryRead(t, p) {
+    return isI(t[p], 'const') && isI(t[p + 1]) && isP(t[p + 2], '=')
+      && isI(t[p + 3], 'parseQuery') && isP(t[p + 4], '(')
+      && isI(t[p + 5], 'reqUrl') && isP(t[p + 6], '(') && isI(t[p + 7], 'req') && isP(t[p + 8], ')')
+      && isP(t[p + 9], '.') && isI(t[p + 10], 'search') && isP(t[p + 11], ')') && isP(t[p + 12], ';');
+  }
+
+  /**
+   * Whether the tokens at `c` are exactly `<x>Caller(req, res, '<action>')`.
+   * The arguments run before the check does, so nothing else may appear there.
+   * @param {Array<object>} t
+   * @param {number} c
+   * @returns {boolean}
+   */
+  function isCallerCall(t, c) {
+    return isI(t[c]) && /Caller$/.test(t[c].value)
+      && isP(t[c + 1], '(') && isI(t[c + 2], 'req') && isP(t[c + 3], ',')
+      && isI(t[c + 4], 'res') && isP(t[c + 5], ',')
+      && !!t[c + 6] && t[c + 6].type === 'string' && isP(t[c + 7], ')');
+  }
+
+  /**
+   * Whether a fail-closed caller check starts exactly at `g`, in one of the two
+   * shapes this codebase uses: `if (!xCaller(req, res, '...')) return;` or
+   * `const c = xCaller(req, res, '...'); if (!c) return;`. A call whose result
+   * is ignored or tested the wrong way round is not a guard, and the return
+   * must be bare: `return f();` would run `f` for a refused caller.
+   * @param {Array<object>} t
+   * @param {number} g
+   * @returns {boolean}
+   */
+  function isFailClosedGuardAt(t, g) {
+    if (isI(t[g], 'if') && isP(t[g + 1], '(') && isP(t[g + 2], '!') && isCallerCall(t, g + 3)) {
+      return isP(t[g + 11], ')') && isI(t[g + 12], 'return') && isP(t[g + 13], ';');
     }
-    if (isP(t[k - 1], '=') && isI(t[k - 2]) && ['const', 'let'].includes(t[k - 3] && t[k - 3].value)) {
-      const name = t[k - 2].value;
-      let j = after;
-      if (isP(t[j], ';')) j++;
-      return isI(t[j], 'if') && isP(t[j + 1], '(') && isP(t[j + 2], '!') && isI(t[j + 3], name)
-        && isP(t[j + 4], ')') && isI(t[j + 5], 'return');
+    if ((isI(t[g], 'const') || isI(t[g], 'let')) && isI(t[g + 1]) && isP(t[g + 2], '=') && isCallerCall(t, g + 3)
+      && isP(t[g + 11], ';')) {
+      const name = t[g + 1].value;
+      const n = g + 12;
+      return isI(t[n], 'if') && isP(t[n + 1], '(') && isP(t[n + 2], '!') && isI(t[n + 3], name)
+        && isP(t[n + 4], ')') && isI(t[n + 5], 'return') && isP(t[n + 6], ';');
     }
     return false;
   }
 
   /**
-   * The /api/v6 routes in `source` that do not check their caller,
-   * fail-closed, before their first response, body read or database access.
-   * Only `parseQuery`/`reqUrl` may be called before the guard.
+   * The index of the first body token of a route's handler, when the tokens
+   * from `c` are exactly `, [async] (<ident>, ...) => {`, the only handler
+   * shape the v6 routes use; else -1. A closed header stops an expression
+   * body or a function reference from borrowing the next route's `{`.
+   * @param {Array<object>} t
+   * @param {number} c - Index of the comma after the route path.
+   * @returns {number}
+   */
+  function arrowBlockBodyStart(t, c) {
+    if (!isP(t[c], ',')) return -1;
+    let h = c + 1;
+    if (isI(t[h], 'async')) h++;
+    if (!isP(t[h], '(') || !isI(t[h + 1])) return -1;
+    h += 2;
+    while (isP(t[h], ',') && isI(t[h + 1])) h += 2;
+    if (!isP(t[h], ')') || !isP(t[h + 1], '=>') || !isP(t[h + 2], '{')) return -1;
+    return h + 3;
+  }
+
+  /**
+   * The /api/v6 routes in `source` whose handler is not an inline arrow block
+   * that STARTS with a fail-closed caller check. This is a closed-world grammar, not a search:
+   * the guard must be the handler's first statement, or follow only the
+   * exact URL-parse statement `isQueryRead` accepts. Nothing else can run
+   * first: no body read, no call in any spelling, no property read (a getter
+   * runs code), no branch, block or callback. Every v6 route matches it.
    * @param {string} source - server.js text.
    * @returns {{routes: number, unguarded: string[]}}
    */
@@ -225,27 +255,13 @@ describe('route security', () => {
       const pathTok = t[k + 4];
       if (!pathTok || pathTok.type !== 'string' || !pathTok.value.startsWith('/api/v6')) continue;
       routes++;
-      let j = k + 5;
-      while (j < t.length && !isP(t[j], '{')) j++;
-      let depth = 0;
-      let guarded = false;
-      let ok = true;
-      for (; j < t.length; j++) {
-        const tok = t[j];
-        if (isP(tok, '{')) depth++;
-        else if (isP(tok, '}')) {
-          if (--depth === 0) break;
-        } else if (isI(tok) && !KEYWORDS.has(tok.value) && isP(t[j + 1], '(')) {
-          if (/Caller$/.test(tok.value)) {
-            if (!failClosed(t, j)) ok = false;
-            guarded = guarded || failClosed(t, j);
-            j = pastParens(t, j + 1) - 1;
-          } else if (!guarded && !PRE_GUARD_READS.has(tok.value)) {
-            ok = false;
-          }
-        }
+      const start = arrowBlockBodyStart(t, k + 5);
+      if (start < 0) {
+        unguarded.push(`${t[k + 2].value} ${pathTok.value}`);
+        continue;
       }
-      if (!ok || !guarded) unguarded.push(`${t[k + 2].value} ${pathTok.value}`);
+      const g = isQueryRead(t, start) ? start + 13 : start;
+      if (!isFailClosedGuardAt(t, g)) unguarded.push(`${t[k + 2].value} ${pathTok.value}`);
     }
     return { routes, unguarded };
   }
@@ -261,7 +277,7 @@ describe('route security', () => {
     assert.deepEqual(unguardedV6Routes(server).unguarded, []);
   });
 
-  it('flags a route whose guard is removed, ignored, inverted, or placed after the body read (mutation regression)', () => {
+  it('flags a route whose guard is removed, ignored, inverted, nested, or placed after the body read (mutation regression)', () => {
     assert.ok(server.includes(KB_GUARD), 'mutation anchor missing from server.js');
     const flagged = (src) => unguardedV6Routes(src).unguarded;
     assert.deepEqual(flagged(server.replace(KB_GUARD, '')), ['GET /api/v6/kb/search'], 'guard removed');
@@ -277,9 +293,58 @@ describe('route security', () => {
     [], 'the const fail-closed form is accepted');
     const create = "  if (!operatorProjectCaller(req, res, 'create a logical project')) return;\n  const b = _v6Body(body);\n";
     assert.ok(server.includes(create), 'mutation anchor missing from server.js');
+    assert.deepEqual(flagged(server.replace(KB_GUARD,
+      "  if (req) {\n  if (!operatorProjectCaller(req, res, 'search the knowledge base')) return;\n  }\n")),
+    ['GET /api/v6/kb/search'], 'guard nested in a branch');
+    assert.deepEqual(flagged(server.replace(KB_GUARD,
+      "  [0].forEach(() => { if (!operatorProjectCaller(req, res, 'search the knowledge base')) return; });\n")),
+    ['GET /api/v6/kb/search'], 'guard nested in a callback');
+    assert.deepEqual(flagged(server.replace(KB_GUARD,
+      "  if (req) if (!operatorProjectCaller(req, res, 'search the knowledge base')) return;\n")),
+    ['GET /api/v6/kb/search'], 'guard in a brace-less branch');
+    assert.deepEqual(flagged(server.replace(KB_GUARD,
+      "  if (req) ; else if (!operatorProjectCaller(req, res, 'search the knowledge base')) return;\n")),
+    ['GET /api/v6/kb/search'], 'guard in a brace-less else branch');
+    assert.deepEqual(flagged(server.replace(KB_GUARD,
+      "  if (!operatorProjectCaller(req, res, 'search the knowledge base', body && body.q)) return;\n")),
+    ['GET /api/v6/kb/search'], 'a body read inside the guard call itself');
+    assert.deepEqual(flagged(server.replace(KB_GUARD,
+      "  if (!operatorProjectCaller(req, res, _v6Lookup(req))) return;\n")),
+    ['GET /api/v6/kb/search'], 'another call inside the guard call itself');
+    for (const [label, guard] of [
+      ['a parenthesised callee inside the guard call', "  if (!operatorProjectCaller(req, res, (_v6Lookup)())) return;\n"],
+      ['a non-literal action inside the guard call', "  if (!operatorProjectCaller(req, res, action)) return;\n"],
+      ['a parenthesised callee before the guard', "  (_v6Lookup)();\n" + KB_GUARD],
+      ['a computed callee before the guard', "  _v6[name]();\n" + KB_GUARD],
+      ['an optional call before the guard', "  _v6Lookup?.();\n" + KB_GUARD],
+      ['a construction without parentheses before the guard', "  const x = new _V6Thing;\n" + KB_GUARD],
+      ['a tagged template before the guard', "  _v6Lookup`q`;\n" + KB_GUARD],
+      ['a member call named like an approved read before the guard', "  untrusted.parseQuery();\n" + KB_GUARD],
+      ['a property read (a possible getter) before the guard', "  req.x;\n" + KB_GUARD],
+      ['an empty statement before the guard', "  ;\n" + KB_GUARD],
+      ['a guard that does not return when the check fails', "  if (!operatorProjectCaller(req, res, 'search the knowledge base')) res.end();\n"],
+      ['a guard that returns a call', "  if (!operatorProjectCaller(req, res, 'search the knowledge base')) return _v6Lookup();\n"],
+      ['a const-form guard that returns a call', "  const ok = operatorProjectCaller(req, res, 'search the knowledge base');\n  if (!ok) return _v6Lookup();\n"],
+      ['a const-form guard chained without a semicolon', "  const ok = operatorProjectCaller(req, res, 'search the knowledge base')\n  if (!ok) return;\n"]
+    ]) {
+      assert.deepEqual(flagged(server.replace(KB_GUARD, guard)), ['GET /api/v6/kb/search'], label);
+    }
+    // A handler that is not an inline arrow block must not borrow the next
+    // route's opening brace and guard.
+    const KB_ROUTE = "route('GET', '/api/v6/kb/search', (req, res, _params) => {";
+    assert.ok(server.includes(KB_ROUTE), 'mutation anchor missing from server.js');
+    for (const [label, extra, name] of [
+      ['an expression-bodied handler', "route('GET', '/api/v6/zz-expr', (req, res) => jsonResponse(res, 200, null));\n", 'GET /api/v6/zz-expr'],
+      ['a function-reference handler', "route('GET', '/api/v6/zz-ref', _zzHandler);\n", 'GET /api/v6/zz-ref']
+    ]) {
+      assert.deepEqual(flagged(server.replace(KB_ROUTE, extra + KB_ROUTE)), [name], label);
+    }
     assert.deepEqual(flagged(server.replace(create,
       "  const b = _v6Body(body);\n  if (!operatorProjectCaller(req, res, 'create a logical project')) return;\n")),
     ['POST /api/v6/logical-projects'], 'guard after the body read');
+    assert.deepEqual(flagged(server.replace(create,
+      "  const peek = body && body.displayName;\n" + create)),
+    ['POST /api/v6/logical-projects'], 'a body property read before the guard (#3044 N1)');
   });
 });
 
@@ -322,7 +387,7 @@ describe('release record', () => {
     assert.doesNotMatch(v6Text, /not yet reachable/i);
   });
 
-  it('no changelog fragment is left pending after the cut', () => {
+  it('no changelog fragment is malformed', () => {
     const { readFragments } = require('../lib/changelog-fragments');
     const r = readFragments(ROOT);
     assert.deepEqual(r.refused, []);

@@ -3225,6 +3225,43 @@ async function ignoreLeaseProject(name) {
   }
 }
 
+/**
+ * Resolve once every classic `<script>` on the page has executed: at once if
+ * the document is already parsed, else on `DOMContentLoaded`, which fires
+ * only after all non-async, non-defer scripts have run (#3029).
+ * @param {Document} doc
+ * @returns {Promise<void>}
+ */
+function whenPageScriptsLoaded(doc) {
+  if (!doc || doc.readyState !== 'loading') return Promise.resolve();
+  return new Promise((resolve) => doc.addEventListener('DOMContentLoaded', () => resolve(), { once: true }));
+}
+
+/**
+ * Wrap ui.js's `renderCard` so every card render injects the held-wake badge
+ * before `card-row-actions` (#2578). Idempotent; a missing `renderCard` is
+ * warned about and skipped rather than thrown, so a load-order fault can
+ * never again abort the rest of `init()` (#3029).
+ * @returns {boolean} Whether `renderCard` is now wrapped.
+ */
+function wrapRenderCardWithHeldWakeBadge() {
+  const original = window.renderCard;
+  if (typeof original !== 'function') {
+    console.warn('renderCard is not defined yet; held-wake badges will not render on cards');
+    return false;
+  }
+  if (original.__heldWakeWrapped) return true;
+  const wrapped = function(project) {
+    const html = original(project);
+    const badge = renderHeldWakeBadge(project);
+    if (!badge) return html;
+    return html.replace('<span class="card-row-actions">', badge + '<span class="card-row-actions">');
+  };
+  wrapped.__heldWakeWrapped = true;
+  window.renderCard = wrapped;
+  return true;
+}
+
 async function init() {
   // Keep the Master pane's prompt above the soft keyboard (#1570): the shared
   // listener publishes the visible area while the keyboard is up.
@@ -3250,17 +3287,14 @@ async function init() {
   await Promise.all([loadVersion(), loadConfig(), loadEngines()]);
   applyTheme();
 
-  // ui.js is now loaded (script tags are synchronous; this await yielded to the
-  // HTML parser which executed ui.js before any microtask resumed init). Wrap
-  // renderCard to inject the held-wake badge before card-row-actions on every
-  // render, without touching public/ui.js (#2578).
-  const _origRenderCard = renderCard;
-  window.renderCard = function(project) {
-    const html = _origRenderCard(project);
-    const badge = renderHeldWakeBadge(project);
-    if (!badge) return html;
-    return html.replace('<span class="card-row-actions">', badge + '<span class="card-row-actions">');
-  };
+  // #3029: ui.js (which defines renderCard) loads AFTER this file. The await
+  // above does not guarantee the parser has reached it — on a fast loopback
+  // or a service-worker cache hit the fetches can resolve first, and reading
+  // renderCard then threw, aborting the rest of init(). Wait until every
+  // classic script has run, then wrap renderCard to inject the held-wake
+  // badge (#2578), without touching public/ui.js.
+  await whenPageScriptsLoaded(document);
+  wrapRenderCardWithHeldWakeBadge();
 
   // Check for first-run setup wizard
   if (typeof checkSetupWizard === 'function' && checkSetupWizard()) {

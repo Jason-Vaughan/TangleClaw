@@ -10580,13 +10580,25 @@ route('POST', '/api/v6/projects/:id/charter/drift-check', (req, res, params, bod
 // persistence (the actual report file lives wherever a future car writes
 // it; these routes only transform HTML the caller already has in hand).
 
+/**
+ * Body limits for the report routes (#3041). They carry a whole report or
+ * its search index, which the 10 KB default refused for any real report:
+ * the published v6.0.0-v6.2.0 Individual Sprint Reports are 120-190 KB of
+ * HTML, and v6.2.0's E6a search index is 376 KB. Each limit leaves ~5x
+ * headroom over that measured size; `ask` takes up to 12 indexes
+ * (`e6b` MAX_REPORTS). All five routes are operator-only.
+ */
+const _V6_REPORT_HTML_BODY_LIMIT = 1024 * 1024;
+const _V6_REPORT_INDEX_BODY_LIMIT = 2 * 1024 * 1024;
+const _V6_REPORT_ASK_BODY_LIMIT = 8 * 1024 * 1024;
+
 route('POST', '/api/v6/reports/present', (req, res, _params, body) => {
   if (!operatorProjectCaller(req, res, 'build a report presentation view-model')) return;
   const b = _v6Body(body);
   if (typeof b.html !== 'string') return errorResponse(res, 400, 'html must be a string', 'INVALID_REQUEST');
   const viewModel = e4Reports.buildReportViewModel(b.html, { excerptChars: b.excerptChars });
   jsonResponse(res, 200, { ...viewModel, pillars: e4Reports.buildPillarSwitcherModel(viewModel) });
-});
+}, { maxBodySize: _V6_REPORT_HTML_BODY_LIMIT });
 
 route('GET', '/api/v6/reports/popovers', (req, res) => {
   if (!operatorProjectCaller(req, res, 'read the report popover catalog')) return;
@@ -10598,14 +10610,14 @@ route('POST', '/api/v6/reports/print-view', (req, res, _params, body) => {
   const b = _v6Body(body);
   if (typeof b.html !== 'string') return errorResponse(res, 400, 'html must be a string', 'INVALID_REQUEST');
   jsonResponse(res, 200, { html: e4Reports.buildPrintView(b.html) });
-});
+}, { maxBodySize: _V6_REPORT_HTML_BODY_LIMIT });
 
 route('POST', '/api/v6/reports/search-index', (req, res, _params, body) => {
   if (!operatorProjectCaller(req, res, 'build a report search index')) return;
   const b = _v6Body(body);
   if (typeof b.html !== 'string') return errorResponse(res, 400, 'html must be a string', 'INVALID_REQUEST');
   jsonResponse(res, 200, e6aReports.buildSearchIndex(b.html, { version: b.version }));
-});
+}, { maxBodySize: _V6_REPORT_HTML_BODY_LIMIT });
 
 route('POST', '/api/v6/reports/cite', (req, res, _params, body) => {
   if (!operatorProjectCaller(req, res, 'cite a report via its search index')) return;
@@ -10615,7 +10627,7 @@ route('POST', '/api/v6/reports/cite', (req, res, _params, body) => {
   }
   if (typeof b.query !== 'string') return errorResponse(res, 400, 'query must be a string', 'INVALID_REQUEST');
   jsonResponse(res, 200, { results: e6aReports.citeThisReport(b.index, b.query, { limit: b.limit, contextChars: b.contextChars }) });
-});
+}, { maxBodySize: _V6_REPORT_INDEX_BODY_LIMIT });
 
 // ── G1/G2a: Guided 3-Tier GitHub Integration, Durable Outbox & Provider Contract (#2990, BRIDGE-2c) ──
 //
@@ -11130,7 +11142,7 @@ route('POST', '/api/v6/reports/ask', async (req, res, _params, body) => {
   } catch (err) {
     _v6RespondThrown(res, err);
   }
-});
+}, { maxBodySize: _V6_REPORT_ASK_BODY_LIMIT });
 
 // ── F1: Built-in knowledge base (#2997) ──
 
