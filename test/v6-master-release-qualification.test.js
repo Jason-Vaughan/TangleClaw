@@ -219,7 +219,8 @@ describe('route security', () => {
    * body read or database access. "Body read" means ANY reference to the
    * handler's `body` (a call such as `_v6Body(body)` or a property read such
    * as `body.x`); "response" and "database access" are any other call. Only
-   * `parseQuery`/`reqUrl` may be called before the guard.
+   * `parseQuery`/`reqUrl` may be called before the guard, and that includes
+   * inside the guard's own argument list, which runs before the guard does.
    * @param {string} source - server.js text.
    * @returns {{routes: number, unguarded: string[]}}
    */
@@ -251,9 +252,18 @@ describe('route security', () => {
           if (/Caller$/.test(tok.value)) {
             // Only a fail-closed guard at the handler's top level counts: one
             // nested in a branch or a callback runs only sometimes, if at all.
-            if (!failClosed(t, j) || depth !== 1) ok = false;
-            guarded = guarded || (depth === 1 && failClosed(t, j));
-            j = pastParens(t, j + 1) - 1;
+            // The guard's own arguments are evaluated before it runs, so a
+            // body read or another call among them happens unguarded.
+            const end = pastParens(t, j + 1);
+            let argsClean = true;
+            for (let a = j + 2; a < end - 1; a++) {
+              if (isI(t[a], 'body')) argsClean = false;
+              else if (isI(t[a]) && !KEYWORDS.has(t[a].value) && isP(t[a + 1], '(')
+                && !PRE_GUARD_READS.has(t[a].value)) argsClean = false;
+            }
+            if (!argsClean || !failClosed(t, j) || depth !== 1) ok = false;
+            guarded = guarded || (argsClean && depth === 1 && failClosed(t, j));
+            j = end - 1;
           } else if (!guarded && !PRE_GUARD_READS.has(tok.value)) {
             ok = false;
           }
@@ -303,6 +313,12 @@ describe('route security', () => {
     assert.deepEqual(flagged(server.replace(KB_GUARD,
       "  if (req) ; else if (!operatorProjectCaller(req, res, 'search the knowledge base')) return;\n")),
     ['GET /api/v6/kb/search'], 'guard in a brace-less else branch');
+    assert.deepEqual(flagged(server.replace(KB_GUARD,
+      "  if (!operatorProjectCaller(req, res, 'search the knowledge base', body && body.q)) return;\n")),
+    ['GET /api/v6/kb/search'], 'a body read inside the guard call itself');
+    assert.deepEqual(flagged(server.replace(KB_GUARD,
+      "  if (!operatorProjectCaller(req, res, _v6Lookup(req))) return;\n")),
+    ['GET /api/v6/kb/search'], 'another call inside the guard call itself');
     assert.deepEqual(flagged(server.replace(create,
       "  const b = _v6Body(body);\n  if (!operatorProjectCaller(req, res, 'create a logical project')) return;\n")),
     ['POST /api/v6/logical-projects'], 'guard after the body read');
