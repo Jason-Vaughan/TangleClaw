@@ -10,6 +10,11 @@
 // that same handler — so a shell render here is the data path a browser
 // takes, minus the network socket.
 //
+// Tier: `large`. Entering the shell calls GET /api/projects, which scans
+// for unregistered project directories in a child process; the medium
+// tier's guard forbids starting one, so this file is declared one tier
+// slower than its static scan, as test/tiers.json allows.
+//
 // Not covered here, deliberately: the conversation route's session-status
 // lookup needs a live tmux session (a subprocess this medium-tier file may
 // not start), so the conversation journey drives the real event routes and
@@ -80,6 +85,11 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
     cfg.setupComplete = true;
     cfg.ingressMode = 'direct';
     cfg.authEnabled = false;
+    // GET /api/projects scans projectsDir for unregistered directories in a
+    // child process; point it at this test's own temp tree so the scan never
+    // reads the real ~/Projects (and this file is declared `large`, the tier
+    // that may start that child).
+    cfg.projectsDir = tempDir;
     store.config.save(cfg);
   });
 
@@ -170,6 +180,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
    * @returns {number}
    */
   function seedProject(name) {
+    fs.mkdirSync(path.join(tempDir, name), { recursive: true });
     return store.getDb().prepare('INSERT INTO projects (name, path, archived) VALUES (?, ?, 0)').run(name, path.join(tempDir, name)).lastInsertRowid;
   }
 

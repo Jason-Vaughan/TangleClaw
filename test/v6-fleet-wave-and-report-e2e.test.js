@@ -214,11 +214,15 @@ describe('v6 Stage 3-4 E2E: fleet, wave and report, against the live server (#30
       assert.ok(answer.citations.length > 0, 'every answer carries its citations');
     });
 
-    it('a full 12-section report can be cited over HTTP', { todo: '#3041: its index (11 KB here) exceeds the 10 KB route body limit, so cite/ask answer 413' }, async () => {
+    it('a full 12-section report index is still refused by the 10 KB route body limit (#3041)', async () => {
+      // Characterizes the open gap rather than hiding it: when #3041 lifts the
+      // limit for cite/ask this assertion fails, and the test becomes the
+      // positive case (cite answers 200 with the [PR #3016] hit).
       const index = json(await post('/api/v6/reports/search-index', { html: REPORT_HTML, version: 'v6.2.1' }));
       assert.equal(index.sections.length, 12);
+      assert.ok(Buffer.byteLength(JSON.stringify({ index, query: '3016' })) > 10 * 1024, 'the fixture must exceed the limit to characterize it');
       const res = await post('/api/v6/reports/cite', { index, query: '3016' });
-      assert.equal(res.statusCode, 200, `got ${res.statusCode}`);
+      assert.equal(res.statusCode, 413, `expected the current 413, got ${res.statusCode}`);
     });
 
     it('refuses malformed report input rather than guessing', async () => {
