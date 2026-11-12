@@ -511,6 +511,7 @@ files = [
   "test/update-applier.test.js",
   "test/v6-a1-iso-host-sandboxing.test.js",
   "test/v6-a2b-self-healing-remediator.test.js",
+  "test/v6-adversarial-security-boundary-torture.test.js",
   "test/v6-b2-conversation-layer.test.js",
   "test/v6-c1-logical-projects.test.js",
   "test/v6-c3-wave-scheduler.test.js",
