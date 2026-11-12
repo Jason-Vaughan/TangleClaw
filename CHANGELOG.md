@@ -4,6 +4,41 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.2.0] - 2026-11-11
+
+### Added
+- Multi-train what-if simulator (#3001, V6-31 / E3b): `lib/v6/e3b-whatif-simulator.js` deterministically schedules cars across several trains at once, honoring cross-train dependencies, file locks, per-role lane pools and per-lane quota budgets. Every result reports what bounded it: the effort-weighted critical path, per-role bottleneck time (waiting for a lane, a file lock or quota), per-train finish, lane utilization, and each unschedulable car with a named reason (cycle, unknown dependency, no lane for its role, quota exhausted). Variants can be compared against a baseline for makespan and critical-path shifts, and simulations persist once per scenario.
+- v6.2.0 modules are now live (#3001-#3005), behind the operator gate, through 10 `/api/v6/*` routes: `POST /api/v6/whatif/simulate` and `POST /api/v6/whatif/compare` (what-if simulator); `GET /api/v6/providers/g2b` and `POST /api/v6/providers/g2b/normalize` (GitLab/Jira/Linear/Dolt adapters, exercised offline); `GET /api/v6/advisor/usage` and `POST /api/v6/advisor/advise` (external advisor); `GET /api/v6/medusa-v2/status` and `POST /api/v6/medusa-v2/compact` (Medusa v2 compact wire); `GET /api/v6/sandboxing/status` and `POST /api/v6/sandboxing/plan` (host sandboxing). The server owns every security-bearing input: the advisor reads only under an operator-configured approved-repositories root (`TANGLECLAW_ADVISOR_REPOS_ROOT`), with server-set limits, protected roots and clock, and checks the rate cap before any file is read; sandboxing plans use server-derived host facts and never return the server's environment; the Medusa v2 route renders and parses human cards and computes Merkle roots and diffs without recording anything. The v6 Fleet Shell adds a Platform view (`#/settings/platform`) with live provider, Medusa v2 and sandboxing status, and a sample what-if simulation (`#/settings/whatif`).
+- GitLab, Jira, Linear and Dolt provider adapters (#3002, V6-32 / G2b): `lib/v6/g2b-provider-adapters.js` implements the same six-method provider contract as the GitHub adapter. Each adapter validates its own resource identifier, detects connection drift, maps issue (and, for GitLab, milestone) creation to that provider's own API request, verifies webhook deliveries with each provider's documented scheme (GitLab token or signed `webhook-signature`, Jira `X-Hub-Signature`, Linear `Linear-Signature` with its one-minute replay window), and normalizes inbound deliveries. A capability a provider lacks is refused as unsupported, never answered with empty success: DoltHub documents no way to authenticate webhooks or create issues, so the Dolt adapter refuses both.
+- External project advisor (`lib/v6/g4-external-advisor.js`): reads files from a repository
+  TangleClaw does not manage, strictly read-only (`O_NOFOLLOW`, no write path), refusing any
+  symlink on the path, any `..` escape, a file swapped between check and open, and any target
+  that overlaps TangleClaw's own projects or home. Output passes through the F3 secret
+  scrubber. Each tenant gets its own `0700` workspace under `~/.tangleclaw/advisor/`, and
+  requests are rate- and spend-capped per tenant (sliding window plus a daily token and USD
+  budget) in SQLite; a refused request spends nothing. Requests naming a project, workspace,
+  session or Medusa identity are refused (#3003).
+- Medusa v2 compact sync core (`lib/v6/medusa-v2-compact-sync.js`). An opt-in `m2`
+  envelope (`msg_type`, `task_id`, `state_delta`, `artifact_ref`, `blocker_code`,
+  `next_action`, `digest`) is used only with peers that advertise `medusa-compact-v1`;
+  prose stays the fallback. Each envelope projects to a deterministic human card that
+  round-trips exactly, with referenced text checked against its SHA-256. Merkle-rooted
+  state deltas apply only on their exact base and must land on their exact target, and
+  a missed delta is repaired only by a full frame matching the expected root. A wake
+  coalescer sends at most one wake per recipient per sealed wave, keeps every
+  completion, and gives each wake the most urgent priority among the completions it
+  holds. Messages, deduplicated bodies, snapshots, deltas and wakes persist in
+  idempotent SQLite tables, and a wake is marked drained only with composer and
+  transcript proof (#3004).
+- Isolated-mode admission for fleet sessions (`lib/v6/a1-iso-host-sandboxing.js`): plans a
+  session as a locked-down Docker or Podman container (read-only root filesystem, all
+  capabilities dropped, no-new-privileges, non-root user, no network or one named allowlist
+  network, bind mounts only from allowed roots and read-only by default) or as a separate
+  unprivileged Unix uid with a minimal environment. A profile that requires isolation is
+  never downgraded: an unavailable runtime, a host that cannot switch uid, or a target uid
+  equal to the host's is refused. Every decision is recorded as an attestation receipt that
+  states what the mode does and does not isolate (#3005).
+
 ## [6.1.0] - 2026-11-11
 
 ### Added

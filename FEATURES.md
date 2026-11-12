@@ -17,6 +17,15 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.2.0 — Multi-train simulator, external providers, Advisor, Medusa v2 compact wire and OS sandboxing
+
+- **Multi-train what-if simulator** (#3001) — `lib/v6/e3b-whatif-simulator.js#simulate` and `#compareScenarios`: cross-train scheduling with critical path, bottlenecks and named unschedulable reasons; `POST /api/v6/whatif/simulate`, `POST /api/v6/whatif/compare`.
+- **GitLab, Jira, Linear and Dolt provider adapters** (#3002) — `lib/v6/g2b-provider-adapters.js#createProviderAdapter` and `#verifyContract`: the six-method provider contract with per-provider webhook verification; `GET /api/v6/providers/g2b`, `POST /api/v6/providers/g2b/normalize` (offline).
+- **Hardened external project advisor** (#3003) — `lib/v6/g4-external-advisor.js#advise`, `#readRepoFile` and `#createAdvisorLedger`: read-only, swap-safe repository reads with per-tenant caps; `POST /api/v6/advisor/advise`, `GET /api/v6/advisor/usage`.
+- **Medusa v2 compact wire** (#3004) — `lib/v6/medusa-v2-compact-sync.js#createEnvelope`, `#applyDelta` and `#createWakeCoalescer`: opt-in `m2` envelope, lossless card, Merkle delta sync, wake coalescer and SQLite persistence; `POST /api/v6/medusa-v2/compact`, `GET /api/v6/medusa-v2/status`.
+- **Isolated-mode host sandboxing** (#3005) — `lib/v6/a1-iso-host-sandboxing.js#planIsolation` and `#sensitiveSource`: container or separate-uid admission, host-policy-only mount roots and sensitive-source refusal; `GET /api/v6/sandboxing/status`, `POST /api/v6/sandboxing/plan`.
+- **Platform and what-if shell views** (#3001-#3005) — `public/v6-shell.js`'s Platform view (`#/settings/platform`) and sample what-if simulation (`#/settings/whatif`).
+
 ## v6.1.0 — Bounded self-healing, operating profiles, wave scheduler, grounded assistants and knowledge base
 
 - **Bounded self-healing remediator** (#2991) — `lib/v6/a2b-self-healing-remediator.js#createRemediator`, `#circuitState` and `#recoveryConsole`: three pre-authorized non-destructive repairs under `RECOVERY_PRINCIPAL`, an atomic per-incident attempt budget, and a four-state recovery circuit with an Operator-only latch.
