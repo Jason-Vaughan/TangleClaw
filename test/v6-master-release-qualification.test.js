@@ -193,23 +193,24 @@ describe('route security', () => {
 
   /**
    * Whether a fail-closed caller check starts exactly at `g`, in one of the two
-   * shapes this codebase uses: `if (!xCaller(req, res, '...')) return` or
-   * `const c = xCaller(req, res, '...'); if (!c) return`. A call whose result
-   * is ignored or tested the wrong way round is not a guard.
+   * shapes this codebase uses: `if (!xCaller(req, res, '...')) return;` or
+   * `const c = xCaller(req, res, '...'); if (!c) return;`. A call whose result
+   * is ignored or tested the wrong way round is not a guard, and the return
+   * must be bare: `return f();` would run `f` for a refused caller.
    * @param {Array<object>} t
    * @param {number} g
    * @returns {boolean}
    */
   function isFailClosedGuardAt(t, g) {
     if (isI(t[g], 'if') && isP(t[g + 1], '(') && isP(t[g + 2], '!') && isCallerCall(t, g + 3)) {
-      return isP(t[g + 11], ')') && isI(t[g + 12], 'return');
+      return isP(t[g + 11], ')') && isI(t[g + 12], 'return') && isP(t[g + 13], ';');
     }
-    if ((isI(t[g], 'const') || isI(t[g], 'let')) && isI(t[g + 1]) && isP(t[g + 2], '=') && isCallerCall(t, g + 3)) {
+    if ((isI(t[g], 'const') || isI(t[g], 'let')) && isI(t[g + 1]) && isP(t[g + 2], '=') && isCallerCall(t, g + 3)
+      && isP(t[g + 11], ';')) {
       const name = t[g + 1].value;
-      let n = g + 11;
-      if (isP(t[n], ';')) n++;
+      const n = g + 12;
       return isI(t[n], 'if') && isP(t[n + 1], '(') && isP(t[n + 2], '!') && isI(t[n + 3], name)
-        && isP(t[n + 4], ')') && isI(t[n + 5], 'return');
+        && isP(t[n + 4], ')') && isI(t[n + 5], 'return') && isP(t[n + 6], ';');
     }
     return false;
   }
@@ -321,7 +322,10 @@ describe('route security', () => {
       ['a member call named like an approved read before the guard', "  untrusted.parseQuery();\n" + KB_GUARD],
       ['a property read (a possible getter) before the guard', "  req.x;\n" + KB_GUARD],
       ['an empty statement before the guard', "  ;\n" + KB_GUARD],
-      ['a guard that does not return when the check fails', "  if (!operatorProjectCaller(req, res, 'search the knowledge base')) res.end();\n"]
+      ['a guard that does not return when the check fails', "  if (!operatorProjectCaller(req, res, 'search the knowledge base')) res.end();\n"],
+      ['a guard that returns a call', "  if (!operatorProjectCaller(req, res, 'search the knowledge base')) return _v6Lookup();\n"],
+      ['a const-form guard that returns a call', "  const ok = operatorProjectCaller(req, res, 'search the knowledge base');\n  if (!ok) return _v6Lookup();\n"],
+      ['a const-form guard chained without a semicolon', "  const ok = operatorProjectCaller(req, res, 'search the knowledge base')\n  if (!ok) return;\n"]
     ]) {
       assert.deepEqual(flagged(server.replace(KB_GUARD, guard)), ['GET /api/v6/kb/search'], label);
     }
