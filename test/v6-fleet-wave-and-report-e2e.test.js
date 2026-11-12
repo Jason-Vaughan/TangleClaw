@@ -214,15 +214,39 @@ describe('v6 Stage 3-4 E2E: fleet, wave and report, against the live server (#30
       assert.ok(answer.citations.length > 0, 'every answer carries its citations');
     });
 
-    it('a full 12-section report index is still refused by the 10 KB route body limit (#3041)', async () => {
-      // Characterizes the open gap rather than hiding it: when #3041 lifts the
-      // limit for cite/ask this assertion fails, and the test becomes the
-      // positive case (cite answers 200 with the [PR #3016] hit).
+    it('a full 12-section report index is cited over HTTP (#3041)', async () => {
       const index = json(await post('/api/v6/reports/search-index', { html: REPORT_HTML, version: 'v6.2.1' }));
       assert.equal(index.sections.length, 12);
-      assert.ok(Buffer.byteLength(JSON.stringify({ index, query: '3016' })) > 10 * 1024, 'the fixture must exceed the limit to characterize it');
+      assert.ok(Buffer.byteLength(JSON.stringify({ index, query: '3016' })) > 10 * 1024, 'the fixture exceeds the old 10 KB default');
       const res = await post('/api/v6/reports/cite', { index, query: '3016' });
-      assert.equal(res.statusCode, 413, `expected the current 413, got ${res.statusCode}`);
+      assert.equal(res.statusCode, 200, res.body.slice(0, 200));
+      assert.ok(json(res).results.some((r) => r.type === 'pr' && r.badge === '[PR #3016]'));
+    });
+
+    it('a report the size of a real published one survives present, index, cite and a multi-report ask (#3041)', async () => {
+      // ~200 KB of HTML (the largest published v6 report is 187 KB), mostly
+      // prose with one PR and one Kaizen reference per section.
+      let html = '<html><body>';
+      for (const id of ['overview', 'architecture', 'velocity', 'deliverables', 'telemetry', 'postmortem',
+        'waves', 'next-sprint', 'plain-english', 'retro', 'longitudinal', 'governance']) {
+        html += `<section id="${id}"><p>The ${id} work shipped in PR #3016 after KR-01.</p>${
+          `<p>Plain narrative prose about the ${id} section that explains what happened and why it mattered to the release.</p>`.repeat(140)}</section>`;
+      }
+      html += '</body></html>';
+      assert.ok(Buffer.byteLength(html) > 180 * 1024, `fixture is ${Buffer.byteLength(html)} bytes`);
+      assert.equal((await post('/api/v6/reports/present', { html })).statusCode, 200);
+      const indexRes = await post('/api/v6/reports/search-index', { html, version: 'v6.2.1' });
+      assert.equal(indexRes.statusCode, 200);
+      const index = json(indexRes);
+      assert.equal((await post('/api/v6/reports/cite', { index, query: '3016' })).statusCode, 200);
+      const ask = await post('/api/v6/reports/ask', { reports: [{ version: 'v6.2.0', index }, { version: 'v6.2.1', index }], question: 'What shipped in PR 3016?' });
+      assert.equal(ask.statusCode, 200, ask.body.slice(0, 200));
+      assert.equal(json(ask).ok, true);
+    });
+
+    it('the report routes still refuse a body over their own limit', async () => {
+      const huge = `<html><body><section id="overview">${'x'.repeat(1024 * 1024 + 1)}</section></body></html>`;
+      assert.equal((await post('/api/v6/reports/present', { html: huge })).statusCode, 413);
     });
 
     it('refuses malformed report input rather than guessing', async () => {
