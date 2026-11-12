@@ -215,8 +215,28 @@ describe('route security', () => {
   }
 
   /**
-   * The /api/v6 routes in `source` whose handler does not START with a
-   * fail-closed caller check. This is a closed-world grammar, not a search:
+   * The index of the first body token of a route's handler, when the tokens
+   * from `c` are exactly `, [async] (<ident>, ...) => {`, the only handler
+   * shape the v6 routes use; else -1. A closed header stops an expression
+   * body or a function reference from borrowing the next route's `{`.
+   * @param {Array<object>} t
+   * @param {number} c - Index of the comma after the route path.
+   * @returns {number}
+   */
+  function arrowBlockBodyStart(t, c) {
+    if (!isP(t[c], ',')) return -1;
+    let h = c + 1;
+    if (isI(t[h], 'async')) h++;
+    if (!isP(t[h], '(') || !isI(t[h + 1])) return -1;
+    h += 2;
+    while (isP(t[h], ',') && isI(t[h + 1])) h += 2;
+    if (!isP(t[h], ')') || !isP(t[h + 1], '=>') || !isP(t[h + 2], '{')) return -1;
+    return h + 3;
+  }
+
+  /**
+   * The /api/v6 routes in `source` whose handler is not an inline arrow block
+   * that STARTS with a fail-closed caller check. This is a closed-world grammar, not a search:
    * the guard must be the handler's first statement, or follow only the
    * exact URL-parse statement `isQueryRead` accepts. Nothing else can run
    * first: no body read, no call in any spelling, no property read (a getter
@@ -234,9 +254,11 @@ describe('route security', () => {
       const pathTok = t[k + 4];
       if (!pathTok || pathTok.type !== 'string' || !pathTok.value.startsWith('/api/v6')) continue;
       routes++;
-      let j = k + 5;
-      while (j < t.length && !isP(t[j], '{')) j++;
-      const start = j + 1;
+      const start = arrowBlockBodyStart(t, k + 5);
+      if (start < 0) {
+        unguarded.push(`${t[k + 2].value} ${pathTok.value}`);
+        continue;
+      }
       const g = isQueryRead(t, start) ? start + 13 : start;
       if (!isFailClosedGuardAt(t, g)) unguarded.push(`${t[k + 2].value} ${pathTok.value}`);
     }
@@ -302,6 +324,16 @@ describe('route security', () => {
       ['a guard that does not return when the check fails', "  if (!operatorProjectCaller(req, res, 'search the knowledge base')) res.end();\n"]
     ]) {
       assert.deepEqual(flagged(server.replace(KB_GUARD, guard)), ['GET /api/v6/kb/search'], label);
+    }
+    // A handler that is not an inline arrow block must not borrow the next
+    // route's opening brace and guard.
+    const KB_ROUTE = "route('GET', '/api/v6/kb/search', (req, res, _params) => {";
+    assert.ok(server.includes(KB_ROUTE), 'mutation anchor missing from server.js');
+    for (const [label, extra, name] of [
+      ['an expression-bodied handler', "route('GET', '/api/v6/zz-expr', (req, res) => jsonResponse(res, 200, null));\n", 'GET /api/v6/zz-expr'],
+      ['a function-reference handler', "route('GET', '/api/v6/zz-ref', _zzHandler);\n", 'GET /api/v6/zz-ref']
+    ]) {
+      assert.deepEqual(flagged(server.replace(KB_ROUTE, extra + KB_ROUTE)), [name], label);
     }
     assert.deepEqual(flagged(server.replace(create,
       "  const b = _v6Body(body);\n  if (!operatorProjectCaller(req, res, 'create a logical project')) return;\n")),
