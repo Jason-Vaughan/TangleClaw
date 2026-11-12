@@ -63,6 +63,16 @@ describe('artifact references', () => {
     assert.throws(() => m2.resolveArtifact(ref, () => `${ARTIFACT}!`), code('ARTIFACT_CORRUPT'));
   });
 
+  it('refuses a byte range that splits a multi-byte UTF-8 character (PRR-A B3)', () => {
+    const text = 'café ☕';
+    assert.throws(() => m2.artifactRef(text, { start: 0, end: 4, anchor: 'a' }), code('REF_INVALID'));
+    assert.throws(() => m2.artifactRef(text, { start: 7, end: Buffer.byteLength(text), anchor: 'a' }), code('REF_INVALID'));
+    const whole = m2.artifactRef(text, { start: 0, end: 5, anchor: 'a' });
+    assert.equal(m2.resolveArtifact(whole, () => text), 'café');
+    const split = { ...whole, byteRange: [0, 4] };
+    assert.throws(() => m2.resolveArtifact(split, () => text), code('REF_INVALID'), 'never decodes to U+FFFD');
+  });
+
   it('refuses malformed ranges, anchors and references', () => {
     assert.throws(() => m2.artifactRef(ARTIFACT, { start: 5, end: 2, anchor: 'a' }), code('REF_INVALID'));
     assert.throws(() => m2.artifactRef(ARTIFACT, { end: 10_000, anchor: 'a' }), code('REF_INVALID'));
@@ -109,7 +119,7 @@ describe('human card (lossless projection)', () => {
     const env = refEnvelope();
     const card = m2.projectCard(env, fetchArtifact);
     assert.equal(card, m2.projectCard(env, fetchArtifact), 'deterministic');
-    const parsed = m2.parseCard(card);
+    const parsed = m2.parseCard(card, fetchArtifact);
     assert.deepEqual(parsed.envelope, env);
     assert.equal(parsed.artifactText, 'Car V62-W1-C passed its R-Gate.');
   });
@@ -134,8 +144,18 @@ describe('human card (lossless projection)', () => {
     assert.throws(() => m2.parseCard(lines.slice(0, -1).join('\n')), code('CARD_INVALID'));
     assert.throws(() => m2.parseCard([...lines, lines[8]].join('\n')), code('CARD_INVALID'));
     assert.throws(() => m2.parseCard(card.replace('task_id: "3004"', 'task_id:  "3004"')), code('CARD_INVALID'));
-    assert.throws(() => m2.parseCard(card.replace('"merge"', '"hold"')), code('DIGEST_MISMATCH'));
-    assert.throws(() => m2.parseCard(card.replace(/^artifact_text: .*$/m, 'artifact_text: null')), code('CARD_INVALID'));
+    assert.throws(() => m2.parseCard(card.replace('"merge"', '"hold"'), fetchArtifact), code('DIGEST_MISMATCH'));
+    assert.throws(() => m2.parseCard(card.replace(/^artifact_text: .*$/m, 'artifact_text: null'), fetchArtifact), code('CARD_INVALID'));
+  });
+
+  it('fails closed on forged artifact text, which sits outside the digest (PRR-A B1)', () => {
+    const card = m2.projectCard(refEnvelope(), fetchArtifact);
+    const forged = card.replace(/^artifact_text: .*$/m, `artifact_text: ${JSON.stringify('Car V62-W1-C FAILED its R-Gate.')}`);
+    assert.throws(() => m2.parseCard(forged, fetchArtifact), code('CARD_TAMPERED'));
+    assert.throws(() => m2.parseCard(card), code('ARTIFACT_MISSING'), 'a referencing card is never trusted unverified');
+    assert.throws(() => m2.parseCard(card, () => 'swapped artifact'), code('ARTIFACT_CORRUPT'));
+    const stateOnly = m2.projectCard(m2.createEnvelope({ msg_type: 'ack' }));
+    assert.equal(m2.parseCard(stateOnly).artifactText, null, 'a state-only card needs no artifact');
   });
 });
 
@@ -294,6 +314,15 @@ describe('SQLite persistence (real store)', () => {
     assert.throws(() => m2.recordMessage(db, { id: 'n1', sender: 'a', recipient: 'b', envelope: refEnvelope(), artifact: 'other' }), code('ARTIFACT_CORRUPT'));
   });
 
+  it('treats a repeated message ID with a different state hash as a conflict (PRR-A B2)', () => {
+    const env = m2.createEnvelope({ msg_type: 'update' });
+    const s1 = 'a'.repeat(64);
+    m2.recordMessage(db, { id: 'state-1', sender: 'a', recipient: 'b', envelope: env, stateHash: s1 });
+    assert.equal(m2.recordMessage(db, { id: 'state-1', sender: 'a', recipient: 'b', envelope: env, stateHash: s1 }).duplicate, true);
+    assert.throws(() => m2.recordMessage(db, { id: 'state-1', sender: 'a', recipient: 'b', envelope: env, stateHash: 'b'.repeat(64) }), code('IDEMPOTENCY_CONFLICT'));
+    assert.throws(() => m2.recordMessage(db, { id: 'state-1', sender: 'a', recipient: 'b', envelope: env }), code('IDEMPOTENCY_CONFLICT'));
+  });
+
   it('detects stored corruption on read', () => {
     m2.recordMessage(db, { id: 'corrupt-me', sender: 'a', recipient: 'b', envelope: m2.createEnvelope({ msg_type: 'update', next_action: 'x' }) });
     const row = db.prepare('SELECT envelope FROM v6_medusa_v2_messages WHERE id = ?').get('corrupt-me');
@@ -336,6 +365,9 @@ describe('SQLite persistence (real store)', () => {
     for (const w of [urgent, normal]) assert.equal(m2.queueWake(db, w).duplicate, false);
     assert.equal(m2.queueWake(db, urgent).duplicate, true);
     assert.throws(() => m2.queueWake(db, { ...urgent, completionIds: ['k1', 'k2'] }), code('WAKE_CONFLICT'));
+    for (const changed of [{ fleetId: 'f2' }, { waveId: 'w2' }, { priority: 'normal' }, { recipient: 'lane-z' }]) {
+      assert.throws(() => m2.queueWake(db, { ...urgent, ...changed }), code('WAKE_CONFLICT'), JSON.stringify(changed));
+    }
     assert.deepEqual(m2.pendingWakes(db).map((w) => w.priority), ['urgent', 'normal']);
 
     assert.equal(m2.drainWake(db, urgent.wakeId, { composerDrained: true, transcriptCommitted: false, marker: 'm' }).code, 'PROOF_REQUIRED');
