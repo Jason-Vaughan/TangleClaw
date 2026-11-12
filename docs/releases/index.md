@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.1.0 — Bounded self-healing, operating profiles, wave scheduler, grounded assistants and knowledge base](v6.1.0.md)
+- [v6.2.0 — Multi-train simulator, external providers, Advisor, Medusa v2 compact wire and OS sandboxing](v6.2.0.md)
 
 ## Recent releases
+
+- [v6.1.0 — Bounded self-healing, operating profiles, wave scheduler, grounded assistants and knowledge base](v6.1.0.md)
 
 - [v6.0.1 — Live Fleet Shell data, conversation detail, and Classic View switching](v6.0.1.md)
 
