@@ -36,12 +36,6 @@ const V6_DIR = path.join(ROOT, 'lib', 'v6');
 const MODULES = fs.readdirSync(V6_DIR).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)).sort();
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-/** The only helpers a handler may call BEFORE its caller check: they only parse the request URL. Any other call first (a response, a body read, a database touch) fails the check. */
-const PRE_GUARD_READS = new Set(['parseQuery', 'reqUrl']);
-
-/** Keywords followed by `(` that are control flow, not calls. */
-const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'function', 'await', 'new']);
-
 
 describe('module inventory', () => {
   it('finds the v6 module tree', () => {
@@ -163,66 +157,70 @@ describe('module-owned schema', () => {
 });
 
 describe('route security', () => {
-  /**
-   * The index just past the parenthesised group that opens at `open`.
-   * @param {Array<object>} t
-   * @param {number} open - Index of a `(` token.
-   * @returns {number}
-   */
-  function pastParens(t, open) {
-    let depth = 0;
-    for (let j = open; j < t.length; j++) {
-      if (t[j].type !== 'punct') continue;
-      if (t[j].value === '(') depth++;
-      else if (t[j].value === ')' && --depth === 0) return j + 1;
-    }
-    return t.length;
-  }
-
   /** @returns {boolean} */
   const isP = (tok, v) => !!tok && tok.type === 'punct' && tok.value === v;
   /** @returns {boolean} */
   const isI = (tok, v) => !!tok && tok.type === 'ident' && (v === undefined || tok.value === v);
 
   /**
-   * Whether the `…Caller(` call at index `k` is used fail-closed, in one of
-   * the two shapes this codebase uses: `if (!xCaller(...)) return` or
-   * `const c = xCaller(...); if (!c) return`. A call whose result is ignored,
-   * or tested the wrong way round, is not a guard. The guard must also be a
-   * statement of its own: the token before its `if`/`const` has to end one
-   * (`{`, `;`, `}`), so a brace-less branch such as `if (req) if (!xCaller(...))`
-   * or `else if (!xCaller(...))`, which brace depth cannot see, is rejected.
+   * Whether the tokens at `p` are exactly `const <name> = parseQuery(reqUrl(req).search);`,
+   * the one statement a v6 handler may run before its guard: it only parses
+   * the request URL.
    * @param {Array<object>} t
-   * @param {number} k
+   * @param {number} p
    * @returns {boolean}
    */
-  function failClosed(t, k) {
-    const prev = t[k - 4];
-    if (!(isP(prev, '{') || isP(prev, ';') || isP(prev, '}'))) return false;
-    const after = pastParens(t, k + 1);
-    if (isI(t[k - 3], 'if') && isP(t[k - 2], '(') && isP(t[k - 1], '!')) {
-      return isP(t[after], ')') && isI(t[after + 1], 'return');
+  function isQueryRead(t, p) {
+    return isI(t[p], 'const') && isI(t[p + 1]) && isP(t[p + 2], '=')
+      && isI(t[p + 3], 'parseQuery') && isP(t[p + 4], '(')
+      && isI(t[p + 5], 'reqUrl') && isP(t[p + 6], '(') && isI(t[p + 7], 'req') && isP(t[p + 8], ')')
+      && isP(t[p + 9], '.') && isI(t[p + 10], 'search') && isP(t[p + 11], ')') && isP(t[p + 12], ';');
+  }
+
+  /**
+   * Whether the tokens at `c` are exactly `<x>Caller(req, res, '<action>')`.
+   * The arguments run before the check does, so nothing else may appear there.
+   * @param {Array<object>} t
+   * @param {number} c
+   * @returns {boolean}
+   */
+  function isCallerCall(t, c) {
+    return isI(t[c]) && /Caller$/.test(t[c].value)
+      && isP(t[c + 1], '(') && isI(t[c + 2], 'req') && isP(t[c + 3], ',')
+      && isI(t[c + 4], 'res') && isP(t[c + 5], ',')
+      && !!t[c + 6] && t[c + 6].type === 'string' && isP(t[c + 7], ')');
+  }
+
+  /**
+   * Whether a fail-closed caller check starts exactly at `g`, in one of the two
+   * shapes this codebase uses: `if (!xCaller(req, res, '...')) return` or
+   * `const c = xCaller(req, res, '...'); if (!c) return`. A call whose result
+   * is ignored or tested the wrong way round is not a guard.
+   * @param {Array<object>} t
+   * @param {number} g
+   * @returns {boolean}
+   */
+  function isFailClosedGuardAt(t, g) {
+    if (isI(t[g], 'if') && isP(t[g + 1], '(') && isP(t[g + 2], '!') && isCallerCall(t, g + 3)) {
+      return isP(t[g + 11], ')') && isI(t[g + 12], 'return');
     }
-    if (isP(t[k - 1], '=') && isI(t[k - 2]) && ['const', 'let'].includes(t[k - 3] && t[k - 3].value)) {
-      const name = t[k - 2].value;
-      let j = after;
-      if (isP(t[j], ';')) j++;
-      return isI(t[j], 'if') && isP(t[j + 1], '(') && isP(t[j + 2], '!') && isI(t[j + 3], name)
-        && isP(t[j + 4], ')') && isI(t[j + 5], 'return');
+    if ((isI(t[g], 'const') || isI(t[g], 'let')) && isI(t[g + 1]) && isP(t[g + 2], '=') && isCallerCall(t, g + 3)) {
+      const name = t[g + 1].value;
+      let n = g + 11;
+      if (isP(t[n], ';')) n++;
+      return isI(t[n], 'if') && isP(t[n + 1], '(') && isP(t[n + 2], '!') && isI(t[n + 3], name)
+        && isP(t[n + 4], ')') && isI(t[n + 5], 'return');
     }
     return false;
   }
 
   /**
-   * The /api/v6 routes in `source` that do not check their caller,
-   * fail-closed and at the handler's top level, before their first response,
-   * body read or database access. "Body read" means ANY reference to the
-   * handler's `body` (a call such as `_v6Body(body)` or a property read such
-   * as `body.x`); "response" and "database access" are any other call. Only
-   * `parseQuery`/`reqUrl` may be called before the guard, in any spelling of
-   * a call (`x()`, `(x)()`, `o[k]()`, `x?.()`, `new X`, a tagged template).
-   * The guard's own arguments run before it does, so they must be exactly
-   * `(req, res, '<action>')`, the only shape the v6 routes use.
+   * The /api/v6 routes in `source` whose handler does not START with a
+   * fail-closed caller check. This is a closed-world grammar, not a search:
+   * the guard must be the handler's first statement, or follow only the
+   * exact URL-parse statement `isQueryRead` accepts. Nothing else can run
+   * first: no body read, no call in any spelling, no property read (a getter
+   * runs code), no branch, block or callback. Every v6 route matches it.
    * @param {string} source - server.js text.
    * @returns {{routes: number, unguarded: string[]}}
    */
@@ -238,42 +236,9 @@ describe('route security', () => {
       routes++;
       let j = k + 5;
       while (j < t.length && !isP(t[j], '{')) j++;
-      let depth = 0;
-      let guarded = false;
-      let ok = true;
-      for (; j < t.length; j++) {
-        const tok = t[j];
-        if (isP(tok, '{')) depth++;
-        else if (isP(tok, '}')) {
-          if (--depth === 0) break;
-        } else if (!guarded && isI(tok, 'body')) {
-          // #3044 N1: a property read of the body before the guard is a body
-          // read too, not only a call that takes it.
-          ok = false;
-        } else if (isI(tok) && /Caller$/.test(tok.value) && isP(t[j + 1], '(')) {
-          // Closed world: every guard passes exactly (req, res, '<action>').
-          // Its arguments run before it does, so anything else there (a body
-          // read, a call in any spelling) would run unguarded.
-          const end = pastParens(t, j + 1);
-          const argsClean = end === j + 8 && isI(t[j + 2], 'req') && isP(t[j + 3], ',')
-            && isI(t[j + 4], 'res') && isP(t[j + 5], ',') && !!t[j + 6] && t[j + 6].type === 'string';
-          // Only a fail-closed guard at the handler's top level counts: one
-          // nested in a branch or a callback runs only sometimes, if at all.
-          if (!argsClean || !failClosed(t, j) || depth !== 1) ok = false;
-          guarded = guarded || (argsClean && depth === 1 && failClosed(t, j));
-          j = end - 1;
-        } else if (!guarded && isP(tok, '(')) {
-          // Before the guard, a `(` may only open an `if` condition or an
-          // approved read's arguments. Any other is a call or a grouping in
-          // some spelling: `x()`, `(x)()`, `o[k]()`, `x?.()`.
-          const prev = t[j - 1];
-          if (!(isI(prev, 'if') || (isI(prev) && PRE_GUARD_READS.has(prev.value)))) ok = false;
-        } else if (!guarded && (isI(tok, 'new') || tok.type === 'template')) {
-          // The two calls with no `(`: `new X` and a tagged template.
-          ok = false;
-        }
-      }
-      if (!ok || !guarded) unguarded.push(`${t[k + 2].value} ${pathTok.value}`);
+      const start = j + 1;
+      const g = isQueryRead(t, start) ? start + 13 : start;
+      if (!isFailClosedGuardAt(t, g)) unguarded.push(`${t[k + 2].value} ${pathTok.value}`);
     }
     return { routes, unguarded };
   }
@@ -330,7 +295,11 @@ describe('route security', () => {
       ['a computed callee before the guard', "  _v6[name]();\n" + KB_GUARD],
       ['an optional call before the guard', "  _v6Lookup?.();\n" + KB_GUARD],
       ['a construction without parentheses before the guard', "  const x = new _V6Thing;\n" + KB_GUARD],
-      ['a tagged template before the guard', "  _v6Lookup`q`;\n" + KB_GUARD]
+      ['a tagged template before the guard', "  _v6Lookup`q`;\n" + KB_GUARD],
+      ['a member call named like an approved read before the guard', "  untrusted.parseQuery();\n" + KB_GUARD],
+      ['a property read (a possible getter) before the guard', "  req.x;\n" + KB_GUARD],
+      ['an empty statement before the guard', "  ;\n" + KB_GUARD],
+      ['a guard that does not return when the check fails', "  if (!operatorProjectCaller(req, res, 'search the knowledge base')) res.end();\n"]
     ]) {
       assert.deepEqual(flagged(server.replace(KB_GUARD, guard)), ['GET /api/v6/kb/search'], label);
     }
