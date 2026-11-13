@@ -2472,7 +2472,10 @@ describe('chat start controls and delegate recognition markup (#3053)', () => {
     const html = G.tcV6ConversationViewMarkup(base());
     assert.match(html, /<button type="button" id="v6ChatStart" class="btn btn-primary btn-small v6-chat-start" data-action="start-chat-session">▶ Start TC-Lane-PM<\/button>/);
     assert.match(html, /<p class="v6-chat-offline">TC-Lane-PM has no live session\.[\s\S]*id="v6ChatStartBanner"[^>]*data-action="start-chat-session"/);
-    assert.match(html, /href="\/\?launch=TC-Lane-PM"/);
+    // Classic's launch link needs an intent token (#2124), so the chat links
+    // to Classic View itself and says so, rather than to a launcher it cannot open.
+    assert.match(html, /<a class="v6-chat-classic-launch" href="#\/">Open Classic View to launch TC-Lane-PM<\/a>/);
+    assert.doesNotMatch(html, /\?launch=/);
   });
 
   it('a live target offers no Start for itself (a group may still offer Start for its offline members)', () => {
@@ -2846,5 +2849,35 @@ describe('tcV6ExtractLiveTurns: the interrupt hint is chrome only in its UI form
   it('the hint in its UI form is still chrome or activity', () => {
     assert.match(plain(G.tcV6ExtractLiveTurns(['> go', 'Working (esc to interrupt)'], 'claude', [])).activity, /Working/);
     assert.deepEqual(plain(G.tcV6ExtractLiveTurns(['> go', 'esc to cancel'], 'claude', [])).turns.length, 1);
+  });
+});
+
+describe('offline status polling does not overlap itself (cumulative review note)', () => {
+  it('a tick that arrives while a slow status read is still running does nothing', async () => {
+    const G = loadV6Shell();
+    let release = null;
+    let statusReads = 0;
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM' }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') {
+        statusReads++;
+        if (statusReads === 1) return { active: false };
+        await new Promise((r) => { release = r; });
+        return { active: false };
+      }
+      return null;
+    };
+    const timers = [];
+    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setDetail() {}, setProjects() {},
+      getRoute: () => ({ view: 'conversation', resourceId: '12' }) };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null,
+      setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
+    await live.handleRoute({ view: 'conversation', resourceId: '12' });
+    const first = timers[0]();
+    await new Promise((r) => setImmediate(r));
+    await timers[0]();
+    assert.equal(statusReads, 2, 'the overlapping tick did not read again');
+    release();
+    await first;
   });
 });

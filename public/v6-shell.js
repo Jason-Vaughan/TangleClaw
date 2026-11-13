@@ -717,7 +717,7 @@
         <pre id="v6ChatPeek" class="v6-chat-peek" tabindex="0">${chatPeekMarkup(chat.peek)}</pre>
       </details>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session.
         <button type="button" id="v6ChatStartBanner" class="btn btn-primary btn-small" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>
-        <a class="v6-chat-classic-launch" href="/?launch=${escapeHtml(encodeURIComponent(name))}">Use the Classic launcher</a></p>`}
+        <a class="v6-chat-classic-launch" href="#/">Open Classic View to launch ${escapeHtml(name)}</a></p>`}
       ${chatQuestionMarkup(live && live.question)}
       ${chatActivityMarkup(live && live.activity)}
       <form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form" aria-label="Message ${escapeHtml(name)}">
@@ -1606,11 +1606,21 @@
         // #3053: an offline chat watches its status, so a session started
         // anywhere turns it Active without a click.
         if (startTimer) {
+          // One check at a time: a slow status read must not overlap the next
+          // tick, or two loads could each start a poll and leave one stray.
+          let checking = false;
           pollId = startTimer(async () => {
             if (mine !== seq) { stopPolling(); return; }
-            const now = await api(`/api/sessions/${name}/status`);
-            if (mine !== seq || !(now && now.active && now.sessionId != null)) return;
-            await loadConversation(project, mine, ctx);
+            if (checking) return;
+            checking = true;
+            try {
+              const now = await api(`/api/sessions/${name}/status`);
+              if (mine !== seq || !(now && now.active && now.sessionId != null)) return;
+              stopPolling();
+              await loadConversation(project, mine, ctx);
+            } finally {
+              checking = false;
+            }
           }, CHAT_POLL_MS);
         }
         return;
@@ -1975,12 +1985,6 @@
     }
 
     /**
-     * Hand the loaded project rows to the shell: its sidebar tree, and the
-     * rows its filters read (setProjects arrived with those filters, #3046;
-     * an older shell handle without it just gets no engine filter data).
-     * @param {object} shell
-     */
-    /**
      * Hand the shell the engines' health for its sidebar badges (#3053); a
      * failed read leaves the badges' health unknown.
      * @param {object} shell
@@ -1992,6 +1996,12 @@
       if (res && res.status && typeof res.status === 'object') shell.setEngineHealth(res.status);
     }
 
+    /**
+     * Hand the loaded project rows to the shell: its sidebar tree, and the
+     * rows its filters read (setProjects arrived with those filters, #3046;
+     * an older shell handle without it just gets no engine filter data).
+     * @param {object} shell
+     */
     function showProjects(shell) {
       if (!projects) return;
       if (typeof shell.setProjects === 'function') shell.setProjects(projects);
@@ -2017,8 +2027,8 @@
     /**
      * Start the chat's offline target (#3053) and reload it in place. A
      * refusal (stranded wraps to acknowledge, an engine that cannot start)
-     * shows the server's reason; the Classic launcher remains for the cases
-     * that need its dialogs.
+     * shows the server's reason, and the banner links to Classic View for the
+     * cases that need its launch dialogs.
      * @returns {Promise<void>}
      */
     async function startSession() {
