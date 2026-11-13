@@ -700,8 +700,13 @@
       ${chatQuestionMarkup(live && live.question)}
       ${chatActivityMarkup(live && live.activity)}
       <form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form" aria-label="Message ${escapeHtml(name)}">
+        <div id="v6ChatAttachments" class="v6-chat-attachments" aria-live="polite">${attachmentChipsMarkup(chat.attachments)}</div>
         <textarea id="v6ChatInput" class="v6-chat-input" name="message" rows="3" aria-label="Message to ${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}"${disabled}>${escapeHtml(chat.draft || '')}</textarea>
-        <button type="submit" id="v6ChatSend" class="btn btn-primary v6-chat-send-btn"${disabled}>Send</button>
+        <div class="v6-chat-composer-actions">
+          <button type="button" id="v6ChatAttachBtn" class="btn btn-secondary btn-small v6-chat-attach-btn" aria-label="Attach files (or drop or paste them into the message)"${liveSession ? '' : ' disabled'}>📎 Attach</button>
+          <input type="file" id="v6ChatFileInput" class="v6-chat-file-input" multiple hidden>
+          <button type="submit" id="v6ChatSend" class="btn btn-primary v6-chat-send-btn"${disabled}>Send</button>
+        </div>
       </form>
       <p id="v6ChatStatus" class="v6-chat-send-status${send ? ` is-${send.kind}` : ''}" role="status" aria-live="polite">${send ? escapeHtml(send.message) : ''}</p>
     </section>`;
@@ -856,6 +861,105 @@
   /** @param {string|null} activity - What the engine is busy doing. @returns {string} HTML. */
   function chatActivityMarkup(activity) {
     return `<p id="v6ChatActivity" class="v6-chat-activity${activity ? ' is-busy' : ''}" aria-live="polite">${activity ? escapeHtml(activity) : ''}</p>`;
+  }
+
+  /** The secure-clipboard route's limit on one decoded file (`lib/secure-clipboard.js` MAX_FILE_BYTES). */
+  const MAX_ATTACH_BYTES = 5 * 1024 * 1024;
+
+  /**
+   * A file name the secure-clipboard route accepts (#3053):
+   * `[A-Za-z0-9._-]{1,128}`, never `.` or `..`. Spaces and path separators
+   * become `-`, anything else outside that set is dropped, a leading run of
+   * dots or dashes goes (so `../x` cannot climb and `.env` cannot hide), the
+   * extension survives truncation, and a name already in `taken` gets `-2`,
+   * `-3`… before its extension.
+   * @param {string} name - The browser's file name.
+   * @param {Set<string>} taken - Names already used in this chat.
+   * @returns {string}
+   */
+  function sanitizeUploadName(name, taken) {
+    const used = taken || new Set();
+    let clean = String(name == null ? '' : name)
+      .replace(/[\s/\\]+/g, '-')
+      .replace(/[^A-Za-z0-9._-]/g, '')
+      .replace(/-{2,}/g, '-')
+      .replace(/^[.-]+/, '')
+      .replace(/-+$/, '');
+    if (!clean) clean = 'attachment';
+    const extMatch = /(\.[A-Za-z0-9]{1,16})$/.exec(clean);
+    const ext = extMatch && extMatch.index > 0 ? extMatch[1] : '';
+    const stem = ext ? clean.slice(0, -ext.length) : clean;
+    const fit = (suffix) => `${stem.slice(0, 128 - ext.length - suffix.length)}${suffix}${ext}`;
+    let candidate = fit('');
+    for (let n = 2; used.has(candidate); n++) candidate = fit(`-${n}`);
+    return candidate;
+  }
+
+  /**
+   * The files an event carries (#3053): a drop's, a paste's (as files or as
+   * file items, which is how a pasted screenshot arrives), or a file
+   * input's. Anything else carries none.
+   * @param {object|null} evt
+   * @returns {Array<object>}
+   */
+  function filesFromEvent(evt) {
+    const list = (x) => (x && typeof x.length === 'number' ? Array.prototype.slice.call(x) : []);
+    if (!evt) return [];
+    if (evt.dataTransfer && list(evt.dataTransfer.files).length) return list(evt.dataTransfer.files);
+    if (evt.clipboardData) {
+      const files = list(evt.clipboardData.files);
+      if (files.length) return files;
+      return list(evt.clipboardData.items)
+        .filter((item) => item && item.kind === 'file' && typeof item.getAsFile === 'function')
+        .map((item) => item.getAsFile()).filter(Boolean);
+    }
+    return evt.target ? list(evt.target.files) : [];
+  }
+
+  /**
+   * Read a browser File as base64 (no `data:` prefix), the encoding the
+   * secure-clipboard route takes.
+   * @param {Blob} file
+   * @returns {Promise<string>}
+   */
+  function defaultReadFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new global.FileReader();
+      reader.onload = () => resolve(String(reader.result || '').replace(/^data:[^,]*,/, ''));
+      reader.onerror = () => reject(reader.error || new Error('the file could not be read'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  /**
+   * Where a saved attachment is, relative to the project's root — the
+   * agent's working directory. The route reports `relPath` relative to the
+   * project's `.tangleclaw/` directory (`secrets/<file>`), so used as-is it
+   * would send the agent to `<project>/secrets/<file>`, which does not exist.
+   * @param {string|undefined} relPath - The route's `relPath`.
+   * @param {string} filename - The name the file was saved under.
+   * @returns {string}
+   */
+  function projectRelative(relPath, filename) {
+    const rel = typeof relPath === 'string' && relPath ? relPath.replace(/^\/+/, '') : `secrets/${filename}`;
+    return rel.startsWith('.tangleclaw/') ? rel : `.tangleclaw/${rel}`;
+  }
+
+  /** The states an attachment chip can show (each is a CSS modifier). */
+  const ATTACH_STATES = Object.freeze(['uploading', 'ready', 'error']);
+
+  /**
+   * The composer's attachment chips, each removable.
+   * @param {Array<{name: string, status: string, relPath?: string, error?: string}>} items
+   * @returns {string} HTML.
+   */
+  function attachmentChipsMarkup(items) {
+    return (Array.isArray(items) ? items : []).map((a, i) => {
+      const status = ATTACH_STATES.includes(a && a.status) ? a.status : 'uploading';
+      const tip = status === 'error' ? (a.error || 'Could not attach this file.') : (status === 'ready' ? a.relPath : 'Uploading…');
+      return `<span class="v6-chat-chip is-${status}" title="${escapeHtml(tip)}">${escapeHtml(a && a.name)}${status === 'uploading' ? ' …' : ''}
+        <button type="button" id="v6ChatAttachRemove-${i}" class="v6-chat-chip-remove" aria-label="Remove ${escapeHtml(a && a.name)}">×</button></span>`;
+    }).join('');
   }
 
   /** The chat header's session pill text, by session state. */
@@ -1248,6 +1352,14 @@
     // the view last handed to the shell — what a send or a poll acts on.
     let current = null;
     let pollId = null;
+    // #3053: files attached in each chat, by target project id, and the
+    // means to read and upload them (injectable for tests).
+    const attachments = new Map();
+    let attachSeq = 0;
+    const readFileAsBase64 = deps.readFileAsBase64 || defaultReadFileAsBase64;
+    const operatorHeaders = deps.operatorHeaders || (typeof global.tcOperatorProofHeaders === 'function'
+      ? () => global.tcOperatorProofHeaders(api)
+      : async () => ({ 'Content-Type': 'application/json' }));
 
     /** @returns {Object<string, string>} Configured delegates, logical project id -> project id. */
     function delegates() {
@@ -1347,7 +1459,7 @@
       if (sessionId == null) {
         current.view = { project, sessionId: null, chat };
         shell.setAttestation(pickAttestation(null, project));
-        shell.setDetail({ kind: 'conversation', view: current.view });
+        showChat(shell);
         return;
       }
       const base = `/api/v6/projects/${encodeURIComponent(project.id)}/sessions/${encodeURIComponent(sessionId)}`;
@@ -1364,7 +1476,7 @@
         ? { project, sessionId, events: events.events, chat }
         : { project, sessionId, error: 'Could not load this session’s conversation events.', chat };
       shell.setAttestation(pickAttestation(attestations && attestations.attestations, project));
-      shell.setDetail({ kind: 'conversation', view: current.view });
+      showChat(shell);
       if (startTimer) {
         pollId = startTimer(async () => {
           if (mine !== seq) { stopPolling(); return; }
@@ -1380,12 +1492,25 @@
       }
     }
 
+    /**
+     * Hand the chat on screen to the shell, with its attachment chips: they
+     * belong to the target project, not to the view a load built.
+     * @param {object} shell
+     */
+    function showChat(shell) {
+      if (!current || !current.view || !shell) return;
+      current.view = Object.assign({}, current.view, {
+        chat: Object.assign({}, current.view.chat, { attachments: (attachments.get(String(current.project.id)) || []).slice() })
+      });
+      shell.setDetail({ kind: 'conversation', view: current.view });
+    }
+
     /** Re-render the chat on screen with a send outcome line. */
     function showSend(outcome) {
       const shell = getShell();
       if (!current || !current.view || !shell) return;
       current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { send: outcome }) });
-      shell.setDetail({ kind: 'conversation', view: current.view });
+      showChat(shell);
     }
 
     /**
@@ -1422,14 +1547,26 @@
      * @returns {Promise<void>}
      */
     async function sendChat(text) {
-      const message = String(text || '').trim();
+      const typed = String(text || '').trim();
       const chat = current;
-      if (!message || !chat || chat.sending || !getShell()) return;
+      if (!chat || chat.sending || !getShell()) return;
+      const files = attachments.get(String(chat.project.id)) || [];
+      const ready = files.filter((a) => a.status === 'ready');
+      const uploading = files.filter((a) => a.status === 'uploading').length;
+      if (!typed && !ready.length && !uploading) return;
       const name = String(chat.project.name || '');
       if (chat.sessionId == null) {
         showSend({ kind: 'error', message: `Not sent: ${name} has no live session.` });
         return;
       }
+      if (uploading) {
+        showSend({ kind: 'error', message: `Not sent: wait for ${uploading} upload${uploading === 1 ? '' : 's'} to finish.` });
+        return;
+      }
+      // Each attachment is referenced by the path the server saved it at, so
+      // the agent can open it; the text and the list are separated by a blank line.
+      const refs = ready.map((a) => `Attached: ${a.relPath}`).join('\n');
+      const message = typed && refs ? `${typed}\n\n${refs}` : (typed || refs);
       chat.sending = true;
       try {
         await deliverChat(chat, message, name);
@@ -1453,6 +1590,7 @@
       // pre-filled and one Enter would send it twice.
       const shellNow = getShell();
       if (sent && shellNow && typeof shellNow.clearChatDraft === 'function') shellNow.clearChatDraft(chat.project.id);
+      if (sent) attachments.delete(String(chat.project.id));
       if (!sent) {
         if (chat === current) showSend({ kind: 'error', message: `Not sent: ${api.lastError || 'the server refused it'}` });
         return;
@@ -1578,6 +1716,77 @@
     }
 
     /**
+     * Attach files to the chat on screen (#3053): each is named for the
+     * secure-clipboard route, refused on its chip when over 5 MB, and
+     * otherwise uploaded into the target project's secrets store
+     * (`POST /api/sessions/:project/secure-clipboard`, with the page's
+     * operator proof), its chip turning ready with the saved path or showing
+     * the server's reason.
+     * @param {Array<{name?: string, size?: number}>} files
+     * @returns {Promise<void>}
+     */
+    async function attachFiles(files) {
+      const chat = current;
+      const shell = getShell();
+      if (!chat || !shell) return;
+      const key = String(chat.project.id);
+      const list = attachments.get(key) || [];
+      attachments.set(key, list);
+      const taken = new Set(list.map((a) => a.name));
+      const uploads = [];
+      (Array.isArray(files) ? files : []).forEach((file) => {
+        const item = { id: ++attachSeq, name: sanitizeUploadName(file && file.name, taken), status: 'uploading' };
+        taken.add(item.name);
+        list.push(item);
+        if (!(Number(file && file.size) <= MAX_ATTACH_BYTES)) {
+          item.status = 'error';
+          item.error = 'Over the 5 MB limit for an attachment.';
+          return;
+        }
+        uploads.push(uploadAttachment(chat.project, key, item, file));
+      });
+      if (chat === current) showChat(shell);
+      await Promise.all(uploads);
+    }
+
+    /**
+     * Upload one attachment and settle its chip, unless the operator has
+     * removed it meanwhile (then the result is dropped).
+     * @returns {Promise<void>}
+     */
+    async function uploadAttachment(project, key, item, file) {
+      let outcome;
+      try {
+        const text = await readFileAsBase64(file);
+        const headers = await operatorHeaders();
+        const res = await api(`/api/sessions/${encodeURIComponent(project.name)}/secure-clipboard`, {
+          method: 'POST', headers, body: JSON.stringify({ text, mode: 'file', filename: item.name, encoding: 'base64' })
+        });
+        outcome = res
+          ? { status: 'ready', relPath: projectRelative(res.relPath, item.name) }
+          : { status: 'error', error: api.lastError || 'The server refused this file.' };
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a file the browser cannot read (permissions, a vanished file) becomes the chip's error, not an unhandled rejection
+        outcome = { status: 'error', error: `Could not read this file: ${err && err.message ? err.message : 'unknown error'}` };
+      }
+      const list = attachments.get(key) || [];
+      const live = list.find((a) => a.id === item.id);
+      if (!live) return;
+      Object.assign(live, outcome);
+      if (current && String(current.project.id) === key) showChat(getShell());
+    }
+
+    /**
+     * Remove the chat on screen's attachment at `index`.
+     * @param {number} index
+     */
+    function removeAttachment(index) {
+      if (!current) return;
+      const list = attachments.get(String(current.project.id)) || [];
+      if (index >= 0 && index < list.length) list.splice(index, 1);
+      showChat(getShell());
+    }
+
+    /**
      * Reload the route on screen with fresh project rows — the chat's
      * Refresh, and what a delegate change needs to take effect.
      * @returns {Promise<void>}
@@ -1639,7 +1848,10 @@
       return tree.length ? routeHash({ view: 'project', projectId: tree[0].id }) : '#/settings/';
     }
 
-    return { handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, getProjects() { return projects; } };
+    return {
+      handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, attachFiles, removeAttachment,
+      getProjects() { return projects; }
+    };
   }
 
   /**
@@ -1655,7 +1867,8 @@
    *   onLaunchTemplate?: (templateId: string) => void,
    *   storage?: {getItem: Function, setItem: Function}|null,
    *   onSendChat?: (text: string) => void, onChangeDelegate?: (nodeId: string, projectId: string) => void,
-   *   onRefreshChat?: () => void, onOpenProjectSettings?: (projectName: string) => void}} opts - `storage`
+   *   onRefreshChat?: () => void, onOpenProjectSettings?: (projectName: string) => void,
+   *   onAttachFiles?: (files: Array<object>) => void, onRemoveAttachment?: (index: number) => void}} opts - `storage`
    *   remembers the sidebar layout (#3046); defaults to the page's `localStorage`,
    *   and `null` keeps it for this page only. The `on*Chat`/delegate/settings
    *   callbacks are the chat view's controls (#3047).
@@ -1817,6 +2030,7 @@
           submitChat();
         });
       }
+      wireAttachments();
       const hood = doc.getElementById('v6ChatUnderHood');
       if (hood) {
         hood.addEventListener('toggle', (evt) => {
@@ -1846,11 +2060,63 @@
       return project && project.id != null ? String(project.id) : null;
     }
 
-    /** Hand the composer's text to the page, unless there is none. */
+    /**
+     * The composer's ways in for files (#3053): the Attach button and its
+     * hidden input, a drop anywhere on the composer, and a paste of files or
+     * a screenshot into the message; plus each chip's remove button.
+     */
+    function wireAttachments() {
+      if (typeof options.onAttachFiles !== 'function') return;
+      const attach = (evt) => {
+        const files = filesFromEvent(evt);
+        if (!files.length) return false;
+        options.onAttachFiles(files);
+        return true;
+      };
+      const input = doc.getElementById('v6ChatFileInput');
+      const button = doc.getElementById('v6ChatAttachBtn');
+      if (button && input) button.addEventListener('click', () => { if (typeof input.click === 'function') input.click(); });
+      if (input) {
+        input.addEventListener('change', (evt) => {
+          attach(evt);
+          if (evt && evt.target) evt.target.value = '';
+        });
+      }
+      const form = doc.getElementById('v6ChatForm');
+      if (form) {
+        form.addEventListener('dragover', (evt) => { if (evt && typeof evt.preventDefault === 'function') evt.preventDefault(); });
+        form.addEventListener('drop', (evt) => {
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          attach(evt);
+        });
+      }
+      const text = doc.getElementById('v6ChatInput');
+      if (text) {
+        // Only a paste that carries files is taken over; pasting text is left alone.
+        text.addEventListener('paste', (evt) => {
+          if (attach(evt) && typeof evt.preventDefault === 'function') evt.preventDefault();
+        });
+      }
+      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      const items = chat && Array.isArray(chat.attachments) ? chat.attachments : [];
+      if (typeof options.onRemoveAttachment === 'function') {
+        items.forEach((_, i) => {
+          const remove = doc.getElementById(`v6ChatAttachRemove-${i}`);
+          if (remove) remove.addEventListener('click', () => options.onRemoveAttachment(i));
+        });
+      }
+    }
+
+    /**
+     * Hand the composer's text to the page, unless there is nothing to send:
+     * no text and no attachment.
+     */
     function submitChat() {
       const input = doc.getElementById('v6ChatInput');
       const text = String((input && typeof input.value === 'string' ? input.value : chatDrafts.get(chatTargetKey())) || '').trim();
-      if (!text || typeof options.onSendChat !== 'function') return;
+      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      const hasFiles = Boolean(chat && Array.isArray(chat.attachments) && chat.attachments.some((a) => a && a.status !== 'error'));
+      if ((!text && !hasFiles) || typeof options.onSendChat !== 'function') return;
       options.onSendChat(text);
     }
 
@@ -2119,6 +2385,8 @@
   global.tcV6ResolveDelegateProject = resolveDelegateProject;
   global.tcV6ChatKeyAction = chatKeyAction;
   global.tcV6ExtractLiveTurns = extractLiveTurns;
+  global.tcV6SanitizeUploadName = sanitizeUploadName;
+  global.tcV6FilesFromEvent = filesFromEvent;
   global.tcV6CreateLiveController = createLiveController;
   global.tcCreateV6Shell = tcCreateV6Shell;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -105,7 +105,8 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
    */
   async function send(method, url, opts = {}) {
     const raw = opts.body === undefined ? null : JSON.stringify(opts.body);
-    const headers = Object.assign({ host: 'localhost:3102' }, opts.operator === false ? {} : { 'x-tangleclaw-client': 'dashboard' });
+    const headers = Object.assign({ host: 'localhost:3102' }, opts.operator === false ? {} : { 'x-tangleclaw-client': 'dashboard' },
+      opts.headers || {});
     if (raw !== null) {
       headers['content-type'] = 'application/json';
       headers['content-length'] = String(Buffer.byteLength(raw));
@@ -152,7 +153,19 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       api.lastErrorCode = data.code || null;
       return null;
     };
-    const api = async (url) => {
+    // Like the page's api(), an optional init sends a method, headers and a body.
+    const api = async (url, init) => {
+      if (init && init.method && init.method !== 'GET') {
+        calls.push(`${init.method} ${url}`);
+        const headers = Object.fromEntries(Object.entries(init.headers || {}).map(([k, v]) => [k.toLowerCase(), v]));
+        delete headers['content-type'];
+        // A page's own POST carries both: the open gate tells a browser from a
+        // local process by them (server.js _looksLikeBrowser), and a write
+        // that proves an operator must come from this server's own origin.
+        headers['sec-fetch-site'] = 'same-origin';
+        headers.origin = 'http://localhost:3102';
+        return settle(await send(init.method, url, { body: init.body ? JSON.parse(init.body) : {}, headers }));
+      }
       calls.push(`GET ${url}`);
       return settle(await send('GET', url));
     };
@@ -178,14 +191,26 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
     const { api, apiMutate, calls } = liveApi();
     const pending = [];
     let shell = null;
-    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate });
+    // The page's operator proof (public/api-helper.js tcOperatorProofHeaders):
+    // on an open install, the open-install token /api/auth/me hands out.
+    const operatorHeaders = async () => {
+      const me = await api('/api/auth/me');
+      const headers = { 'Content-Type': 'application/json' };
+      if (me && me.openInstallToken) headers['X-TC-Open-Token'] = me.openInstallToken;
+      return headers;
+    };
+    const readFileAsBase64 = async (file) => Buffer.from(file.content).toString('base64');
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, operatorHeaders, readFileAsBase64, storage: null });
     shell = G.tcCreateV6Shell(doc, {
       root, window: win,
       onLaunchTemplate: (id) => pending.push(live.launchTemplate(id)),
       onRender: (route) => pending.push(live.handleRoute(route)),
       onSendChat: (text) => pending.push(live.sendChat(text)),
       onChangeDelegate: (nodeId, projectId) => pending.push(live.changeDelegate(nodeId, projectId)),
-      onRefreshChat: () => pending.push(live.refresh())
+      onRefreshChat: () => pending.push(live.refresh()),
+      onAttachFiles: (files) => pending.push(live.attachFiles(files)),
+      onRemoveAttachment: (i) => pending.push(live.removeAttachment(i)),
+      storage: null
     });
     pending.push(live.handleRoute(shell.getRoute()));
     const settle = async () => { while (pending.length) await pending.shift(); };
@@ -360,6 +385,24 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.ok(!calls.some((c) => c.startsWith('POST') && c.endsWith('/conversation/events')), 'a refused message is not recorded');
       assert.match(root.innerHTML, /<textarea id="v6ChatInput"[^>]*>status please<\/textarea>/);
       assert.equal(typeof live.sendChat, 'function');
+    });
+
+    it('a file attached in the chat is saved into the project\'s secrets store through the real route, and its chip shows the saved path (#3053)', async () => {
+      const projectId = seedProject('e2e-chat-upload');
+      store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(projectId);
+      const { root, calls, settle, doc } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      const input = doc.getElementById('v6ChatFileInput');
+      input.files = [{ name: 'Screen Shot 1.png', size: 9, content: 'PNG-BYTES' }];
+      input.dispatch('change');
+      await settle();
+      assert.ok(calls.includes('POST /api/sessions/e2e-chat-upload/secure-clipboard'), JSON.stringify(calls));
+      assert.match(root.innerHTML, /v6-chat-chip is-ready" title="\.tangleclaw\/secrets\/Screen-Shot-1\.png"/);
+      const saved = path.join(tempDir, 'e2e-chat-upload', '.tangleclaw', 'secrets', 'Screen-Shot-1.png');
+      assert.equal(fs.readFileSync(saved, 'utf8'), 'PNG-BYTES');
+      assert.equal(fs.statSync(saved).mode & 0o777, 0o600, 'saved readable by its owner only');
     });
 
     it('the real B2 route accepts the event the chat records, and the next seq counts deleted events (#3047)', async () => {

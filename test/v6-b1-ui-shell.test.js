@@ -986,6 +986,12 @@ describe('page wiring (#3022 deliverable a) — index.html and ui.js', () => {
     assert.match(UI, /^function openSettings\(name, options\) \{/m, 'the settings opener the chat calls exists at top level');
   });
 
+  it('ui.js wires the chat\'s attachment controls to the live controller (#3053)', () => {
+    const block = UI.slice(UI.indexOf("if (typeof window.tcCreateV6Shell === 'function')"));
+    assert.match(block, /onAttachFiles\(files\) \{ v6Live\.attachFiles\(files\); \}/);
+    assert.match(block, /onRemoveAttachment\(index\) \{ v6Live\.removeAttachment\(index\); \}/);
+  });
+
   it('ui.js hides the Classic toolbar while the Fleet View shows, and hands the shell its project rows', () => {
     const block = UI.slice(UI.indexOf("if (typeof window.tcCreateV6Shell === 'function')"));
     assert.match(block, /const v6ClassicToolbar = document\.querySelector\('\.toolbar'\);/);
@@ -2202,5 +2208,233 @@ describe('Above-the-Hood chat, live in the shell (#3052)', () => {
       chat: { status: 'active', peek: { lines: ['x'] } } } });
     assert.equal(doc.getElementById('v6ChatStream').scrollTop, 900);
     assert.equal(doc.getElementById('v6ChatPeek').scrollTop, 900);
+  });
+});
+
+// ── #3053 (Car V623-W1-A): attachments in the chat composer ──
+
+describe('tcV6SanitizeUploadName (#3053)', () => {
+  const G = loadV6Shell();
+  const clean = (name, taken) => G.tcV6SanitizeUploadName(name, new Set(taken || []));
+
+  it('turns a browser file name into one the secure-clipboard route accepts', () => {
+    assert.equal(clean('Screenshot 2026-11-13 at 10.00 AM.png'), 'Screenshot-2026-11-13-at-10.00-AM.png');
+    assert.equal(clean('../etc/passwd'), 'etc-passwd');
+    assert.equal(clean('café notes (v2).txt'), 'caf-notes-v2.txt');
+  });
+
+  it('never yields an empty, dot-only or over-long name', () => {
+    assert.equal(clean(''), 'attachment');
+    assert.equal(clean('..'), 'attachment');
+    assert.equal(clean('???'), 'attachment');
+    const long = clean(`${'a'.repeat(200)}.png`);
+    assert.equal(long.length, 128);
+    assert.match(long, /\.png$/);
+    for (const name of ['Screenshot 1.png', '../x', '..', '']) assert.match(clean(name), /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,128}$/);
+  });
+
+  it('suffixes a name already taken in the same chat', () => {
+    assert.equal(clean('a.png', ['a.png']), 'a-2.png');
+    assert.equal(clean('a.png', ['a.png', 'a-2.png']), 'a-3.png');
+    assert.equal(clean('README', ['README']), 'README-2');
+  });
+});
+
+describe('tcV6FilesFromEvent (#3053)', () => {
+  const G = loadV6Shell();
+  it('reads files from a drop, a paste (files or file items) and a file input; nothing else', () => {
+    const f = { name: 'a.png', size: 3 };
+    assert.equal(G.tcV6FilesFromEvent({ dataTransfer: { files: [f] } }).length, 1);
+    assert.equal(G.tcV6FilesFromEvent({ clipboardData: { files: [f] } }).length, 1);
+    assert.equal(G.tcV6FilesFromEvent({ clipboardData: { files: [], items: [{ kind: 'file', getAsFile: () => f }, { kind: 'string' }] } }).length, 1);
+    assert.equal(G.tcV6FilesFromEvent({ target: { files: [f, f] } }).length, 2);
+    assert.equal(G.tcV6FilesFromEvent({ clipboardData: { files: [], items: [{ kind: 'string' }] } }).length, 0);
+    assert.equal(G.tcV6FilesFromEvent(null).length, 0);
+  });
+});
+
+describe('chat composer attachment markup (#3053)', () => {
+  const G = loadV6Shell();
+  const v = (chat) => ({ project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [],
+    chat: Object.assign({ status: 'active' }, chat || {}) });
+
+  it('offers an Attach button and a hidden multi-file input inside the composer', () => {
+    const html = G.tcV6ConversationViewMarkup(v());
+    assert.match(html, /<button type="button" id="v6ChatAttachBtn" class="btn btn-secondary btn-small v6-chat-attach-btn"[^>]*>📎 Attach<\/button>/);
+    assert.match(html, /<input type="file" id="v6ChatFileInput" class="v6-chat-file-input" multiple hidden>/);
+  });
+
+  it('shows one removable chip per attachment, with its state, escaped', () => {
+    const html = G.tcV6ConversationViewMarkup(v({ attachments: [
+      { name: 'a.png', status: 'ready', relPath: '.tangleclaw/secrets/a.png' },
+      { name: '<b>.txt', status: 'uploading' },
+      { name: 'big.mov', status: 'error', error: 'over 5 MB' }
+    ] }));
+    assert.match(html, /<div id="v6ChatAttachments" class="v6-chat-attachments"/);
+    assert.match(html, /class="v6-chat-chip is-ready"[^>]*>a\.png/);
+    assert.match(html, /class="v6-chat-chip is-uploading"[^>]*>&lt;b&gt;\.txt/);
+    assert.match(html, /class="v6-chat-chip is-error"[^>]*title="over 5 MB"/);
+    assert.match(html, /<button type="button" id="v6ChatAttachRemove-2" class="v6-chat-chip-remove" aria-label="Remove big\.mov">×<\/button>/);
+    assert.doesNotMatch(html, /<b>\.txt/);
+  });
+
+  it('an offline target cannot take attachments', () => {
+    assert.match(G.tcV6ConversationViewMarkup(v({ status: 'offline' })), /id="v6ChatAttachBtn"[^>]*disabled/);
+  });
+});
+
+describe('chat attachments, end to end through the shell and controller (#3053)', () => {
+  function mountUploads(opts) {
+    const o = opts || {};
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow(o.initialHash || '#/projects/tc-lane');
+    const rows = [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }, { id: 10, name: 'TC-Lane-A', engine: { id: 'claude' } }];
+    const posts = [];
+    let release = null;
+    const api = async (url, init) => {
+      if (init && init.method === 'POST') {
+        posts.push({ url, headers: plain(init.headers), body: JSON.parse(init.body) });
+        if (o.hold) await new Promise((r) => { release = r; });
+        if (o.refuse) { api.lastError = 'Sign in to send a secret into a project session'; return null; }
+        const b = JSON.parse(init.body);
+        // The real route's shape: relPath is relative to the project's .tangleclaw/ directory.
+        return { ok: true, mode: 'file', relPath: `secrets/${b.filename}`, bytes: 3 };
+      }
+      if (url === '/api/projects') return { projects: rows };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
+      if (url === '/api/sessions/TC-Lane-A/status') return { active: true, sessionId: 1660 };
+      if (/\/conversation\/events/.test(url)) return { events: [] };
+      return null;
+    };
+    const mutateCalls = [];
+    const apiMutate = async (url, method, body) => { mutateCalls.push({ url, body: plain(body) }); return { ok: true }; };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({
+      getShell: () => shell, api, apiMutate, storage: null,
+      readFileAsBase64: async (file) => Buffer.from(file.content || 'abc').toString('base64'),
+      operatorHeaders: async () => ({ 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' })
+    });
+    shell = G.tcCreateV6Shell(doc, {
+      root, window: win, storage: null,
+      onRender: (r) => pending.push(live.handleRoute(r)),
+      onSendChat: (t) => pending.push(live.sendChat(t)),
+      onAttachFiles: (files) => pending.push(live.attachFiles(files)),
+      onRemoveAttachment: (i) => pending.push(live.removeAttachment(i))
+    });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    const pick = (files) => { const input = doc.getElementById('v6ChatFileInput'); input.files = files; input.dispatch('change'); };
+    return { shell, root, doc, win, live, posts, mutateCalls, settle, pick, release: () => release && release() };
+  }
+
+  it('a picked file is uploaded to the project with operator proof, then becomes a ready chip', async () => {
+    const m = mountUploads();
+    await m.settle();
+    m.pick([{ name: 'Screen Shot.png', size: 3, content: 'png' }]);
+    await m.settle();
+    assert.equal(m.posts.length, 1);
+    assert.equal(m.posts[0].url, '/api/sessions/TC-Lane-PM/secure-clipboard');
+    assert.deepEqual(m.posts[0].body, { text: Buffer.from('png').toString('base64'), mode: 'file', filename: 'Screen-Shot.png', encoding: 'base64' });
+    assert.equal(m.posts[0].headers['X-TC-Open-Token'], 'tok');
+    assert.match(m.root.innerHTML, /v6-chat-chip is-ready[^>]*>Screen-Shot\.png/);
+  });
+
+  it('sending appends one Attached line per ready file, and the chips clear once it is sent', async () => {
+    const m = mountUploads();
+    await m.settle();
+    m.pick([{ name: 'a.png', size: 3 }, { name: 'b.txt', size: 3 }]);
+    await m.settle();
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'look at these';
+    input.dispatch('input');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.settle();
+    assert.equal(m.mutateCalls[0].body.command, 'look at these\n\nAttached: .tangleclaw/secrets/a.png\nAttached: .tangleclaw/secrets/b.txt');
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-chip/);
+  });
+
+  it('attachments alone can be sent, with no text', async () => {
+    const m = mountUploads();
+    await m.settle();
+    m.pick([{ name: 'a.png', size: 3 }]);
+    await m.settle();
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.settle();
+    assert.equal(m.mutateCalls[0].body.command, 'Attached: .tangleclaw/secrets/a.png');
+  });
+
+  it('a file over 5 MB is refused on the chip and never uploaded', async () => {
+    const m = mountUploads();
+    await m.settle();
+    m.pick([{ name: 'big.mov', size: 5 * 1024 * 1024 + 1 }]);
+    await m.settle();
+    assert.equal(m.posts.length, 0);
+    assert.match(m.root.innerHTML, /v6-chat-chip is-error[^>]*title="Over the 5 MB limit for an attachment\."/);
+  });
+
+  it('an upload the server refuses shows its reason on the chip, and is not referenced in a send', async () => {
+    const m = mountUploads({ refuse: true });
+    await m.settle();
+    m.pick([{ name: 'a.png', size: 3 }]);
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-chip is-error[^>]*title="Sign in to send a secret into a project session"/);
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'hi';
+    input.dispatch('input');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.settle();
+    assert.equal(m.mutateCalls[0].body.command, 'hi');
+  });
+
+  it('sending while a file is still uploading waits, and says why', async () => {
+    const m = mountUploads({ hold: true });
+    await m.settle();
+    m.pick([{ name: 'a.png', size: 3 }]);
+    await new Promise((r) => setImmediate(r));
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'hi';
+    input.dispatch('input');
+    await m.live.sendChat('hi');
+    assert.equal(m.mutateCalls.length, 0);
+    assert.match(m.root.innerHTML, /is-error[^>]*>Not sent: wait for 1 upload to finish\./);
+    m.release();
+    await m.settle();
+  });
+
+  it('a removed chip is gone, and an upload that finishes after its removal is discarded', async () => {
+    const m = mountUploads({ hold: true });
+    await m.settle();
+    m.pick([{ name: 'a.png', size: 3 }]);
+    await new Promise((r) => setImmediate(r));
+    m.doc.getElementById('v6ChatAttachRemove-0').dispatch('click');
+    m.release();
+    await m.settle();
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-chip/);
+  });
+
+  it('attachments belong to their chat and do not follow the operator to another one', async () => {
+    const m = mountUploads();
+    await m.settle();
+    m.pick([{ name: 'a.png', size: 3 }]);
+    await m.settle();
+    m.win.location.hash = '#/resources/10/conversation';
+    await m.settle();
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-chip/);
+    m.win.location.hash = '#/projects/tc-lane';
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-chip is-ready[^>]*>a\.png/);
+  });
+
+  it('two files with the same name in one chat get distinct names', async () => {
+    const m = mountUploads();
+    await m.settle();
+    m.pick([{ name: 'a.png', size: 3 }, { name: 'a.png', size: 3 }]);
+    await m.settle();
+    assert.deepEqual(m.posts.map((p) => p.body.filename), ['a.png', 'a-2.png']);
   });
 });
