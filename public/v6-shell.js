@@ -301,20 +301,20 @@
         const fleetFolded = collapsed.has(fleetNodeKey(project, fleet));
         // #3022: a member with a seat id is a real resource — link it to its
         // B2 Conversation View; one without stays plain text.
-        const memberItems = fleetFolded ? '' : fleet.members.map((m) => {
+        const memberItems = fleetFolded ? '' : fleet.members.map((m, mi) => {
           const label = `${escapeHtml(m.role)} (${escapeHtml(m.seatId)})`;
           if (!m.seatId) return `<li class="v6-shell-member">${label}</li>`;
           const memberActive = activeResourceId === String(m.seatId);
           const memberHash = routeHash({ view: 'conversation', resourceId: m.seatId });
           return `<li class="v6-shell-member"><a class="v6-shell-member-link${memberActive ? ' is-active' : ''}"
-            aria-current="${memberActive ? 'page' : 'false'}"
+            aria-current="${memberActive ? 'page' : 'false'}" id="v6TreeLink-m${pi}-${fi}-${mi}"
             href="${escapeHtml(memberHash)}" data-route="${escapeHtml(memberHash)}">${label}</a></li>`;
         }).join('');
         const fleetToggle = fleet.members.length
           ? treeToggleMarkup(`v6TreeToggle-f${pi}-${fi}`, fleetNodeKey(project, fleet), fleet.displayName, fleetFolded)
           : '';
         return `<li>
-          <div class="v6-tree-row">${fleetToggle}<a class="v6-shell-fleet${fleetActive ? ' is-active' : ''}"
+          <div class="v6-tree-row">${fleetToggle}<a class="v6-shell-fleet${fleetActive ? ' is-active' : ''}" id="v6TreeLink-f${pi}-${fi}"
              aria-current="${fleetActive ? 'page' : 'false'}"
              href="${escapeHtml(fleetHash)}" data-route="${escapeHtml(fleetHash)}">${escapeHtml(fleet.displayName)}</a></div>
           ${memberItems ? `<ul class="v6-shell-members">${memberItems}</ul>` : ''}
@@ -324,7 +324,7 @@
         ? treeToggleMarkup(`v6TreeToggle-p${pi}`, projectNodeKey(project), project.displayName, projectFolded)
         : '';
       return `<li>
-        <div class="v6-tree-row">${projectToggle}<a class="v6-shell-project${projectActive ? ' is-active' : ''}"
+        <div class="v6-tree-row">${projectToggle}<a class="v6-shell-project${projectActive ? ' is-active' : ''}" id="v6TreeLink-p${pi}"
            aria-current="${projectActive ? 'page' : 'false'}"
            href="${escapeHtml(projectHash)}" data-route="${escapeHtml(projectHash)}">${escapeHtml(project.displayName)}</a></div>
         ${fleetItems ? `<ul class="v6-shell-fleets">${fleetItems}</ul>` : ''}
@@ -659,7 +659,10 @@
     stream = `<div id="v6ChatStream" class="v6-chat-stream" tabindex="0">${stream}
       <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name)}</ol>
     </div>`;
-    const delegateMode = chat.mode === 'delegate';
+    // A member reached directly is still the project's delegate when it is
+    // the one the delegate resolution picks (#3053).
+    const delegateMode = chat.mode === 'delegate'
+      || Boolean(chat.delegate && String(chat.delegate.id) === String(v.project.id));
     const title = delegateMode && chat.nodeName ? chat.nodeName : name;
     const session = v.sessionId != null ? ` (#${escapeHtml(v.sessionId)})` : '';
     const members = Array.isArray(chat.members) ? chat.members : [];
@@ -679,6 +682,16 @@
     // Disabled while a send is in flight too, so a second Enter cannot type
     // the same message into the session twice.
     const disabled = liveSession && !(send && send.kind === 'pending') ? '' : ' disabled';
+    // #3053: start an offline target, or every offline member of a group,
+    // from the chat itself. Starting several agents asks a second time.
+    const startButton = liveSession ? '' : `<button type="button" id="v6ChatStart" class="btn btn-primary btn-small v6-chat-start" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>`;
+    const offlineMembers = chat.mode === 'delegate' ? members.filter((m) => m && m.live === false).length : 0;
+    const fleetLabel = chat.fleetArmed
+      ? `Click again to start ${offlineMembers} session${offlineMembers === 1 ? '' : 's'}`
+      : `▶ Start ${escapeHtml(chat.nodeName || name)} (${offlineMembers} offline)`;
+    const startFleetButton = offlineMembers
+      ? `<button type="button" id="v6ChatStartFleet" class="btn btn-secondary btn-small v6-chat-start-fleet" data-action="start-chat-fleet">${fleetLabel}</button>`
+      : '';
     const placeholder = `Message ${name}… (Enter to send, Shift+Enter for newline)`;
     return `<section class="v6-conversation v6-chat" aria-label="Conversation — ${escapeHtml(name)}">
       <header class="v6-chat-header">
@@ -686,7 +699,7 @@
         <p class="v6-chat-talking-to">Talking to: <strong>${escapeHtml(name)}</strong>${session} · ${delegateMode ? 'Designated Project Delegate' : 'Direct Session'}
           <span class="v6-chat-pill is-${status}">${CHAT_STATUS_LABELS[status]}</span></p>
         <div class="v6-chat-actions">
-          ${delegatePicker}${toDelegate}
+          ${startButton}${startFleetButton}${delegatePicker}${toDelegate}
           <a class="btn btn-secondary v6-open-hood" href="${escapeHtml(hoodHref)}">Open Hood (Live Terminal)</a>
           <button type="button" id="v6ChatRefresh" class="btn btn-secondary btn-small">Refresh</button>
           <button type="button" id="v6ChatSettings" class="btn btn-secondary btn-small">Project Settings</button>
@@ -696,7 +709,9 @@
       ${liveSession ? `<details id="v6ChatUnderHood" class="v6-chat-under-hood"${chat.hoodOpen ? ' open' : ''}>
         <summary>🔧 Under the Hood (Raw CLI &amp; Tool Activity)</summary>
         <pre id="v6ChatPeek" class="v6-chat-peek" tabindex="0">${chatPeekMarkup(chat.peek)}</pre>
-      </details>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session — open the Hood to start one.</p>`}
+      </details>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session.
+        <button type="button" id="v6ChatStartBanner" class="btn btn-primary btn-small" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>
+        <a class="v6-chat-classic-launch" href="/?launch=${escapeHtml(encodeURIComponent(name))}">Use the Classic launcher</a></p>`}
       ${chatQuestionMarkup(live && live.question)}
       ${chatActivityMarkup(live && live.activity)}
       <form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form" aria-label="Message ${escapeHtml(name)}">
@@ -1191,8 +1206,9 @@
       // passes only the draft for this chat's own project.
       const draft = (extras && extras.draft) || '';
       const hoodOpen = Boolean(extras && extras.hoodOpen);
+      const fleetArmed = Boolean(extras && extras.fleetArmed);
       const v = detail.view || {};
-      return conversationViewMarkup(Object.assign({}, v, { chat: Object.assign({}, v.chat, { draft, hoodOpen }) }));
+      return conversationViewMarkup(Object.assign({}, v, { chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed }) }));
     }
     if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
     if (detail.kind === 'recovery') return recoveryConsoleMarkup(detail.view);
@@ -1352,6 +1368,9 @@
     // the view last handed to the shell — what a send or a poll acts on.
     let current = null;
     let pollId = null;
+    // Set when a sidebar click leads to a different route (#3053), so that
+    // route reloads the project rows before it shows anything.
+    let freshNext = false;
     // #3053: files attached in each chat, by target project id, and the
     // means to read and upload them (injectable for tests).
     const attachments = new Map();
@@ -1423,7 +1442,9 @@
         nodeId: node ? node.id : null,
         nodeName: node ? node.displayName : '',
         fleetId,
-        members: memberRows.map((p) => ({ id: String(p.id), name: String(p.name || '') })),
+        members: memberRows.map((p) => ({
+          id: String(p.id), name: String(p.name || ''), live: Boolean(p.session && p.session.active === true)
+        })),
         delegate: delegate ? { id: String(delegate.id), name: String(delegate.name || '') } : null
       };
     }
@@ -1460,6 +1481,16 @@
         current.view = { project, sessionId: null, chat };
         shell.setAttestation(pickAttestation(null, project));
         showChat(shell);
+        // #3053: an offline chat watches its status, so a session started
+        // anywhere turns it Active without a click.
+        if (startTimer) {
+          pollId = startTimer(async () => {
+            if (mine !== seq) { stopPolling(); return; }
+            const now = await api(`/api/sessions/${name}/status`);
+            if (mine !== seq || !(now && now.active && now.sessionId != null)) return;
+            await loadConversation(project, mine, ctx);
+          }, CHAT_POLL_MS);
+        }
         return;
       }
       const base = `/api/v6/projects/${encodeURIComponent(project.id)}/sessions/${encodeURIComponent(sessionId)}`;
@@ -1667,7 +1698,8 @@
       stopPolling();
       current = null;
       if (!key) return;
-      if (entering || !projects) {
+      if (entering || !projects || freshNext) {
+        freshNext = false;
         await loadProjects();
         if (mine !== seq) return;
         showProjects(shell);
@@ -1817,6 +1849,66 @@
     }
 
     /**
+     * A sidebar link was clicked (#3053): the same route refreshes now; any
+     * other reloads the project rows when its hashchange arrives.
+     * @param {string} hash
+     * @returns {Promise<void>}
+     */
+    async function treeLinkClicked(hash) {
+      const shell = getShell();
+      if (!shell) return;
+      if (String(hash) === routeHash(shell.getRoute())) {
+        await refresh();
+        return;
+      }
+      freshNext = true;
+    }
+
+    /**
+     * Start the chat's offline target (#3053) and reload it in place. A
+     * refusal (stranded wraps to acknowledge, an engine that cannot start)
+     * shows the server's reason; the Classic launcher remains for the cases
+     * that need its dialogs.
+     * @returns {Promise<void>}
+     */
+    async function startSession() {
+      const chat = current;
+      if (!chat || !getShell()) return;
+      showSend({ kind: 'pending', message: `Starting ${chat.project.name}…` });
+      const ok = await apiMutate(`/api/sessions/${encodeURIComponent(chat.project.name)}`, 'POST', {});
+      if (chat !== current) return;
+      if (!ok) {
+        showSend({ kind: 'error', message: `Not started: ${api.lastError || 'the server refused it'}` });
+        return;
+      }
+      await refresh();
+    }
+
+    /**
+     * Start every offline member of the group on screen, one at a time, then
+     * reload and report how many started and why any did not.
+     * @returns {Promise<void>}
+     */
+    async function startFleet() {
+      const chat = current;
+      if (!chat || !getShell()) return;
+      const offline = (chat.ctx && Array.isArray(chat.ctx.members) ? chat.ctx.members : []).filter((m) => m.live === false);
+      if (!offline.length) return;
+      showSend({ kind: 'pending', message: `Starting ${offline.length} session${offline.length === 1 ? '' : 's'}…` });
+      const failures = [];
+      for (const m of offline) {
+        const ok = await apiMutate(`/api/sessions/${encodeURIComponent(m.name)}`, 'POST', {});
+        if (!ok) failures.push(`${m.name}: ${api.lastError || 'the server refused it'}`);
+      }
+      await refresh();
+      const started = offline.length - failures.length;
+      showSend({
+        kind: failures.length ? 'warning' : 'ok',
+        message: `Started ${started} of ${offline.length}.${failures.map((f) => ` ${f}`).join('')}`
+      });
+    }
+
+    /**
      * Make `projectId` the Designated Delegate of logical project `nodeId`,
      * remembered across visits, and reload the chat with it.
      * @param {string} nodeId
@@ -1850,6 +1942,7 @@
 
     return {
       handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, attachFiles, removeAttachment,
+      startSession, startFleet, treeLinkClicked,
       getProjects() { return projects; }
     };
   }
@@ -1868,7 +1961,8 @@
    *   storage?: {getItem: Function, setItem: Function}|null,
    *   onSendChat?: (text: string) => void, onChangeDelegate?: (nodeId: string, projectId: string) => void,
    *   onRefreshChat?: () => void, onOpenProjectSettings?: (projectName: string) => void,
-   *   onAttachFiles?: (files: Array<object>) => void, onRemoveAttachment?: (index: number) => void}} opts - `storage`
+   *   onAttachFiles?: (files: Array<object>) => void, onRemoveAttachment?: (index: number) => void,
+   *   onStartSession?: () => void, onStartFleet?: () => void, onTreeLinkClick?: (hash: string) => void}} opts - `storage`
    *   remembers the sidebar layout (#3046); defaults to the page's `localStorage`,
    *   and `null` keeps it for this page only. The `on*Chat`/delegate/settings
    *   callbacks are the chat view's controls (#3047).
@@ -1912,6 +2006,8 @@
     // polls and visits; and which chat was last scrolled to its bottom, so a
     // chat opens at its newest line once and is then left where the operator puts it.
     let chatHoodOpen = prefs.get('tc_v6_chat_under_hood_open', false, isBoolean);
+    // The chat whose Start fleet button has been clicked once (#3053).
+    let fleetArmedKey = null;
     let scrolledChatKey = null;
 
     function readHash() {
@@ -1952,6 +2048,8 @@
       const expandAll = doc.getElementById('v6TreeExpandAll');
       if (expandAll) expandAll.addEventListener('click', () => setCollapsedNodes([]));
       wireChat();
+      wireStart();
+      wireTreeLinks();
       const search = doc.getElementById('v6FilterSearch');
       if (search) {
         search.addEventListener('input', (evt) => {
@@ -2007,6 +2105,52 @@
     function focusById(id) {
       const el = doc.getElementById(id);
       if (el && typeof el.focus === 'function') el.focus();
+    }
+
+    /**
+     * The chat's start controls (#3053). Start fleet arms on the first
+     * click and starts on the second, within ten seconds: it launches
+     * several agents at once.
+     */
+    function wireStart() {
+      ['v6ChatStart', 'v6ChatStartBanner'].forEach((id) => {
+        const button = doc.getElementById(id);
+        if (button && typeof options.onStartSession === 'function') button.addEventListener('click', () => options.onStartSession());
+      });
+      const fleet = doc.getElementById('v6ChatStartFleet');
+      if (!fleet || typeof options.onStartFleet !== 'function') return;
+      fleet.addEventListener('click', () => {
+        const key = chatTargetKey();
+        if (fleetArmedKey !== key) {
+          fleetArmedKey = key;
+          render();
+          if (typeof global.setTimeout === 'function') {
+            global.setTimeout(() => { if (fleetArmedKey === key) { fleetArmedKey = null; render(); } }, 10000);
+          }
+          return;
+        }
+        fleetArmedKey = null;
+        render();
+        options.onStartFleet();
+      });
+    }
+
+    /** Report every sidebar link click, with its hash, so the page can refresh (#3053). */
+    function wireTreeLinks() {
+      if (typeof options.onTreeLinkClick !== 'function') return;
+      shownTree.forEach((project, pi) => {
+        const report = (id, hash) => {
+          const link = doc.getElementById(id);
+          if (link) link.addEventListener('click', () => options.onTreeLinkClick(hash));
+        };
+        report(`v6TreeLink-p${pi}`, routeHash({ view: 'project', projectId: project.id }));
+        project.fleets.forEach((fleet, fi) => {
+          report(`v6TreeLink-f${pi}-${fi}`, routeHash({ view: 'fleet', projectId: project.id, fleetId: fleet.id }));
+          fleet.members.forEach((m, mi) => {
+            if (m.seatId) report(`v6TreeLink-m${pi}-${fi}-${mi}`, routeHash({ view: 'conversation', resourceId: m.seatId }));
+          });
+        });
+      });
     }
 
     /** The chat view's own controls (#3047), when the detail pane shows one. */
@@ -2165,6 +2309,9 @@
       const saved = captureViewState();
       const title = routeTitle(currentRoute);
       shownTree = filterTree(tree, { text: filterText, engine: filterEngine, groups: selectedGroups }, projectRows);
+      // #3053: the template wizard and attestation pills are not chat
+      // content; they stay in the page (and wired) but out of sight.
+      const inChat = Boolean(detail && detail.kind === 'conversation');
       if (root.classList) root.classList.toggle('v6-shell-root--sidebar-collapsed', sidebarCollapsed);
       root.innerHTML = `
         <a id="v6ShellSkipLink" class="v6-shell-skip-link" href="#v6ShellMain">Skip to main content</a>
@@ -2192,12 +2339,14 @@
           <div class="v6-shell-header">
             ${sidebarCollapsed ? `<button type="button" id="v6SidebarExpand" class="btn btn-secondary v6-sidebar-expand"
               data-action="toggle-sidebar-drawer" aria-controls="v6ShellSidebar" aria-expanded="false">» Show Fleet</button>` : ''}
-            <a id="v6ShellClassicLink" class="btn btn-secondary v6-shell-classic-link" href="#/">← Classic View</a>
             <h1 class="v6-shell-title">${escapeHtml(title)}</h1>
           </div>
-          <div id="v6ShellDetail">${detailMarkup(detail, { draft: chatDrafts.get(chatTargetKey()) || '', hoodOpen: chatHoodOpen })}</div>
-          <div id="v6ShellWizard">${fleetWizardMarkup(templates)}</div>
-          <div id="v6ShellAttestation">${modelAttestationMarkup(attestation)}</div>
+          <div id="v6ShellDetail">${detailMarkup(detail, {
+            draft: chatDrafts.get(chatTargetKey()) || '', hoodOpen: chatHoodOpen,
+            fleetArmed: fleetArmedKey != null && fleetArmedKey === chatTargetKey()
+          })}</div>
+          <div id="v6ShellWizard"${inChat ? ' hidden' : ''}>${fleetWizardMarkup(templates)}</div>
+          <div id="v6ShellAttestation"${inChat ? ' hidden' : ''}>${modelAttestationMarkup(attestation)}</div>
         </main>
         ${watermarkFooterMarkup(showWatermark)}
       `;

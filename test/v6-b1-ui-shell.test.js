@@ -696,9 +696,12 @@ describe('tcCreateV6Shell — Classic View link and detail slot (#3022 deliverab
     return { shell, root, win };
   }
 
-  it('renders a "← Classic View" link back to #/', () => {
+  // #3053 removed the inner "← Classic View" link: the page header's
+  // Fleet/Classic switcher (#3046) is the one way back, so the shell no
+  // longer draws a second one. This assertion moved with that requirement.
+  it('draws no inner Classic View link: the page header switcher is the way back (#3053)', () => {
     const { root } = mount();
-    assert.match(root.innerHTML, /id="v6ShellClassicLink"[^>]*href="#\/"[^>]*>← Classic View</);
+    assert.doesNotMatch(root.innerHTML, /v6ShellClassicLink|← Classic View/);
   });
 
   it('setDetail renders into #v6ShellDetail and clears with null', () => {
@@ -990,6 +993,13 @@ describe('page wiring (#3022 deliverable a) — index.html and ui.js', () => {
     const block = UI.slice(UI.indexOf("if (typeof window.tcCreateV6Shell === 'function')"));
     assert.match(block, /onAttachFiles\(files\) \{ v6Live\.attachFiles\(files\); \}/);
     assert.match(block, /onRemoveAttachment\(index\) \{ v6Live\.removeAttachment\(index\); \}/);
+  });
+
+  it('ui.js wires Start, Start fleet and the sidebar refresh to the live controller (#3053)', () => {
+    const block = UI.slice(UI.indexOf("if (typeof window.tcCreateV6Shell === 'function')"));
+    assert.match(block, /onStartSession\(\) \{ v6Live\.startSession\(\); \}/);
+    assert.match(block, /onStartFleet\(\) \{ v6Live\.startFleet\(\); \}/);
+    assert.match(block, /onTreeLinkClick\(hash\) \{ v6Live\.treeLinkClicked\(hash\); \}/);
   });
 
   it('ui.js hides the Classic toolbar while the Fleet View shows, and hands the shell its project rows', () => {
@@ -1744,7 +1754,12 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     await m.live.sendChat('hello');
     assert.equal(m.mutateCalls.length, 0);
     assert.match(m.root.innerHTML, /Medusa-INT has no live session/);
-    assert.equal(m.timers.length, 0, 'nothing to poll');
+    // #3053: an offline chat polls its status (to turn Active by itself),
+    // never its pane, which has nothing to show.
+    assert.equal(m.timers.length, 1);
+    const before = m.calls.length;
+    await m.timers[0].fn();
+    assert.deepEqual(m.calls.slice(before), ['/api/sessions/Medusa-INT/status']);
   });
 
   it('polls the live output every 4 s without re-rendering the composer, and stops when the route changes', async () => {
@@ -2436,5 +2451,206 @@ describe('chat attachments, end to end through the shell and controller (#3053)'
     m.pick([{ name: 'a.png', size: 3 }, { name: 'a.png', size: 3 }]);
     await m.settle();
     assert.deepEqual(m.posts.map((p) => p.body.filename), ['a.png', 'a-2.png']);
+  });
+});
+
+// ── #3053 (Car V623-W1-A): start from the chat, refresh, delegate recognition, chrome ──
+
+describe('chat start controls and delegate recognition markup (#3053)', () => {
+  const G = loadV6Shell();
+  const base = (chat, extra) => Object.assign({
+    project: { id: 12, name: 'TC-Lane-PM' }, sessionId: null,
+    chat: Object.assign({ mode: 'delegate', nodeId: 'tc-lane', nodeName: 'TC-Lane', status: 'offline',
+      members: [{ id: '10', name: 'TC-Lane-A', live: true }, { id: '12', name: 'TC-Lane-PM', live: false }, { id: '14', name: 'TC-Lane-B', live: false }] }, chat || {})
+  }, extra || {});
+
+  it('an offline target offers Start in the header and the offline banner, plus the Classic launcher', () => {
+    const html = G.tcV6ConversationViewMarkup(base());
+    assert.match(html, /<button type="button" id="v6ChatStart" class="btn btn-primary btn-small v6-chat-start" data-action="start-chat-session">▶ Start TC-Lane-PM<\/button>/);
+    assert.match(html, /<p class="v6-chat-offline">TC-Lane-PM has no live session\.[\s\S]*id="v6ChatStartBanner"[^>]*data-action="start-chat-session"/);
+    assert.match(html, /href="\/\?launch=TC-Lane-PM"/);
+  });
+
+  it('a live target offers no Start for itself (a group may still offer Start for its offline members)', () => {
+    assert.doesNotMatch(G.tcV6ConversationViewMarkup(base({ status: 'active' }, { sessionId: 1 })), /id="v6ChatStart"|v6ChatStartBanner/);
+  });
+
+  it('a group with offline members offers Start for them, counted, and asks again before starting', () => {
+    assert.match(G.tcV6ConversationViewMarkup(base()),
+      /<button type="button" id="v6ChatStartFleet" class="btn btn-secondary btn-small v6-chat-start-fleet" data-action="start-chat-fleet">▶ Start TC-Lane \(2 offline\)<\/button>/);
+    assert.match(G.tcV6ConversationViewMarkup(base({ fleetArmed: true })), /id="v6ChatStartFleet"[^>]*>Click again to start 2 sessions<\/button>/);
+    const allLive = base({ members: [{ id: '10', name: 'A', live: true }] });
+    assert.doesNotMatch(G.tcV6ConversationViewMarkup(allLive), /v6ChatStartFleet/);
+  });
+
+  it('a direct route whose member is the delegate is shown as the Designated Project Delegate, with the picker', () => {
+    const html = G.tcV6ConversationViewMarkup(base({ mode: 'direct', delegate: { id: '12', name: 'TC-Lane-PM' }, status: 'active' }, { sessionId: 1 }));
+    assert.match(html, /Designated Project Delegate/);
+    assert.match(html, /id="v6ChatDelegate"/);
+    assert.doesNotMatch(html, /Direct Session/);
+  });
+
+  it('a direct route to a member that is not the delegate stays a Direct Session', () => {
+    const html = G.tcV6ConversationViewMarkup(base({ mode: 'direct', delegate: { id: '12', name: 'TC-Lane-PM' }, status: 'active' },
+      { project: { id: 10, name: 'TC-Lane-A' }, sessionId: 1 }));
+    assert.match(html, /Direct Session/);
+    assert.match(html, /Switch to Delegate: TC-Lane-PM/);
+  });
+});
+
+describe('tcCreateV6Shell — chrome in the conversation view (#3053)', () => {
+  it('keeps the template wizard and attestation slots in the page but hidden while a conversation shows', () => {
+    const { shell, root } = mountShell({ tree: TWO_GROUP_TREE, templates: [{ id: 't1', name: 'T', seats: [1] }] });
+    assert.match(root.innerHTML, /<div id="v6ShellWizard">/);
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'x' }, sessionId: null, chat: {} } });
+    assert.match(root.innerHTML, /<div id="v6ShellWizard" hidden>[\s\S]*v6ShellWizardLaunch-t1/);
+    assert.match(root.innerHTML, /<div id="v6ShellAttestation" hidden>/);
+  });
+
+  it('gives every sidebar link a positional id, and reports a click on it with its hash', () => {
+    const clicked = [];
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, onTreeLinkClick: (hash) => clicked.push(hash) });
+    assert.match(root.innerHTML, /class="v6-shell-project[^"]*"[^>]*id="v6TreeLink-p0"/);
+    assert.match(root.innerHTML, /class="v6-shell-fleet[^"]*"[^>]*id="v6TreeLink-f0-0"/);
+    assert.match(root.innerHTML, /class="v6-shell-member-link[^"]*"[^>]*id="v6TreeLink-m1-0-0"/);
+    doc.getElementById('v6TreeLink-p0').dispatch('click');
+    doc.getElementById('v6TreeLink-m1-0-0').dispatch('click');
+    assert.deepEqual(clicked, ['#/projects/tc-lane', '#/resources/21/conversation']);
+  });
+});
+
+describe('start, refresh and offline polling through the live controller (#3053)', () => {
+  function mountStart(opts) {
+    const o = opts || {};
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow(o.initialHash || '#/projects/tc-lane');
+    const live = { 10: true, 12: false, 14: false };
+    const rows = () => [
+      { id: 10, name: 'TC-Lane-A', engine: { id: 'claude' }, session: live[10] ? { active: true } : null },
+      { id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' }, session: live[12] ? { active: true } : null },
+      { id: 14, name: 'TC-Lane-B', engine: { id: 'claude' }, session: live[14] ? { active: true } : null }
+    ];
+    const byName = { 'TC-Lane-A': 10, 'TC-Lane-PM': 12, 'TC-Lane-B': 14 };
+    const calls = [];
+    const api = async (url) => {
+      calls.push(url);
+      if (url === '/api/projects') return { projects: rows() };
+      const st = /^\/api\/sessions\/([^/]+)\/status$/.exec(url);
+      if (st) { const id = byName[decodeURIComponent(st[1])]; return live[id] ? { active: true, sessionId: id * 100 } : { active: false }; }
+      if (/conversation\/events/.test(url)) return { events: [] };
+      return null;
+    };
+    const mutateCalls = [];
+    const apiMutate = async (url, method, body) => {
+      mutateCalls.push({ url, method, body: plain(body) });
+      const m = /^\/api\/sessions\/([^/]+)$/.exec(url);
+      if (m) {
+        const name = decodeURIComponent(m[1]);
+        if (o.refuse && o.refuse[name]) { api.lastError = o.refuse[name]; return null; }
+        live[byName[name]] = true;
+        return { ok: true };
+      }
+      return { ok: true };
+    };
+    api.lastError = null;
+    const timers = [];
+    let shell = null;
+    const pending = [];
+    const ctl = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null,
+      setInterval: (fn, ms) => { timers.push({ fn, ms, cleared: false }); return timers.length - 1; },
+      clearInterval: (id) => { if (timers[id]) timers[id].cleared = true; } });
+    shell = G.tcCreateV6Shell(doc, {
+      root, window: win, storage: null,
+      onRender: (r) => pending.push(ctl.handleRoute(r)),
+      onStartSession: () => pending.push(ctl.startSession()),
+      onStartFleet: () => pending.push(ctl.startFleet()),
+      onTreeLinkClick: (hash) => pending.push(ctl.treeLinkClicked(hash))
+    });
+    pending.push(ctl.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    return { shell, root, doc, win, ctl, calls, mutateCalls, timers, live, settle };
+  }
+
+  it('Start launches the offline target and reloads the chat in place as Active', async () => {
+    const m = mountStart();
+    await m.settle();
+    assert.match(m.root.innerHTML, /is-offline/);
+    m.doc.getElementById('v6ChatStart').dispatch('click');
+    await m.settle();
+    assert.deepEqual(m.mutateCalls[0], { url: '/api/sessions/TC-Lane-PM', method: 'POST', body: {} });
+    assert.match(m.root.innerHTML, /class="v6-chat-pill is-active">Active</);
+  });
+
+  it('a refused start shows the server\'s reason and leaves the chat offline', async () => {
+    const m = mountStart({ refuse: { 'TC-Lane-PM': 'Stranded wraps need acknowledging (STRANDED_WRAPS)' } });
+    await m.settle();
+    m.doc.getElementById('v6ChatStartBanner').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /is-error[^>]*>Not started: Stranded wraps need acknowledging \(STRANDED_WRAPS\)</);
+    assert.match(m.root.innerHTML, /is-offline/);
+  });
+
+  it('Start fleet asks again first, then starts each offline member and reports the result', async () => {
+    const m = mountStart({ refuse: { 'TC-Lane-B': 'no engine' } });
+    await m.settle();
+    m.doc.getElementById('v6ChatStartFleet').dispatch('click');
+    await m.settle();
+    assert.equal(m.mutateCalls.length, 0, 'the first click only arms it');
+    assert.match(m.root.innerHTML, /Click again to start 2 sessions/);
+    m.doc.getElementById('v6ChatStartFleet').dispatch('click');
+    await m.settle();
+    // In the sidebar's member order (by name).
+    assert.deepEqual(m.mutateCalls.map((c) => c.url), ['/api/sessions/TC-Lane-B', '/api/sessions/TC-Lane-PM']);
+    assert.match(m.root.innerHTML, /Started 1 of 2\. TC-Lane-B: no engine/);
+    assert.match(m.root.innerHTML, /class="v6-chat-pill is-active">Active</, 'the PM started, and the chat reloaded');
+  });
+
+  it('an offline chat polls its status and turns Active by itself once the session starts elsewhere', async () => {
+    const m = mountStart();
+    await m.settle();
+    assert.equal(m.timers.length, 1, 'an offline chat polls too');
+    m.live[12] = true;
+    await m.timers[0].fn();
+    await m.settle();
+    assert.match(m.root.innerHTML, /class="v6-chat-pill is-active">Active</);
+  });
+
+  it('re-clicking the route already on screen refreshes it', async () => {
+    const m = mountStart();
+    await m.settle();
+    const reads = () => m.calls.filter((u) => u === '/api/projects').length;
+    const before = reads();
+    m.ctl.treeLinkClicked('#/projects/tc-lane');
+    await m.settle();
+    assert.equal(reads(), before + 1);
+  });
+
+  it('clicking another route reloads the projects for it, so its session state is current', async () => {
+    const m = mountStart();
+    await m.settle();
+    const reads = () => m.calls.filter((u) => u === '/api/projects').length;
+    const before = reads();
+    m.live[14] = true;
+    m.ctl.treeLinkClicked('#/resources/14/conversation');
+    m.win.location.hash = '#/resources/14/conversation';
+    await m.settle();
+    assert.equal(reads(), before + 1);
+    assert.match(m.root.innerHTML, /class="v6-chat-pill is-active">Active</);
+  });
+
+  it('coming back to the Fleet View from Classic reloads the projects (no separate refresh needed)', async () => {
+    const m = mountStart();
+    await m.settle();
+    const reads = () => m.calls.filter((u) => u === '/api/projects').length;
+    const before = reads();
+    m.win.location.hash = '#/';
+    await m.settle();
+    m.win.location.hash = '#/projects/tc-lane';
+    await m.settle();
+    assert.equal(reads(), before + 1);
   });
 });

@@ -4220,7 +4220,15 @@ html[data-theme="light"] .tc-bg-watermark img {
   overflow-wrap: anywhere;
 }
 .v6-chat-offline {
-  opacity: 0.8;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* #3053: the Classic launcher, for a start that needs its dialogs. */
+.v6-chat-classic-launch {
+  font-size: 0.85em;
+  opacity: 0.85;
 }
 /* #3052: Above the Hood — the conversation as bubbles, the raw pane folded away. */
 .v6-chat-stream {
