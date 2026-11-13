@@ -1906,6 +1906,27 @@ describe('Project Delegate Chat review fixes (#3047)', () => {
     assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*><\/textarea>/, 'the sent text does not come back');
   });
 
+  it('a message delivered after the operator left the chat is still recorded, against its own target, and the new chat is untouched', async () => {
+    const m = mountPair({ hold: true });
+    await m.settle();
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'record me';
+    input.dispatch('input');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    m.win.location.hash = '#/resources/10/conversation';
+    await new Promise((r) => setImmediate(r));
+    m.release();
+    await m.settle();
+    const commands = m.mutateCalls.filter((c) => c.url.endsWith('/command'));
+    const events = m.mutateCalls.filter((c) => c.url.endsWith('/conversation/events'));
+    assert.deepEqual(commands.map((c) => c.url), ['/api/sessions/TC-Lane-PM/command']);
+    assert.deepEqual(events.map((c) => [c.url, c.body.content, c.body.role]),
+      [['/api/v6/projects/12/sessions/1592/conversation/events', 'record me', 'user']]);
+    assert.match(m.root.innerHTML, /Talking to: <strong>TC-Lane-A<\/strong>/, 'the chat on screen is still the one the operator moved to');
+    assert.doesNotMatch(m.root.innerHTML, /Sent to TC-Lane-PM/, 'no stale outcome line lands in the other chat');
+  });
+
   it('Refresh hands the freshly read project rows to the sidebar and its engine filter', async () => {
     const m = mountPair();
     await m.settle();

@@ -1258,11 +1258,14 @@
       // pre-filled and one Enter would send it twice.
       const shellNow = getShell();
       if (sent && shellNow && typeof shellNow.clearChatDraft === 'function') shellNow.clearChatDraft(chat.project.id);
-      if (chat !== current) return;
       if (!sent) {
-        showSend({ kind: 'error', message: `Not sent: ${api.lastError || 'the server refused it'}` });
+        if (chat === current) showSend({ kind: 'error', message: `Not sent: ${api.lastError || 'the server refused it'}` });
         return;
       }
+      // A delivered message is recorded against the chat it was sent from,
+      // even if the operator has moved on: the conversation must not lose
+      // what the session received. Only the on-screen update waits on the
+      // operator still being here.
       const recorded = await recordUserEvent(chat, message);
       if (chat !== current) return;
       await loadConversation(chat.project, chat.mine, chat.ctx, recorded === true
