@@ -1888,6 +1888,24 @@ describe('Project Delegate Chat review fixes (#3047)', () => {
     assert.match(m.root.innerHTML, /Sent to TC-Lane-PM\./);
   });
 
+  it('a message sent while the operator left the chat is not waiting to be sent again on return', async () => {
+    const m = mountPair({ hold: true });
+    await m.settle();
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'sent once';
+    input.dispatch('input');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    m.win.location.hash = '#/resources/10/conversation';
+    await new Promise((r) => setImmediate(r));
+    m.release();
+    await m.settle();
+    m.win.location.hash = '#/projects/tc-lane';
+    await m.settle();
+    assert.equal(m.mutateCalls.filter((c) => c.url.endsWith('/command')).length, 1);
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*><\/textarea>/, 'the sent text does not come back');
+  });
+
   it('Refresh hands the freshly read project rows to the sidebar and its engine filter', async () => {
     const m = mountPair();
     await m.settle();

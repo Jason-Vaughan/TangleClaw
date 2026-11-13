@@ -1253,6 +1253,11 @@
     async function deliverChat(chat, message, name) {
       showSend({ kind: 'pending', message: `Sending to ${name}…` });
       const sent = await apiMutate(`/api/sessions/${encodeURIComponent(name)}/command`, 'POST', { command: message, enter: true });
+      // Once it is in the session the draft is spent, even if the operator
+      // has moved to another chat meanwhile: left saved, it would come back
+      // pre-filled and one Enter would send it twice.
+      const shellNow = getShell();
+      if (sent && shellNow && typeof shellNow.clearChatDraft === 'function') shellNow.clearChatDraft(chat.project.id);
       if (chat !== current) return;
       if (!sent) {
         showSend({ kind: 'error', message: `Not sent: ${api.lastError || 'the server refused it'}` });
@@ -1260,8 +1265,6 @@
       }
       const recorded = await recordUserEvent(chat, message);
       if (chat !== current) return;
-      const shell = getShell();
-      if (shell && typeof shell.clearChatDraft === 'function') shell.clearChatDraft();
       await loadConversation(chat.project, chat.mine, chat.ctx, recorded === true
         ? { kind: 'ok', message: `Sent to ${name}.` }
         : { kind: 'warning', message: `Sent to ${name}, but it could not be recorded in the conversation: ${recorded}` });
@@ -1462,7 +1465,7 @@
    *   toggleDrawer: (force?: boolean) => void, isDrawerOpen: () => boolean,
    *   toggleSidebar: (force?: boolean) => void, isSidebarCollapsed: () => boolean,
    *   selectGroup: (id: string, additive?: boolean) => void, setProjects: (rows: Array<object>) => void,
-   *   setPeek: (peek: object|null) => void, clearChatDraft: () => void,
+   *   setPeek: (peek: object|null) => void, clearChatDraft: (projectId?: *) => void,
    *   setTree: (tree: Array<*>) => void, setTelemetry: (bar: object|null) => void,
    *   setTemplates: (templates: Array<*>) => void,
    *   setAttestation: (attestation: object|null) => void,
@@ -1831,8 +1834,11 @@
         el.innerHTML = chatPeekMarkup(peek);
         if (atBottom) el.scrollTop = el.scrollHeight;
       },
-      /** Forget the chat on screen's composer text, once it has been sent. */
-      clearChatDraft() { chatDrafts.delete(chatTargetKey()); },
+      /**
+       * Forget a chat's composer text once it has been sent.
+       * @param {*} [projectId] - The project it was sent to; the chat on screen when omitted.
+       */
+      clearChatDraft(projectId) { chatDrafts.delete(projectId != null ? String(projectId) : chatTargetKey()); },
       destroy() {
         if (win && typeof win.removeEventListener === 'function') win.removeEventListener('hashchange', handleHashChange);
       }
