@@ -1808,3 +1808,11 @@ describe('remembered settings without a usable store (#3047)', () => {
     assert.equal(views[views.length - 1].project.name, 'TC-Lane-A');
   });
 });
+
+describe('the page header holds the Fleet/Classic switcher without overflowing (#3046)', () => {
+  const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  it('the base .dash-bar wraps, so the action pills drop a row instead of running off the right edge', () => {
+    const body = CSS.match(/(^|\n)\.dash-bar\s*\{([^}]*)\}/)[2];
+    assert.match(body, /flex-wrap:\s*wrap/);
+  });
+});

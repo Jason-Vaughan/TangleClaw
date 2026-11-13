@@ -118,6 +118,12 @@ html[data-tc-keyboard] body {
   gap: 12px;
   padding: calc(env(safe-area-inset-top, 0px) + 5px) 16px 5px;
   flex-shrink: 0;
+  /* #3046: when brand + stats + the action pills do not fit one row (the
+     Fleet/Classic switcher joined the pills; a long notice in the brand
+     cluster already overflowed at 1280px), the pills drop to their own row
+     instead of running off the right edge. A row that fits never wraps. */
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 .dash-brand {
   display: flex;
