@@ -768,8 +768,16 @@
    *   but **null** on any non-2xx response (R-Gate R2, #2956): the refusal
    *   body then arrives only through `deps.api`'s `lastBody`/`lastErrorCode`
    *   side channel, same as `applyUpdateAndRestart`'s own `STRUCTURED_REFUSALS`
-   *   above. `confirm`/`alert` are injectable for tests; production defaults
-   *   to the real `window.confirm`/`window.alert`.
+   *   above. `confirm`/`alert` are injectable; an injected `confirm` is used
+   *   as given. Without one, the chip confirms in place instead of through
+   *   `window.confirm` (#3048): a browser or webview that suppresses native
+   *   dialogs makes `confirm()` return false at once, so every click looked
+   *   dead. The first click turns the chip into "click again to apply"; a
+   *   second click within `MEDUSA_DRIFT_CONFIRM_WINDOW_MS` applies. A refusal
+   *   or failure is written onto the chip itself (label and title) as well
+   *   as passed to `alert` (`window.alert` by default), so it is visible
+   *   even where that alert is suppressed. `now` is injectable for tests and
+   *   defaults to `Date.now`.
    * @returns {void}
    */
   function tcWireMedusaDriftAction(doc, elementId, deps) {
@@ -781,13 +789,48 @@
     // STRUCTURED_REFUSALS staying reachable only through the full
     // tcCreateUpdateBeacon closure above.
     const MEDUSA_DRIFT_REFUSAL_CODES = new Set(['git-error', 'dirty-tree', 'not-fast-forwardable', 'restart-failed', 'restart-unverified']);
-    const confirmFn = deps.confirm || ((msg) => global.confirm(msg));
+    // The chip's short label per refusal; the full reason goes in its title.
+    const MEDUSA_DRIFT_REFUSAL_LABELS = {
+      'git-error': 'git error',
+      'dirty-tree': 'local changes',
+      'not-fast-forwardable': 'cannot fast-forward',
+      'restart-failed': 'Hub restart refused or failed',
+      'restart-unverified': 'Hub restart unverified'
+    };
+    const MEDUSA_DRIFT_CONFIRM_WINDOW_MS = 10000;
+    const MEDUSA_DRIFT_ARMED_LABEL = '⚠ Click again to apply the Medusa update';
+    const inChipConfirm = typeof deps.confirm !== 'function';
+    const confirmFn = deps.confirm;
     const alertFn = deps.alert || ((msg) => global.alert(msg));
+    const now = deps.now || (() => Date.now());
+    let armedAt = null;
+    let armedFromText = '';
+    let armedFromTitle = '';
     if (el._tcMedusaDriftHandler) el.removeEventListener('click', el._tcMedusaDriftHandler);
     const handler = async () => {
       if (el.classList.contains('hidden') || el.disabled) return;
-      if (!confirmFn('Fast-forward the local Medusa checkout and/or restart com.medusa.hub now?')) return;
-      const wasText = el.textContent;
+      if (inChipConfirm) {
+        // A click on the armed chip within the window confirms; any other
+        // click (the first one, or one after the window lapsed) arms it.
+        const armed = armedAt !== null && el.textContent === MEDUSA_DRIFT_ARMED_LABEL
+          && now() - armedAt <= MEDUSA_DRIFT_CONFIRM_WINDOW_MS;
+        if (!armed) {
+          if (el.textContent !== MEDUSA_DRIFT_ARMED_LABEL) {
+            armedFromText = el.textContent;
+            armedFromTitle = el.title;
+          }
+          armedAt = now();
+          el.textContent = MEDUSA_DRIFT_ARMED_LABEL;
+          el.title = 'Fast-forward the local Medusa checkout and/or restart com.medusa.hub. '
+            + `Click again within ${MEDUSA_DRIFT_CONFIRM_WINDOW_MS / 1000} seconds to confirm.`;
+          return;
+        }
+        armedAt = null;
+        el.textContent = armedFromText;
+        el.title = armedFromTitle;
+      } else if (!confirmFn('Fast-forward the local Medusa checkout and/or restart com.medusa.hub now?')) {
+        return;
+      }
       el.disabled = true;
       el.textContent = '⚠ Applying…';
       let result = null;
@@ -805,12 +848,16 @@
         // apiMutate returned null for a real non-2xx refusal, so the reason
         // (dirty-tree's detail, restart-failed's) lives only in
         // deps.api.lastBody, never in `result` itself.
-        el.textContent = wasText;
         const api = deps.api;
         const refusal = !thrown && api && MEDUSA_DRIFT_REFUSAL_CODES.has(api.lastErrorCode) ? api.lastBody : null;
         const message = thrown
           ? (thrown.message || 'request did not complete')
           : ((refusal && refusal.error) || (api && api.lastError) || 'request did not complete');
+        // #3048: the reason stays on the chip, not only in an alert a
+        // browser may suppress. The next drift render replaces it.
+        const shortReason = (refusal && MEDUSA_DRIFT_REFUSAL_LABELS[api.lastErrorCode]) || 'request failed';
+        el.textContent = `⚠ Medusa update not applied: ${shortReason}`;
+        el.title = `${String(message).replace(/\.\s*$/, '')}. Click to try again.`;
         alertFn(`Medusa drift action failed: ${message}`);
         return;
       }

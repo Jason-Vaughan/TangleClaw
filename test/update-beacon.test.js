@@ -1274,7 +1274,7 @@ describe('tcWireMedusaDriftAction (#2956)', () => {
     assert.equal(btn._classes.has('hidden'), true);
   });
 
-  it('a refused/failed apply (apiMutate returns null, same as the real api() on a non-2xx) restores the prior text and alerts with the reason read from api.lastBody, never silently', async () => {
+  it('a refused/failed apply (apiMutate returns null, same as the real api() on a non-2xx) shows the reason on the chip and alerts with it, read from api.lastBody, never silently (#3048)', async () => {
     const alerts = [];
     // The real `api()`/`apiMutate()` returns null on any non-2xx response
     // (confirmed against public/api-helper.js#tcCreateApi) -- the refusal
@@ -1289,7 +1289,10 @@ describe('tcWireMedusaDriftAction (#2956)', () => {
     });
     btn.textContent = '⚠ Medusa update available';
     await btn.click();
-    assert.equal(btn.textContent, '⚠ Medusa update available', 'restored, not left on "Applying…"');
+    // #3048 changed this from "restore the prior label": a browser that
+    // suppresses alert() left the chip looking as if nothing had happened.
+    assert.equal(btn.textContent, '⚠ Medusa update not applied: local changes', 'the refusal, on the chip, not left on "Applying…"');
+    assert.equal(btn.title, 'the local Medusa checkout has uncommitted changes. Click to try again.');
     assert.equal(btn.disabled, false);
     assert.equal(alerts.length, 1);
     assert.match(alerts[0], /uncommitted changes/);
@@ -1305,7 +1308,7 @@ describe('tcWireMedusaDriftAction (#2956)', () => {
     assert.doesNotMatch(alerts[0], /stale body/);
   });
 
-  it('a request that never completes (apiMutate throws) re-enables the button, restores its text, and alerts with the thrown message', async () => {
+  it('a request that never completes (apiMutate throws) re-enables the button, shows the failure on the chip, and alerts with the thrown message', async () => {
     const alerts = [];
     const { btn } = wire({
       confirm: () => true,
@@ -1315,7 +1318,8 @@ describe('tcWireMedusaDriftAction (#2956)', () => {
     btn.textContent = '⚠ Medusa update available';
     await btn.click();
     assert.equal(btn.disabled, false, 'the finally re-enables it even though the call threw past the handler');
-    assert.equal(btn.textContent, '⚠ Medusa update available', 'restored, not left on "Applying…" after a thrown apiMutate');
+    assert.equal(btn.textContent, '⚠ Medusa update not applied: request failed', 'not left on "Applying…" after a thrown apiMutate (#3048)');
+    assert.match(btn.title, /ECONNREFUSED\. Click to try again\.$/);
     assert.equal(alerts.length, 1);
     assert.match(alerts[0], /ECONNREFUSED/);
   });
@@ -1326,6 +1330,96 @@ describe('tcWireMedusaDriftAction (#2956)', () => {
     ctx.tcWireMedusaDriftAction(ctx.document, 'medusaDriftNotice', { confirm: () => { confirms.push(1); return true; }, apiMutate: async () => ({ ok: true, snapshot: { updateAvailable: false, hubRestartNeeded: false } }) });
     await btn.click();
     assert.equal(confirms.length, 1, 'only the SECOND wiring\'s handler fired, not both');
+  });
+
+  describe('#3048: without an injected confirm, the chip confirms in place', () => {
+    /**
+     * Wire with no `confirm`, a controllable clock, and a recording apiMutate.
+     * @param {object} [over] - Extra deps
+     * @returns {{btn: object, posts: Array, alerts: string[], clock: {t: number}}}
+     */
+    function wireInChip(over = {}) {
+      const posts = [];
+      const alerts = [];
+      const clock = { t: 1000 };
+      const { btn } = wire({
+        now: () => clock.t,
+        alert: (msg) => alerts.push(msg),
+        apiMutate: async (url, method) => { posts.push([url, method]); return { ok: true, snapshot: { updateAvailable: false, hubRestartNeeded: false } }; },
+        ...over
+      });
+      btn.textContent = '⚠ Medusa update available';
+      btn.title = 'the checkout is 2 commits behind. Click to fast-forward/restart now.';
+      return { btn, posts, alerts, clock };
+    }
+
+    it('the first click never POSTs and never calls a native dialog: it arms the chip, visibly', async () => {
+      const { btn, posts, alerts } = wireInChip();
+      await btn.click();
+      assert.equal(posts.length, 0);
+      assert.equal(alerts.length, 0);
+      assert.equal(btn.textContent, '⚠ Click again to apply the Medusa update');
+      assert.match(btn.title, /Click again within 10 seconds to confirm/);
+      assert.equal(btn.disabled, false);
+    });
+
+    it('a second click inside the window applies, and the success re-renders from the snapshot', async () => {
+      const { btn, posts, clock } = wireInChip();
+      await btn.click();
+      clock.t += 9000;
+      await btn.click();
+      assert.equal(posts.length, 1);
+      assert.equal(posts[0][0], '/api/system/medusa-drift/apply');
+      assert.equal(btn._classes.has('hidden'), true, 'no drift left, so the render hid the chip');
+    });
+
+    it('a second click after the window lapses re-arms instead of applying', async () => {
+      const { btn, posts, clock } = wireInChip();
+      await btn.click();
+      clock.t += 10001;
+      await btn.click();
+      assert.equal(posts.length, 0);
+      assert.equal(btn.textContent, '⚠ Click again to apply the Medusa update');
+      clock.t += 500;
+      await btn.click();
+      assert.equal(posts.length, 1, 'the re-armed window confirms');
+    });
+
+    it('a re-render between the clicks disarms it: the next click arms again', async () => {
+      const { btn, posts } = wireInChip();
+      await btn.click();
+      btn.textContent = '⚠ Medusa Hub restart needed'; // a poll re-rendered the chip
+      await btn.click();
+      assert.equal(posts.length, 0);
+      assert.equal(btn.textContent, '⚠ Click again to apply the Medusa update');
+    });
+
+    it('a refusal after the in-chip confirm shows its short label and full reason on the chip', async () => {
+      const api = { lastErrorCode: 'restart-failed', lastBody: { ok: false, code: 'restart-failed', error: 'WorkingDirectory /gone does not exist; the running Hub was left alone.' }, lastError: 'HTTP 500' };
+      const { btn, alerts } = wireInChip({ api, apiMutate: async () => null });
+      await btn.click();
+      await btn.click();
+      assert.equal(btn.textContent, '⚠ Medusa update not applied: Hub restart refused or failed');
+      assert.equal(btn.title, 'WorkingDirectory /gone does not exist; the running Hub was left alone. Click to try again.');
+      assert.equal(alerts.length, 1);
+    });
+
+    it('once the apply starts, the arming tooltip gives way to the chip\'s prior title', async () => {
+      const { btn, clock } = wireInChip({ apiMutate: async () => new Promise(() => {}) });
+      await btn.click();
+      clock.t += 1;
+      btn.click(); // never resolves: inspect the in-flight state
+      await new Promise((r) => setImmediate(r));
+      assert.equal(btn.textContent, '⚠ Applying…');
+      assert.equal(btn.title, 'the checkout is 2 commits behind. Click to fast-forward/restart now.', 'the arming tooltip does not linger');
+    });
+
+    it('every refusal code the chip knows has a short label', () => {
+      const src = BEACON_SRC.slice(BEACON_SRC.indexOf('function tcWireMedusaDriftAction('));
+      const codes = src.match(/MEDUSA_DRIFT_REFUSAL_CODES = new Set\(\[([^\]]*)\]\)/)[1].match(/'[^']+'/g);
+      const labels = src.match(/MEDUSA_DRIFT_REFUSAL_LABELS = \{([\s\S]*?)\};/)[1];
+      for (const code of codes) assert.ok(labels.includes(`${code}:`), `no short label for ${code}`);
+    });
   });
 
   it('a missing element is a quiet no-op, never a throw', () => {

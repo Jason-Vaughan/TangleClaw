@@ -325,8 +325,11 @@ describe('medusa-drift (#2956)', () => {
     /**
      * A ready-to-use git command stub: `rev-parse`/`rev-list` answer as a
      * checkout `commitsBehind` behind, `status --porcelain` answers clean
-     * unless `dirty` is set, and every other call (merge, fetch) is recorded
-     * in `calls` and succeeds unless `fail` names it.
+     * unless `dirty` is set (or answers `status` verbatim, NUL-delimited like
+     * the real `-z` output), `rev-parse --abbrev-ref HEAD` answers `branch`
+     * (default `main`; `'HEAD'` is a detached HEAD; `null` makes it fail), and
+     * every other call (merge, fetch) is recorded in `calls` and succeeds
+     * unless `fail` names it.
      * @param {object} [opts]
      * @returns {{impl: Function, calls: string[]}}
      */
@@ -336,9 +339,16 @@ describe('medusa-drift (#2956)', () => {
       const impl = async (cmd, args) => {
         calls.push(args.join(' '));
         if (cmd !== 'git') return { stdout: '' }; // the restart command, recorded but not git
+        if (args.includes('--abbrev-ref')) {
+          if (opts.branch === null) throw new Error('fatal: not a git repository');
+          return { stdout: `${opts.branch === undefined ? 'main' : opts.branch}\n` };
+        }
         if (args.includes('rev-parse')) return { stdout: `${LOCAL_SHA}\n` };
         if (args.includes('rev-list')) return { stdout: `${commitsBehind}\n` };
-        if (args.includes('status')) return { stdout: opts.dirty ? ' M some-file.js\n' : '' };
+        if (args.includes('status')) {
+          if (typeof opts.status === 'string') return { stdout: opts.status };
+          return { stdout: opts.dirty ? ' M some-file.js\0' : '' };
+        }
         if (args.includes('merge')) {
           if (opts.failMerge) throw new Error('fatal: Not possible to fast-forward');
           return { stdout: '' };
@@ -522,6 +532,9 @@ describe('medusa-drift (#2956)', () => {
       };
       drift._internal.fetchImpl = async () => ({ ok: true, json: async () => ({ gitSha: LOCAL_SHA }) });
       drift._internal.restartHubCommand = () => ({ cmd: 'launchctl', args: ['kickstart', '-k', 'gui/501/com.medusa.hub'] });
+      // No LaunchAgent plist (#3048), so the precheck passes and the command
+      // itself runs and fails -- never this host's real plist.
+      drift._internal.fileExists = () => false;
       const out = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
       assert.equal(out.ok, false);
       assert.equal(out.code, 'restart-failed');
@@ -645,6 +658,172 @@ describe('medusa-drift (#2956)', () => {
 
       const polled = await drift.getDrift({ checkoutPath: '/fake/Medusa-PM' });
       assert.equal(polled.hubRestartNeeded, true, 'a plain, non-force poll right after must see it too, not a stale cached false');
+    });
+
+    describe('#3048: the dirty-tree check reads tracked changes only, and names them', () => {
+      /**
+       * Run applyDriftAction against a checkout 3 commits behind with the
+       * given `git status` output, a matching Hub, and a no-op restart.
+       * @param {object} stubOpts - Passed to gitStub
+       * @returns {Promise<{out: object, calls: string[]}>}
+       */
+      async function applyWithStatus(stubOpts) {
+        drift._internal.pathExists = () => true;
+        const { impl, calls } = gitStub({ commitsBehind: 3, ...stubOpts });
+        drift._internal.execFileAsync = impl;
+        drift._internal.fetchImpl = async () => ({ ok: true, json: async () => ({ gitSha: LOCAL_SHA }) });
+        drift._internal.restartHubCommand = () => ({ cmd: 'true', args: [] });
+        const out = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
+        return { out, calls };
+      }
+
+      it('asks git for tracked changes only, NUL-delimited, so untracked files never block', async () => {
+        const { calls } = await applyWithStatus({ status: '' });
+        assert.ok(calls.includes('status --porcelain=v1 -z --untracked-files=no'), calls.join(' | '));
+      });
+
+      it('changes only under .tangleclaw/ (runtime state) do not block: the checkout fast-forwards', async () => {
+        const { out, calls } = await applyWithStatus({ status: ' M .tangleclaw/project.json\0 M .tangleclaw/memories/MEMORY.md\0' });
+        assert.equal(out.code, undefined, out.error);
+        assert.equal(out.fastForwarded, true);
+        assert.ok(calls.includes('merge --ff-only origin/main'));
+      });
+
+      it('a tracked change outside .tangleclaw/ refuses, naming the file and the branch, and never merges', async () => {
+        const { out, calls } = await applyWithStatus({ status: ' M .tangleclaw/x.json\0M  src/hub.js\0', branch: 'wrap/2026-11-13' });
+        assert.equal(out.code, 'dirty-tree');
+        assert.match(out.error, /src\/hub\.js/);
+        assert.doesNotMatch(out.error, /\.tangleclaw/, 'runtime state is never named as blocking');
+        assert.match(out.error, /branch wrap\/2026-11-13/);
+        assert.ok(!calls.some((c) => c.includes('merge')));
+      });
+
+      it('lists at most five blocking files and counts the rest', async () => {
+        const status = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((n) => ` M ${n}.js\0`).join('');
+        const { out } = await applyWithStatus({ status });
+        assert.equal(out.code, 'dirty-tree');
+        assert.match(out.error, /a\.js, b\.js, c\.js, d\.js, e\.js and 2 more/);
+        assert.doesNotMatch(out.error, /f\.js/);
+      });
+
+      it('a rename entry\'s original path is not read as a separate entry', async () => {
+        // -z prints a rename as "R  <new>\0<old>\0": the old path is not a change of its own.
+        const clean = await applyWithStatus({ status: 'R  .tangleclaw/new.json\0src/old-name.js\0' });
+        assert.equal(clean.out.fastForwarded, true, 'only the new path counts, and it is runtime state');
+        const dirty = await applyWithStatus({ status: 'R  src/new-name.js\0.tangleclaw/old.json\0' });
+        assert.equal(dirty.out.code, 'dirty-tree');
+        assert.match(dirty.out.error, /src\/new-name\.js/);
+        assert.doesNotMatch(dirty.out.error, /old\.json/);
+      });
+
+      it('a refusal on a detached HEAD says so; an unreadable branch is simply left out', async () => {
+        const detached = await applyWithStatus({ status: ' M x.js\0', branch: 'HEAD' });
+        assert.match(detached.out.error, /\(branch \(detached HEAD\)\)/);
+        const unknown = await applyWithStatus({ status: ' M x.js\0', branch: null });
+        assert.equal(unknown.out.code, 'dirty-tree');
+        assert.doesNotMatch(unknown.out.error, /branch/);
+      });
+
+      it('a non-fast-forwardable merge names the branch along with git\'s own error', async () => {
+        const { out } = await applyWithStatus({ status: '', failMerge: true, branch: 'wrap/abc' });
+        assert.equal(out.code, 'not-fast-forwardable');
+        assert.match(out.error, /branch wrap\/abc/);
+        assert.match(out.error, /Not possible to fast-forward/);
+      });
+    });
+
+    describe('#3048: kickstart -k is refused when the LaunchAgent could not respawn the Hub', () => {
+      const PLIST = '/fake/Library/LaunchAgents/com.medusa.hub.plist';
+
+      /**
+       * Run applyDriftAction where a restart is owed (the Hub reports a
+       * stale sha) and the restart command is the real darwin
+       * `launchctl kickstart -k`, against a stubbed plist.
+       * @param {object} plist
+       * @param {boolean} [plist.exists] - Whether the plist file exists
+       * @param {string|Error} [plist.json] - plutil's JSON output, or the error it throws
+       * @param {string[]} [plist.dirs] - Directories that exist on disk
+       * @param {{cmd: string, args: string[]}} [command] - Override the restart command
+       * @returns {Promise<{out: object, ran: string[]}>} `ran` lists every non-git command run
+       */
+      async function applyWithPlist(plist, command) {
+        const dirs = new Set(['/fake/Medusa-PM', ...(plist.dirs || [])]);
+        drift._internal.pathExists = (p) => dirs.has(p);
+        drift._internal.fileExists = (p) => p === PLIST && plist.exists !== false;
+        drift._internal.hubPlistPath = () => PLIST;
+        drift._internal.restartHubCommand = () => command || { cmd: 'launchctl', args: ['kickstart', '-k', 'gui/501/com.medusa.hub'] };
+        const { impl, calls } = gitStub({ commitsBehind: 0 });
+        const ran = [];
+        drift._internal.execFileAsync = async (cmd, args) => {
+          if (cmd === 'plutil') {
+            ran.push(`plutil ${args.join(' ')}`);
+            if (plist.json instanceof Error) throw plist.json;
+            return { stdout: plist.json };
+          }
+          if (cmd !== 'git') { ran.push(`${cmd} ${args.join(' ')}`); calls.push('restart-marker'); }
+          return impl(cmd, args);
+        };
+        drift._internal.fetchImpl = hubStub({ staleSha: UPSTREAM_SHA }, calls);
+        const out = await drift.applyDriftAction({ checkoutPath: '/fake/Medusa-PM' });
+        return { out, ran };
+      }
+
+      it('a WorkingDirectory that no longer exists refuses with restart-failed, never runs kickstart, and keeps the restart owed', async () => {
+        const { out, ran } = await applyWithPlist({ json: JSON.stringify({ Label: 'com.medusa.hub', WorkingDirectory: '/gone/Medusa' }) });
+        assert.equal(out.ok, false);
+        assert.equal(out.code, 'restart-failed');
+        assert.equal(out.restarted, false);
+        assert.match(out.error, /WorkingDirectory to \/gone\/Medusa, which does not exist/);
+        assert.match(out.error, /left alone/);
+        assert.ok(!ran.some((c) => c.startsWith('launchctl')), `kickstart must not run: ${ran.join(' | ')}`);
+        assert.equal(out.snapshot.hubRestartNeeded, true, 'the restart is still owed');
+        assert.equal((await drift.getDrift()).hubRestartNeeded, true, 'and the cache says so too');
+      });
+
+      it('reads the plist through plutil as JSON, so XML and binary plists both work', async () => {
+        const { ran } = await applyWithPlist({ json: JSON.stringify({ WorkingDirectory: '/gone' }) });
+        assert.deepEqual(ran, [`plutil -convert json -o - ${PLIST}`]);
+      });
+
+      it('an existing WorkingDirectory lets kickstart -k run', async () => {
+        const { out, ran } = await applyWithPlist({ json: JSON.stringify({ WorkingDirectory: '/real/Medusa-PM' }), dirs: ['/real/Medusa-PM'] });
+        assert.equal(out.ok, true, out.error);
+        assert.equal(out.restarted, true);
+        assert.ok(ran.includes('launchctl kickstart -k gui/501/com.medusa.hub'));
+      });
+
+      it('no plist at all, or one declaring no WorkingDirectory, lets kickstart -k run', async () => {
+        const none = await applyWithPlist({ exists: false });
+        assert.equal(none.out.restarted, true, none.out.error);
+        assert.ok(!none.ran.some((c) => c.startsWith('plutil')), 'no file, nothing to read');
+        const noKey = await applyWithPlist({ json: JSON.stringify({ Label: 'com.medusa.hub' }) });
+        assert.equal(noKey.out.restarted, true, noKey.out.error);
+      });
+
+      it('a plist that exists but cannot be read as a job dictionary is refused, never guessed at', async () => {
+        const cases = [
+          { json: new Error('Invalid object in plist for JSON format'), why: /Invalid object in plist/ },
+          { json: 'not json', why: /could not read/ },
+          { json: JSON.stringify('garbage'), why: /root is not a dictionary/ },
+          { json: JSON.stringify([1]), why: /root is not a dictionary/ },
+          { json: JSON.stringify({ WorkingDirectory: 7 }), why: /WorkingDirectory is not a path/ },
+          { json: JSON.stringify({ WorkingDirectory: '' }), why: /WorkingDirectory is not a path/ }
+        ];
+        for (const c of cases) {
+          drift.stop();
+          const { out, ran } = await applyWithPlist({ json: c.json });
+          assert.equal(out.code, 'restart-failed', String(c.json));
+          assert.match(out.error, c.why);
+          assert.ok(!ran.some((r) => r.startsWith('launchctl')), `kickstart must not run for ${String(c.json)}`);
+        }
+      });
+
+      it('only launchctl kickstart -k is checked: systemctl never reads the plist', async () => {
+        const { out, ran } = await applyWithPlist({ json: JSON.stringify({ WorkingDirectory: '/gone' }) },
+          { cmd: 'systemctl', args: ['--user', 'restart', 'medusa-hub.service'] });
+        assert.equal(out.restarted, true, out.error);
+        assert.ok(!ran.some((c) => c.startsWith('plutil')));
+      });
     });
 
     it('exposes its retry bound and delay as named constants, not a magic number buried in the loop', () => {
