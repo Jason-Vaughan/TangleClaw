@@ -155,6 +155,16 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
     };
     // Like the page's api(), an optional init sends a method, headers and a body.
     const api = async (url, init) => {
+      // A browser read that carries headers (an operator-proofed GET) goes
+      // through the same browser-shaped path as a write.
+      if (init && init.method === 'GET' && init.headers) {
+        calls.push(`GET ${url}`);
+        const headers = Object.fromEntries(Object.entries(init.headers).map(([k, v]) => [k.toLowerCase(), v]));
+        delete headers['content-type'];
+        headers['sec-fetch-site'] = 'same-origin';
+        headers.origin = 'http://localhost:3102';
+        return settle(await send('GET', url, { headers }));
+      }
       if (init && init.method && init.method !== 'GET') {
         calls.push(`${init.method} ${url}`);
         const headers = Object.fromEntries(Object.entries(init.headers || {}).map(([k, v]) => [k.toLowerCase(), v]));
@@ -403,6 +413,26 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       const saved = path.join(tempDir, 'e2e-chat-upload', '.tangleclaw', 'secrets', 'Screen-Shot-1.png');
       assert.equal(fs.readFileSync(saved, 'utf8'), 'PNG-BYTES');
       assert.equal(fs.statSync(saved).mode & 0o777, 0o600, 'saved readable by its owner only');
+    });
+
+    it('an attachment named like a file already in the secrets store gets a new name through the real route, leaving the old file intact (INT R-Gate)', async () => {
+      const projectId = seedProject('e2e-chat-upload-dup');
+      store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(projectId);
+      const dir = path.join(tempDir, 'e2e-chat-upload-dup', '.tangleclaw', 'secrets');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'image.png'), 'ORIGINAL', { mode: 0o600 });
+      const { root, calls, settle, doc } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      const input = doc.getElementById('v6ChatFileInput');
+      input.files = [{ name: 'image.png', size: 3, content: 'NEW' }];
+      input.dispatch('change');
+      await settle();
+      assert.ok(calls.includes('GET /api/sessions/e2e-chat-upload-dup/secure-clipboard'), 'the listing was read');
+      assert.match(root.innerHTML, /v6-chat-chip is-ready" title="\.tangleclaw\/secrets\/image-2\.png"/);
+      assert.equal(fs.readFileSync(path.join(dir, 'image.png'), 'utf8'), 'ORIGINAL', 'the existing file was not overwritten');
+      assert.equal(fs.readFileSync(path.join(dir, 'image-2.png'), 'utf8'), 'NEW');
     });
 
     it('the real B2 route accepts the event the chat records, and the next seq counts deleted events (#3047)', async () => {

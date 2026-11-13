@@ -995,6 +995,20 @@
     return rel.startsWith('.tangleclaw/') ? rel : `.tangleclaw/${rel}`;
   }
 
+  /**
+   * A file name with a time suffix before its extension (`image.png` ->
+   * `image-lx2k9a.png`), for when the secrets store's own listing could not
+   * be read and a plain name might already be taken there.
+   * @param {string} name
+   * @returns {string}
+   */
+  function uniqueStem(name) {
+    const raw = String(name == null ? '' : name);
+    const dot = raw.lastIndexOf('.');
+    const suffix = `-${Date.now().toString(36)}`;
+    return dot > 0 ? `${raw.slice(0, dot)}${suffix}${raw.slice(dot)}` : `${raw || 'attachment'}${suffix}`;
+  }
+
   /** The states an attachment chip can show (each is a CSS modifier). */
   const ATTACH_STATES = Object.freeze(['uploading', 'ready', 'error']);
 
@@ -1498,9 +1512,17 @@
     const uploadedNames = new Map();
     let attachSeq = 0;
     const readFileAsBase64 = deps.readFileAsBase64 || defaultReadFileAsBase64;
-    const operatorHeaders = deps.operatorHeaders || (typeof global.tcOperatorProofHeaders === 'function'
-      ? () => global.tcOperatorProofHeaders(api)
-      : async () => ({ 'Content-Type': 'application/json' }));
+    // The secure-clipboard routes gate even their GET listing with operator
+    // proof, and api()'s own CSRF header only rides on writes, so the token
+    // is added here too, as public/secure-clipboard-ui.js does.
+    const operatorHeaders = deps.operatorHeaders || (async () => {
+      const headers = typeof global.tcOperatorProofHeaders === 'function'
+        ? await global.tcOperatorProofHeaders(api)
+        : { 'Content-Type': 'application/json' };
+      const csrf = typeof global.tcCsrfToken === 'function' ? global.tcCsrfToken() : null;
+      if (csrf) headers['X-CSRF-Token'] = csrf;
+      return headers;
+    });
 
     /** @returns {Object<string, string>} Configured delegates, logical project id -> project id. */
     function delegates() {
@@ -1901,18 +1923,23 @@
       const used = uploadedNames.get(key) || new Set();
       uploadedNames.set(key, used);
       // The project's secrets store may hold files from earlier visits too.
-      let stored = [];
+      // If it cannot be listed, a name is not known to be free, so each one
+      // gets a time suffix rather than risk overwriting a file the store holds.
+      let stored = null;
       try {
         const headers = await operatorHeaders();
         const res = await api(`/api/sessions/${encodeURIComponent(chat.project.name)}/secure-clipboard`, { method: 'GET', headers });
-        stored = res && Array.isArray(res.files) ? res.files.map((f) => f && f.filename).filter(Boolean) : [];
-      } catch { // prawduct:allow prawduct/broad-except -- the listing only refines naming; without it, names this visit used still stay unique
-        stored = [];
+        stored = res && Array.isArray(res.files) ? res.files.map((f) => f && f.filename).filter(Boolean) : null;
+      } catch { // prawduct:allow prawduct/broad-except -- an unreadable listing is handled below by making every name unique
+        stored = null;
       }
+      const unverified = stored === null;
+      if (unverified) stored = [];
       const taken = new Set(list.map((a) => a.name).concat([...used], stored));
       const uploads = [];
       (Array.isArray(files) ? files : []).forEach((file) => {
-        const item = { id: ++attachSeq, name: sanitizeUploadName(file && file.name, taken), status: 'uploading' };
+        const base = unverified ? uniqueStem(file && file.name) : (file && file.name);
+        const item = { id: ++attachSeq, name: sanitizeUploadName(base, taken), status: 'uploading' };
         taken.add(item.name);
         used.add(item.name);
         list.push(item);

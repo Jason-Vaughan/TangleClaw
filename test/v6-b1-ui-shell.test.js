@@ -2315,6 +2315,8 @@ describe('chat attachments, end to end through the shell and controller (#3053)'
     const posts = [];
     let release = null;
     const api = async (url, init) => {
+      // The real listing route: an empty secrets store.
+      if (init && init.method === 'GET' && /\/secure-clipboard$/.test(url)) return { files: [] };
       if (init && init.method === 'POST') {
         posts.push({ url, headers: plain(init.headers), body: JSON.parse(init.body) });
         if (o.hold) await new Promise((r) => { release = r; });
@@ -2879,5 +2881,48 @@ describe('offline status polling does not overlap itself (cumulative review note
     assert.equal(statusReads, 2, 'the overlapping tick did not read again');
     release();
     await first;
+  });
+});
+
+describe('the secrets-store listing is read with full operator proof (INT R-Gate)', () => {
+  it('the default headers carry the CSRF token as well as the open-install proof, since api() adds CSRF to writes only', async () => {
+    const G = loadV6Shell();
+    G.tcOperatorProofHeaders = async () => ({ 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' });
+    G.tcCsrfToken = () => 'csrf-1';
+    const seen = [];
+    const api = async (url, init) => {
+      if (init && init.method) { seen.push({ url, method: init.method, headers: plain(init.headers) }); return init.method === 'GET' ? { files: [] } : { relPath: 'secrets/a.png' }; }
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM' }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1 };
+      return null;
+    };
+    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setDetail() {}, setProjects() {} };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null, readFileAsBase64: async () => 'eA==' });
+    await live.handleRoute({ view: 'conversation', resourceId: '12' });
+    await live.attachFiles([{ name: 'a.png', size: 1 }]);
+    const get = seen.find((c) => c.method === 'GET');
+    assert.equal(get.url, '/api/sessions/TC-Lane-PM/secure-clipboard');
+    assert.equal(get.headers['X-CSRF-Token'], 'csrf-1');
+    assert.equal(get.headers['X-TC-Open-Token'], 'tok');
+  });
+
+  it('when the listing cannot be read, the name is made unique anyway, so nothing in the store can be overwritten', async () => {
+    const G = loadV6Shell();
+    const posts = [];
+    const api = async (url, init) => {
+      if (init && init.method === 'GET') { api.lastError = 'CSRF token missing'; return null; }
+      if (init && init.method === 'POST') { const b = JSON.parse(init.body); posts.push(b.filename); return { relPath: `secrets/${b.filename}` }; }
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM' }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1 };
+      return null;
+    };
+    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setDetail() {}, setProjects() {} };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null,
+      readFileAsBase64: async () => 'eA==', operatorHeaders: async () => ({}) });
+    await live.handleRoute({ view: 'conversation', resourceId: '12' });
+    await live.attachFiles([{ name: 'image.png', size: 1 }]);
+    assert.equal(posts.length, 1);
+    assert.notEqual(posts[0], 'image.png');
+    assert.match(posts[0], /^image-[a-z0-9]+\.png$/);
   });
 });
