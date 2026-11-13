@@ -2658,3 +2658,165 @@ describe('start, refresh and offline polling through the live controller (#3053)
     assert.equal(reads(), before + 1);
   });
 });
+
+// ── #3053 item 4 and the cumulative review's fixes (Car V623-W1-A) ──
+
+describe('tcV6MemberIndicators (#3053 item 4, Option A)', () => {
+  const G = loadV6Shell();
+  const ind = (row, health) => plain(G.tcV6MemberIndicators(row, health || {}));
+
+  it('reads a member\'s session state: live, needs attention, starting/wrapping, offline', () => {
+    assert.equal(ind({ session: { active: true } }).state, 'live');
+    const blocked = ind({ session: { active: true, launchBlocker: { message: 'model held' } } });
+    assert.equal(blocked.state, 'attention');
+    assert.match(blocked.title, /model held/);
+    assert.equal(ind({ session: { active: true, heldWakeReason: 'held by INT' } }).state, 'attention');
+    assert.equal(ind({ session: { active: true, lastEngineError: { message: 'rate limit' } } }).state, 'attention');
+    assert.equal(ind({ session: null, sessionHealth: { status: 'crashed', state: 'clean' } }).state, 'attention');
+    assert.equal(ind({ session: null, sessionHealth: { status: 'wrapped', state: 'left-work' } }).state, 'attention');
+    assert.equal(ind({ session: { active: true, status: 'starting' } }).state, 'starting');
+    assert.equal(ind({ session: { active: true, status: 'wrapping' } }).state, 'wrapping');
+    assert.equal(ind({ session: null }).state, 'offline');
+    assert.equal(ind(null).state, 'offline');
+  });
+
+  it('gives each state its glyph', () => {
+    assert.deepEqual(['live', 'attention', 'starting', 'offline'].map((s) => ({
+      live: { session: { active: true } }, attention: { session: { active: true, heldWakeReason: 'x' } },
+      starting: { session: { active: true, status: 'starting' } }, offline: {}
+    })[s]).map((r) => ind(r).glyph), ['●', '⚠', '◐', '○']);
+  });
+
+  it('reads the Medusa link as on, link-only (wake off) or off', () => {
+    assert.equal(ind({ medusaEnabled: true, medusaWake: true }).medusa, 'on');
+    assert.equal(ind({ medusaEnabled: true, medusaWake: false }).medusa, 'wake-off');
+    assert.equal(ind({ medusaEnabled: false, medusaWake: true }).medusa, 'off');
+    assert.equal(ind({}).medusa, 'off');
+  });
+
+  it('names the engine by a short code and colours it by its health', () => {
+    const health = { claude: { status: 'operational' }, codex: { status: 'degraded' }, antigravity: { status: 'outage' } };
+    assert.deepEqual(ind({ engine: { id: 'claude', name: 'Claude Code' } }, health).engine, { code: 'CC', name: 'Claude Code', health: 'operational' });
+    assert.equal(ind({ engine: { id: 'codex' } }, health).engine.code, 'CX');
+    assert.equal(ind({ engine: { id: 'antigravity' } }, health).engine.health, 'outage');
+    assert.equal(ind({ engine: { id: 'aider' } }, health).engine.code, 'AI');
+    assert.deepEqual(ind({ engine: { id: 'openclaw' } }, health).engine, { code: 'OP', name: 'openclaw', health: 'unknown' });
+    assert.equal(ind({}).engine, null);
+  });
+});
+
+describe('sidebar member status indicators (#3053 item 4)', () => {
+  const ROWS = [
+    { id: 11, name: 'TC-Lane-A', engine: { id: 'claude', name: 'Claude Code' }, session: { active: true }, medusaEnabled: true, medusaWake: true },
+    { id: 12, name: 'TC-Lane-PM', engine: { id: 'codex', name: 'Codex' }, session: { active: true, heldWakeReason: '<held> by INT' }, medusaEnabled: true, medusaWake: false },
+    { id: 21, name: 'Medusa-PM', engine: { id: 'aider' }, session: null }
+  ];
+
+  it('styles each member by its session state and adds the link and engine symbols beside it', () => {
+    const { shell, root } = mountShell({ tree: TWO_GROUP_TREE });
+    shell.setProjects(ROWS);
+    shell.setEngineHealth({ claude: { status: 'operational' }, codex: { status: 'degraded' } });
+    const html = root.innerHTML;
+    assert.match(html, /class="v6-shell-member-link is-live[^"]*"[\s\S]{0,200}<span class="v6-member-glyph" aria-hidden="true">●<\/span>TC-Lane-A \(11\)/);
+    assert.match(html, /class="v6-shell-member-link is-attention[^"]*"[^>]*title="Needs attention: &lt;held&gt; by INT"/);
+    assert.match(html, /class="v6-shell-member-link is-offline/);
+    assert.match(html, /<span class="v6-member-indicators"><span class="v6-member-link-status is-on" title="Medusa link and wake on">🔗<\/span><span class="v6-member-ai-status is-operational" title="Claude Code: operational">CC<\/span><\/span>/);
+    assert.match(html, /v6-member-link-status is-wake-off" title="Medusa link on, wake off"/);
+    assert.match(html, /v6-member-ai-status is-degraded" title="Codex: degraded">CX</);
+    assert.match(html, /v6-member-link-status is-off" title="Medusa link off"/);
+    assert.match(html, /v6-member-ai-status is-unknown" title="aider: status unknown">AI</);
+  });
+
+  it('a member with no project row is drawn as before, with no indicators', () => {
+    const { root } = mountShell({ tree: TWO_GROUP_TREE });
+    assert.doesNotMatch(root.innerHTML, /v6-member-indicators/);
+  });
+
+  it('the live controller hands the shell the engine health from /api/models/status', async () => {
+    const G = loadV6Shell();
+    const seen = [];
+    const api = async (url) => (url === '/api/projects' ? { projects: [] }
+      : (url === '/api/models/status' ? { status: { claude: { status: 'operational' } } } : null));
+    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setDetail() {}, setProjects() {},
+      setEngineHealth(h) { seen.push(plain(h)); } };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null });
+    await live.handleRoute({ view: 'settings', settingsPath: '' });
+    assert.deepEqual(seen, [{ claude: { status: 'operational' } }]);
+  });
+});
+
+describe('tcV6ExtractLiveTurns keeps ordinary prose (cumulative review)', () => {
+  const G = loadV6Shell();
+  it('a reply mentioning thinking, a running command, tokens used or the context window is kept, not dropped or read as activity', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['> go', 'I was thinking about the plan.', 'Running command line tools is fine.',
+      'We have used 10k tokens so far.', 'The context window is large.'], 'claude', []));
+    assert.equal(out.turns[1].text, 'I was thinking about the plan.\nRunning command line tools is fine.\nWe have used 10k tokens so far.\nThe context window is large.');
+    assert.equal(out.activity, null);
+  });
+
+  it('an indented line under a status or boilerplate line is kept; only a tool line hides what is indented under it', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['> go', '[TangleClaw Switchboard] wake', '  This reply line is indented.'], 'claude', []));
+    assert.deepEqual(out.turns[1], { role: 'assistant', text: 'This reply line is indented.' });
+  });
+});
+
+describe('tcV6ExtractLiveTurns does not repeat a multi-line or wrapped message (cumulative review)', () => {
+  const G = loadV6Shell();
+  it('a message sent with attachments is recognised by its lines, including its Attached lines', () => {
+    const sent = 'look at these\n\nAttached: .tangleclaw/secrets/a.png';
+    const out = plain(G.tcV6ExtractLiveTurns(['> look at these', 'Attached: .tangleclaw/secrets/a.png', '⏺ Got it.'], 'claude', [sent]));
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Got it.' }]);
+  });
+
+  it('a long prompt the terminal wrapped is recognised by its first line', () => {
+    const sent = 'please review the release notes for v6.2.3 and tell me whether the delegate order reads correctly';
+    const out = plain(G.tcV6ExtractLiveTurns(['> please review the release notes for v6.2.3 and tell', '⏺ It reads correctly.'], 'claude', [sent]));
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'It reads correctly.' }]);
+  });
+});
+
+describe('an upload never overwrites an earlier one (cumulative review)', () => {
+  function mountNames(existing) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('#/projects/tc-lane');
+    const posts = [];
+    const api = async (url, init) => {
+      if (init && init.method === 'POST') { const b = JSON.parse(init.body); posts.push(b.filename); return { ok: true, relPath: `secrets/${b.filename}` }; }
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }, { id: 10, name: 'TC-Lane-A' }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1 };
+      if (url === '/api/sessions/TC-Lane-PM/secure-clipboard') return { files: (existing || []).map((filename) => ({ filename })) };
+      if (/conversation\/events/.test(url)) return { events: [] };
+      return null;
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => ({ ok: true }), storage: null,
+      readFileAsBase64: async () => 'eA==', operatorHeaders: async () => ({}) });
+    shell = G.tcCreateV6Shell(doc, { root, window: win, storage: null, onRender: (r) => pending.push(live.handleRoute(r)),
+      onSendChat: (t) => pending.push(live.sendChat(t)), onAttachFiles: (f) => pending.push(live.attachFiles(f)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    return { live, settle, posts };
+  }
+
+  it('a second pasted image.png after a send gets a new name rather than replacing the first', async () => {
+    const m = mountNames();
+    await m.settle();
+    await m.live.attachFiles([{ name: 'image.png', size: 1 }]);
+    await m.live.sendChat('first');
+    await m.live.attachFiles([{ name: 'image.png', size: 1 }]);
+    await m.settle();
+    assert.deepEqual(m.posts, ['image.png', 'image-2.png']);
+  });
+
+  it('a name already in the project\'s secrets store is not reused', async () => {
+    const m = mountNames(['image.png', 'image-2.png']);
+    await m.settle();
+    await m.live.attachFiles([{ name: 'image.png', size: 1 }]);
+    assert.deepEqual(m.posts, ['image-3.png']);
+  });
+});

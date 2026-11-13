@@ -4165,6 +4165,57 @@ html[data-theme="light"] .tc-bg-watermark img {
   opacity: 0.7;
   font-size: 0.9em;
 }
+/* #3053 item 4 (Option A): each member's session state on its name, and
+   its Medusa link and engine to the right. */
+.v6-shell-member {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.v6-shell-member .v6-shell-member-link {
+  flex: 1;
+  min-width: 0;
+}
+.v6-member-glyph {
+  display: inline-block;
+  margin-right: 4px;
+}
+.v6-shell-member-link.is-live { color: #56d364; }
+.v6-shell-member-link.is-offline { opacity: 0.6; }
+.v6-shell-member-link.is-starting,
+.v6-shell-member-link.is-wrapping { color: #d4a72c; }
+.v6-shell-member-link.is-starting .v6-member-glyph,
+.v6-shell-member-link.is-wrapping .v6-member-glyph {
+  animation: v6-member-pulse 1.4s ease-in-out infinite;
+}
+.v6-shell-member-link.is-attention { color: #f0883e; }
+@keyframes v6-member-pulse {
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .v6-shell-member-link .v6-member-glyph { animation: none; }
+}
+.v6-member-indicators {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.75em;
+}
+.v6-member-link-status.is-on { opacity: 1; }
+.v6-member-link-status.is-wake-off { opacity: 0.75; filter: sepia(1) saturate(4) hue-rotate(5deg); }
+.v6-member-link-status.is-off { opacity: 0.35; filter: grayscale(1); }
+.v6-member-ai-status {
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid var(--border-color, #2a2f36);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.v6-member-ai-status.is-operational { border-color: #56d364; color: #56d364; }
+.v6-member-ai-status.is-degraded { border-color: #d4a72c; color: #d4a72c; }
+.v6-member-ai-status.is-outage { border-color: #f85149; color: #f85149; }
+.v6-member-ai-status.is-unknown { opacity: 0.6; }
 /* #3047: Project Delegate Chat. */
 .v6-chat {
   display: flex;

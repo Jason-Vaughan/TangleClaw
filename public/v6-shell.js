@@ -281,7 +281,8 @@
    * on `data-node-id`.
    * @param {ReturnType<typeof buildHierarchyTree>} tree
    * @param {{activeProjectId?: string, activeFleetId?: string, activeResourceId?: string,
-   *   collapsed?: Array<string>|Set<string>}} [opts]
+   *   collapsed?: Array<string>|Set<string>, memberInfo?: (seatId: string) => object|null}} [opts] -
+   *   `memberInfo` gives a member's status indicators (#3053), or null to draw it plain.
    * @returns {string} HTML.
    */
   function sidebarMarkup(tree, opts) {
@@ -306,9 +307,14 @@
           if (!m.seatId) return `<li class="v6-shell-member">${label}</li>`;
           const memberActive = activeResourceId === String(m.seatId);
           const memberHash = routeHash({ view: 'conversation', resourceId: m.seatId });
-          return `<li class="v6-shell-member"><a class="v6-shell-member-link${memberActive ? ' is-active' : ''}"
-            aria-current="${memberActive ? 'page' : 'false'}" id="v6TreeLink-m${pi}-${fi}-${mi}"
-            href="${escapeHtml(memberHash)}" data-route="${escapeHtml(memberHash)}">${label}</a></li>`;
+          // #3053 item 4: the member's status, when its project row is known.
+          const info = typeof options.memberInfo === 'function' ? options.memberInfo(m.seatId) : null;
+          const stateClass = info ? ` is-${info.state}` : '';
+          const title = info ? ` title="${escapeHtml(info.title)}"` : '';
+          const glyph = info ? `<span class="v6-member-glyph" aria-hidden="true">${info.glyph}</span>` : '';
+          return `<li class="v6-shell-member"><a class="v6-shell-member-link${stateClass}${memberActive ? ' is-active' : ''}"
+            aria-current="${memberActive ? 'page' : 'false'}" id="v6TreeLink-m${pi}-${fi}-${mi}"${title}
+            href="${escapeHtml(memberHash)}" data-route="${escapeHtml(memberHash)}">${glyph}${label}</a>${info ? memberIndicatorsMarkup(info) : ''}</li>`;
         }).join('');
         const fleetToggle = fleet.members.length
           ? treeToggleMarkup(`v6TreeToggle-f${pi}-${fi}`, fleetNodeKey(project, fleet), fleet.displayName, fleetFolded)
@@ -746,12 +752,14 @@
     /esc to (cancel|interrupt)/i,
     /\?\s*for shortcuts/i,
     /How'?s the CLI experience/i,
-    /\btokens?\b.*\b(sent|received|left|used)\b/i,
-    /\bcontext (left|window)\b/i,
-    /^(⏎|⌃|ctrl\+)/i,
-    /^…\s*\d+\s+more actions?\s*…?$/i,
-    /^[⎿└]/
+    // Status bars start with the number: "12.3k tokens", "41% context left".
+    /^[\d.,]+k?\s+tokens?\b/i,
+    /^\d+%\s+(of\s+)?context\b/i,
+    /^(⏎|⌃|ctrl\+)/i
   ]);
+
+  /** Lines that start a tool block: what is indented under them is the tool's output. */
+  const LIVE_TOOL = Object.freeze([/^…\s*\d+\s+more actions?\s*…?$/i, /^[⎿└]/]);
 
   /** Per-engine thinking/tool lines; an unknown engine gets all of them. */
   const LIVE_ENGINE_NOISE = Object.freeze({
@@ -761,8 +769,12 @@
     aider: [/^Tokens:/, /^Applied edit to /, /^Commit [0-9a-f]{7,}\b/, /^(Repo-map|Main model|Weak model|Git repo|Aider v)\b/, /^Added .+ to the chat\b/]
   });
 
-  /** A tail line meaning the engine is busy right now (thinking, running a tool). */
-  const LIVE_BUSY = /esc to interrupt|^[✶✻✽✢]|^[⠀-⣿]|Running command|Thinking/i;
+  /**
+   * A tail line meaning the engine is busy right now: a spinner glyph or the
+   * interrupt hint. Words like "thinking" alone are not enough — a reply can
+   * say them.
+   */
+  const LIVE_BUSY = /esc to interrupt|^[\u2736\u273B\u273D\u2722]|^[\u2800-\u28FF]/i;
 
   /** A prompt line: `> text`, `❯ text` or `› text`, possibly inside a box border. */
   const LIVE_PROMPT = /^(?:│\s*)?(?:>|❯|›)\s?(.*?)\s*│?$/;
@@ -783,8 +795,20 @@
   function extractLiveTurns(lines, engine, knownUserTexts) {
     const engineRules = LIVE_ENGINE_NOISE[engine]
       || Object.keys(LIVE_ENGINE_NOISE).reduce((all, k) => all.concat(LIVE_ENGINE_NOISE[k]), []);
-    const noise = LIVE_NOISE.concat(engineRules);
-    const known = new Set((Array.isArray(knownUserTexts) ? knownUserTexts : []).map((t) => String(t).trim()));
+    const tools = LIVE_TOOL.concat(engineRules);
+    const squash = (t) => String(t).replace(/\s+/g, ' ').trim();
+    // A recorded message can span lines (text, then its Attached lines) and
+    // a long prompt wraps in the pane, so an echo is matched by line, by
+    // prefix, or as a fragment of the message it continues.
+    const sent = (Array.isArray(knownUserTexts) ? knownUserTexts : []).map(squash).filter(Boolean);
+    const knownLines = new Set((Array.isArray(knownUserTexts) ? knownUserTexts : [])
+      .flatMap((t) => String(t).split('\n')).map((t) => t.trim()).filter(Boolean));
+    const recordedAs = (said) => {
+      const one = squash(said);
+      if (knownLines.has(said)) return sent.find((m) => m.includes(one)) || one;
+      return one.length >= 20 ? sent.find((m) => m.startsWith(one)) || null : null;
+    };
+    let echo = null;
     const turns = [];
     let reply = [];
     let activity = null;
@@ -811,17 +835,26 @@
         // operator speaking: it neither ends nor starts anything.
         if (said) {
           activity = null;
-          if (!known.has(said)) turns.push({ role: 'user', text: said });
+          echo = recordedAs(said);
+          if (!echo) turns.push({ role: 'user', text: said });
         }
         return;
       }
+      // The rest of a recorded message the pane is still echoing.
+      if (echo && (knownLines.has(text) || echo.includes(squash(text)))) return;
+      echo = null;
       if (LIVE_BUSY.test(text) && !/Thought for/i.test(text)) {
         activity = text.replace(/^[✶✻✽✢⠀-⣿\s]+/, '').replace(/\s*\(?esc to interrupt\)?/i, '').trim() || 'Working…';
         return;
       }
       if (indented && block === 'tool') return;
-      if (noise.some((re) => re.test(text))) {
+      if (tools.some((re) => re.test(text))) {
         block = 'tool';
+        return;
+      }
+      // Chrome and boilerplate are dropped, but do not swallow what follows.
+      if (LIVE_NOISE.some((re) => re.test(text))) {
+        block = null;
         return;
       }
       if (indented && block === 'reply') {
@@ -975,6 +1008,81 @@
       return `<span class="v6-chat-chip is-${status}" title="${escapeHtml(tip)}">${escapeHtml(a && a.name)}${status === 'uploading' ? ' …' : ''}
         <button type="button" id="v6ChatAttachRemove-${i}" class="v6-chat-chip-remove" aria-label="Remove ${escapeHtml(a && a.name)}">×</button></span>`;
     }).join('');
+  }
+
+  /** Short engine codes for the sidebar badge (#3053); other engines use their first two letters. */
+  const ENGINE_CODES = Object.freeze({ antigravity: 'AG', claude: 'CC', codex: 'CX', aider: 'AI' });
+
+  /** Engine health values the badge colours; anything else is unknown. */
+  const ENGINE_HEALTH = Object.freeze(['operational', 'degraded', 'outage']);
+
+  /** Each member state's glyph and plain title. */
+  const MEMBER_STATES = Object.freeze({
+    live: { glyph: '●', title: 'Live session' },
+    attention: { glyph: '⚠', title: 'Needs attention' },
+    starting: { glyph: '◐', title: 'Starting' },
+    wrapping: { glyph: '◐', title: 'Wrapping' },
+    offline: { glyph: '○', title: 'No live session' }
+  });
+
+  /** @param {*} v - A reason the server gave as text or as `{message}`. @returns {string} */
+  function reasonText(v) {
+    if (!v) return '';
+    if (typeof v === 'string') return v;
+    return String(v.message || v.reason || v.code || '');
+  }
+
+  /**
+   * A sidebar member's status (#3053 item 4, Option A), from its project row
+   * (`GET /api/projects`, as the operator sees it) and the engines' health
+   * (`GET /api/models/status`): its session state, Medusa link and engine.
+   * A live session's launch blocker, held wake or engine error, or a last
+   * session that crashed or left work behind, is "attention".
+   * @param {object|null} row
+   * @param {Object<string, {status?: string}>} health - Engine id -> status.
+   * @returns {{state: string, glyph: string, title: string, medusa: string,
+   *   engine: {code: string, name: string, health: string}|null}}
+   */
+  function memberIndicators(row, health) {
+    const r = row || {};
+    const s = r.session || null;
+    const live = Boolean(s && s.active === true);
+    const sh = r.sessionHealth || null;
+    const reason = (live && (reasonText(s.launchBlocker) || reasonText(s.heldWakeReason) || reasonText(s.lastEngineError)))
+      || (sh && sh.status === 'crashed' ? 'the last session crashed' : '')
+      || (sh && sh.state === 'left-work' ? 'the last session left work behind' : '');
+    let state = 'offline';
+    if (reason) state = 'attention';
+    else if (live && (s.status === 'starting' || s.status === 'wrapping')) state = s.status;
+    else if (live) state = 'live';
+    const medusa = r.medusaEnabled === true ? (r.medusaWake === true ? 'on' : 'wake-off') : 'off';
+    let engine = null;
+    if (r.engine && r.engine.id) {
+      const id = String(r.engine.id);
+      const status = health && health[id] && ENGINE_HEALTH.includes(health[id].status) ? health[id].status : 'unknown';
+      engine = { code: ENGINE_CODES[id] || id.slice(0, 2).toUpperCase(), name: String(r.engine.name || id), health: status };
+    }
+    return {
+      state, glyph: MEMBER_STATES[state].glyph,
+      title: state === 'attention' ? `Needs attention: ${reason}` : MEMBER_STATES[state].title,
+      medusa, engine
+    };
+  }
+
+  /** The Medusa link symbol's title, by state. */
+  const MEDUSA_TITLES = Object.freeze({ on: 'Medusa link and wake on', 'wake-off': 'Medusa link on, wake off', off: 'Medusa link off' });
+
+  /**
+   * The right-hand symbols beside a sidebar member (#3053 item 4).
+   * @param {ReturnType<typeof memberIndicators>} info
+   * @returns {string} HTML.
+   */
+  function memberIndicatorsMarkup(info) {
+    const link = `<span class="v6-member-link-status is-${info.medusa}" title="${escapeHtml(MEDUSA_TITLES[info.medusa])}">🔗</span>`;
+    const ai = info.engine
+      ? `<span class="v6-member-ai-status is-${info.engine.health}" title="${escapeHtml(info.engine.name)}: ${info.engine.health === 'unknown' ? 'status unknown' : info.engine.health}">${escapeHtml(info.engine.code)}</span>`
+      : '';
+    return `<span class="v6-member-indicators">${link}${ai}</span>`;
   }
 
   /** The chat header's session pill text, by session state. */
@@ -1374,6 +1482,9 @@
     // #3053: files attached in each chat, by target project id, and the
     // means to read and upload them (injectable for tests).
     const attachments = new Map();
+    // Names already uploaded per target this visit: the route overwrites a
+    // file of the same name, so a name is never reused (#3053).
+    const uploadedNames = new Map();
     let attachSeq = 0;
     const readFileAsBase64 = deps.readFileAsBase64 || defaultReadFileAsBase64;
     const operatorHeaders = deps.operatorHeaders || (typeof global.tcOperatorProofHeaders === 'function'
@@ -1703,6 +1814,8 @@
         await loadProjects();
         if (mine !== seq) return;
         showProjects(shell);
+        await loadEngineHealth(shell);
+        if (mine !== seq) return;
       }
       if (entering) {
         const scopeId = encodeURIComponent(route.projectId || route.resourceId || 'global');
@@ -1764,11 +1877,23 @@
       const key = String(chat.project.id);
       const list = attachments.get(key) || [];
       attachments.set(key, list);
-      const taken = new Set(list.map((a) => a.name));
+      const used = uploadedNames.get(key) || new Set();
+      uploadedNames.set(key, used);
+      // The project's secrets store may hold files from earlier visits too.
+      let stored = [];
+      try {
+        const headers = await operatorHeaders();
+        const res = await api(`/api/sessions/${encodeURIComponent(chat.project.name)}/secure-clipboard`, { method: 'GET', headers });
+        stored = res && Array.isArray(res.files) ? res.files.map((f) => f && f.filename).filter(Boolean) : [];
+      } catch { // prawduct:allow prawduct/broad-except -- the listing only refines naming; without it, names this visit used still stay unique
+        stored = [];
+      }
+      const taken = new Set(list.map((a) => a.name).concat([...used], stored));
       const uploads = [];
       (Array.isArray(files) ? files : []).forEach((file) => {
         const item = { id: ++attachSeq, name: sanitizeUploadName(file && file.name, taken), status: 'uploading' };
         taken.add(item.name);
+        used.add(item.name);
         list.push(item);
         if (!(Number(file && file.size) <= MAX_ATTACH_BYTES)) {
           item.status = 'error';
@@ -1833,6 +1958,8 @@
       await loadProjects();
       if (mine !== seq) return;
       showProjects(shell);
+      await loadEngineHealth(shell);
+      if (mine !== seq) return;
       await loadRouteDetail(route, mine);
     }
 
@@ -1842,6 +1969,18 @@
      * an older shell handle without it just gets no engine filter data).
      * @param {object} shell
      */
+    /**
+     * Hand the shell the engines' health for its sidebar badges (#3053); a
+     * failed read leaves the badges' health unknown.
+     * @param {object} shell
+     * @returns {Promise<void>}
+     */
+    async function loadEngineHealth(shell) {
+      if (typeof shell.setEngineHealth !== 'function') return;
+      const res = await api('/api/models/status');
+      if (res && res.status && typeof res.status === 'object') shell.setEngineHealth(res.status);
+    }
+
     function showProjects(shell) {
       if (!projects) return;
       if (typeof shell.setProjects === 'function') shell.setProjects(projects);
@@ -1970,6 +2109,7 @@
    *   toggleDrawer: (force?: boolean) => void, isDrawerOpen: () => boolean,
    *   toggleSidebar: (force?: boolean) => void, isSidebarCollapsed: () => boolean,
    *   selectGroup: (id: string, additive?: boolean) => void, setProjects: (rows: Array<object>) => void,
+   *   setEngineHealth: (health: object|null) => void,
    *   setPeek: (peek: object|null) => void, setLive: (update: object) => void, clearChatDraft: (projectId?: *) => void,
    *   setTree: (tree: Array<*>) => void, setTelemetry: (bar: object|null) => void,
    *   setTemplates: (templates: Array<*>) => void,
@@ -1992,6 +2132,8 @@
     let sidebarCollapsed = prefs.get('tc_v6_sidebar_collapsed', false, isBoolean);
     let collapsedNodes = new Set(prefs.get('tc_v6_collapsed_nodes', [], isStringArray));
     let projectRows = new Map();
+    // Engine id -> {status}, from /api/models/status, for the sidebar badges (#3053).
+    let engineHealth = {};
     let filterText = '';
     let filterEngine = '';
     let selectedGroups = new Set(prefs.get('tc_v6_selected_groups', [], isStringArray));
@@ -2331,7 +2473,11 @@
             activeProjectId: currentRoute.projectId,
             activeFleetId: currentRoute.fleetId,
             activeResourceId: currentRoute.resourceId,
-            collapsed: collapsedNodes
+            collapsed: collapsedNodes,
+            memberInfo: (seatId) => {
+              const row = projectRows.get(String(seatId));
+              return row ? memberIndicators(row, engineHealth) : null;
+            }
           }) : '<p class="v6-sidebar-empty">No projects match these filters.</p>'}
         </nav>
         ${telemetryHeaderMarkup(telemetry)}
@@ -2443,6 +2589,11 @@
       toggleSidebar,
       isSidebarCollapsed() { return sidebarCollapsed; },
       selectGroup,
+      /** @param {Object<string, {status?: string}>|null} health - Engine id -> status (#3053). */
+      setEngineHealth(health) {
+        engineHealth = health && typeof health === 'object' ? health : {};
+        render();
+      },
       setProjects(rows) {
         projectRows = new Map((Array.isArray(rows) ? rows : [])
           .filter((r) => r && r.id != null).map((r) => [String(r.id), r]));
@@ -2536,6 +2687,7 @@
   global.tcV6ExtractLiveTurns = extractLiveTurns;
   global.tcV6SanitizeUploadName = sanitizeUploadName;
   global.tcV6FilesFromEvent = filesFromEvent;
+  global.tcV6MemberIndicators = memberIndicators;
   global.tcV6CreateLiveController = createLiveController;
   global.tcCreateV6Shell = tcCreateV6Shell;
 })(typeof window !== 'undefined' ? window : globalThis);
