@@ -2293,8 +2293,12 @@ describe('chat composer attachment markup (#3053)', () => {
     assert.doesNotMatch(html, /<b>\.txt/);
   });
 
-  it('an offline target cannot take attachments', () => {
-    assert.match(G.tcV6ConversationViewMarkup(v({ status: 'offline' })), /id="v6ChatAttachBtn"[^>]*disabled/);
+  // Attaching saves files into the project; only sending needs a live
+  // session, so files can be attached first and sent once the chat is started.
+  it('an offline target can still take attachments, while sending stays disabled', () => {
+    const html = G.tcV6ConversationViewMarkup(v({ status: 'offline' }));
+    assert.doesNotMatch(html, /id="v6ChatAttachBtn"[^>]*disabled/);
+    assert.match(html, /<button type="submit" id="v6ChatSend"[^>]*disabled/);
   });
 });
 
