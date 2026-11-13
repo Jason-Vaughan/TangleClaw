@@ -2664,27 +2664,41 @@ describe('start, refresh and offline polling through the live controller (#3053)
 describe('tcV6MemberIndicators (#3053 item 4, Option A)', () => {
   const G = loadV6Shell();
   const ind = (row, health) => plain(G.tcV6MemberIndicators(row, health || {}));
+  // A live session as lib/projects.js#_liveSession sends it, after
+  // enrichProject fills startupReadiness: the store's status column only
+  // ever says 'active' here; starting and wrapping have their own fields.
+  const live = (over) => ({ session: Object.assign({
+    active: true, status: 'active', startedAt: '2026-11-13T22:00:00Z', tmuxSession: 'tc-x', sessionMode: 'tmux',
+    incomplete: [], cause: null, lastEngineError: null, launchBlocker: null, heldWakeReason: null,
+    startupReadiness: { state: 'ready', step: 4, sequenceId: 1, revision: 1, readyAt: 1 }, wrapping: false
+  }, over || {}) });
 
-  it('reads a member\'s session state: live, needs attention, starting/wrapping, offline', () => {
-    assert.equal(ind({ session: { active: true } }).state, 'live');
-    const blocked = ind({ session: { active: true, launchBlocker: { message: 'model held' } } });
-    assert.equal(blocked.state, 'attention');
-    assert.match(blocked.title, /model held/);
-    assert.equal(ind({ session: { active: true, heldWakeReason: 'held by INT' } }).state, 'attention');
-    assert.equal(ind({ session: { active: true, lastEngineError: { message: 'rate limit' } } }).state, 'attention');
-    assert.equal(ind({ session: null, sessionHealth: { status: 'crashed', state: 'clean' } }).state, 'attention');
-    assert.equal(ind({ session: null, sessionHealth: { status: 'wrapped', state: 'left-work' } }).state, 'attention');
-    assert.equal(ind({ session: { active: true, status: 'starting' } }).state, 'starting');
-    assert.equal(ind({ session: { active: true, status: 'wrapping' } }).state, 'wrapping');
+  it('reads a member\'s session state from the fields the server actually sends', () => {
+    assert.equal(ind(live()).state, 'live');
+    assert.equal(ind(live({ startupReadiness: { state: 'starting', step: 2 } })).state, 'starting');
+    assert.equal(ind(live({ wrapping: { step: 'commit', since: 1, stale: false } })).state, 'wrapping');
+    assert.match(ind(live({ wrapping: { step: 'commit', since: 1, stale: false } })).title, /commit/);
     assert.equal(ind({ session: null }).state, 'offline');
     assert.equal(ind(null).state, 'offline');
   });
 
+  it('needs attention: a launch blocker, a held wake, an engine error, a startup that needs attention, a stale wrap, or a last session that crashed or left work', () => {
+    const blocked = ind(live({ launchBlocker: { label: 'trust dialog', message: 'folder trust dialog' } }));
+    assert.equal(blocked.state, 'attention');
+    assert.match(blocked.title, /folder trust dialog/);
+    assert.equal(ind(live({ heldWakeReason: 'pane-composer-has-input' })).state, 'attention');
+    assert.equal(ind(live({ lastEngineError: { message: 'rate limit' } })).state, 'attention');
+    const startup = ind(live({ startupReadiness: { state: 'needs-attention', blocker: 'missing-launch-sequence' } }));
+    assert.equal(startup.state, 'attention');
+    assert.match(startup.title, /missing-launch-sequence/);
+    assert.equal(ind(live({ wrapping: { step: 'push', since: 1, stale: true } })).state, 'attention');
+    assert.equal(ind({ session: null, sessionHealth: { status: 'crashed', state: 'clean' } }).state, 'attention');
+    assert.equal(ind({ session: null, sessionHealth: { status: 'wrapped', state: 'left-work' } }).state, 'attention');
+  });
+
   it('gives each state its glyph', () => {
-    assert.deepEqual(['live', 'attention', 'starting', 'offline'].map((s) => ({
-      live: { session: { active: true } }, attention: { session: { active: true, heldWakeReason: 'x' } },
-      starting: { session: { active: true, status: 'starting' } }, offline: {}
-    })[s]).map((r) => ind(r).glyph), ['●', '⚠', '◐', '○']);
+    assert.deepEqual([live(), live({ heldWakeReason: 'pane-not-at-rest' }), live({ startupReadiness: { state: 'starting' } }), {}]
+      .map((r) => ind(r).glyph), ['●', '⚠', '◐', '○']);
   });
 
   it('reads the Medusa link as on, link-only (wake off) or off', () => {
@@ -2707,8 +2721,8 @@ describe('tcV6MemberIndicators (#3053 item 4, Option A)', () => {
 
 describe('sidebar member status indicators (#3053 item 4)', () => {
   const ROWS = [
-    { id: 11, name: 'TC-Lane-A', engine: { id: 'claude', name: 'Claude Code' }, session: { active: true }, medusaEnabled: true, medusaWake: true },
-    { id: 12, name: 'TC-Lane-PM', engine: { id: 'codex', name: 'Codex' }, session: { active: true, heldWakeReason: '<held> by INT' }, medusaEnabled: true, medusaWake: false },
+    { id: 11, name: 'TC-Lane-A', engine: { id: 'claude', name: 'Claude Code' }, session: { active: true, status: 'active', wrapping: false, startupReadiness: { state: 'ready' } }, medusaEnabled: true, medusaWake: true },
+    { id: 12, name: 'TC-Lane-PM', engine: { id: 'codex', name: 'Codex' }, session: { active: true, status: 'active', wrapping: false, launchBlocker: { message: '<held> by INT' } }, medusaEnabled: true, medusaWake: false },
     { id: 21, name: 'Medusa-PM', engine: { id: 'aider' }, session: null }
   ];
 
@@ -2818,5 +2832,19 @@ describe('an upload never overwrites an earlier one (cumulative review)', () => 
     await m.settle();
     await m.live.attachFiles([{ name: 'image.png', size: 1 }]);
     assert.deepEqual(m.posts, ['image-3.png']);
+  });
+});
+
+describe('tcV6ExtractLiveTurns: the interrupt hint is chrome only in its UI form (cumulative review, R-2)', () => {
+  const G = loadV6Shell();
+  it('a reply that mentions pressing esc to interrupt or cancel is kept and is not read as activity', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['> how do I stop it?', 'Press esc to interrupt the run, or esc to cancel a menu.'], 'claude', []));
+    assert.equal(out.turns[1].text, 'Press esc to interrupt the run, or esc to cancel a menu.');
+    assert.equal(out.activity, null);
+  });
+
+  it('the hint in its UI form is still chrome or activity', () => {
+    assert.match(plain(G.tcV6ExtractLiveTurns(['> go', 'Working (esc to interrupt)'], 'claude', [])).activity, /Working/);
+    assert.deepEqual(plain(G.tcV6ExtractLiveTurns(['> go', 'esc to cancel'], 'claude', [])).turns.length, 1);
   });
 });

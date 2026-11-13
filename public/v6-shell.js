@@ -749,7 +749,9 @@
     /^\$?\s*tc\s+(message|start|workload|control|rules|whoami|branch|docs|sessions|capabilities)\b/,
     /^[╭╮╰╯│─━┌┐└┘├┤═║╔╗╚╝\s]+$/,
     /^[─━═]{3,}/,
-    /esc to (cancel|interrupt)/i,
+    // The hint as the UI draws it — a line of its own, or a trailing
+    // parenthesis — not a reply that tells the operator to press it.
+    /^esc to (cancel|interrupt)\b|\(esc to (cancel|interrupt)\)\s*$/i,
     /\?\s*for shortcuts/i,
     /How'?s the CLI experience/i,
     // Status bars start with the number: "12.3k tokens", "41% context left".
@@ -774,7 +776,7 @@
    * interrupt hint. Words like "thinking" alone are not enough — a reply can
    * say them.
    */
-  const LIVE_BUSY = /esc to interrupt|^[\u2736\u273B\u273D\u2722]|^[\u2800-\u28FF]/i;
+  const LIVE_BUSY = /\(esc to interrupt\)\s*$|^[\u2736\u273B\u273D\u2722]|^[\u2800-\u28FF]/i;
 
   /** A prompt line: `> text`, `❯ text` or `› text`, possibly inside a box border. */
   const LIVE_PROMPT = /^(?:│\s*)?(?:>|❯|›)\s?(.*?)\s*│?$/;
@@ -1048,12 +1050,22 @@
     const s = r.session || null;
     const live = Boolean(s && s.active === true);
     const sh = r.sessionHealth || null;
+    // The session's status column only ever says 'active' while it is live;
+    // starting and wrapping are their own fields (lib/projects.js
+    // _liveSession: startupReadiness from enrichProject, wrapping from the
+    // project's wrap state).
+    const readiness = live && s.startupReadiness ? s.startupReadiness : null;
+    const wrap = live && s.wrapping && typeof s.wrapping === 'object' ? s.wrapping : null;
     const reason = (live && (reasonText(s.launchBlocker) || reasonText(s.heldWakeReason) || reasonText(s.lastEngineError)))
+      || (readiness && readiness.state === 'needs-attention'
+        ? `startup needs attention${readiness.blocker ? ` (${readiness.blocker})` : ''}` : '')
+      || (wrap && wrap.stale ? `the wrap looks stuck${wrap.step ? ` at ${wrap.step}` : ''}` : '')
       || (sh && sh.status === 'crashed' ? 'the last session crashed' : '')
       || (sh && sh.state === 'left-work' ? 'the last session left work behind' : '');
     let state = 'offline';
     if (reason) state = 'attention';
-    else if (live && (s.status === 'starting' || s.status === 'wrapping')) state = s.status;
+    else if (wrap) state = 'wrapping';
+    else if (readiness && readiness.state === 'starting') state = 'starting';
     else if (live) state = 'live';
     const medusa = r.medusaEnabled === true ? (r.medusaWake === true ? 'on' : 'wake-off') : 'off';
     let engine = null;
@@ -1062,11 +1074,10 @@
       const status = health && health[id] && ENGINE_HEALTH.includes(health[id].status) ? health[id].status : 'unknown';
       engine = { code: ENGINE_CODES[id] || id.slice(0, 2).toUpperCase(), name: String(r.engine.name || id), health: status };
     }
-    return {
-      state, glyph: MEMBER_STATES[state].glyph,
-      title: state === 'attention' ? `Needs attention: ${reason}` : MEMBER_STATES[state].title,
-      medusa, engine
-    };
+    let title = MEMBER_STATES[state].title;
+    if (state === 'attention') title = `Needs attention: ${reason}`;
+    else if (state === 'wrapping' && wrap.step) title = `Wrapping (${wrap.step})`;
+    return { state, glyph: MEMBER_STATES[state].glyph, title, medusa, engine };
   }
 
   /** The Medusa link symbol's title, by state. */
