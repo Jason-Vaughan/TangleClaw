@@ -3,9 +3,10 @@
 ## Current release
 
 - [v6.2.2 — Fleet View sidebar, Project Delegate Chat and the Medusa update chip fix](v6.2.2.md)
-- [v6.2.1 — Full-stack soak, adversarial chaos and browser E2E qualification, and the dashboard startup fix](v6.2.1.md)
 
 ## Recent releases
+
+- [v6.2.1 — Full-stack soak, adversarial chaos and browser E2E qualification, and the dashboard startup fix](v6.2.1.md)
 
 - [v6.2.0 — Multi-train simulator, external providers, Advisor, Medusa v2 compact wire and OS sandboxing](v6.2.0.md)
 
