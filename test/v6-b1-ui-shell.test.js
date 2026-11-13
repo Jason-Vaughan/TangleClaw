@@ -1949,3 +1949,258 @@ describe('Hide Fleet / Show Fleet keep keyboard focus (#3046)', () => {
     assert.equal(doc.activeElement, doc.getElementById('v6SidebarCollapse'));
   });
 });
+
+// ── #3052 (Car V623-W1-A): Above-the-Hood turns from a session's live output ──
+// Synthetic pane text per engine, built from the markers #3052 names: no real
+// session content is captured into this repo.
+
+const PANES = {
+  claude: [
+    'When the user wants to wrap up, run the wrap protocol.',
+    '### Medusa consumer contract (read docs/CONSUMER-CONTRACT.md)',
+    '[TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.',
+    '> ship the release',
+    '⏺ I\'ll check the branch first.',
+    '⏺ Bash(git status)',
+    '  ⎿  On branch main',
+    '     nothing to commit',
+    '⏺ The branch is clean.',
+    '  Should I push it?',
+    '╭──────────────────────────────────╮',
+    '│ >                                │',
+    '╰──────────────────────────────────╯',
+    '  ? for shortcuts'
+  ],
+  codex: [
+    'TangleClaw\'d into existence. Reading launch context via tc start next.',
+    '› run the tests',
+    '• Ran npm test',
+    '  └ 12 passing',
+    '▸ Thought for 3s',
+    '• All 12 tests pass.',
+    '⣷ Running command (esc to interrupt)',
+    '───────────────────────────',
+    '› '
+  ],
+  antigravity: [
+    '❯ fix the button',
+    '○ Thought for 4s',
+    '● Ran npm test',
+    '● Explored 3 files',
+    '… 2 more actions …',
+    '● Edited public/ui.js',
+    'The button now confirms on a second click.',
+    'Does that match what you wanted?',
+    '❯ ',
+    'How\'s the CLI experience so far? (1-5)'
+  ],
+  aider: [
+    '> add a test for the empty case',
+    'Tokens: 1.2k sent, 300 received. Cost: $0.01 message.',
+    'Applied edit to test/a.test.js',
+    'I added a regression test for the empty case.',
+    'Commit 1a2b3c4 add empty-case test',
+    '> '
+  ]
+};
+
+describe('tcV6ExtractLiveTurns (#3052)', () => {
+  const G = loadV6Shell();
+  const run = (engine, known) => plain(G.tcV6ExtractLiveTurns(PANES[engine], engine, known || []));
+
+  it('claude: keeps the replies, drops boilerplate, wakes, tool calls and their output, and the prompt box', () => {
+    const out = run('claude');
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'ship the release' },
+      { role: 'assistant', text: 'I\'ll check the branch first.\nThe branch is clean.\nShould I push it?' }
+    ]);
+    assert.equal(out.question, 'Should I push it?');
+    assert.equal(out.activity, null);
+  });
+
+  it('codex: drops Ran/Thought lines and reports the running spinner as activity', () => {
+    const out = run('codex');
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'run the tests' },
+      { role: 'assistant', text: 'All 12 tests pass.' }
+    ]);
+    assert.equal(out.question, null);
+    assert.match(out.activity, /Running command/);
+  });
+
+  it('antigravity: drops ○/● tool lines, the action fold and the CLI survey', () => {
+    const out = run('antigravity');
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'fix the button' },
+      { role: 'assistant', text: 'The button now confirms on a second click.\nDoes that match what you wanted?' }
+    ]);
+    assert.equal(out.question, 'Does that match what you wanted?');
+  });
+
+  it('aider: drops token, applied-edit and commit lines', () => {
+    const out = run('aider');
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'add a test for the empty case' },
+      { role: 'assistant', text: 'I added a regression test for the empty case.' }
+    ]);
+  });
+
+  it('a prompt already recorded as a user event is not repeated', () => {
+    const out = run('claude', ['ship the release']);
+    assert.deepEqual(out.turns.map((t) => t.role), ['assistant']);
+  });
+
+  it('a question the operator has already answered is no longer pinned', () => {
+    const lines = PANES.antigravity.slice(0, 8).concat(['❯ yes, ship it', 'Shipping now.']);
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'antigravity', []));
+    assert.equal(out.question, null);
+    assert.equal(out.turns[out.turns.length - 1].text, 'Shipping now.');
+  });
+
+  it('strips terminal colour codes and keeps any line it does not recognise', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['> hi', '\u001b[32mHello there\u001b[0m', 'An unusual line: 42%'], 'claude', []));
+    assert.deepEqual(out.turns[1], { role: 'assistant', text: 'Hello there\nAn unusual line: 42%' });
+  });
+
+  it('an unknown engine uses every engine\'s markers; empty or malformed input yields nothing', () => {
+    assert.deepEqual(run('antigravity').turns, plain(G.tcV6ExtractLiveTurns(PANES.antigravity, 'mystery', [])).turns);
+    assert.deepEqual(plain(G.tcV6ExtractLiveTurns(null, 'claude', [])), { turns: [], question: null, activity: null });
+    assert.deepEqual(plain(G.tcV6ExtractLiveTurns([null, 7, '   '], 'claude', [])).turns, []);
+  });
+
+  it('activity is reported only while the busy marker is the latest thing on screen', () => {
+    const settled = PANES.codex.slice(0, 6).concat(['• Done. Anything else?', '› ']);
+    assert.equal(plain(G.tcV6ExtractLiveTurns(settled, 'codex', [])).activity, null);
+    const thinking = ['> go', '✶ Thinking… (esc to interrupt)'];
+    assert.match(plain(G.tcV6ExtractLiveTurns(thinking, 'claude', [])).activity, /Thinking/);
+  });
+});
+
+describe('Above-the-Hood chat view (#3052)', () => {
+  const G = loadV6Shell();
+  const view = (chat, extra) => Object.assign({
+    project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1592,
+    events: [{ seq: 1, role: 'user', content: 'ship the release' }],
+    chat: Object.assign({ mode: 'delegate', nodeId: 'tc-lane', nodeName: 'TC-Lane', status: 'active', members: [] }, chat || {})
+  }, extra || {});
+
+  it('shows live assistant turns as ASSISTANT (<project>) bubbles after the recorded events', () => {
+    const html = G.tcV6ConversationViewMarkup(view({ live: { turns: [{ role: 'assistant', text: 'The branch is clean.' }], question: null, activity: null } }));
+    assert.match(html, /<ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns"[^>]*><li class="v6-conversation-event is-assistant is-live">/);
+    assert.match(html, /<span class="v6-conversation-role">assistant <span class="v6-conversation-who">\(TC-Lane-PM\)<\/span><\/span>/);
+    assert.match(html, /The branch is clean\./);
+    assert.ok(html.indexOf('ship the release') < html.indexOf('The branch is clean.'), 'recorded events come first');
+  });
+
+  it('pins the question the assistant is waiting on, and shows what it is busy doing, above the composer', () => {
+    const html = G.tcV6ConversationViewMarkup(view({ live: { turns: [], question: 'Should I <push>?', activity: 'Running command' } }));
+    assert.match(html, /<div id="v6ChatQuestion" class="v6-chat-question is-asking"[^>]*>[\s\S]*Should I &lt;push&gt;\?/);
+    assert.match(html, /<p id="v6ChatActivity" class="v6-chat-activity is-busy"[^>]*>Running command<\/p>/);
+    assert.ok(html.indexOf('v6ChatQuestion') < html.indexOf('v6ChatForm'));
+  });
+
+  it('keeps empty question and activity slots, so a poll can fill them in place', () => {
+    const html = G.tcV6ConversationViewMarkup(view({ live: null }));
+    assert.match(html, /<div id="v6ChatQuestion" class="v6-chat-question"[^>]*><\/div>/);
+    assert.match(html, /<p id="v6ChatActivity" class="v6-chat-activity"[^>]*><\/p>/);
+    assert.match(html, /<ol id="v6ChatLive"[^>]*><\/ol>/);
+  });
+
+  it('puts the raw output in a collapsed Under the Hood drawer, open only when asked', () => {
+    const closed = G.tcV6ConversationViewMarkup(view({ peek: { lines: ['$ ok'] } }));
+    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\)<\/summary>\s*<pre id="v6ChatPeek"/);
+    assert.match(G.tcV6ConversationViewMarkup(view({ peek: { lines: [] }, hoodOpen: true })), /<details id="v6ChatUnderHood" class="v6-chat-under-hood" open>/);
+  });
+
+  it('wraps both streams in one scroll container', () => {
+    assert.match(G.tcV6ConversationViewMarkup(view()), /<div id="v6ChatStream" class="v6-chat-stream"[^>]*>\s*<ol class="v6-conversation-stream"/);
+  });
+
+  it('with no recorded events but live turns, shows the turns instead of "no events"', () => {
+    const html = G.tcV6ConversationViewMarkup(view({ live: { turns: [{ role: 'assistant', text: 'hi' }] } }, { events: [] }));
+    assert.doesNotMatch(html, /No conversation events recorded/);
+    assert.match(html, /is-live/);
+  });
+});
+
+describe('Above-the-Hood chat, live in the shell (#3052)', () => {
+  function mountLiveChat(peeks) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('#/projects/tc-lane');
+    let n = 0;
+    const rows = [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }, { id: 10, name: 'TC-Lane-A', engine: { id: 'claude' } }];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: rows };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
+      if (url === '/api/v6/projects/12/sessions/1592/conversation/events') return { events: [{ seq: 1, role: 'user', content: 'ship the release' }] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: peeks[Math.min(n++, peeks.length - 1)] };
+      return null;
+    };
+    const timers = [];
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => ({ ok: true }), storage: null,
+      setInterval: (fn, ms) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: win, storage: null, onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    return { shell, root, doc, timers, settle };
+  }
+
+  it('extracts the reply from the peek with the project\'s engine, without repeating the recorded prompt', async () => {
+    const m = mountLiveChat([PANES.claude]);
+    await m.settle();
+    assert.match(m.root.innerHTML, /is-live[\s\S]*The branch is clean\./);
+    // The raw drawer shows the pane as it is; the conversation must not repeat the prompt.
+    const html = m.root.innerHTML;
+    const conversation = html.slice(html.indexOf('id="v6ChatStream"'), html.indexOf('id="v6ChatUnderHood"'));
+    assert.equal((conversation.match(/ship the release/g) || []).length, 1, 'the recorded prompt is not shown twice');
+    assert.match(m.root.innerHTML, /v6-chat-question is-asking[\s\S]*Should I push it\?/);
+  });
+
+  it('a poll updates the live turns, question and activity in place, leaving the composer alone', async () => {
+    const m = mountLiveChat([PANES.claude, ['> ship the release', '⏺ Pushing now.', '✶ Thinking… (esc to interrupt)']]);
+    await m.settle();
+    const input = m.doc.getElementById('v6ChatInput');
+    await m.timers[0]();
+    assert.match(m.doc.getElementById('v6ChatLive').innerHTML, /Pushing now\./);
+    assert.equal(m.doc.getElementById('v6ChatQuestion').innerHTML, '');
+    assert.match(m.doc.getElementById('v6ChatActivity').innerHTML, /Thinking/);
+    assert.equal(m.doc.getElementById('v6ChatInput'), input);
+  });
+
+  it('the Under the Hood drawer stays open across re-renders once the operator opens it', async () => {
+    const m = mountLiveChat([PANES.claude]);
+    await m.settle();
+    const hood = m.doc.getElementById('v6ChatUnderHood');
+    hood.open = true;
+    hood.dispatch('toggle');
+    m.shell.setTelemetry(null);
+    assert.match(m.root.innerHTML, /<details id="v6ChatUnderHood" class="v6-chat-under-hood" open>/);
+  });
+
+  it('scrolls the conversation and the raw output to the bottom on first render', async () => {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const realGet = doc.getElementById;
+    doc.getElementById = (id) => {
+      const el = realGet(id);
+      if (el && (id === 'v6ChatStream' || id === 'v6ChatPeek') && el.scrollHeight === undefined) {
+        el.scrollHeight = 900; el.clientHeight = 300; el.scrollTop = 0;
+      }
+      return el;
+    };
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/tc-lane'), storage: null });
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [],
+      chat: { status: 'active', peek: { lines: ['x'] } } } });
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 900);
+    assert.equal(doc.getElementById('v6ChatPeek').scrollTop, 900);
+  });
+});

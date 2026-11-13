@@ -469,6 +469,22 @@
     </div>`;
   }
 
+  /**
+   * Whether a scroll container is showing its last line (within a few
+   * pixels). A container that cannot report its geometry is not.
+   * @param {object|null} el
+   * @returns {boolean}
+   */
+  function isAtBottom(el) {
+    return Boolean(el) && typeof el.scrollHeight === 'number'
+      && el.scrollHeight - (el.scrollTop || 0) - (el.clientHeight || 0) < 8;
+  }
+
+  /** @param {object|null} el - Scroll it to its last line. */
+  function pinToBottom(el) {
+    if (el && typeof el.scrollHeight === 'number') el.scrollTop = el.scrollHeight;
+  }
+
   const isBoolean = (v) => typeof v === 'boolean';
   const isStringMap = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
     && Object.keys(v).every((k) => typeof v[k] === 'string');
@@ -619,7 +635,9 @@
     const hoodHref = `/session.html?project=${encodeURIComponent(name)}`;
     const chat = v.chat || {};
     const status = CHAT_STATUS_LABELS[chat.status] ? chat.status : (v.sessionId == null ? 'offline' : 'active');
-    const live = status !== 'offline';
+    const liveSession = status !== 'offline';
+    const live = chat.live || null;
+    const liveTurns = live && Array.isArray(live.turns) ? live.turns : [];
     let stream;
     if (v.error) {
       stream = `<p class="v6-conversation-empty">${escapeHtml(v.error)}</p>`;
@@ -630,12 +648,17 @@
       stream = events.length
         ? `<ol class="v6-conversation-stream">${events.map((e) => (
           `<li class="v6-conversation-event is-${escapeHtml(e && e.role)}">
-            <span class="v6-conversation-role">${escapeHtml(e && e.role)}</span>
+            ${chatRoleMarkup(e && e.role, name)}
             <span class="v6-conversation-content">${escapeHtml(e && e.content)}</span>
           </li>`
         )).join('')}</ol>`
-        : '<p class="v6-conversation-empty">No conversation events recorded for this session yet.</p>';
+        : (liveTurns.length ? '' : '<p class="v6-conversation-empty">No conversation events recorded for this session yet.</p>');
     }
+    // #3052: the replies the session's live output shows, after what is
+    // recorded; its own list so a poll can replace it without a re-render.
+    stream = `<div id="v6ChatStream" class="v6-chat-stream" tabindex="0">${stream}
+      <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name)}</ol>
+    </div>`;
     const delegateMode = chat.mode === 'delegate';
     const title = delegateMode && chat.nodeName ? chat.nodeName : name;
     const session = v.sessionId != null ? ` (#${escapeHtml(v.sessionId)})` : '';
@@ -655,7 +678,7 @@
     const send = chat.send && CHAT_SEND_KINDS.includes(chat.send.kind) ? chat.send : null;
     // Disabled while a send is in flight too, so a second Enter cannot type
     // the same message into the session twice.
-    const disabled = live && !(send && send.kind === 'pending') ? '' : ' disabled';
+    const disabled = liveSession && !(send && send.kind === 'pending') ? '' : ' disabled';
     const placeholder = `Message ${name}… (Enter to send, Shift+Enter for newline)`;
     return `<section class="v6-conversation v6-chat" aria-label="Conversation — ${escapeHtml(name)}">
       <header class="v6-chat-header">
@@ -670,16 +693,169 @@
         </div>
       </header>
       ${stream}
-      ${live ? `<section class="v6-chat-live" aria-label="Live output">
-        <h3 class="v6-chat-subtitle">Live output</h3>
+      ${liveSession ? `<details id="v6ChatUnderHood" class="v6-chat-under-hood"${chat.hoodOpen ? ' open' : ''}>
+        <summary>🔧 Under the Hood (Raw CLI &amp; Tool Activity)</summary>
         <pre id="v6ChatPeek" class="v6-chat-peek" tabindex="0">${chatPeekMarkup(chat.peek)}</pre>
-      </section>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session — open the Hood to start one.</p>`}
+      </details>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session — open the Hood to start one.</p>`}
+      ${chatQuestionMarkup(live && live.question)}
+      ${chatActivityMarkup(live && live.activity)}
       <form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form" aria-label="Message ${escapeHtml(name)}">
         <textarea id="v6ChatInput" class="v6-chat-input" name="message" rows="3" aria-label="Message to ${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}"${disabled}>${escapeHtml(chat.draft || '')}</textarea>
         <button type="submit" id="v6ChatSend" class="btn btn-primary v6-chat-send-btn"${disabled}>Send</button>
       </form>
       <p id="v6ChatStatus" class="v6-chat-send-status${send ? ` is-${send.kind}` : ''}" role="status" aria-live="polite">${send ? escapeHtml(send.message) : ''}</p>
     </section>`;
+  }
+
+  /**
+   * Markers for what a session's pane shows besides the conversation itself
+   * (#3052): launch boilerplate, switchboard wakes, `tc` tool blocks, prompt
+   * and status chrome, and each engine's thinking and tool lines. Matched
+   * against a line with its colour codes stripped. Anything not matched is
+   * kept: an unrecognised line is shown, never silently dropped.
+   */
+  const LIVE_NOISE = Object.freeze([
+    /^When the user wants to wrap up/i,
+    /^#{1,6}\s*Medusa consumer contract/i,
+    /TangleClaw'd into existence/i,
+    /^Reading launch context via tc start next/i,
+    /^\[TangleClaw( Switchboard)?\]/,
+    /^\$?\s*tc\s+(message|start|workload|control|rules|whoami|branch|docs|sessions|capabilities)\b/,
+    /^[╭╮╰╯│─━┌┐└┘├┤═║╔╗╚╝\s]+$/,
+    /^[─━═]{3,}/,
+    /esc to (cancel|interrupt)/i,
+    /\?\s*for shortcuts/i,
+    /How'?s the CLI experience/i,
+    /\btokens?\b.*\b(sent|received|left|used)\b/i,
+    /\bcontext (left|window)\b/i,
+    /^(⏎|⌃|ctrl\+)/i,
+    /^…\s*\d+\s+more actions?\s*…?$/i,
+    /^[⎿└]/
+  ]);
+
+  /** Per-engine thinking/tool lines; an unknown engine gets all of them. */
+  const LIVE_ENGINE_NOISE = Object.freeze({
+    claude: [/^⏺\s+[A-Za-z][\w.-]*\(/, /^[✶✻✽✢]/],
+    codex: [/^•\s+(Ran|Explored|Edited|Read|Searched|Updated|Added|Deleted|Called|Running|Listed)\b/, /^▸\s*Thought\b/],
+    antigravity: [/^[○●]/],
+    aider: [/^Tokens:/, /^Applied edit to /, /^Commit [0-9a-f]{7,}\b/, /^(Repo-map|Main model|Weak model|Git repo|Aider v)\b/, /^Added .+ to the chat\b/]
+  });
+
+  /** A tail line meaning the engine is busy right now (thinking, running a tool). */
+  const LIVE_BUSY = /esc to interrupt|^[✶✻✽✢]|^[⠀-⣿]|Running command|Thinking/i;
+
+  /** A prompt line: `> text`, `❯ text` or `› text`, possibly inside a box border. */
+  const LIVE_PROMPT = /^(?:│\s*)?(?:>|❯|›)\s?(.*?)\s*│?$/;
+
+  /** Assistant bullets an engine prefixes its own message lines with. */
+  const LIVE_BULLET = /^(?:⏺|•)\s+/;
+
+  /**
+   * The conversation a session's live output shows (#3052): its assistant
+   * replies, any operator prompt not already recorded, the question the
+   * assistant is waiting on, and what it is busy doing. Display only — the
+   * pane is not a record, so nothing here is written to the B2 conversation.
+   * @param {Array<string>|null} lines - The pane's lines (`GET .../peek`).
+   * @param {string} engine - `claude`, `codex`, `antigravity` or `aider`; anything else uses every engine's markers.
+   * @param {Array<string>} knownUserTexts - User messages already recorded, not to repeat.
+   * @returns {{turns: Array<{role: 'user'|'assistant', text: string}>, question: string|null, activity: string|null}}
+   */
+  function extractLiveTurns(lines, engine, knownUserTexts) {
+    const engineRules = LIVE_ENGINE_NOISE[engine]
+      || Object.keys(LIVE_ENGINE_NOISE).reduce((all, k) => all.concat(LIVE_ENGINE_NOISE[k]), []);
+    const noise = LIVE_NOISE.concat(engineRules);
+    const known = new Set((Array.isArray(knownUserTexts) ? knownUserTexts : []).map((t) => String(t).trim()));
+    const turns = [];
+    let reply = [];
+    let activity = null;
+    // An indented line belongs to whatever started the block above it: a tool
+    // line's output is noise, an assistant line's continuation is reply.
+    let block = null;
+    const flush = () => {
+      if (reply.length) turns.push({ role: 'assistant', text: reply.join('\n') });
+      reply = [];
+    };
+    (Array.isArray(lines) ? lines : []).forEach((raw) => {
+      if (typeof raw !== 'string') return;
+      // eslint-disable-next-line no-control-regex
+      const line = raw.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\s+$/, '');
+      const text = line.trim();
+      if (!text) return;
+      const indented = /^\s/.test(line);
+      const prompt = LIVE_PROMPT.exec(text);
+      if (prompt && !indented) {
+        flush();
+        block = null;
+        const said = prompt[1].trim();
+        // An empty prompt is the input box the engine always draws, not the
+        // operator speaking: it neither ends nor starts anything.
+        if (said) {
+          activity = null;
+          if (!known.has(said)) turns.push({ role: 'user', text: said });
+        }
+        return;
+      }
+      if (LIVE_BUSY.test(text) && !/Thought for/i.test(text)) {
+        activity = text.replace(/^[✶✻✽✢⠀-⣿\s]+/, '').replace(/\s*\(?esc to interrupt\)?/i, '').trim() || 'Working…';
+        return;
+      }
+      if (indented && block === 'tool') return;
+      if (noise.some((re) => re.test(text))) {
+        block = 'tool';
+        return;
+      }
+      if (indented && block === 'reply') {
+        reply.push(text);
+        return;
+      }
+      block = 'reply';
+      activity = null;
+      reply.push(text.replace(LIVE_BULLET, ''));
+    });
+    flush();
+    const last = turns[turns.length - 1];
+    const tail = last && last.role === 'assistant' ? last.text.split('\n').pop() : '';
+    return { turns, question: /\?\s*$/.test(tail) ? tail : null, activity };
+  }
+
+  /**
+   * A conversation bubble's role label; an assistant is named for the
+   * project it speaks for, kept out of the label's uppercase styling.
+   * @param {string} role
+   * @param {string} name - The project's name.
+   * @returns {string} HTML.
+   */
+  function chatRoleMarkup(role, name) {
+    const who = role === 'assistant' ? ` <span class="v6-conversation-who">(${escapeHtml(name)})</span>` : '';
+    return `<span class="v6-conversation-role">${escapeHtml(role)}${who}</span>`;
+  }
+
+  /**
+   * The live replies (#3052) as conversation bubbles, marked `is-live` because
+   * they come from the pane, not the record.
+   * @param {Array<{role: string, text: string}>} turns
+   * @param {string} name
+   * @returns {string} HTML list items.
+   */
+  function liveTurnsMarkup(turns, name) {
+    return (Array.isArray(turns) ? turns : []).map((t) => (
+      `<li class="v6-conversation-event is-${escapeHtml(t && t.role)} is-live">${chatRoleMarkup(t && t.role, name)}<span class="v6-conversation-content">${escapeHtml(t && t.text)}</span></li>`
+    )).join('');
+  }
+
+  /** @param {string|null} question - The question the assistant is waiting on. @returns {string} HTML. */
+  function chatQuestionMarkup(question) {
+    return `<div id="v6ChatQuestion" class="v6-chat-question${question ? ' is-asking' : ''}" role="status" aria-live="polite">${chatQuestionInner(question)}</div>`;
+  }
+
+  /** @param {string|null} question @returns {string} HTML for inside the question slot. */
+  function chatQuestionInner(question) {
+    return question ? `<span class="v6-chat-question-label">Waiting on you:</span> ${escapeHtml(question)}` : '';
+  }
+
+  /** @param {string|null} activity - What the engine is busy doing. @returns {string} HTML. */
+  function chatActivityMarkup(activity) {
+    return `<p id="v6ChatActivity" class="v6-chat-activity${activity ? ' is-busy' : ''}" aria-live="polite">${activity ? escapeHtml(activity) : ''}</p>`;
   }
 
   /** The chat header's session pill text, by session state. */
@@ -910,8 +1086,9 @@
       // view, so a re-render that is not a send keeps it (#3047); the shell
       // passes only the draft for this chat's own project.
       const draft = (extras && extras.draft) || '';
+      const hoodOpen = Boolean(extras && extras.hoodOpen);
       const v = detail.view || {};
-      return conversationViewMarkup(Object.assign({}, v, { chat: Object.assign({}, v.chat, { draft }) }));
+      return conversationViewMarkup(Object.assign({}, v, { chat: Object.assign({}, v.chat, { draft, hoodOpen }) }));
     }
     if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
     if (detail.kind === 'recovery') return recoveryConsoleMarkup(detail.view);
@@ -1092,6 +1269,21 @@
     }
 
     /**
+     * The replies, question and activity a peek shows (#3052), read with the
+     * project's own engine, leaving out prompts already recorded.
+     * @param {{lines?: string[]}|null} res
+     * @param {object} project
+     * @param {Array<{role?: string, content?: string}>|null} events
+     * @returns {object|null}
+     */
+    function liveView(res, project, events) {
+      if (!res || !Array.isArray(res.lines)) return null;
+      const engine = project && project.engine && project.engine.id ? String(project.engine.id) : '';
+      const said = (Array.isArray(events) ? events : []).filter((e) => e && e.role === 'user').map((e) => e.content);
+      return extractLiveTurns(res.lines, engine, said);
+    }
+
+    /**
      * Who a route's chat is with, and how it was reached: a project or
      * fleet route talks to that group's delegate, anything else directly to
      * the member it names (#3047).
@@ -1167,6 +1359,7 @@
       ]);
       if (mine !== seq) return;
       chat.peek = peekView(peek);
+      chat.live = liveView(peek, project, events && events.events);
       current.view = events
         ? { project, sessionId, events: events.events, chat }
         : { project, sessionId, error: 'Could not load this session’s conversation events.', chat };
@@ -1178,9 +1371,11 @@
           const res = await api(peekUrl);
           if (mine !== seq || !current || !current.view) return;
           const next = peekView(res);
-          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next }) });
+          const nextLive = liveView(res, current.project, current.view.events);
+          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next, live: nextLive }) });
           const sh = getShell();
-          if (sh && typeof sh.setPeek === 'function') sh.setPeek(next);
+          if (sh && typeof sh.setLive === 'function') sh.setLive({ peek: next, live: nextLive });
+          else if (sh && typeof sh.setPeek === 'function') sh.setPeek(next);
         }, CHAT_POLL_MS);
       }
     }
@@ -1468,7 +1663,7 @@
    *   toggleDrawer: (force?: boolean) => void, isDrawerOpen: () => boolean,
    *   toggleSidebar: (force?: boolean) => void, isSidebarCollapsed: () => boolean,
    *   selectGroup: (id: string, additive?: boolean) => void, setProjects: (rows: Array<object>) => void,
-   *   setPeek: (peek: object|null) => void, clearChatDraft: (projectId?: *) => void,
+   *   setPeek: (peek: object|null) => void, setLive: (update: object) => void, clearChatDraft: (projectId?: *) => void,
    *   setTree: (tree: Array<*>) => void, setTelemetry: (bar: object|null) => void,
    *   setTemplates: (templates: Array<*>) => void,
    *   setAttestation: (attestation: object|null) => void,
@@ -1500,6 +1695,11 @@
     // Unsent composer text per target project, so text meant for one agent
     // never appears in, and is never sent from, another one's chat.
     const chatDrafts = new Map();
+    // #3052: whether the raw-output drawer is open, kept across re-renders,
+    // polls and visits; and which chat was last scrolled to its bottom, so a
+    // chat opens at its newest line once and is then left where the operator puts it.
+    let chatHoodOpen = prefs.get('tc_v6_chat_under_hood_open', false, isBoolean);
+    let scrolledChatKey = null;
 
     function readHash() {
       if (typeof options.getHash === 'function') return options.getHash();
@@ -1617,6 +1817,13 @@
           submitChat();
         });
       }
+      const hood = doc.getElementById('v6ChatUnderHood');
+      if (hood) {
+        hood.addEventListener('toggle', (evt) => {
+          chatHoodOpen = Boolean(evt && evt.target && evt.target.open);
+          prefs.set('tc_v6_chat_under_hood_open', chatHoodOpen);
+        });
+      }
       const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
       const picker = doc.getElementById('v6ChatDelegate');
       if (picker && chat && chat.nodeId != null && typeof options.onChangeDelegate === 'function') {
@@ -1659,13 +1866,24 @@
       const focusId = active && typeof active.id === 'string' && active.id.startsWith('v6') ? active.id : null;
       const selection = focusId && typeof active.selectionStart === 'number'
         ? [active.selectionStart, active.selectionEnd] : null;
-      return { scrollTop: (sidebar && sidebar.scrollTop) || 0, focusId, selection };
+      return {
+        scrollTop: (sidebar && sidebar.scrollTop) || 0, focusId, selection,
+        streamAtBottom: isAtBottom(doc.getElementById('v6ChatStream')),
+        peekAtBottom: isAtBottom(doc.getElementById('v6ChatPeek'))
+      };
     }
 
     /** @param {ReturnType<typeof captureViewState>} saved */
     function restoreViewState(saved) {
       const sidebar = doc.getElementById('v6ShellSidebar');
       if (sidebar && saved.scrollTop) sidebar.scrollTop = saved.scrollTop;
+      // A chat opens at its newest line (#3052); after that it follows new
+      // lines only while the operator is reading the bottom.
+      const key = chatTargetKey();
+      const first = key != null && key !== scrolledChatKey;
+      if (key != null) scrolledChatKey = key;
+      if (first || saved.streamAtBottom) pinToBottom(doc.getElementById('v6ChatStream'));
+      if (first || saved.peekAtBottom) pinToBottom(doc.getElementById('v6ChatPeek'));
       if (!saved.focusId) return;
       const el = doc.getElementById(saved.focusId);
       if (!el || doc.activeElement === el || typeof el.focus !== 'function') return;
@@ -1711,7 +1929,7 @@
             <a id="v6ShellClassicLink" class="btn btn-secondary v6-shell-classic-link" href="#/">← Classic View</a>
             <h1 class="v6-shell-title">${escapeHtml(title)}</h1>
           </div>
-          <div id="v6ShellDetail">${detailMarkup(detail, { draft: chatDrafts.get(chatTargetKey()) || '' })}</div>
+          <div id="v6ShellDetail">${detailMarkup(detail, { draft: chatDrafts.get(chatTargetKey()) || '', hoodOpen: chatHoodOpen })}</div>
           <div id="v6ShellWizard">${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation">${modelAttestationMarkup(attestation)}</div>
         </main>
@@ -1826,16 +2044,44 @@
        * @param {{lines?: string[], error?: string}|null} peek
        */
       setPeek(peek) {
+        this.setLive({ peek, live: detail && detail.view && detail.view.chat ? detail.view.chat.live : null });
+      },
+      /**
+       * Replace the chat's live parts only (#3052): its raw output, the
+       * replies extracted from it, the pinned question and the activity
+       * line — never the composer, so a poll every few seconds cannot rebuild
+       * the page under an operator mid-message.
+       * @param {{peek: object|null, live: {turns: Array, question: string|null, activity: string|null}|null}} update
+       */
+      setLive(update) {
         if (!detail || detail.kind !== 'conversation' || !detail.view) return;
+        const peek = update ? update.peek : null;
+        const live = update && update.live ? update.live : null;
+        const name = String((detail.view.project && detail.view.project.name) || '');
         detail = Object.assign({}, detail, {
-          view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { peek }) })
+          view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { peek, live }) })
         });
-        const el = doc.getElementById('v6ChatPeek');
-        if (!el) return;
-        const atBottom = typeof el.scrollHeight === 'number'
-          && el.scrollHeight - (el.scrollTop || 0) - (el.clientHeight || 0) < 8;
-        el.innerHTML = chatPeekMarkup(peek);
-        if (atBottom) el.scrollTop = el.scrollHeight;
+        const peekEl = doc.getElementById('v6ChatPeek');
+        if (peekEl) {
+          const atBottom = isAtBottom(peekEl);
+          peekEl.innerHTML = chatPeekMarkup(peek);
+          if (atBottom) pinToBottom(peekEl);
+        }
+        const stream = doc.getElementById('v6ChatStream');
+        const streamAtBottom = isAtBottom(stream);
+        const liveEl = doc.getElementById('v6ChatLive');
+        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name);
+        if (streamAtBottom) pinToBottom(stream);
+        const q = doc.getElementById('v6ChatQuestion');
+        if (q) {
+          q.innerHTML = chatQuestionInner(live && live.question);
+          q.className = `v6-chat-question${live && live.question ? ' is-asking' : ''}`;
+        }
+        const a = doc.getElementById('v6ChatActivity');
+        if (a) {
+          a.innerHTML = live && live.activity ? escapeHtml(live.activity) : '';
+          a.className = `v6-chat-activity${live && live.activity ? ' is-busy' : ''}`;
+        }
       },
       /**
        * Forget a chat's composer text once it has been sent.
@@ -1872,6 +2118,7 @@
   global.tcV6ResolveRouteProject = resolveRouteProject;
   global.tcV6ResolveDelegateProject = resolveDelegateProject;
   global.tcV6ChatKeyAction = chatKeyAction;
+  global.tcV6ExtractLiveTurns = extractLiveTurns;
   global.tcV6CreateLiveController = createLiveController;
   global.tcCreateV6Shell = tcCreateV6Shell;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -4208,10 +4208,6 @@ html[data-theme="light"] .tc-bg-watermark img {
 .v6-chat-delegate {
   max-width: 220px;
 }
-.v6-chat-subtitle {
-  font-size: 0.95em;
-  margin: 0 0 6px;
-}
 .v6-chat-peek {
   margin: 0;
   max-height: 320px;
@@ -4225,6 +4221,57 @@ html[data-theme="light"] .tc-bg-watermark img {
 }
 .v6-chat-offline {
   opacity: 0.8;
+}
+/* #3052: Above the Hood — the conversation as bubbles, the raw pane folded away. */
+.v6-chat-stream {
+  max-height: 55vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.v6-chat-live-turns:empty {
+  display: none;
+}
+.v6-conversation-who {
+  text-transform: none;
+}
+.v6-conversation-event.is-live {
+  border-style: dashed;
+}
+.v6-conversation-event.is-assistant {
+  border-left: 3px solid #56d364;
+}
+.v6-chat-question.is-asking {
+  padding: 8px 10px;
+  border: 1px solid #d4a72c;
+  border-radius: 4px;
+  background: rgba(212, 167, 44, 0.1);
+  overflow-wrap: anywhere;
+}
+.v6-chat-question-label {
+  font-weight: 600;
+}
+.v6-chat-activity {
+  margin: 0;
+}
+.v6-chat-activity.is-busy {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color, #2a2f36);
+  font-size: 0.85em;
+  opacity: 0.85;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.v6-chat-under-hood > summary {
+  cursor: pointer;
+  opacity: 0.85;
+  margin-bottom: 6px;
 }
 .v6-chat-composer {
   display: flex;
