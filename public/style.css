@@ -4159,3 +4159,97 @@ html[data-theme="light"] .tc-bg-watermark img {
   opacity: 0.7;
   font-size: 0.9em;
 }
+/* #3047: Project Delegate Chat. */
+.v6-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.v6-chat-header .v6-detail-title {
+  margin-bottom: 4px;
+}
+.v6-chat-talking-to {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+.v6-chat-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.8em;
+  border: 1px solid var(--border-color, #2a2f36);
+}
+.v6-chat-pill.is-active { border-color: #56d364; color: #56d364; }
+.v6-chat-pill.is-idle { border-color: #d4a72c; color: #d4a72c; }
+.v6-chat-pill.is-offline { opacity: 0.7; }
+.v6-chat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.v6-chat-actions .v6-open-hood {
+  margin-bottom: 0;
+}
+.v6-chat-delegate-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.v6-chat-delegate {
+  max-width: 220px;
+}
+.v6-chat-subtitle {
+  font-size: 0.95em;
+  margin: 0 0 6px;
+}
+.v6-chat-peek {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border-color, #2a2f36);
+  border-radius: 4px;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.v6-chat-offline {
+  opacity: 0.8;
+}
+.v6-chat-composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.v6-chat-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 64px;
+  resize: vertical;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color, #2a2f36);
+  background: var(--input-bg, transparent);
+  color: inherit;
+}
+.v6-chat-send-status {
+  margin: 0;
+  min-height: 1.2em;
+  overflow-wrap: anywhere;
+}
+.v6-chat-send-status.is-pending { opacity: 0.7; }
+.v6-chat-send-status.is-ok { color: #56d364; }
+.v6-chat-send-status.is-warning { color: #d4a72c; }
+.v6-chat-send-status.is-error { color: #f85149; }
+@media (max-width: 760px) {
+  .v6-chat-composer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

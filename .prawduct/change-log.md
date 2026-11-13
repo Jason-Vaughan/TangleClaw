@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-13 — v6 Fleet View layout, sidebar filters and Project Delegate Chat (#3046, #3047)
+
+<!-- prawduct: type=feature | scope=v622-w1a -->
+
+Car V622-W1-A, Chunks 1-3.
+
+- #3046: the shell root gains explicit grid rows (the sidebar's `1 / -1` had spanned only row 1, pushing the main pane below it); the sidebar is its own sticky scroll container and keeps its scroll and the focused control across re-renders. It hides (`« Hide Fleet` / `» Show Fleet`, desktop), folds per project and fleet (with Expand/Collapse all), and filters by text, engine and one-or-many project pills (Multi, Ctrl/Cmd/Shift-click, All), all remembered. The Classic/Fleet switcher moves into the page header and the Classic toolbar hides in the Fleet View.
+- #3047: project and fleet routes resolve to a Designated Delegate (configured, else `-PM`, else `-Master`, else role `pm`, else first live, else first member); the conversation view becomes a chat with a delegate picker or a direct-session link back, a session status pill, the live output (polled every 4 s, updated in place), and a composer that types into the session through `POST /api/sessions/:project/command` and records a Tier-A `v6-chat-ui` user event at the next seq counting deleted events, retrying once on `SEQ_CONFLICT`. A refusal shows the server's reason and keeps the text.
+- Three `tcV6ResolveRouteProject` assertions changed with the requirement: a project with a `-PM` member now resolves to it rather than to the first live member. The live-member and first-member fallbacks keep their own tests on fixtures with no PM.
+
 ## 2026-11-12 — v6.2.1 release cut (Milestone #68)
 
 <!-- prawduct: type=internal | scope=v621-release -->

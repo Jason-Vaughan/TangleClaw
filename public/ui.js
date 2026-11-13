@@ -8214,6 +8214,11 @@ if (typeof window.tcCreateV6Shell === 'function') {
   v6Shell = window.tcCreateV6Shell(document, {
     root: v6ShellRoot,
     onLaunchTemplate(templateId) { v6Live.launchTemplate(templateId); },
+    // #3047: the Project Delegate Chat's controls.
+    onSendChat(text) { v6Live.sendChat(text); },
+    onChangeDelegate(nodeId, projectId) { v6Live.changeDelegate(nodeId, projectId); },
+    onRefreshChat() { v6Live.refresh(); },
+    onOpenProjectSettings(projectName) { openSettings(projectName); },
     onRender(route) {
       const active = Boolean(route && route.view);
       if (v6ShellRoot) v6ShellRoot.classList.toggle('hidden', !active);
