@@ -8201,20 +8201,29 @@ setInterval(loadMedusaDrift, MEDUSA_DRIFT_POLL_MS);
 // #3022: the live data feeds (hierarchy tree, B4 telemetry, C2 templates
 // and plan preview, B2 conversation, D1 attestation) are loaded by
 // tcV6CreateLiveController, given this page's own api()/apiMutate(); the
-// toolbar's #v6ViewToggleBtn switches between the shell and Classic View.
+// header's #v6ViewToggleBtn switches between the shell and Classic View.
 if (typeof window.tcCreateV6Shell === 'function') {
   const v6ShellRoot = document.getElementById('v6ShellRoot');
   const v6DashboardRoot = document.getElementById('projectsContainer');
   const v6ToggleBtn = document.getElementById('v6ViewToggleBtn');
+  // #3046: the Classic filter toolbar does nothing for the Fleet View (the
+  // shell has its own filters), so it hides while the shell shows.
+  const v6ClassicToolbar = document.querySelector('.toolbar');
   let v6Shell = null;
   const v6Live = window.tcV6CreateLiveController({ getShell: () => v6Shell, api, apiMutate });
   v6Shell = window.tcCreateV6Shell(document, {
     root: v6ShellRoot,
     onLaunchTemplate(templateId) { v6Live.launchTemplate(templateId); },
+    // #3047: the Project Delegate Chat's controls.
+    onSendChat(text) { v6Live.sendChat(text); },
+    onChangeDelegate(nodeId, projectId) { v6Live.changeDelegate(nodeId, projectId); },
+    onRefreshChat() { v6Live.refresh(); },
+    onOpenProjectSettings(projectName) { openSettings(projectName); },
     onRender(route) {
       const active = Boolean(route && route.view);
       if (v6ShellRoot) v6ShellRoot.classList.toggle('hidden', !active);
       if (v6DashboardRoot) v6DashboardRoot.classList.toggle('hidden', active);
+      if (v6ClassicToolbar) v6ClassicToolbar.classList.toggle('hidden', active);
       if (v6ToggleBtn) {
         v6ToggleBtn.textContent = window.tcV6ViewToggleLabel(route);
         v6ToggleBtn.setAttribute('aria-pressed', active ? 'true' : 'false');

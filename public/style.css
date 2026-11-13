@@ -118,6 +118,12 @@ html[data-tc-keyboard] body {
   gap: 12px;
   padding: calc(env(safe-area-inset-top, 0px) + 5px) 16px 5px;
   flex-shrink: 0;
+  /* #3046: when brand + stats + the action pills do not fit one row (the
+     Fleet/Classic switcher joined the pills; a long notice in the brand
+     cluster already overflowed at 1280px), the pills drop to their own row
+     instead of running off the right edge. A row that fits never wraps. */
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 .dash-brand {
   display: flex;
@@ -3849,6 +3855,10 @@ html[data-theme="light"] .tc-bg-watermark img {
 .v6-shell-root {
   display: grid;
   grid-template-columns: 260px 1fr;
+  /* #3046: explicit rows. With none, the sidebar's `grid-row: 1 / -1`
+     spanned only the single explicit row 1, so row 1 grew to the full
+     sidebar height and pushed the main view below the bottom of it. */
+  grid-template-rows: auto 1fr auto;
   gap: 16px;
   align-items: start;
 }
@@ -3878,6 +3888,12 @@ html[data-theme="light"] .tc-bg-watermark img {
   grid-row: 1 / -1;
   border-right: 1px solid var(--border-color, #2a2f36);
   padding-right: 12px;
+  /* #3046: its own scroll container, so a long fleet list scrolls beside
+     the main view instead of stretching the page. */
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 110px);
+  overflow-y: auto;
 }
 .v6-shell-tree,
 .v6-shell-fleets,
@@ -3909,10 +3925,12 @@ html[data-theme="light"] .tc-bg-watermark img {
 }
 .v6-shell-view {
   grid-column: 2;
+  grid-row: 2;
   min-width: 0;
 }
 .v6-telemetry-header {
   grid-column: 2;
+  grid-row: 1;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -3944,6 +3962,7 @@ html[data-theme="light"] .tc-bg-watermark img {
 }
 .v6-shell-watermark {
   grid-column: 2;
+  grid-row: 3;
   text-align: center;
   opacity: 0.5;
   font-size: 0.8em;
@@ -3952,6 +3971,16 @@ html[data-theme="light"] .tc-bg-watermark img {
 /* #3022: live wire-up — view switcher, member links, detail pane. */
 #v6ViewToggleBtn.is-active {
   border-color: #56d364;
+}
+/* #3046: the switcher lives in the page header, styled to stand out from
+   the panel toggles beside it. */
+.v6-view-toggle {
+  border: 1px solid #56d364;
+  color: #56d364;
+  font-weight: 600;
+}
+.v6-view-toggle.is-active {
+  background: var(--accent-bg, rgba(86, 211, 100, 0.12));
 }
 .v6-shell-header {
   display: flex;
@@ -4043,5 +4072,190 @@ html[data-theme="light"] .tc-bg-watermark img {
   .v6-telemetry-header,
   .v6-shell-watermark {
     grid-column: 1;
+    grid-row: auto;
+  }
+  .v6-shell-root {
+    grid-template-rows: none;
+  }
+  .v6-shell-sidebar {
+    position: static;
+    max-height: none;
+  }
+  /* The ☰ Menu drawer owns the sidebar on a phone; Hide Fleet is desktop-only. */
+  .v6-sidebar-collapse {
+    display: none;
+  }
+}
+/* #3046: collapsible sidebar column (desktop only) and fold toggles. */
+@media (min-width: 761px) {
+  .v6-shell-root--sidebar-collapsed {
+    grid-template-columns: 0 1fr;
+  }
+  .v6-shell-root--sidebar-collapsed .v6-shell-sidebar {
+    display: none;
+  }
+}
+.v6-sidebar-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.v6-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.v6-tree-row > a {
+  flex: 1;
+  min-width: 0;
+}
+.v6-tree-toggle {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  line-height: 1;
+}
+.v6-tree-toggle:hover,
+.v6-tree-toggle:focus-visible {
+  background: var(--accent-bg, rgba(86, 211, 100, 0.12));
+}
+/* #3046: the sidebar's own filters. */
+.v6-sidebar-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.v6-filter-search,
+.v6-filter-engine {
+  width: 100%;
+  box-sizing: border-box;
+}
+.v6-filter-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.v6-filter-pill {
+  padding: 2px 8px;
+  border: 1px solid var(--border-color, #2a2f36);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 0.85em;
+  cursor: pointer;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.v6-filter-pill.is-active {
+  border-color: #56d364;
+  background: var(--accent-bg, rgba(86, 211, 100, 0.12));
+}
+.v6-filter-multi {
+  border-style: dashed;
+}
+.v6-sidebar-empty {
+  opacity: 0.7;
+  font-size: 0.9em;
+}
+/* #3047: Project Delegate Chat. */
+.v6-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.v6-chat-header .v6-detail-title {
+  margin-bottom: 4px;
+}
+.v6-chat-talking-to {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+.v6-chat-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.8em;
+  border: 1px solid var(--border-color, #2a2f36);
+}
+.v6-chat-pill.is-active { border-color: #56d364; color: #56d364; }
+.v6-chat-pill.is-idle { border-color: #d4a72c; color: #d4a72c; }
+.v6-chat-pill.is-offline { opacity: 0.7; }
+.v6-chat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.v6-chat-actions .v6-open-hood {
+  margin-bottom: 0;
+}
+.v6-chat-delegate-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.v6-chat-delegate {
+  max-width: 220px;
+}
+.v6-chat-subtitle {
+  font-size: 0.95em;
+  margin: 0 0 6px;
+}
+.v6-chat-peek {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border-color, #2a2f36);
+  border-radius: 4px;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.v6-chat-offline {
+  opacity: 0.8;
+}
+.v6-chat-composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.v6-chat-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 64px;
+  resize: vertical;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color, #2a2f36);
+  background: var(--input-bg, transparent);
+  color: inherit;
+}
+.v6-chat-send-status {
+  margin: 0;
+  min-height: 1.2em;
+  overflow-wrap: anywhere;
+}
+.v6-chat-send-status.is-pending { opacity: 0.7; }
+.v6-chat-send-status.is-ok { color: #56d364; }
+.v6-chat-send-status.is-warning { color: #d4a72c; }
+.v6-chat-send-status.is-error { color: #f85149; }
+@media (max-width: 760px) {
+  .v6-chat-composer {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

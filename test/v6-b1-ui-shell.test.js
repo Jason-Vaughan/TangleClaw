@@ -646,17 +646,31 @@ describe('tcV6ResolveRouteProject (#3022 deliverable e, PRR-B R1 HOLD)', () => {
     assert.equal(resolve({ view: 'project', projectId: '30' }), 30);
   });
 
-  it('resolves a synthesized logical project to its member with a live session', () => {
-    assert.equal(resolve({ view: 'project', projectId: 'tc-lane' }), 11);
+  // #3047 replaced "first member with a live session" with the project's
+  // Designated Delegate, which defaults to its -PM member: these three
+  // assertions moved with the requirement. The live-member and first-member
+  // fallbacks keep their own tests, on rows with no PM.
+  it('resolves a synthesized logical project to its designated delegate, its -PM member by default (#3047)', () => {
+    assert.equal(resolve({ view: 'project', projectId: 'tc-lane' }), 12);
   });
 
-  it('falls back to the first member when no member has a live session', () => {
-    const idle = ROWS.map((r) => Object.assign({}, r, { session: null }));
+  const NO_PM = ROWS.filter((r) => r.name !== 'TC-Lane-PM');
+
+  it('with no PM, resolves to the member with a live session', () => {
+    assert.equal(resolve({ view: 'project', projectId: 'tc-lane' }, NO_PM), 11);
+  });
+
+  it('with no PM and no live session, falls back to the first member', () => {
+    const idle = NO_PM.map((r) => Object.assign({}, r, { session: null }));
     assert.equal(resolve({ view: 'project', projectId: 'tc-lane' }, idle), 10);
   });
 
+  it('honours a configured delegate', () => {
+    assert.equal(G.tcV6ResolveRouteProject({ view: 'project', projectId: 'tc-lane' }, ROWS, { 'tc-lane': '10' }).id, 10);
+  });
+
   it('resolves a fleet route through its fleet, and refuses a fleet the project does not have', () => {
-    assert.equal(resolve({ view: 'fleet', projectId: 'tc-lane', fleetId: 'tc-lane' }), 11);
+    assert.equal(resolve({ view: 'fleet', projectId: 'tc-lane', fleetId: 'tc-lane' }), 12);
     assert.equal(resolve({ view: 'fleet', projectId: 'tc-lane', fleetId: 'nope' }), null);
     assert.equal(resolve({ view: 'fleet', projectId: 'workspace', fleetId: 'workspace' }), 30);
   });
@@ -953,9 +967,29 @@ describe('page wiring (#3022 deliverable a) — index.html and ui.js', () => {
   const HTML = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const UI = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
 
-  it('puts #v6ViewToggleBtn in .toolbar-right beside #newBtn', () => {
-    const toolbar = HTML.slice(HTML.indexOf('<div class="toolbar-right">'), HTML.indexOf('id="newBtn"'));
-    assert.match(toolbar, /<button type="button" class="btn btn-secondary" id="v6ViewToggleBtn" aria-label="Switch between Fleet Shell \(v6\) and Classic View">Fleet Shell \(v6\)<\/button>/);
+  // #3046 (Gate 0, Charter A673 v1.1): the switcher moved from the Classic
+  // toolbar into the page header, so it stays put while the toolbar hides.
+  it('puts #v6ViewToggleBtn in the header\'s .dash-actions, and nowhere in the Classic toolbar', () => {
+    const actions = HTML.slice(HTML.indexOf('<div class="dash-actions">'), HTML.indexOf('id="masterToggle"'));
+    assert.match(actions, /<button type="button" class="dash-action v6-view-toggle" id="v6ViewToggleBtn" aria-label="Switch between Fleet Shell \(v6\) and Classic View">Fleet Shell \(v6\)<\/button>/);
+    const toolbar = HTML.slice(HTML.indexOf('<nav class="toolbar"'), HTML.indexOf('</nav>', HTML.indexOf('<nav class="toolbar"')));
+    assert.doesNotMatch(toolbar, /v6ViewToggleBtn/);
+    assert.equal(HTML.match(/id="v6ViewToggleBtn"/g).length, 1);
+  });
+
+  it('ui.js wires the chat\'s send, delegate, refresh and project-settings controls to the live controller (#3047)', () => {
+    const block = UI.slice(UI.indexOf("if (typeof window.tcCreateV6Shell === 'function')"));
+    assert.match(block, /onSendChat\(text\) \{ v6Live\.sendChat\(text\); \}/);
+    assert.match(block, /onChangeDelegate\(nodeId, projectId\) \{ v6Live\.changeDelegate\(nodeId, projectId\); \}/);
+    assert.match(block, /onRefreshChat\(\) \{ v6Live\.refresh\(\); \}/);
+    assert.match(block, /onOpenProjectSettings\(projectName\) \{ openSettings\(projectName\); \}/);
+    assert.match(UI, /^function openSettings\(name, options\) \{/m, 'the settings opener the chat calls exists at top level');
+  });
+
+  it('ui.js hides the Classic toolbar while the Fleet View shows, and hands the shell its project rows', () => {
+    const block = UI.slice(UI.indexOf("if (typeof window.tcCreateV6Shell === 'function')"));
+    assert.match(block, /const v6ClassicToolbar = document\.querySelector\('\.toolbar'\);/);
+    assert.match(block, /if \(v6ClassicToolbar\) v6ClassicToolbar\.classList\.toggle\('hidden', active\);/);
   });
 
   it('ui.js mounts the live controller and wires the toggle to it', () => {
@@ -966,5 +1000,952 @@ describe('page wiring (#3022 deliverable a) — index.html and ui.js', () => {
     assert.match(block, /getElementById\('v6ViewToggleBtn'\)/);
     assert.match(block, /v6Shell\.navigate\('#\/'\)/);
     assert.match(block, /v6Shell\.navigate\(await v6Live\.enterHash\(\)\)/);
+  });
+});
+
+// ── #3046 (Car V622-W1-A): layout, scroll, focus, collapsible drawer and tree nodes ──
+
+/**
+ * An in-memory stand-in for `localStorage` (string values, like the real one).
+ * @param {object} [seed] - Initial key/value pairs; values are stored as given.
+ * @returns {{getItem: Function, setItem: Function, removeItem: Function, data: object}}
+ */
+function makeStorage(seed) {
+  const data = Object.assign(Object.create(null), seed || {});
+  return {
+    data,
+    getItem(key) { return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : null; },
+    setItem(key, value) { data[key] = String(value); },
+    removeItem(key) { delete data[key]; }
+  };
+}
+
+/**
+ * Mount a shell on a mini-dom root with an injectable storage.
+ * @param {object} [opts] - Extra `tcCreateV6Shell` options, plus `initialHash`.
+ * @returns {{shell: object, doc: object, win: object, root: object, G: object}}
+ */
+function mountShell(opts) {
+  const G = loadV6Shell();
+  const { doc } = makeDocument([]);
+  const root = doc.createElement('div');
+  root.id = 'v6ShellRoot';
+  withIdParsingInnerHTML(root, doc);
+  doc.body.appendChild(root);
+  doc._register(root);
+  const win = makeFakeWindow((opts && opts.initialHash) || '#/projects/tc-lane');
+  const shell = G.tcCreateV6Shell(doc, Object.assign({ root, window: win }, opts || {}));
+  return { shell, doc, win, root, G };
+}
+
+const TWO_GROUP_TREE = [
+  { id: 'tc-lane', displayName: 'TC-Lane', fleets: [{ id: 'tc-lane', displayName: 'TC-Lane Fleet',
+    members: [{ seatId: '11', role: 'TC-Lane-A' }, { seatId: '12', role: 'TC-Lane-PM' }] }] },
+  { id: 'medusa', displayName: 'Medusa', fleets: [{ id: 'medusa', displayName: 'Medusa Fleet',
+    members: [{ seatId: '21', role: 'Medusa-PM' }] }] }
+];
+
+describe('public/style.css grid rows (#3046)', () => {
+  const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  function ruleBodyFor(selector) {
+    const re = new RegExp(`${selector.replace(/[.#]/g, '\\$&')}\\s*\\{([^}]*)\\}`);
+    const match = CSS.match(re);
+    return match ? match[1] : null;
+  }
+
+  it('gives the root explicit rows, so the sidebar\'s 1 / -1 spans all of them and the main view starts at the top', () => {
+    const body = ruleBodyFor('.v6-shell-root');
+    assert.match(body, /grid-template-rows:\s*auto\s+1fr\s+auto/);
+  });
+
+  it('pins the telemetry header, main view and footer to rows 1, 2 and 3 of column 2', () => {
+    assert.match(ruleBodyFor('.v6-telemetry-header'), /grid-row:\s*1;/);
+    assert.match(ruleBodyFor('.v6-shell-view'), /grid-row:\s*2;/);
+    assert.match(ruleBodyFor('.v6-shell-watermark'), /grid-row:\s*3;/);
+  });
+
+  it('makes the sidebar its own sticky scroll container', () => {
+    const body = ruleBodyFor('.v6-shell-sidebar');
+    assert.match(body, /position:\s*sticky/);
+    assert.match(body, /max-height:\s*calc\(100vh - 110px\)/);
+    assert.match(body, /overflow-y:\s*auto/);
+  });
+
+  it('collapses the sidebar column only on desktop, where the mobile drawer is not in charge', () => {
+    const desktop = CSS.slice(CSS.indexOf('@media (min-width: 761px)'));
+    assert.ok(CSS.includes('@media (min-width: 761px)'), 'a desktop-only block must exist');
+    assert.match(desktop, /\.v6-shell-root--sidebar-collapsed\s*\{\s*grid-template-columns:\s*0\s+1fr;/);
+    assert.match(desktop, /\.v6-shell-root--sidebar-collapsed \.v6-shell-sidebar\s*\{\s*display:\s*none;/);
+  });
+});
+
+describe('tcCreateV6Shell — sidebar scroll and focus survive a re-render (#3046)', () => {
+  it('keeps the sidebar\'s scroll position across a re-render', () => {
+    const { shell, doc } = mountShell({ tree: TWO_GROUP_TREE });
+    doc.getElementById('v6ShellSidebar').scrollTop = 240;
+    shell.setTelemetry(null);
+    assert.equal(doc.getElementById('v6ShellSidebar').scrollTop, 240);
+  });
+
+  it('gives focus back to the same control, caret included, after a re-render', () => {
+    const { shell, doc } = mountShell({ tree: TWO_GROUP_TREE });
+    const before = doc.getElementById('v6SidebarCollapse');
+    before.selectionStart = 2;
+    before.selectionEnd = 4;
+    before.focus();
+    let range = null;
+    shell.setTelemetry(null);
+    const after = doc.getElementById('v6SidebarCollapse');
+    assert.notEqual(after, before, 'the re-render replaced the element');
+    assert.equal(doc.activeElement, after);
+    after.setSelectionRange = (s, e) => { range = [s, e]; };
+    after.focus();
+    shell.setTelemetry(null);
+    const third = doc.getElementById('v6SidebarCollapse');
+    assert.equal(doc.activeElement, third);
+    assert.equal(range, null, 'an element with no caret has none restored');
+  });
+
+  it('restores a caret position through setSelectionRange when the new element supports it', () => {
+    const { shell, doc } = mountShell({ tree: TWO_GROUP_TREE });
+    const before = doc.getElementById('v6SidebarCollapse');
+    before.selectionStart = 3;
+    before.selectionEnd = 5;
+    before.focus();
+    const seen = [];
+    const realGet = doc.getElementById;
+    doc.getElementById = (id) => {
+      const el = realGet(id);
+      if (el && id === 'v6SidebarCollapse' && el !== before) el.setSelectionRange = (s, e) => seen.push([s, e]);
+      return el;
+    };
+    shell.setTelemetry(null);
+    assert.deepEqual(seen, [[3, 5]]);
+  });
+
+  it('leaves focus alone when nothing inside the shell had it', () => {
+    const { shell, doc } = mountShell({ tree: TWO_GROUP_TREE });
+    doc.activeElement = null;
+    shell.setTelemetry(null);
+    assert.equal(doc.activeElement, null);
+  });
+});
+
+describe('tcCreateV6Shell — collapsible sidebar drawer (#3046)', () => {
+  it('Hide Fleet collapses the sidebar, shows Show Fleet in the header, and remembers it', () => {
+    const storage = makeStorage();
+    const { shell, doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    assert.equal(shell.isSidebarCollapsed(), false);
+    assert.match(root.innerHTML, /data-action="toggle-sidebar-drawer"/);
+    doc.getElementById('v6SidebarCollapse').dispatch('click');
+    assert.equal(shell.isSidebarCollapsed(), true);
+    assert.equal(root.classList.contains('v6-shell-root--sidebar-collapsed'), true);
+    assert.ok(doc.getElementById('v6SidebarExpand'), 'Show Fleet must render while collapsed');
+    assert.match(root.innerHTML, /» Show Fleet/);
+    assert.equal(storage.data.tc_v6_sidebar_collapsed, 'true');
+  });
+
+  it('Show Fleet expands it again and remembers that too', () => {
+    const storage = makeStorage({ tc_v6_sidebar_collapsed: 'true' });
+    const { shell, doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    assert.equal(shell.isSidebarCollapsed(), true, 'a remembered collapse is restored on mount');
+    doc.getElementById('v6SidebarExpand').dispatch('click');
+    assert.equal(shell.isSidebarCollapsed(), false);
+    assert.equal(root.classList.contains('v6-shell-root--sidebar-collapsed'), false);
+    assert.doesNotMatch(root.innerHTML, /» Show Fleet/);
+    assert.equal(storage.data.tc_v6_sidebar_collapsed, 'false');
+  });
+
+  it('a storage that throws on every call does not break the mount or the toggle', () => {
+    const storage = { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } };
+    const { shell, doc } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    doc.getElementById('v6SidebarCollapse').dispatch('click');
+    assert.equal(shell.isSidebarCollapsed(), true);
+  });
+
+  it('a corrupt stored value is ignored rather than trusted', () => {
+    const storage = makeStorage({ tc_v6_sidebar_collapsed: '{not json', tc_v6_collapsed_nodes: '"a string"' });
+    const { shell, root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    assert.equal(shell.isSidebarCollapsed(), false);
+    assert.match(root.innerHTML, /v6-shell-fleets/);
+  });
+});
+
+describe('tcCreateV6Shell — collapsible project and fleet nodes (#3046)', () => {
+  it('gives every project and fleet that has children a fold toggle, with its node id and state', () => {
+    const { root } = mountShell({ tree: TWO_GROUP_TREE });
+    const toggles = root.innerHTML.match(/data-action="toggle-tree-node"/g) || [];
+    assert.equal(toggles.length, 4, 'two projects and two fleets');
+    assert.match(root.innerHTML, /data-node-id="p:tc-lane"[^>]*aria-expanded="true"/);
+    assert.match(root.innerHTML, /data-node-id="f:tc-lane\/tc-lane"/);
+  });
+
+  it('a project or fleet with nothing under it gets no toggle', () => {
+    const { root } = mountShell({ tree: [{ id: 'solo', displayName: 'Solo', fleets: [] }] });
+    assert.doesNotMatch(root.innerHTML, /toggle-tree-node/);
+  });
+
+  it('folding a project hides its fleets, unfolding shows them, and the state is remembered', () => {
+    const storage = makeStorage();
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    doc.getElementById('v6TreeToggle-p0').dispatch('click');
+    assert.doesNotMatch(root.innerHTML, /TC-Lane Fleet/);
+    assert.match(root.innerHTML, /Medusa Fleet/, 'only the folded project hides');
+    assert.match(root.innerHTML, /data-node-id="p:tc-lane"[^>]*aria-expanded="false"/);
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_collapsed_nodes), ['p:tc-lane']);
+    doc.getElementById('v6TreeToggle-p0').dispatch('click');
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_collapsed_nodes), []);
+  });
+
+  it('folding a fleet hides only its members', () => {
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE });
+    doc.getElementById('v6TreeToggle-f0-0').dispatch('click');
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+    assert.doesNotMatch(root.innerHTML, /TC-Lane-PM \(12\)/);
+    assert.match(root.innerHTML, /Medusa-PM \(21\)/);
+  });
+
+  it('a remembered fold is restored on mount', () => {
+    const storage = makeStorage({ tc_v6_collapsed_nodes: JSON.stringify(['p:medusa']) });
+    const { root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    assert.doesNotMatch(root.innerHTML, /Medusa Fleet/);
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+  });
+
+  it('Collapse all folds every project and fleet; Expand all unfolds them', () => {
+    const storage = makeStorage();
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    doc.getElementById('v6TreeCollapseAll').dispatch('click');
+    assert.doesNotMatch(root.innerHTML, /Fleet<\/a>/);
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_collapsed_nodes).sort(),
+      ['f:medusa/medusa', 'f:tc-lane/tc-lane', 'p:medusa', 'p:tc-lane']);
+    doc.getElementById('v6TreeExpandAll').dispatch('click');
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+    assert.match(root.innerHTML, /Medusa-PM \(21\)/);
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_collapsed_nodes), []);
+  });
+
+  it('a fold toggle names what it folds for a screen reader, escaped', () => {
+    const { root } = mountShell({ tree: [{ id: 'x', displayName: '<b>X</b>', fleets: [{ id: 'f', displayName: 'F', members: [{ seatId: '1', role: 'r' }] }] }] });
+    assert.match(root.innerHTML, /aria-label="Collapse &lt;b&gt;X&lt;\/b&gt;"/);
+    assert.doesNotMatch(root.innerHTML, /<b>X<\/b>/);
+  });
+});
+
+// ── #3046 (Car V622-W1-A): single- and multi-select filters for the sidebar tree ──
+
+const FILTER_PROJECTS = [
+  { id: 11, name: 'TC-Lane-A', engine: { id: 'claude' } },
+  { id: 12, name: 'TC-Lane-PM', engine: { id: 'codex' } },
+  { id: 21, name: 'Medusa-PM', engine: { id: 'claude' } }
+];
+
+describe('tcV6FilterTree (#3046)', () => {
+  const G = loadV6Shell();
+  const tree = () => G.tcV6BuildHierarchyTree(TWO_GROUP_TREE);
+  const byId = () => new Map(FILTER_PROJECTS.map((p) => [String(p.id), p]));
+  const names = (t) => plain(t).flatMap((p) => p.fleets.flatMap((f) => f.members.map((m) => m.role)));
+
+  it('with no filters returns the whole tree', () => {
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), {}, byId())), ['TC-Lane-A', 'TC-Lane-PM', 'Medusa-PM']);
+  });
+
+  it('text matching a member keeps only matching members; matching a project keeps all of its members', () => {
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { text: '-pm' }, byId())), ['TC-Lane-PM', 'Medusa-PM']);
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { text: 'medusa' }, byId())), ['Medusa-PM']);
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { text: 'TC-LANE FLEET' }, byId())), ['TC-Lane-A', 'TC-Lane-PM']);
+  });
+
+  it('drops a project or fleet left with no members', () => {
+    const out = plain(G.tcV6FilterTree(tree(), { text: 'Lane-A' }, byId()));
+    assert.deepEqual(out.map((p) => p.id), ['tc-lane']);
+  });
+
+  it('engine keeps members whose project runs it, and drops members with no project row', () => {
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { engine: 'claude' }, byId())), ['TC-Lane-A', 'Medusa-PM']);
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { engine: 'claude' }, new Map())), []);
+  });
+
+  it('a group set keeps only those logical projects, whatever the other filters say', () => {
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { groups: ['medusa'] }, byId())), ['Medusa-PM']);
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { groups: ['medusa', 'tc-lane'] }, byId())), ['TC-Lane-A', 'TC-Lane-PM', 'Medusa-PM']);
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { groups: ['tc-lane'], engine: 'codex' }, byId())), ['TC-Lane-PM']);
+  });
+
+  it('filters combine', () => {
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { text: 'pm', engine: 'claude', groups: ['medusa', 'tc-lane'] }, byId())), ['Medusa-PM']);
+  });
+});
+
+describe('tcCreateV6Shell — filter controls (#3046)', () => {
+  function mountWithProjects(opts) {
+    const m = mountShell(Object.assign({ tree: TWO_GROUP_TREE }, opts || {}));
+    m.shell.setProjects(FILTER_PROJECTS);
+    return m;
+  }
+
+  it('renders search, engine (one option per engine in use), one pill per logical project, Multi and All', () => {
+    const { root } = mountWithProjects();
+    assert.match(root.innerHTML, /id="v6FilterSearch"/);
+    assert.match(root.innerHTML, /<option value="">All Engines<\/option><option value="claude">claude<\/option><option value="codex">codex<\/option>/);
+    assert.match(root.innerHTML, /id="v6GroupPill-0"[^>]*>TC-Lane</);
+    assert.match(root.innerHTML, /id="v6GroupPill-1"[^>]*>Medusa</);
+    assert.match(root.innerHTML, /id="v6FilterMulti"[^>]*data-action="toggle-multi-filter"[^>]*aria-pressed="false"/);
+    assert.match(root.innerHTML, /id="v6FilterAll"[^>]*aria-pressed="true"/);
+  });
+
+  it('typing in search filters the tree immediately and keeps focus in the box', () => {
+    const { doc, root } = mountWithProjects();
+    const box = doc.getElementById('v6FilterSearch');
+    box.focus();
+    box.value = 'medusa';
+    box.dispatch('input');
+    assert.doesNotMatch(root.innerHTML, /TC-Lane-A \(11\)/);
+    assert.match(root.innerHTML, /Medusa-PM \(21\)/);
+    assert.match(root.innerHTML, /id="v6FilterSearch"[^>]*value="medusa"/);
+    assert.equal(doc.activeElement, doc.getElementById('v6FilterSearch'));
+  });
+
+  it('choosing an engine filters by it and keeps it selected', () => {
+    const { doc, root } = mountWithProjects();
+    const select = doc.getElementById('v6FilterEngine');
+    select.value = 'codex';
+    select.dispatch('change');
+    assert.match(root.innerHTML, /TC-Lane-PM \(12\)/);
+    assert.doesNotMatch(root.innerHTML, /TC-Lane-A \(11\)/);
+    assert.match(root.innerHTML, /<option value="codex" selected>/);
+  });
+
+  it('single mode: a pill shows only its project, a second pill replaces it, re-clicking the only one clears it', () => {
+    const storage = makeStorage();
+    const { doc, root } = mountWithProjects({ storage });
+    doc.getElementById('v6GroupPill-1').dispatch('click');
+    assert.doesNotMatch(root.innerHTML, /TC-Lane Fleet/);
+    assert.match(root.innerHTML, /id="v6GroupPill-1"[^>]*aria-pressed="true"/);
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['medusa']);
+    doc.getElementById('v6GroupPill-0').dispatch('click');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['tc-lane']);
+    doc.getElementById('v6GroupPill-0').dispatch('click');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), []);
+    assert.match(root.innerHTML, /Medusa Fleet/);
+  });
+
+  it('Multi mode: pills add to and remove from the selection, and the mode is remembered', () => {
+    const storage = makeStorage();
+    const { doc, root } = mountWithProjects({ storage });
+    doc.getElementById('v6FilterMulti').dispatch('click');
+    assert.equal(storage.data.tc_v6_filter_multi_mode, 'true');
+    assert.match(root.innerHTML, /id="v6FilterMulti"[^>]*aria-pressed="true"/);
+    doc.getElementById('v6GroupPill-0').dispatch('click');
+    doc.getElementById('v6GroupPill-1').dispatch('click');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['tc-lane', 'medusa']);
+    doc.getElementById('v6GroupPill-0').dispatch('click');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['medusa']);
+  });
+
+  it('a Ctrl/Cmd/Shift-click adds to the selection even in single mode', () => {
+    const { shell, root } = mountWithProjects();
+    shell.selectGroup('tc-lane', false);
+    shell.selectGroup('medusa', true);
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+    assert.match(root.innerHTML, /Medusa Fleet/);
+    assert.match(root.innerHTML, /id="v6FilterAll"[^>]*aria-pressed="false"/);
+  });
+
+  it('All clears the selection', () => {
+    const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) });
+    const { doc, root } = mountWithProjects({ storage });
+    assert.doesNotMatch(root.innerHTML, /TC-Lane Fleet/, 'a remembered selection is restored on mount');
+    doc.getElementById('v6FilterAll').dispatch('click');
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), []);
+  });
+
+  it('says so when nothing matches, and fold toggles follow the filtered tree', () => {
+    const { doc, root } = mountWithProjects();
+    const box = doc.getElementById('v6FilterSearch');
+    box.value = 'medusa';
+    box.dispatch('input');
+    assert.match(root.innerHTML, /id="v6TreeToggle-p0"[^>]*data-node-id="p:medusa"/, 'positional ids follow the filtered tree');
+    box.value = 'zzz-nothing';
+    box.dispatch('input');
+    assert.match(root.innerHTML, /No projects match these filters\./);
+  });
+
+  it('escapes a hostile engine id and project name in the controls', () => {
+    const { shell, root } = mountShell({ tree: [{ id: 'x', displayName: '<i>x</i>', fleets: [] }] });
+    shell.setProjects([{ id: 1, name: 'x', engine: { id: '"><script>' } }]);
+    assert.doesNotMatch(root.innerHTML, /<script>|<i>x<\/i>/);
+  });
+});
+
+describe('tcV6CreateLiveController hands the shell its project rows (#3046)', () => {
+  it('passes the loaded rows to setProjects, so the engine filter and its options have data', async () => {
+    const G = loadV6Shell();
+    const rows = [{ id: 11, name: 'TC-Lane-A', engine: { id: 'claude' } }, { id: 12, name: 'TC-Lane-PM', engine: { id: 'codex' } }];
+    const api = async (url) => (url === '/api/projects' ? { projects: rows } : null);
+    const seen = [];
+    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setDetail() {},
+      setProjects(r) { seen.push(plain(r)); } };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null });
+    await live.handleRoute({ view: 'settings', settingsPath: '' });
+    assert.deepEqual(seen, [rows]);
+  });
+
+  it('a shell without setProjects (an older caller) is not broken by it', async () => {
+    const G = loadV6Shell();
+    const api = async (url) => (url === '/api/projects' ? { projects: [{ id: 1, name: 'a' }] } : null);
+    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setDetail() {} };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null });
+    await live.handleRoute({ view: 'settings', settingsPath: '' });
+  });
+});
+
+// ── #3047 (Car V622-W1-A): Project Delegate Chat ──
+
+const LANE_ROWS = [
+  { id: 10, name: 'TC-Lane-A', engine: { id: 'claude' }, session: { active: true } },
+  { id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } },
+  { id: 14, name: 'TC-Lane-Master', engine: { id: 'claude' } },
+  { id: 21, name: 'Medusa-INT', engine: { id: 'claude' } },
+  { id: 22, name: 'Medusa-Ops', engine: { id: 'claude' }, session: { active: true } }
+];
+
+describe('tcV6ResolveDelegateProject (#3047)', () => {
+  const G = loadV6Shell();
+  const nodeFor = (id, rows) => plain(G.tcV6SynthesizeTreeFromProjects(rows || LANE_ROWS)).find((n) => n.id === id);
+  const pick = (id, state) => {
+    const p = G.tcV6ResolveDelegateProject(nodeFor(id, state && state.rows), Object.assign({ projects: LANE_ROWS }, state || {}));
+    return p ? p.id : null;
+  };
+
+  it('defaults to the -PM member, even when another member has the live session', () => {
+    assert.equal(pick('tc-lane'), 12);
+  });
+
+  it('takes a -Master member when there is no -PM', () => {
+    const rows = LANE_ROWS.filter((r) => r.id !== 12);
+    assert.equal(pick('tc-lane', { rows, projects: rows }), 14);
+  });
+
+  it('takes a member whose role is pm (a native fleet tree)', () => {
+    const node = { id: 'n', fleets: [{ id: 'n', members: [{ seatId: '21', role: 'reviewer' }, { seatId: '22', role: 'PM' }] }] };
+    assert.equal(G.tcV6ResolveDelegateProject(node, { projects: LANE_ROWS }).id, 22);
+  });
+
+  it('with no PM, falls back to the first member with a live session, then the first member', () => {
+    assert.equal(pick('medusa'), 22);
+    const idle = LANE_ROWS.map((r) => Object.assign({}, r, { session: null }));
+    assert.equal(pick('medusa', { rows: idle, projects: idle }), 21);
+  });
+
+  it('a configured delegate wins, but only while it is still a member', () => {
+    assert.equal(pick('tc-lane', { delegates: { 'tc-lane': '10' } }), 10);
+    assert.equal(pick('tc-lane', { delegates: { 'tc-lane': '22' } }), 12, 'a delegate from another project is ignored');
+    assert.equal(pick('tc-lane', { delegates: { 'tc-lane': '999' } }), 12, 'a delegate that no longer exists is ignored');
+  });
+
+  it('scopes the choice to one fleet when given', () => {
+    const node = { id: 'x', fleets: [
+      { id: 'a', members: [{ seatId: '12', role: 'TC-Lane-PM' }] },
+      { id: 'b', members: [{ seatId: '10', role: 'TC-Lane-A' }] }
+    ] };
+    assert.equal(G.tcV6ResolveDelegateProject(node, { projects: LANE_ROWS, fleetId: 'b' }).id, 10);
+  });
+
+  it('returns null with no node or no matching rows', () => {
+    assert.equal(G.tcV6ResolveDelegateProject(null, { projects: LANE_ROWS }), null);
+    assert.equal(G.tcV6ResolveDelegateProject(nodeFor('tc-lane'), { projects: [] }), null);
+  });
+});
+
+describe('tcV6ConversationViewMarkup — chat (#3047)', () => {
+  const G = loadV6Shell();
+  const base = (chat, extra) => Object.assign({
+    project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1592, events: [],
+    chat: Object.assign({
+      mode: 'delegate', nodeId: 'tc-lane', nodeName: 'TC-Lane', status: 'active',
+      members: [{ id: '10', name: 'TC-Lane-A' }, { id: '12', name: 'TC-Lane-PM' }]
+    }, chat || {})
+  }, extra || {});
+
+  it('names who you are talking to, as the project\'s delegate, with its session and status', () => {
+    const html = G.tcV6ConversationViewMarkup(base());
+    assert.match(html, /Talking to: <strong>TC-Lane-PM<\/strong> \(#1592\)/);
+    assert.match(html, /Designated Project Delegate/);
+    assert.match(html, /class="v6-chat-pill is-active">Active</);
+    assert.match(html, /<h2 class="v6-detail-title">TC-Lane<\/h2>/);
+  });
+
+  it('offers every member as the delegate, the current one selected', () => {
+    const html = G.tcV6ConversationViewMarkup(base());
+    assert.match(html, /<select id="v6ChatDelegate"[^>]*data-action="change-project-delegate"/);
+    assert.match(html, /<option value="10">TC-Lane-A<\/option><option value="12" selected>TC-Lane-PM<\/option>/);
+  });
+
+  it('a direct session says so and offers the way back to the delegate', () => {
+    const html = G.tcV6ConversationViewMarkup(base({ mode: 'direct', delegate: { id: '12', name: 'TC-Lane-PM' } },
+      { project: { id: 10, name: 'TC-Lane-A' } }));
+    assert.match(html, /Direct Session/);
+    assert.doesNotMatch(html, /v6ChatDelegate/);
+    assert.match(html, /<a id="v6ChatToDelegate"[^>]*href="#\/projects\/tc-lane"[^>]*>Switch to Delegate: TC-Lane-PM<\/a>/);
+  });
+
+  it('a direct session that is the delegate needs no switch link', () => {
+    const html = G.tcV6ConversationViewMarkup(base({ mode: 'direct', delegate: { id: '12', name: 'TC-Lane-PM' } }));
+    assert.doesNotMatch(html, /v6ChatToDelegate/);
+  });
+
+  it('renders the composer addressed to the target, with Enter/Shift+Enter guidance', () => {
+    const html = G.tcV6ConversationViewMarkup(base());
+    assert.match(html, /<form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form"/);
+    assert.match(html, /<textarea id="v6ChatInput" class="v6-chat-input" name="message"[^>]*placeholder="Message TC-Lane-PM… \(Enter to send, Shift\+Enter for newline\)"/);
+    assert.match(html, /<button type="submit" id="v6ChatSend" class="btn btn-primary v6-chat-send-btn">Send<\/button>/);
+  });
+
+  it('an offline target disables the composer and says why', () => {
+    const html = G.tcV6ConversationViewMarkup(base({ status: 'offline' }, { sessionId: null }));
+    assert.match(html, /class="v6-chat-pill is-offline">Offline</);
+    assert.match(html, /<textarea id="v6ChatInput"[^>]*disabled/);
+    assert.match(html, /<button type="submit"[^>]*disabled/);
+    assert.match(html, /TC-Lane-PM has no live session/);
+  });
+
+  it('an idle session is labelled idle', () => {
+    assert.match(G.tcV6ConversationViewMarkup(base({ status: 'idle' })), /class="v6-chat-pill is-idle">Idle</);
+  });
+
+  it('shows the live output panel, escaped, only for a live session', () => {
+    const html = G.tcV6ConversationViewMarkup(base({ peek: { lines: ['$ ok', '<b>bold</b>'] } }));
+    assert.match(html, /<pre id="v6ChatPeek" class="v6-chat-peek"[^>]*>\$ ok\n&lt;b&gt;bold&lt;\/b&gt;<\/pre>/);
+    assert.doesNotMatch(G.tcV6ConversationViewMarkup(base({ status: 'offline' }, { sessionId: null })), /v6ChatPeek/);
+    assert.match(G.tcV6ConversationViewMarkup(base({ peek: { error: 'gone' } })), /v6ChatPeek[^>]*>Could not read live output: gone</);
+    assert.match(G.tcV6ConversationViewMarkup(base()), /v6ChatPeek[^>]*>Waiting for output…</);
+  });
+
+  it('renders the send outcome line and the remembered draft, escaped', () => {
+    const html = G.tcV6ConversationViewMarkup(base({ send: { kind: 'error', message: 'Not sent: <held>' }, draft: 'half <typed>' }));
+    assert.match(html, /<p id="v6ChatStatus" class="v6-chat-send-status is-error" role="status" aria-live="polite">Not sent: &lt;held&gt;<\/p>/);
+    assert.match(html, /<textarea id="v6ChatInput"[^>]*>half &lt;typed&gt;<\/textarea>/);
+  });
+
+  it('escapes hostile member and node names everywhere they appear', () => {
+    const html = G.tcV6ConversationViewMarkup(base({
+      nodeName: '<i>n</i>', members: [{ id: '"><x', name: '<script>' }], delegate: { id: '1', name: '<u>d</u>' }
+    }, { project: { id: 1, name: '<b>p</b>' } }));
+    assert.doesNotMatch(html, /<script>|<i>n<\/i>|<b>p<\/b>|<u>d<\/u>|"><x/);
+  });
+
+  it('a view with no chat context still renders the composer for its project', () => {
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 7, name: 'X' }, sessionId: 3, events: [] });
+    assert.match(html, /v6-chat-composer/);
+    assert.match(html, /Direct Session/);
+  });
+});
+
+describe('tcV6ChatKeyAction (#3047)', () => {
+  const G = loadV6Shell();
+  it('Enter sends; Shift+Enter, an IME composition, and other keys do not', () => {
+    assert.equal(G.tcV6ChatKeyAction({ key: 'Enter' }), 'send');
+    assert.equal(G.tcV6ChatKeyAction({ key: 'Enter', shiftKey: true }), null);
+    assert.equal(G.tcV6ChatKeyAction({ key: 'Enter', isComposing: true }), null);
+    assert.equal(G.tcV6ChatKeyAction({ key: 'a' }), null);
+    assert.equal(G.tcV6ChatKeyAction(null), null);
+  });
+});
+
+describe('Project Delegate Chat, end to end through the shell and live controller (#3047)', () => {
+  /**
+   * A shell wired to a live controller the way public/ui.js wires them, with
+   * an injectable storage, interval timers and api/apiMutate fakes. The fake
+   * api carries the real helper's lastError/lastErrorCode side channel.
+   */
+  function mountChat(opts) {
+    const o = opts || {};
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow(o.initialHash || '#/projects/tc-lane');
+    const calls = [];
+    const map = Object.assign({
+      '/api/projects': { projects: LANE_ROWS },
+      '/api/sessions/TC-Lane-PM/status': { active: true, sessionId: 1592, idle: false },
+      '/api/sessions/TC-Lane-A/status': { active: true, sessionId: 1660, idle: true },
+      '/api/sessions/Medusa-INT/status': { active: false },
+      '/api/v6/projects/12/sessions/1592/conversation/events': { events: [{ seq: 1, role: 'user', content: 'earlier' }] },
+      '/api/v6/projects/12/sessions/1592/conversation/events?includeDeleted=1': { events: [{ seq: 1 }, { seq: 4, deleted_at: 'x' }] },
+      '/api/v6/projects/12/sessions/1592/attestations': { attestations: [] },
+      '/api/sessions/TC-Lane-PM/peek?lines=80': { lines: ['pm line 1'] },
+      '/api/sessions/TC-Lane-A/peek?lines=80': { lines: ['a line'] }
+    }, o.map || {});
+    const api = async (url) => {
+      calls.push(url);
+      const v = map[url];
+      return typeof v === 'function' ? v(url) : (v === undefined ? null : v);
+    };
+    api.lastError = null;
+    api.lastErrorCode = null;
+    const mutateCalls = [];
+    const apiMutate = async (url, method, body) => {
+      mutateCalls.push({ url, method, body: plain(body) });
+      api.lastError = null;
+      api.lastErrorCode = null;
+      return o.mutate ? o.mutate(url, plain(body), api, mutateCalls) : { ok: true };
+    };
+    const timers = [];
+    const storage = o.storage || makeStorage();
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({
+      getShell: () => shell, api, apiMutate, storage,
+      setInterval: (fn, ms) => { timers.push({ fn, ms, cleared: false }); return timers.length - 1; },
+      clearInterval: (id) => { if (timers[id]) timers[id].cleared = true; }
+    });
+    shell = G.tcCreateV6Shell(doc, {
+      root, window: win, storage,
+      onRender: (route) => pending.push(live.handleRoute(route)),
+      onSendChat: (text) => pending.push(live.sendChat(text)),
+      onChangeDelegate: (nodeId, projectId) => pending.push(live.changeDelegate(nodeId, projectId)),
+      onRefreshChat: () => pending.push(live.refresh())
+    });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    return { G, shell, root, doc, win, live, calls, mutateCalls, timers, storage, settle, api };
+  }
+
+  async function typeAndSend(m, text) {
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = text;
+    input.dispatch('input');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.settle();
+  }
+
+  it('a project route opens a chat with its PM delegate, its live output and its events', async () => {
+    const m = mountChat();
+    await m.settle();
+    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/status'));
+    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=80'));
+    assert.match(m.root.innerHTML, /Talking to: <strong>TC-Lane-PM<\/strong> \(#1592\)/);
+    assert.match(m.root.innerHTML, /pm line 1/);
+    assert.match(m.root.innerHTML, /earlier/);
+  });
+
+  it('a remembered delegate is used', async () => {
+    const m = mountChat({ storage: makeStorage({ tc_v6_project_delegates: JSON.stringify({ 'tc-lane': '10' }) }) });
+    await m.settle();
+    assert.match(m.root.innerHTML, /Talking to: <strong>TC-Lane-A<\/strong> \(#1660\)/);
+    assert.match(m.root.innerHTML, /class="v6-chat-pill is-idle">Idle</);
+  });
+
+  it('changing the delegate remembers it and reloads the chat for the new one', async () => {
+    const m = mountChat();
+    await m.settle();
+    const select = m.doc.getElementById('v6ChatDelegate');
+    select.value = '10';
+    select.dispatch('change');
+    await m.settle();
+    assert.deepEqual(JSON.parse(m.storage.data.tc_v6_project_delegates), { 'tc-lane': '10' });
+    assert.match(m.root.innerHTML, /Talking to: <strong>TC-Lane-A<\/strong>/);
+  });
+
+  it('a member route is a direct session, with the way back to the delegate', async () => {
+    const m = mountChat({ initialHash: '#/resources/10/conversation' });
+    await m.settle();
+    assert.match(m.root.innerHTML, /Direct Session/);
+    assert.match(m.root.innerHTML, /Switch to Delegate: TC-Lane-PM/);
+  });
+
+  it('sending types the message into the session, records it with the next seq, and confirms', async () => {
+    const m = mountChat();
+    await m.settle();
+    await typeAndSend(m, 'ship the release');
+    assert.deepEqual(m.mutateCalls[0], {
+      url: '/api/sessions/TC-Lane-PM/command', method: 'POST', body: { command: 'ship the release', enter: true }
+    });
+    assert.deepEqual(m.mutateCalls[1], {
+      url: '/api/v6/projects/12/sessions/1592/conversation/events', method: 'POST',
+      body: { launchId: 'v6-chat-ui', seq: 5, tier: 'A', adapter: 'v6-chat-ui', role: 'user', content: 'ship the release' }
+    });
+    assert.match(m.root.innerHTML, /v6-chat-send-status is-ok[^>]*>Sent to TC-Lane-PM\.</);
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*><\/textarea>/, 'the composer is cleared');
+  });
+
+  it('records with the session\'s own launch id when its status carries one', async () => {
+    const m = mountChat({ map: { '/api/sessions/TC-Lane-PM/status': { active: true, sessionId: 1592, launchId: 'L-77' } } });
+    await m.settle();
+    await typeAndSend(m, 'hi');
+    assert.equal(m.mutateCalls[1].body.launchId, 'L-77');
+  });
+
+  it('a refused message says why, records nothing, and keeps the text', async () => {
+    const m = mountChat({
+      mutate: (url, body, api) => {
+        if (url.endsWith('/command')) { api.lastError = 'Lane is held by its coordinator'; api.lastErrorCode = 'CONTROL_HELD'; return null; }
+        return { ok: true };
+      }
+    });
+    await m.settle();
+    await typeAndSend(m, 'keep me');
+    assert.equal(m.mutateCalls.length, 1, 'no conversation event for a message that was not sent');
+    assert.match(m.root.innerHTML, /v6-chat-send-status is-error[^>]*>Not sent: Lane is held by its coordinator</);
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*>keep me<\/textarea>/);
+  });
+
+  it('retries the record once on a seq conflict, with a freshly read seq', async () => {
+    let reads = 0;
+    const m = mountChat({
+      map: { '/api/v6/projects/12/sessions/1592/conversation/events?includeDeleted=1': () => ({ events: [{ seq: 3 + reads++ }] }) },
+      mutate: (url, body, api, sent) => {
+        if (url.endsWith('/conversation/events') && sent.filter((c) => c.url.endsWith('/conversation/events')).length === 1) {
+          api.lastError = 'seq taken'; api.lastErrorCode = 'SEQ_CONFLICT'; return null;
+        }
+        return { ok: true };
+      }
+    });
+    await m.settle();
+    await typeAndSend(m, 'race');
+    const events = m.mutateCalls.filter((c) => c.url.endsWith('/conversation/events'));
+    assert.deepEqual(events.map((c) => c.body.seq), [4, 5]);
+    assert.match(m.root.innerHTML, /is-ok[^>]*>Sent to TC-Lane-PM\.</);
+  });
+
+  it('a message that was sent but could not be recorded says exactly that', async () => {
+    const m = mountChat({
+      mutate: (url, body, api) => {
+        if (url.endsWith('/conversation/events')) { api.lastError = 'boom'; api.lastErrorCode = 'INTERNAL'; return null; }
+        return { ok: true };
+      }
+    });
+    await m.settle();
+    await typeAndSend(m, 'x');
+    assert.match(m.root.innerHTML, /is-warning[^>]*>Sent to TC-Lane-PM, but it could not be recorded in the conversation: boom</);
+  });
+
+  it('an empty or blank message sends nothing', async () => {
+    const m = mountChat();
+    await m.settle();
+    await typeAndSend(m, '   \n ');
+    assert.equal(m.mutateCalls.length, 0);
+  });
+
+  it('a target with no live session is not typed into', async () => {
+    const m = mountChat({ storage: makeStorage({ tc_v6_project_delegates: JSON.stringify({ medusa: '21' }) }), initialHash: '#/projects/medusa' });
+    await m.settle();
+    await m.live.sendChat('hello');
+    assert.equal(m.mutateCalls.length, 0);
+    assert.match(m.root.innerHTML, /Medusa-INT has no live session/);
+    assert.equal(m.timers.length, 0, 'nothing to poll');
+  });
+
+  it('polls the live output every 4 s without re-rendering the composer, and stops when the route changes', async () => {
+    let n = 0;
+    const m = mountChat({ map: { '/api/sessions/TC-Lane-PM/peek?lines=80': () => ({ lines: [`tick ${n++}`] }) } });
+    await m.settle();
+    assert.equal(m.timers.length, 1);
+    assert.equal(m.timers[0].ms, 4000);
+    const input = m.doc.getElementById('v6ChatInput');
+    await m.timers[0].fn();
+    assert.match(m.doc.getElementById('v6ChatPeek').innerHTML, /tick 1/);
+    assert.equal(m.doc.getElementById('v6ChatInput'), input, 'a peek refresh leaves the composer element alone');
+    m.win.location.hash = '#/settings/';
+    await m.settle();
+    assert.equal(m.timers[0].cleared, true);
+  });
+
+  it('a poll that lands after the operator moved on is dropped', async () => {
+    const m = mountChat();
+    await m.settle();
+    const tick = m.timers[0].fn;
+    m.win.location.hash = '#/projects/medusa';
+    await m.settle();
+    const before = m.root.innerHTML;
+    await tick();
+    assert.equal(m.root.innerHTML, before);
+  });
+
+  it('Refresh reloads the conversation', async () => {
+    const m = mountChat();
+    await m.settle();
+    const statusReads = () => m.calls.filter((u) => u === '/api/sessions/TC-Lane-PM/status').length;
+    const first = statusReads();
+    m.doc.getElementById('v6ChatRefresh').dispatch('click');
+    await m.settle();
+    assert.equal(statusReads(), first + 1);
+  });
+
+  it('the draft survives a re-render that is not a send', async () => {
+    const m = mountChat();
+    await m.settle();
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'half typed';
+    input.dispatch('input');
+    m.shell.setTelemetry(null);
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*>half typed<\/textarea>/);
+  });
+});
+
+describe('remembered settings without a usable store (#3047)', () => {
+  it('a delegate change still takes effect for this page when storage is unavailable', async () => {
+    const G = loadV6Shell();
+    const rows = LANE_ROWS;
+    const api = async (url) => ({
+      '/api/projects': { projects: rows },
+      '/api/sessions/TC-Lane-PM/status': { active: false },
+      '/api/sessions/TC-Lane-A/status': { active: false }
+    })[url] || null;
+    let route = { view: 'project', projectId: 'tc-lane' };
+    const views = [];
+    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setProjects() {},
+      setDetail(d) { if (d && d.kind === 'conversation') views.push(plain(d.view)); }, getRoute: () => route };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null });
+    await live.handleRoute(route);
+    assert.equal(views[views.length - 1].project.name, 'TC-Lane-PM');
+    await live.changeDelegate('tc-lane', '10');
+    assert.equal(views[views.length - 1].project.name, 'TC-Lane-A');
+  });
+});
+
+describe('the page header holds the Fleet/Classic switcher without overflowing (#3046)', () => {
+  const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  it('the base .dash-bar wraps, so the action pills drop a row instead of running off the right edge', () => {
+    const body = CSS.match(/(^|\n)\.dash-bar\s*\{([^}]*)\}/)[2];
+    assert.match(body, /flex-wrap:\s*wrap/);
+  });
+});
+
+describe('Project Delegate Chat review fixes (#3047)', () => {
+  function mountPair(opts) {
+    const o = opts || {};
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow(o.initialHash || '#/projects/tc-lane');
+    const calls = [];
+    let rows = LANE_ROWS;
+    const map = {
+      '/api/sessions/TC-Lane-PM/status': { active: true, sessionId: 1592 },
+      '/api/sessions/TC-Lane-A/status': { active: true, sessionId: 1660 },
+      '/api/v6/projects/12/sessions/1592/conversation/events': { events: [] },
+      '/api/v6/projects/10/sessions/1660/conversation/events': { events: [] }
+    };
+    const api = async (url) => { calls.push(url); if (url === '/api/projects') return { projects: rows }; return map[url] === undefined ? null : map[url]; };
+    const mutateCalls = [];
+    let release = null;
+    const apiMutate = async (url, method, body) => {
+      mutateCalls.push({ url, body: plain(body) });
+      if (o.hold && url.endsWith('/command')) await new Promise((r) => { release = r; });
+      return { ok: true };
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null });
+    shell = G.tcCreateV6Shell(doc, {
+      root, window: win, storage: null,
+      onRender: (route) => pending.push(live.handleRoute(route)),
+      onSendChat: (text) => pending.push(live.sendChat(text))
+    });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    return { shell, root, doc, win, live, calls, mutateCalls, settle, setRows: (r) => { rows = r; }, release: () => release && release() };
+  }
+
+  it('an unsent message stays with its own chat and never follows the operator to another one', async () => {
+    const m = mountPair();
+    await m.settle();
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'for the PM only';
+    input.dispatch('input');
+    m.win.location.hash = '#/resources/10/conversation';
+    await m.settle();
+    assert.match(m.root.innerHTML, /Talking to: <strong>TC-Lane-A<\/strong>/);
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*><\/textarea>/, 'the other chat starts empty');
+    m.win.location.hash = '#/projects/tc-lane';
+    await m.settle();
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*>for the PM only<\/textarea>/, 'the draft is still there on return');
+  });
+
+  it('a second Enter or Send while the first is still sending is ignored, and the composer is disabled meanwhile', async () => {
+    const m = mountPair({ hold: true });
+    await m.settle();
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'once';
+    input.dispatch('input');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*disabled/);
+    assert.match(m.root.innerHTML, /<button type="submit"[^>]*disabled/);
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.live.sendChat('once');
+    m.release();
+    await m.settle();
+    assert.equal(m.mutateCalls.filter((c) => c.url.endsWith('/command')).length, 1);
+    assert.match(m.root.innerHTML, /Sent to TC-Lane-PM\./);
+  });
+
+  it('a message sent while the operator left the chat is not waiting to be sent again on return', async () => {
+    const m = mountPair({ hold: true });
+    await m.settle();
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'sent once';
+    input.dispatch('input');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    m.win.location.hash = '#/resources/10/conversation';
+    await new Promise((r) => setImmediate(r));
+    m.release();
+    await m.settle();
+    m.win.location.hash = '#/projects/tc-lane';
+    await m.settle();
+    assert.equal(m.mutateCalls.filter((c) => c.url.endsWith('/command')).length, 1);
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*><\/textarea>/, 'the sent text does not come back');
+  });
+
+  it('a message delivered after the operator left the chat is still recorded, against its own target, and the new chat is untouched', async () => {
+    const m = mountPair({ hold: true });
+    await m.settle();
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'record me';
+    input.dispatch('input');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    m.win.location.hash = '#/resources/10/conversation';
+    await new Promise((r) => setImmediate(r));
+    m.release();
+    await m.settle();
+    const commands = m.mutateCalls.filter((c) => c.url.endsWith('/command'));
+    const events = m.mutateCalls.filter((c) => c.url.endsWith('/conversation/events'));
+    assert.deepEqual(commands.map((c) => c.url), ['/api/sessions/TC-Lane-PM/command']);
+    assert.deepEqual(events.map((c) => [c.url, c.body.content, c.body.role]),
+      [['/api/v6/projects/12/sessions/1592/conversation/events', 'record me', 'user']]);
+    assert.match(m.root.innerHTML, /Talking to: <strong>TC-Lane-A<\/strong>/, 'the chat on screen is still the one the operator moved to');
+    assert.doesNotMatch(m.root.innerHTML, /Sent to TC-Lane-PM/, 'no stale outcome line lands in the other chat');
+  });
+
+  it('Refresh hands the freshly read project rows to the sidebar and its engine filter', async () => {
+    const m = mountPair();
+    await m.settle();
+    m.setRows(LANE_ROWS.concat([{ id: 30, name: 'TC-Lane-New', engine: { id: 'codex' } }]));
+    await m.live.refresh();
+    await m.settle();
+    assert.match(m.root.innerHTML, /TC-Lane-New \(30\)/);
+    assert.match(m.root.innerHTML, /<option value="codex">codex<\/option>/);
+  });
+});
+
+describe('Hide Fleet / Show Fleet keep keyboard focus (#3046)', () => {
+  it('focus moves to the control that undoes the action, rather than to the page', () => {
+    const { doc } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    const hide = doc.getElementById('v6SidebarCollapse');
+    hide.focus();
+    hide.dispatch('click');
+    assert.equal(doc.activeElement, doc.getElementById('v6SidebarExpand'));
+    doc.getElementById('v6SidebarExpand').dispatch('click');
+    assert.equal(doc.activeElement, doc.getElementById('v6SidebarCollapse'));
   });
 });

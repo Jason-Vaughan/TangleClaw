@@ -245,6 +245,26 @@
     return logical;
   }
 
+  /** The persisted key for a project node in the sidebar's fold state. */
+  function projectNodeKey(project) { return `p:${project.id}`; }
+
+  /** The persisted key for a fleet node, scoped by its project (fleet ids repeat across projects). */
+  function fleetNodeKey(project, fleet) { return `f:${project.id}/${fleet.id}`; }
+
+  /**
+   * One fold toggle (`▾` open / `▸` folded) for a project or fleet node.
+   * @param {string} id - The button's element id.
+   * @param {string} nodeKey
+   * @param {string} name - What it folds, for the accessible label.
+   * @param {boolean} folded
+   * @returns {string} HTML.
+   */
+  function treeToggleMarkup(id, nodeKey, name, folded) {
+    return `<button type="button" id="${escapeHtml(id)}" class="v6-tree-toggle" data-action="toggle-tree-node"
+      data-node-id="${escapeHtml(nodeKey)}" aria-expanded="${folded ? 'false' : 'true'}"
+      aria-label="${folded ? 'Expand' : 'Collapse'} ${escapeHtml(name)}">${folded ? '▸' : '▾'}</button>`;
+  }
+
   /**
    * The collapsible Logical Project -> Fleet -> Member sidebar (#2981
    * deliverable 2). Plain nested lists with real `<a href="#...">` links —
@@ -253,8 +273,15 @@
    * without that behavior is a worse accessibility bug than not using it),
    * so keyboard reachability comes from the browser's own native tab
    * order rather than a half-built custom interaction model.
+   *
+   * Every project and fleet with something under it carries a fold toggle
+   * (#3046); a folded node's children are not rendered. Toggle ids are
+   * positional (`v6TreeToggle-p<i>`, `v6TreeToggle-f<i>-<j>`) because node
+   * ids are free text and an element id must not be; the real node key rides
+   * on `data-node-id`.
    * @param {ReturnType<typeof buildHierarchyTree>} tree
-   * @param {{activeProjectId?: string, activeFleetId?: string, activeResourceId?: string}} [opts]
+   * @param {{activeProjectId?: string, activeFleetId?: string, activeResourceId?: string,
+   *   collapsed?: Array<string>|Set<string>}} [opts]
    * @returns {string} HTML.
    */
   function sidebarMarkup(tree, opts) {
@@ -262,16 +289,19 @@
     const activeProjectId = options.activeProjectId != null ? String(options.activeProjectId) : null;
     const activeFleetId = options.activeFleetId != null ? String(options.activeFleetId) : null;
     const activeResourceId = options.activeResourceId != null ? String(options.activeResourceId) : null;
+    const collapsed = new Set(options.collapsed || []);
     const list = Array.isArray(tree) ? tree : [];
-    const items = list.map((project) => {
+    const items = list.map((project, pi) => {
       const projectActive = activeProjectId === String(project.id);
       const projectHash = routeHash({ view: 'project', projectId: project.id });
-      const fleetItems = project.fleets.map((fleet) => {
+      const projectFolded = collapsed.has(projectNodeKey(project));
+      const fleetItems = projectFolded ? '' : project.fleets.map((fleet, fi) => {
         const fleetActive = projectActive && activeFleetId === String(fleet.id);
         const fleetHash = routeHash({ view: 'fleet', projectId: project.id, fleetId: fleet.id });
+        const fleetFolded = collapsed.has(fleetNodeKey(project, fleet));
         // #3022: a member with a seat id is a real resource — link it to its
         // B2 Conversation View; one without stays plain text.
-        const memberItems = fleet.members.map((m) => {
+        const memberItems = fleetFolded ? '' : fleet.members.map((m) => {
           const label = `${escapeHtml(m.role)} (${escapeHtml(m.seatId)})`;
           if (!m.seatId) return `<li class="v6-shell-member">${label}</li>`;
           const memberActive = activeResourceId === String(m.seatId);
@@ -280,22 +310,172 @@
             aria-current="${memberActive ? 'page' : 'false'}"
             href="${escapeHtml(memberHash)}" data-route="${escapeHtml(memberHash)}">${label}</a></li>`;
         }).join('');
+        const fleetToggle = fleet.members.length
+          ? treeToggleMarkup(`v6TreeToggle-f${pi}-${fi}`, fleetNodeKey(project, fleet), fleet.displayName, fleetFolded)
+          : '';
         return `<li>
-          <a class="v6-shell-fleet${fleetActive ? ' is-active' : ''}"
+          <div class="v6-tree-row">${fleetToggle}<a class="v6-shell-fleet${fleetActive ? ' is-active' : ''}"
              aria-current="${fleetActive ? 'page' : 'false'}"
-             href="${escapeHtml(fleetHash)}" data-route="${escapeHtml(fleetHash)}">${escapeHtml(fleet.displayName)}</a>
+             href="${escapeHtml(fleetHash)}" data-route="${escapeHtml(fleetHash)}">${escapeHtml(fleet.displayName)}</a></div>
           ${memberItems ? `<ul class="v6-shell-members">${memberItems}</ul>` : ''}
         </li>`;
       }).join('');
+      const projectToggle = project.fleets.length
+        ? treeToggleMarkup(`v6TreeToggle-p${pi}`, projectNodeKey(project), project.displayName, projectFolded)
+        : '';
       return `<li>
-        <a class="v6-shell-project${projectActive ? ' is-active' : ''}"
+        <div class="v6-tree-row">${projectToggle}<a class="v6-shell-project${projectActive ? ' is-active' : ''}"
            aria-current="${projectActive ? 'page' : 'false'}"
-           href="${escapeHtml(projectHash)}" data-route="${escapeHtml(projectHash)}">${escapeHtml(project.displayName)}</a>
+           href="${escapeHtml(projectHash)}" data-route="${escapeHtml(projectHash)}">${escapeHtml(project.displayName)}</a></div>
         ${fleetItems ? `<ul class="v6-shell-fleets">${fleetItems}</ul>` : ''}
       </li>`;
     }).join('');
     return `<ul class="v6-shell-tree">${items}</ul>`;
   }
+
+  /**
+   * Every fold key in `tree`: one per project and one per fleet that has
+   * something to fold — what "Collapse all" folds.
+   * @param {ReturnType<typeof buildHierarchyTree>} tree
+   * @returns {string[]}
+   */
+  function allNodeKeys(tree) {
+    const keys = [];
+    (Array.isArray(tree) ? tree : []).forEach((project) => {
+      if (project.fleets.length) keys.push(projectNodeKey(project));
+      project.fleets.forEach((fleet) => { if (fleet.members.length) keys.push(fleetNodeKey(project, fleet)); });
+    });
+    return keys;
+  }
+
+  /**
+   * A JSON view of a `localStorage`-like store that never throws: a store
+   * that is missing, blocked or full, or a value that is not valid JSON of
+   * the expected kind, reads as the fallback, and a write it cannot keep
+   * still holds for this page. The shell's remembered layout is a
+   * convenience; losing it must never break the page.
+   * @param {{getItem: Function, setItem: Function}|null} storage
+   * @returns {{get: (key: string, fallback: *, accept: (value: *) => boolean) => *, set: (key: string, value: *) => void}}
+   */
+  function makePrefs(storage) {
+    // This page's own writes, so a setting still holds for the visit when
+    // the store cannot keep it.
+    const memory = new Map();
+    return {
+      get(key, fallback, accept) {
+        if (memory.has(key)) return memory.get(key);
+        let value;
+        try {
+          const raw = storage ? storage.getItem(key) : null;
+          if (raw == null) return fallback;
+          value = JSON.parse(raw);
+        } catch { // prawduct:allow prawduct/broad-except -- a blocked store (SecurityError) or corrupt JSON (SyntaxError) both mean "nothing remembered"
+          return fallback;
+        }
+        return accept(value) ? value : fallback;
+      },
+      set(key, value) {
+        memory.set(key, value);
+        try {
+          if (storage) storage.setItem(key, JSON.stringify(value));
+        } catch { // prawduct:allow prawduct/broad-except -- a blocked or full store (SecurityError, QuotaExceededError): the setting lasts this page only
+          /* not persisted */
+        }
+      }
+    };
+  }
+
+  /**
+   * The page's own `localStorage`, or null where reading it throws (some
+   * browsers do, with storage blocked).
+   * @param {object|null} win
+   * @returns {object|null}
+   */
+  function defaultStorage(win) {
+    try {
+      return (win && win.localStorage) || null;
+    } catch { // prawduct:allow prawduct/broad-except -- reading window.localStorage throws SecurityError when storage is blocked
+      return null;
+    }
+  }
+
+  /**
+   * The sidebar tree as the operator's filters leave it (#3046). Text
+   * matching a project or fleet name keeps all of its members; otherwise it
+   * keeps the members whose name matches. An engine keeps the members whose
+   * project row runs it (a member with no row cannot be shown to run it). A
+   * non-empty group set keeps only those logical projects. A fleet or
+   * project left with no members is dropped. Pure.
+   * @param {ReturnType<typeof buildHierarchyTree>} tree
+   * @param {{text?: string, engine?: string, groups?: Iterable<string>}} filters
+   * @param {Map<string, {engine?: {id?: string}|null}>} projectsById - Project rows keyed by id.
+   * @returns {ReturnType<typeof buildHierarchyTree>}
+   */
+  function filterTree(tree, filters, projectsById) {
+    const f = filters || {};
+    const text = typeof f.text === 'string' ? f.text.trim().toLowerCase() : '';
+    const engine = typeof f.engine === 'string' ? f.engine : '';
+    const groups = new Set(f.groups || []);
+    const rows = projectsById && typeof projectsById.get === 'function' ? projectsById : new Map();
+    const has = (value) => String(value || '').toLowerCase().includes(text);
+    const runsEngine = (m) => {
+      const row = rows.get(String(m.seatId));
+      return Boolean(row && row.engine && row.engine.id === engine);
+    };
+    return (Array.isArray(tree) ? tree : [])
+      .filter((project) => !groups.size || groups.has(String(project.id)))
+      .map((project) => {
+        const projectHit = !text || has(project.displayName);
+        const fleets = project.fleets.map((fleet) => {
+          const fleetHit = projectHit || has(fleet.displayName);
+          const members = fleet.members.filter((m) => (fleetHit || has(m.role)) && (!engine || runsEngine(m)));
+          return Object.assign({}, fleet, { members });
+        }).filter((fleet) => fleet.members.length);
+        return Object.assign({}, project, { fleets });
+      })
+      .filter((project) => project.fleets.length);
+  }
+
+  /**
+   * The sidebar's filter controls (#3046): text search, an engine select
+   * (one option per engine a project runs), a pill per logical project, a
+   * Multi toggle and All. Ids are positional for the same reason the fold
+   * toggles' are.
+   * @param {{tree: ReturnType<typeof buildHierarchyTree>, engines: string[], text: string,
+   *   engine: string, groups: Set<string>, multi: boolean}} view
+   * @returns {string} HTML.
+   */
+  function filterControlsMarkup(view) {
+    const engineOptions = ['<option value="">All Engines</option>'].concat(view.engines.map((id) => (
+      `<option value="${escapeHtml(id)}"${id === view.engine ? ' selected' : ''}>${escapeHtml(id)}</option>`
+    ))).join('');
+    const pills = view.tree.map((project, i) => {
+      const on = view.groups.has(String(project.id));
+      return `<button type="button" id="v6GroupPill-${i}" class="v6-filter-pill${on ? ' is-active' : ''}"
+        data-group-id="${escapeHtml(project.id)}" aria-pressed="${on ? 'true' : 'false'}">${escapeHtml(project.displayName)}</button>`;
+    }).join('');
+    return `<div class="v6-sidebar-filters" role="search" aria-label="Filter the fleet tree">
+      <input type="search" id="v6FilterSearch" class="filter-input v6-filter-search" placeholder="Filter…"
+        aria-label="Filter projects by name" autocomplete="off" spellcheck="false" value="${escapeHtml(view.text)}">
+      <select id="v6FilterEngine" class="filter-input v6-filter-engine" aria-label="Filter by engine">${engineOptions}</select>
+      <div class="v6-filter-pills" role="group" aria-label="Show projects">
+        <button type="button" id="v6FilterAll" class="v6-filter-pill${view.groups.size ? '' : ' is-active'}"
+          aria-pressed="${view.groups.size ? 'false' : 'true'}">All</button>
+        ${pills}
+        <button type="button" id="v6FilterMulti" class="v6-filter-pill v6-filter-multi${view.multi ? ' is-active' : ''}"
+          data-action="toggle-multi-filter" aria-pressed="${view.multi ? 'true' : 'false'}"
+          title="Select several projects at once (or Ctrl/Cmd/Shift-click a pill)">Multi</button>
+      </div>
+    </div>`;
+  }
+
+  const isBoolean = (v) => typeof v === 'boolean';
+  const isStringMap = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
+    && Object.keys(v).every((k) => typeof v[k] === 'string');
+
+  /** How often an open chat re-reads its session's live output (#3047). */
+  const CHAT_POLL_MS = 4000;
+  const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
   /** Every metric a B4 telemetry bar carries, in its own listed display order, mirroring `lib/v6/b4-telemetry-header.js#METRIC_KEYS`. */
   const TELEMETRY_METRIC_LABELS = Object.freeze({
@@ -437,6 +617,9 @@
     }
     const name = String(v.project.name || '');
     const hoodHref = `/session.html?project=${encodeURIComponent(name)}`;
+    const chat = v.chat || {};
+    const status = CHAT_STATUS_LABELS[chat.status] ? chat.status : (v.sessionId == null ? 'offline' : 'active');
+    const live = status !== 'offline';
     let stream;
     if (v.error) {
       stream = `<p class="v6-conversation-empty">${escapeHtml(v.error)}</p>`;
@@ -453,11 +636,79 @@
         )).join('')}</ol>`
         : '<p class="v6-conversation-empty">No conversation events recorded for this session yet.</p>';
     }
-    return `<section class="v6-conversation" aria-label="Conversation — ${escapeHtml(name)}">
-      <h2 class="v6-detail-title">${escapeHtml(name)}</h2>
-      <a class="btn btn-secondary v6-open-hood" href="${escapeHtml(hoodHref)}">Open Hood (Live Terminal)</a>
+    const delegateMode = chat.mode === 'delegate';
+    const title = delegateMode && chat.nodeName ? chat.nodeName : name;
+    const session = v.sessionId != null ? ` (#${escapeHtml(v.sessionId)})` : '';
+    const members = Array.isArray(chat.members) ? chat.members : [];
+    const delegatePicker = delegateMode && members.length
+      ? `<label class="v6-chat-delegate-label">Delegate
+          <select id="v6ChatDelegate" class="filter-input v6-chat-delegate" data-action="change-project-delegate"
+            aria-label="Choose who this project's chat talks to">${members.map((m) => (
+              `<option value="${escapeHtml(m.id)}"${String(m.id) === String(v.project.id) ? ' selected' : ''}>${escapeHtml(m.name)}</option>`
+            )).join('')}</select>
+        </label>`
+      : '';
+    const toDelegate = !delegateMode && chat.delegate && chat.nodeId != null && String(chat.delegate.id) !== String(v.project.id)
+      ? `<a id="v6ChatToDelegate" class="btn btn-secondary btn-small"
+          href="${escapeHtml(routeHash({ view: 'project', projectId: chat.nodeId }))}">Switch to Delegate: ${escapeHtml(chat.delegate.name)}</a>`
+      : '';
+    const send = chat.send && CHAT_SEND_KINDS.includes(chat.send.kind) ? chat.send : null;
+    // Disabled while a send is in flight too, so a second Enter cannot type
+    // the same message into the session twice.
+    const disabled = live && !(send && send.kind === 'pending') ? '' : ' disabled';
+    const placeholder = `Message ${name}… (Enter to send, Shift+Enter for newline)`;
+    return `<section class="v6-conversation v6-chat" aria-label="Conversation — ${escapeHtml(name)}">
+      <header class="v6-chat-header">
+        <h2 class="v6-detail-title">${escapeHtml(title)}</h2>
+        <p class="v6-chat-talking-to">Talking to: <strong>${escapeHtml(name)}</strong>${session} · ${delegateMode ? 'Designated Project Delegate' : 'Direct Session'}
+          <span class="v6-chat-pill is-${status}">${CHAT_STATUS_LABELS[status]}</span></p>
+        <div class="v6-chat-actions">
+          ${delegatePicker}${toDelegate}
+          <a class="btn btn-secondary v6-open-hood" href="${escapeHtml(hoodHref)}">Open Hood (Live Terminal)</a>
+          <button type="button" id="v6ChatRefresh" class="btn btn-secondary btn-small">Refresh</button>
+          <button type="button" id="v6ChatSettings" class="btn btn-secondary btn-small">Project Settings</button>
+        </div>
+      </header>
       ${stream}
+      ${live ? `<section class="v6-chat-live" aria-label="Live output">
+        <h3 class="v6-chat-subtitle">Live output</h3>
+        <pre id="v6ChatPeek" class="v6-chat-peek" tabindex="0">${chatPeekMarkup(chat.peek)}</pre>
+      </section>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session — open the Hood to start one.</p>`}
+      <form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form" aria-label="Message ${escapeHtml(name)}">
+        <textarea id="v6ChatInput" class="v6-chat-input" name="message" rows="3" aria-label="Message to ${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}"${disabled}>${escapeHtml(chat.draft || '')}</textarea>
+        <button type="submit" id="v6ChatSend" class="btn btn-primary v6-chat-send-btn"${disabled}>Send</button>
+      </form>
+      <p id="v6ChatStatus" class="v6-chat-send-status${send ? ` is-${send.kind}` : ''}" role="status" aria-live="polite">${send ? escapeHtml(send.message) : ''}</p>
     </section>`;
+  }
+
+  /** The chat header's session pill text, by session state. */
+  const CHAT_STATUS_LABELS = Object.freeze({ active: 'Active', idle: 'Idle', offline: 'Offline' });
+
+  /** The kinds a send outcome line can carry (each is a CSS modifier). */
+  const CHAT_SEND_KINDS = Object.freeze(['pending', 'ok', 'warning', 'error']);
+
+  /**
+   * The live output panel's text: the session's last lines, escaped, or what
+   * stands in for them.
+   * @param {{lines?: string[], error?: string}|null} peek
+   * @returns {string} HTML-escaped text for a `<pre>`.
+   */
+  function chatPeekMarkup(peek) {
+    if (!peek) return 'Waiting for output…';
+    if (peek.error) return `Could not read live output: ${escapeHtml(peek.error)}`;
+    const lines = Array.isArray(peek.lines) ? peek.lines : [];
+    return lines.length ? lines.map((l) => escapeHtml(l)).join('\n') : 'No output yet.';
+  }
+
+  /**
+   * What a key press in the chat composer means: Enter sends; Shift+Enter
+   * is a newline, and a key pressed mid IME composition belongs to the IME.
+   * @param {{key?: string, shiftKey?: boolean, isComposing?: boolean}|null} evt
+   * @returns {'send'|null}
+   */
+  function chatKeyAction(evt) {
+    return evt && evt.key === 'Enter' && !evt.shiftKey && !evt.isComposing ? 'send' : null;
   }
 
   /**
@@ -651,10 +902,17 @@
    *   {kind: 'recovery', view: object}|{kind: 'knowledge', help: object}|{kind: 'loading'}|null} detail
    * @returns {string} HTML.
    */
-  function detailMarkup(detail) {
+  function detailMarkup(detail, extras) {
     if (!detail) return '';
     if (detail.kind === 'plan') return fleetPlanMarkup(detail.plan);
-    if (detail.kind === 'conversation') return conversationViewMarkup(detail.view);
+    if (detail.kind === 'conversation') {
+      // The composer's unsent text lives in the shell, not the controller's
+      // view, so a re-render that is not a send keeps it (#3047); the shell
+      // passes only the draft for this chat's own project.
+      const draft = (extras && extras.draft) || '';
+      const v = detail.view || {};
+      return conversationViewMarkup(Object.assign({}, v, { chat: Object.assign({}, v.chat, { draft }) }));
+    }
     if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
     if (detail.kind === 'recovery') return recoveryConsoleMarkup(detail.view);
     if (detail.kind === 'knowledge') return knowledgeBaseMarkup(detail.help);
@@ -696,19 +954,55 @@
   }
 
   /**
+   * A project or fleet's Designated Delegate (#3047): who its chat talks to.
+   * In order: the operator's configured delegate for this logical project,
+   * while it is still one of its members; else its PM — a member named
+   * `*-PM`, else one named `*-Master`, else one whose role is `pm`; else the first member with
+   * a live session; else the first member.
+   * @param {{id: *, fleets?: Array<{id: *, members?: Array<{seatId?: string, role?: string}>}>}|null} node -
+   *   A logical project from {@link synthesizeTreeFromProjects} (or a native fleet tree).
+   * @param {{projects?: Array<{id: *, name?: string, session?: {active?: *}|null}>,
+   *   delegates?: Object<string, string>, fleetId?: *}} state - `fleetId` limits the choice to one fleet.
+   * @returns {object|null} The delegate's project row.
+   */
+  function resolveDelegateProject(node, state) {
+    if (!node) return null;
+    const st = state || {};
+    const rows = Array.isArray(st.projects) ? st.projects : [];
+    const fleets = (Array.isArray(node.fleets) ? node.fleets : [])
+      .filter((f) => st.fleetId == null || String(f.id) === String(st.fleetId));
+    const members = [];
+    fleets.forEach((f) => (Array.isArray(f.members) ? f.members : []).forEach((m) => {
+      const row = rows.find((p) => p && String(p.id) === String(m && m.seatId));
+      if (row && !members.some((x) => x.row === row)) members.push({ row, role: (m && m.role) || '' });
+    }));
+    if (!members.length) return null;
+    const configured = st.delegates && st.delegates[node.id];
+    const chosen = configured != null && members.find((m) => String(m.row.id) === String(configured));
+    if (chosen) return chosen.row;
+    // The operator's usual delegate is the PM, so a -PM member outranks a
+    // -Master one rather than whichever sorts first.
+    const named = (re) => members.find((m) => re.test(String(m.row.name || '')));
+    const pm = named(/-PM$/i) || named(/-Master$/i)
+      || members.find((m) => String(m.role).toLowerCase() === 'pm');
+    if (pm) return pm.row;
+    return (members.find((m) => m.row.session && m.row.session.active === true) || members[0]).row;
+  }
+
+  /**
    * The legacy project a route's detail pane should show (#3022 deliverable
    * e). A conversation route, or a project route naming a real project id,
    * resolves to that project directly. A synthesized Logical Project route
    * (`#/projects/tc-lane`, where the toolbar toggle lands) or a fleet route
-   * (`#/projects/tc-lane/fleets/tc-lane`) resolves through the synthesized
-   * tree to one of its members: the first whose session is live, else the
-   * first that is a real project — so every route the sidebar or the toggle
-   * produces has a project behind it.
+   * (`#/projects/tc-lane/fleets/tc-lane`) resolves to that project's (or
+   * fleet's) Designated Delegate (#3047) — so every route the sidebar or the
+   * toggle produces has a project behind it.
    * @param {{view: string|null, projectId?: string, fleetId?: string, resourceId?: string}|null} route
    * @param {Array<{id: *, name?: string, session?: {active?: *}|null}>|null} projects - `GET /api/projects`' `projects`.
+   * @param {Object<string, string>} [delegates] - Configured delegates, logical project id -> project id.
    * @returns {object|null} The project row, or null when the route names none.
    */
-  function resolveRouteProject(route, projects) {
+  function resolveRouteProject(route, projects, delegates) {
     const rows = Array.isArray(projects) ? projects : [];
     const byId = (id) => (id == null ? null : rows.find((p) => p && String(p.id) === String(id)) || null);
     if (!route) return null;
@@ -720,11 +1014,9 @@
     }
     const node = synthesizeTreeFromProjects(rows).find((lp) => String(lp.id) === String(route.projectId));
     if (!node) return null;
-    const fleets = route.view === 'fleet'
-      ? node.fleets.filter((f) => String(f.id) === String(route.fleetId))
-      : node.fleets;
-    const members = fleets.flatMap((f) => f.members.map((m) => byId(m.seatId)).filter(Boolean));
-    return members.find((p) => p.session && p.session.active === true) || members[0] || null;
+    return resolveDelegateProject(node, {
+      projects: rows, delegates, fleetId: route.view === 'fleet' ? route.fleetId : null
+    });
   }
 
   /**
@@ -767,10 +1059,70 @@
     const getShell = deps.getShell;
     const api = deps.api;
     const apiMutate = deps.apiMutate;
+    const prefs = makePrefs(deps.storage !== undefined ? deps.storage
+      : defaultStorage(typeof window !== 'undefined' ? window : null));
+    const startTimer = deps.setInterval || (typeof setInterval === 'function' ? setInterval : null);
+    const stopTimer = deps.clearInterval || (typeof clearInterval === 'function' ? clearInterval : null);
     let projects = null;
     let templatesLoaded = false;
     let lastRouteKey = null;
     let seq = 0;
+    // The chat on screen (#3047): its project, session, route context and
+    // the view last handed to the shell — what a send or a poll acts on.
+    let current = null;
+    let pollId = null;
+
+    /** @returns {Object<string, string>} Configured delegates, logical project id -> project id. */
+    function delegates() {
+      return prefs.get('tc_v6_project_delegates', {}, isStringMap);
+    }
+
+    function stopPolling() {
+      if (pollId != null && stopTimer) stopTimer(pollId);
+      pollId = null;
+    }
+
+    /**
+     * The live output panel for a peek response (`null` = it failed).
+     * @param {{lines?: string[]}|null} res
+     * @returns {{lines: string[]}|{error: string}}
+     */
+    function peekView(res) {
+      return res && Array.isArray(res.lines) ? { lines: res.lines } : { error: 'the session did not answer' };
+    }
+
+    /**
+     * Who a route's chat is with, and how it was reached: a project or
+     * fleet route talks to that group's delegate, anything else directly to
+     * the member it names (#3047).
+     * @param {object} route
+     * @param {object} project - The row {@link resolveRouteProject} chose.
+     * @returns {{mode: string, nodeId: *, nodeName: string, fleetId: *, members: Array<{id: string, name: string}>,
+     *   delegate: {id: string, name: string}|null}}
+     */
+    function chatContext(route, project) {
+      const rows = projects || [];
+      const tree = synthesizeTreeFromProjects(rows);
+      const viaGroup = (route.view === 'project' || route.view === 'fleet')
+        && !rows.some((p) => p && String(p.id) === String(route.projectId));
+      const node = viaGroup
+        ? tree.find((n) => String(n.id) === String(route.projectId))
+        : tree.find((n) => n.fleets.some((f) => f.members.some((m) => String(m.seatId) === String(project.id))));
+      const fleetId = viaGroup && route.view === 'fleet' ? route.fleetId : null;
+      const memberRows = node
+        ? node.fleets.filter((f) => fleetId == null || String(f.id) === String(fleetId))
+          .flatMap((f) => f.members.map((m) => rows.find((p) => p && String(p.id) === String(m.seatId))).filter(Boolean))
+        : [];
+      const delegate = node ? resolveDelegateProject(node, { projects: rows, delegates: delegates(), fleetId }) : null;
+      return {
+        mode: viaGroup ? 'delegate' : 'direct',
+        nodeId: node ? node.id : null,
+        nodeName: node ? node.displayName : '',
+        fleetId,
+        members: memberRows.map((p) => ({ id: String(p.id), name: String(p.name || '') })),
+        delegate: delegate ? { id: String(delegate.id), name: String(delegate.name || '') } : null
+      };
+    }
 
     async function loadProjects() {
       const data = await api('/api/projects');
@@ -778,29 +1130,147 @@
       return projects;
     }
 
-    async function loadConversation(project, mine) {
+    /**
+     * Load one project's chat (#3047): its session status, and for a live
+     * session its B2 events, attestations and live output, then poll the
+     * live output while it stays on screen.
+     * @param {object} project
+     * @param {number} mine - The route generation this load belongs to.
+     * @param {ReturnType<typeof chatContext>} ctx
+     * @param {{kind: string, message: string}|null} [sendOutcome] - A send result to show.
+     * @returns {Promise<void>}
+     */
+    async function loadConversation(project, mine, ctx, sendOutcome) {
+      stopPolling();
       const shell = getShell();
-      const status = await api(`/api/sessions/${encodeURIComponent(project.name)}/status`);
+      const name = encodeURIComponent(project.name);
+      const status = await api(`/api/sessions/${name}/status`);
       if (mine !== seq) return;
       const sessionId = status && status.active && status.sessionId != null ? status.sessionId : null;
+      const chat = Object.assign({}, ctx, {
+        status: sessionId == null ? 'offline' : (status.idle ? 'idle' : 'active'),
+        send: sendOutcome || null
+      });
+      current = { project, sessionId, launchId: (status && status.launchId) || null, ctx, mine, view: null };
       if (sessionId == null) {
+        current.view = { project, sessionId: null, chat };
         shell.setAttestation(pickAttestation(null, project));
-        shell.setDetail({ kind: 'conversation', view: { project, sessionId: null } });
+        shell.setDetail({ kind: 'conversation', view: current.view });
         return;
       }
       const base = `/api/v6/projects/${encodeURIComponent(project.id)}/sessions/${encodeURIComponent(sessionId)}`;
-      const [events, attestations] = await Promise.all([
+      const peekUrl = `/api/sessions/${name}/peek?lines=80`;
+      const [events, attestations, peek] = await Promise.all([
         api(`${base}/conversation/events`),
-        api(`${base}/attestations`)
+        api(`${base}/attestations`),
+        api(peekUrl)
       ]);
       if (mine !== seq) return;
+      chat.peek = peekView(peek);
+      current.view = events
+        ? { project, sessionId, events: events.events, chat }
+        : { project, sessionId, error: 'Could not load this session’s conversation events.', chat };
       shell.setAttestation(pickAttestation(attestations && attestations.attestations, project));
-      shell.setDetail({
-        kind: 'conversation',
-        view: events
-          ? { project, sessionId, events: events.events }
-          : { project, sessionId, error: 'Could not load this session’s conversation events.' }
-      });
+      shell.setDetail({ kind: 'conversation', view: current.view });
+      if (startTimer) {
+        pollId = startTimer(async () => {
+          if (mine !== seq) { stopPolling(); return; }
+          const res = await api(peekUrl);
+          if (mine !== seq || !current || !current.view) return;
+          const next = peekView(res);
+          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next }) });
+          const sh = getShell();
+          if (sh && typeof sh.setPeek === 'function') sh.setPeek(next);
+        }, CHAT_POLL_MS);
+      }
+    }
+
+    /** Re-render the chat on screen with a send outcome line. */
+    function showSend(outcome) {
+      const shell = getShell();
+      if (!current || !current.view || !shell) return;
+      current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { send: outcome }) });
+      shell.setDetail({ kind: 'conversation', view: current.view });
+    }
+
+    /**
+     * Record a sent message as a B2 user event (Tier A, `v6-chat-ui`), at
+     * the next seq after every event the session holds — soft-deleted ones
+     * too, since their seq stays taken — retrying once if another writer
+     * took that seq first.
+     * @param {object} chat - `current` at send time.
+     * @param {string} message
+     * @returns {Promise<true|string>} true, or why it could not be recorded.
+     */
+    async function recordUserEvent(chat, message) {
+      const base = `/api/v6/projects/${encodeURIComponent(chat.project.id)}/sessions/${encodeURIComponent(chat.sessionId)}`;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const all = await api(`${base}/conversation/events?includeDeleted=1`);
+        const seqs = (all && Array.isArray(all.events) ? all.events : [])
+          .map((e) => Number(e && e.seq)).filter((n) => Number.isSafeInteger(n));
+        const next = (seqs.length ? Math.max(...seqs) : 0) + 1;
+        const ok = await apiMutate(`${base}/conversation/events`, 'POST', {
+          launchId: chat.launchId || 'v6-chat-ui', seq: next, tier: 'A', adapter: 'v6-chat-ui', role: 'user', content: message
+        });
+        if (ok) return true;
+        if (api.lastErrorCode !== 'SEQ_CONFLICT') return api.lastError || 'the server refused it';
+      }
+      return api.lastError || 'another writer kept taking the next sequence number';
+    }
+
+    /**
+     * Send the operator's message to the chat's session (#3047): type it in
+     * through the session command route, then record it in the B2
+     * conversation, then reload. A refusal (a held lane, a startup gate, no
+     * pane) is shown with the server's own reason and the text is kept.
+     * @param {string} text
+     * @returns {Promise<void>}
+     */
+    async function sendChat(text) {
+      const message = String(text || '').trim();
+      const chat = current;
+      if (!message || !chat || chat.sending || !getShell()) return;
+      const name = String(chat.project.name || '');
+      if (chat.sessionId == null) {
+        showSend({ kind: 'error', message: `Not sent: ${name} has no live session.` });
+        return;
+      }
+      chat.sending = true;
+      try {
+        await deliverChat(chat, message, name);
+      } finally {
+        chat.sending = false;
+      }
+    }
+
+    /**
+     * The send itself, once {@link sendChat} has claimed it.
+     * @param {object} chat - `current` at send time.
+     * @param {string} message
+     * @param {string} name - The target project's name.
+     * @returns {Promise<void>}
+     */
+    async function deliverChat(chat, message, name) {
+      showSend({ kind: 'pending', message: `Sending to ${name}…` });
+      const sent = await apiMutate(`/api/sessions/${encodeURIComponent(name)}/command`, 'POST', { command: message, enter: true });
+      // Once it is in the session the draft is spent, even if the operator
+      // has moved to another chat meanwhile: left saved, it would come back
+      // pre-filled and one Enter would send it twice.
+      const shellNow = getShell();
+      if (sent && shellNow && typeof shellNow.clearChatDraft === 'function') shellNow.clearChatDraft(chat.project.id);
+      if (!sent) {
+        if (chat === current) showSend({ kind: 'error', message: `Not sent: ${api.lastError || 'the server refused it'}` });
+        return;
+      }
+      // A delivered message is recorded against the chat it was sent from,
+      // even if the operator has moved on: the conversation must not lose
+      // what the session received. Only the on-screen update waits on the
+      // operator still being here.
+      const recorded = await recordUserEvent(chat, message);
+      if (chat !== current) return;
+      await loadConversation(chat.project, chat.mine, chat.ctx, recorded === true
+        ? { kind: 'ok', message: `Sent to ${name}.` }
+        : { kind: 'warning', message: `Sent to ${name}, but it could not be recorded in the conversation: ${recorded}` });
     }
 
     /**
@@ -861,11 +1331,13 @@
       const entering = lastRouteKey === null;
       lastRouteKey = key;
       const mine = ++seq;
+      stopPolling();
+      current = null;
       if (!key) return;
       if (entering || !projects) {
         await loadProjects();
         if (mine !== seq) return;
-        if (projects) shell.setTree(synthesizeTreeFromProjects(projects));
+        showProjects(shell);
       }
       if (entering) {
         const scopeId = encodeURIComponent(route.projectId || route.resourceId || 'global');
@@ -887,7 +1359,18 @@
         await loadSettings(route, mine);
         return;
       }
-      const project = resolveRouteProject(route, projects);
+      await loadRouteDetail(route, mine);
+    }
+
+    /**
+     * The detail pane for a project, fleet or conversation route.
+     * @param {object} route
+     * @param {number} mine
+     * @returns {Promise<void>}
+     */
+    async function loadRouteDetail(route, mine) {
+      const shell = getShell();
+      const project = resolveRouteProject(route, projects, delegates());
       if (!project) {
         shell.setAttestation(null);
         shell.setDetail(route.view === 'conversation'
@@ -896,7 +1379,51 @@
         return;
       }
       shell.setDetail({ kind: 'loading' });
-      await loadConversation(project, mine);
+      await loadConversation(project, mine, chatContext(route, project));
+    }
+
+    /**
+     * Reload the route on screen with fresh project rows — the chat's
+     * Refresh, and what a delegate change needs to take effect.
+     * @returns {Promise<void>}
+     */
+    async function refresh() {
+      const shell = getShell();
+      if (!shell) return;
+      const route = shell.getRoute();
+      if (!route || !route.view || route.view === 'settings') return;
+      const mine = ++seq;
+      stopPolling();
+      await loadProjects();
+      if (mine !== seq) return;
+      showProjects(shell);
+      await loadRouteDetail(route, mine);
+    }
+
+    /**
+     * Hand the loaded project rows to the shell: its sidebar tree, and the
+     * rows its filters read (setProjects arrived with those filters, #3046;
+     * an older shell handle without it just gets no engine filter data).
+     * @param {object} shell
+     */
+    function showProjects(shell) {
+      if (!projects) return;
+      if (typeof shell.setProjects === 'function') shell.setProjects(projects);
+      shell.setTree(synthesizeTreeFromProjects(projects));
+    }
+
+    /**
+     * Make `projectId` the Designated Delegate of logical project `nodeId`,
+     * remembered across visits, and reload the chat with it.
+     * @param {string} nodeId
+     * @param {string} projectId
+     * @returns {Promise<void>}
+     */
+    async function changeDelegate(nodeId, projectId) {
+      const next = Object.assign({}, delegates());
+      next[String(nodeId)] = String(projectId);
+      prefs.set('tc_v6_project_delegates', next);
+      await refresh();
     }
 
     async function launchTemplate(templateId) {
@@ -917,7 +1444,7 @@
       return tree.length ? routeHash({ view: 'project', projectId: tree[0].id }) : '#/settings/';
     }
 
-    return { handleRoute, launchTemplate, enterHash, getProjects() { return projects; } };
+    return { handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, getProjects() { return projects; } };
   }
 
   /**
@@ -930,9 +1457,18 @@
    * @param {{root: object|string, window?: object, tree?: Array<*>,
    *   telemetry?: object|null, templates?: Array<*>, attestation?: object|null,
    *   detail?: object|null, showWatermark?: boolean, onRender?: (route: object) => void,
-   *   onLaunchTemplate?: (templateId: string) => void}} opts
+   *   onLaunchTemplate?: (templateId: string) => void,
+   *   storage?: {getItem: Function, setItem: Function}|null,
+   *   onSendChat?: (text: string) => void, onChangeDelegate?: (nodeId: string, projectId: string) => void,
+   *   onRefreshChat?: () => void, onOpenProjectSettings?: (projectName: string) => void}} opts - `storage`
+   *   remembers the sidebar layout (#3046); defaults to the page's `localStorage`,
+   *   and `null` keeps it for this page only. The `on*Chat`/delegate/settings
+   *   callbacks are the chat view's controls (#3047).
    * @returns {{getRoute: () => object, navigate: (hash: string) => void,
    *   toggleDrawer: (force?: boolean) => void, isDrawerOpen: () => boolean,
+   *   toggleSidebar: (force?: boolean) => void, isSidebarCollapsed: () => boolean,
+   *   selectGroup: (id: string, additive?: boolean) => void, setProjects: (rows: Array<object>) => void,
+   *   setPeek: (peek: object|null) => void, clearChatDraft: (projectId?: *) => void,
    *   setTree: (tree: Array<*>) => void, setTelemetry: (bar: object|null) => void,
    *   setTemplates: (templates: Array<*>) => void,
    *   setAttestation: (attestation: object|null) => void,
@@ -950,6 +1486,20 @@
     const showWatermark = options.showWatermark !== false;
     let currentRoute = { view: null };
     let drawerOpen = false;
+    const prefs = makePrefs(options.storage !== undefined ? options.storage : defaultStorage(win));
+    let sidebarCollapsed = prefs.get('tc_v6_sidebar_collapsed', false, isBoolean);
+    let collapsedNodes = new Set(prefs.get('tc_v6_collapsed_nodes', [], isStringArray));
+    let projectRows = new Map();
+    let filterText = '';
+    let filterEngine = '';
+    let selectedGroups = new Set(prefs.get('tc_v6_selected_groups', [], isStringArray));
+    let multiMode = prefs.get('tc_v6_filter_multi_mode', false, isBoolean);
+    // The tree as last rendered, filters applied: the fold toggles' positional
+    // ids were generated from it, so they are wired from it too.
+    let shownTree = [];
+    // Unsent composer text per target project, so text meant for one agent
+    // never appears in, and is never sent from, another one's chat.
+    const chatDrafts = new Map();
 
     function readHash() {
       if (typeof options.getHash === 'function') return options.getHash();
@@ -978,6 +1528,59 @@
           if (evt && (evt.key === 'Escape' || evt.key === 'Esc')) toggleDrawer(false);
         });
       }
+      // Each moves focus to the control that undoes it: the one clicked is
+      // hidden or gone after the re-render, which would drop focus to the page.
+      const collapseBtn = doc.getElementById('v6SidebarCollapse');
+      if (collapseBtn) collapseBtn.addEventListener('click', () => { toggleSidebar(true); focusById('v6SidebarExpand'); });
+      const expandBtn = doc.getElementById('v6SidebarExpand');
+      if (expandBtn) expandBtn.addEventListener('click', () => { toggleSidebar(false); focusById('v6SidebarCollapse'); });
+      const collapseAll = doc.getElementById('v6TreeCollapseAll');
+      if (collapseAll) collapseAll.addEventListener('click', () => setCollapsedNodes(allNodeKeys(tree)));
+      const expandAll = doc.getElementById('v6TreeExpandAll');
+      if (expandAll) expandAll.addEventListener('click', () => setCollapsedNodes([]));
+      wireChat();
+      const search = doc.getElementById('v6FilterSearch');
+      if (search) {
+        search.addEventListener('input', (evt) => {
+          filterText = String((evt && evt.target && evt.target.value) || '');
+          render();
+        });
+      }
+      const engineSelect = doc.getElementById('v6FilterEngine');
+      if (engineSelect) {
+        engineSelect.addEventListener('change', (evt) => {
+          filterEngine = String((evt && evt.target && evt.target.value) || '');
+          render();
+        });
+      }
+      const allPill = doc.getElementById('v6FilterAll');
+      if (allPill) allPill.addEventListener('click', () => setSelectedGroups([]));
+      const multiPill = doc.getElementById('v6FilterMulti');
+      if (multiPill) {
+        multiPill.addEventListener('click', () => {
+          multiMode = !multiMode;
+          prefs.set('tc_v6_filter_multi_mode', multiMode);
+          render();
+        });
+      }
+      tree.forEach((project, i) => {
+        const pill = doc.getElementById(`v6GroupPill-${i}`);
+        if (pill) {
+          pill.addEventListener('click', (evt) => {
+            selectGroup(String(project.id), Boolean(evt && (evt.ctrlKey || evt.metaKey || evt.shiftKey)));
+          });
+        }
+      });
+      // Wired by position over the same tree the sidebar rendered, so a
+      // toggle's id and the node it folds always agree.
+      shownTree.forEach((project, pi) => {
+        const pToggle = doc.getElementById(`v6TreeToggle-p${pi}`);
+        if (pToggle) pToggle.addEventListener('click', () => toggleNode(projectNodeKey(project)));
+        project.fleets.forEach((fleet, fi) => {
+          const fToggle = doc.getElementById(`v6TreeToggle-f${pi}-${fi}`);
+          if (fToggle) fToggle.addEventListener('click', () => toggleNode(fleetNodeKey(project, fleet)));
+        });
+      });
       if (typeof options.onLaunchTemplate === 'function') {
         templates.forEach((t) => {
           const templateId = t && t.id;
@@ -987,40 +1590,198 @@
       }
     }
 
+    /** @param {string} id */
+    function focusById(id) {
+      const el = doc.getElementById(id);
+      if (el && typeof el.focus === 'function') el.focus();
+    }
+
+    /** The chat view's own controls (#3047), when the detail pane shows one. */
+    function wireChat() {
+      const input = doc.getElementById('v6ChatInput');
+      if (input) {
+        input.addEventListener('input', (evt) => {
+          const key = chatTargetKey();
+          if (key != null) chatDrafts.set(key, String((evt && evt.target && evt.target.value) || ''));
+        });
+        input.addEventListener('keydown', (evt) => {
+          if (chatKeyAction(evt) !== 'send') return;
+          if (typeof evt.preventDefault === 'function') evt.preventDefault();
+          submitChat();
+        });
+      }
+      const form = doc.getElementById('v6ChatForm');
+      if (form) {
+        form.addEventListener('submit', (evt) => {
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          submitChat();
+        });
+      }
+      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      const picker = doc.getElementById('v6ChatDelegate');
+      if (picker && chat && chat.nodeId != null && typeof options.onChangeDelegate === 'function') {
+        picker.addEventListener('change', (evt) => {
+          options.onChangeDelegate(String(chat.nodeId), String((evt && evt.target && evt.target.value) || ''));
+        });
+      }
+      const refresh = doc.getElementById('v6ChatRefresh');
+      if (refresh && typeof options.onRefreshChat === 'function') refresh.addEventListener('click', () => options.onRefreshChat());
+      const settings = doc.getElementById('v6ChatSettings');
+      const project = detail && detail.view ? detail.view.project : null;
+      if (settings && project && typeof options.onOpenProjectSettings === 'function') {
+        settings.addEventListener('click', () => options.onOpenProjectSettings(String(project.name || '')));
+      }
+    }
+
+    /** @returns {string|null} The project the chat on screen talks to, as a draft key. */
+    function chatTargetKey() {
+      const project = detail && detail.kind === 'conversation' && detail.view ? detail.view.project : null;
+      return project && project.id != null ? String(project.id) : null;
+    }
+
+    /** Hand the composer's text to the page, unless there is none. */
+    function submitChat() {
+      const input = doc.getElementById('v6ChatInput');
+      const text = String((input && typeof input.value === 'string' ? input.value : chatDrafts.get(chatTargetKey())) || '').trim();
+      if (!text || typeof options.onSendChat !== 'function') return;
+      options.onSendChat(text);
+    }
+
+    /**
+     * What a full re-render would otherwise lose: the sidebar's scroll
+     * position, and which shell control had focus (with its caret), since
+     * replacing `innerHTML` replaces every element.
+     * @returns {{scrollTop: number, focusId: string|null, selection: Array<number>|null}}
+     */
+    function captureViewState() {
+      const sidebar = doc.getElementById('v6ShellSidebar');
+      const active = doc.activeElement;
+      const focusId = active && typeof active.id === 'string' && active.id.startsWith('v6') ? active.id : null;
+      const selection = focusId && typeof active.selectionStart === 'number'
+        ? [active.selectionStart, active.selectionEnd] : null;
+      return { scrollTop: (sidebar && sidebar.scrollTop) || 0, focusId, selection };
+    }
+
+    /** @param {ReturnType<typeof captureViewState>} saved */
+    function restoreViewState(saved) {
+      const sidebar = doc.getElementById('v6ShellSidebar');
+      if (sidebar && saved.scrollTop) sidebar.scrollTop = saved.scrollTop;
+      if (!saved.focusId) return;
+      const el = doc.getElementById(saved.focusId);
+      if (!el || doc.activeElement === el || typeof el.focus !== 'function') return;
+      el.focus();
+      if (saved.selection && typeof el.setSelectionRange === 'function') {
+        el.setSelectionRange(saved.selection[0], saved.selection[1]);
+      }
+    }
+
     function render() {
       currentRoute = parseRoute(readHash());
       if (!root) return;
+      const saved = captureViewState();
       const title = routeTitle(currentRoute);
+      shownTree = filterTree(tree, { text: filterText, engine: filterEngine, groups: selectedGroups }, projectRows);
+      if (root.classList) root.classList.toggle('v6-shell-root--sidebar-collapsed', sidebarCollapsed);
       root.innerHTML = `
         <a id="v6ShellSkipLink" class="v6-shell-skip-link" href="#v6ShellMain">Skip to main content</a>
         <button type="button" id="v6ShellDrawerToggle" class="v6-shell-drawer-toggle"
           aria-expanded="${drawerOpen ? 'true' : 'false'}" aria-controls="v6ShellSidebar">☰ Menu</button>
         <nav id="v6ShellSidebar" class="v6-shell-sidebar${drawerOpen ? ' is-open' : ''}" aria-label="Fleet navigation">
-          ${sidebarMarkup(tree, {
+          <div class="v6-sidebar-header">
+            <button type="button" id="v6SidebarCollapse" class="btn btn-secondary btn-small v6-sidebar-collapse"
+              data-action="toggle-sidebar-drawer" aria-controls="v6ShellSidebar" aria-expanded="true">« Hide Fleet</button>
+            <button type="button" id="v6TreeExpandAll" class="btn btn-secondary btn-small">Expand all</button>
+            <button type="button" id="v6TreeCollapseAll" class="btn btn-secondary btn-small">Collapse all</button>
+          </div>
+          ${filterControlsMarkup({
+            tree, engines: engineIds(), text: filterText, engine: filterEngine, groups: selectedGroups, multi: multiMode
+          })}
+          ${shownTree.length ? sidebarMarkup(shownTree, {
             activeProjectId: currentRoute.projectId,
             activeFleetId: currentRoute.fleetId,
-            activeResourceId: currentRoute.resourceId
-          })}
+            activeResourceId: currentRoute.resourceId,
+            collapsed: collapsedNodes
+          }) : '<p class="v6-sidebar-empty">No projects match these filters.</p>'}
         </nav>
         ${telemetryHeaderMarkup(telemetry)}
         <main id="v6ShellMain" class="v6-shell-view" tabindex="-1" aria-label="${escapeHtml(title)}">
           <div class="v6-shell-header">
+            ${sidebarCollapsed ? `<button type="button" id="v6SidebarExpand" class="btn btn-secondary v6-sidebar-expand"
+              data-action="toggle-sidebar-drawer" aria-controls="v6ShellSidebar" aria-expanded="false">» Show Fleet</button>` : ''}
             <a id="v6ShellClassicLink" class="btn btn-secondary v6-shell-classic-link" href="#/">← Classic View</a>
             <h1 class="v6-shell-title">${escapeHtml(title)}</h1>
           </div>
-          <div id="v6ShellDetail">${detailMarkup(detail)}</div>
+          <div id="v6ShellDetail">${detailMarkup(detail, { draft: chatDrafts.get(chatTargetKey()) || '' })}</div>
           <div id="v6ShellWizard">${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation">${modelAttestationMarkup(attestation)}</div>
         </main>
         ${watermarkFooterMarkup(showWatermark)}
       `;
       wireControls();
+      restoreViewState(saved);
       if (typeof options.onRender === 'function') options.onRender(currentRoute);
     }
 
     function toggleDrawer(force) {
       drawerOpen = typeof force === 'boolean' ? force : !drawerOpen;
       render();
+    }
+
+    /**
+     * Hide or show the desktop sidebar column (#3046), remembered across
+     * visits. The mobile `☰ Menu` drawer is separate and unaffected.
+     * @param {boolean} [force] - Collapse when true, expand when false; flip when omitted.
+     */
+    function toggleSidebar(force) {
+      sidebarCollapsed = typeof force === 'boolean' ? force : !sidebarCollapsed;
+      prefs.set('tc_v6_sidebar_collapsed', sidebarCollapsed);
+      render();
+    }
+
+    /** @param {Iterable<string>} keys - The full set of folded node keys. */
+    function setCollapsedNodes(keys) {
+      collapsedNodes = new Set(keys);
+      prefs.set('tc_v6_collapsed_nodes', [...collapsedNodes]);
+      render();
+    }
+
+    /** @returns {string[]} Every engine id a known project runs, sorted, for the engine select. */
+    function engineIds() {
+      const ids = new Set();
+      projectRows.forEach((row) => { if (row && row.engine && row.engine.id) ids.add(String(row.engine.id)); });
+      return [...ids].sort();
+    }
+
+    /** @param {Iterable<string>} ids - The logical project ids to show; empty shows all. */
+    function setSelectedGroups(ids) {
+      selectedGroups = new Set(ids);
+      prefs.set('tc_v6_selected_groups', [...selectedGroups]);
+      render();
+    }
+
+    /**
+     * Pick a logical project pill. Additive (Multi mode, or a
+     * Ctrl/Cmd/Shift-click) toggles it in the selection; otherwise it
+     * becomes the only selection, or clears it when it already was.
+     * @param {string} id
+     * @param {boolean} [additive]
+     */
+    function selectGroup(id, additive) {
+      const key = String(id);
+      if (additive || multiMode) {
+        const next = new Set(selectedGroups);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        setSelectedGroups(next);
+        return;
+      }
+      setSelectedGroups(selectedGroups.size === 1 && selectedGroups.has(key) ? [] : [key]);
+    }
+
+    /** @param {string} key - A project or fleet fold key. */
+    function toggleNode(key) {
+      const next = new Set(collapsedNodes);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      setCollapsedNodes(next);
     }
 
     function navigate(hash) {
@@ -1046,11 +1807,41 @@
       navigate,
       toggleDrawer,
       isDrawerOpen() { return drawerOpen; },
+      toggleSidebar,
+      isSidebarCollapsed() { return sidebarCollapsed; },
+      selectGroup,
+      setProjects(rows) {
+        projectRows = new Map((Array.isArray(rows) ? rows : [])
+          .filter((r) => r && r.id != null).map((r) => [String(r.id), r]));
+        render();
+      },
       setTree(nextTree) { tree = buildHierarchyTree(nextTree || []); render(); },
       setTelemetry(bar) { telemetry = bar || null; render(); },
       setTemplates(nextTemplates) { templates = Array.isArray(nextTemplates) ? nextTemplates : []; render(); },
       setAttestation(nextAttestation) { attestation = nextAttestation || null; render(); },
       setDetail(nextDetail) { detail = nextDetail || null; render(); },
+      /**
+       * Replace only the chat's live output panel (#3047): a poll every few
+       * seconds must not rebuild the page under an operator mid-message.
+       * @param {{lines?: string[], error?: string}|null} peek
+       */
+      setPeek(peek) {
+        if (!detail || detail.kind !== 'conversation' || !detail.view) return;
+        detail = Object.assign({}, detail, {
+          view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { peek }) })
+        });
+        const el = doc.getElementById('v6ChatPeek');
+        if (!el) return;
+        const atBottom = typeof el.scrollHeight === 'number'
+          && el.scrollHeight - (el.scrollTop || 0) - (el.clientHeight || 0) < 8;
+        el.innerHTML = chatPeekMarkup(peek);
+        if (atBottom) el.scrollTop = el.scrollHeight;
+      },
+      /**
+       * Forget a chat's composer text once it has been sent.
+       * @param {*} [projectId] - The project it was sent to; the chat on screen when omitted.
+       */
+      clearChatDraft(projectId) { chatDrafts.delete(projectId != null ? String(projectId) : chatTargetKey()); },
       destroy() {
         if (win && typeof win.removeEventListener === 'function') win.removeEventListener('hashchange', handleHashChange);
       }
@@ -1062,6 +1853,7 @@
   global.tcV6RouteTitle = routeTitle;
   global.tcV6BuildHierarchyTree = buildHierarchyTree;
   global.tcV6SidebarMarkup = sidebarMarkup;
+  global.tcV6FilterTree = filterTree;
   global.tcV6TelemetryHeaderMarkup = telemetryHeaderMarkup;
   global.tcV6FleetWizardMarkup = fleetWizardMarkup;
   global.tcV6ModelAttestationMarkup = modelAttestationMarkup;
@@ -1078,6 +1870,8 @@
   global.tcV6ViewToggleLabel = viewToggleLabel;
   global.tcV6PickAttestation = pickAttestation;
   global.tcV6ResolveRouteProject = resolveRouteProject;
+  global.tcV6ResolveDelegateProject = resolveDelegateProject;
+  global.tcV6ChatKeyAction = chatKeyAction;
   global.tcV6CreateLiveController = createLiveController;
   global.tcCreateV6Shell = tcCreateV6Shell;
 })(typeof window !== 'undefined' ? window : globalThis);

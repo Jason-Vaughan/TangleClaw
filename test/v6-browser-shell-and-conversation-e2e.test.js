@@ -138,15 +138,27 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
    */
   function liveApi() {
     const calls = [];
+    // Like public/api-helper.js, a failure answers null and leaves the
+    // server's own reason on api.lastError / api.lastErrorCode.
+    const settle = (res) => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        api.lastError = null;
+        api.lastErrorCode = null;
+        return json(res);
+      }
+      let data = {};
+      try { data = json(res); } catch { /* a non-JSON failure carries no reason */ }
+      api.lastError = data.error || `HTTP ${res.statusCode}`;
+      api.lastErrorCode = data.code || null;
+      return null;
+    };
     const api = async (url) => {
       calls.push(`GET ${url}`);
-      const res = await send('GET', url);
-      return res.statusCode >= 200 && res.statusCode < 300 ? json(res) : null;
+      return settle(await send('GET', url));
     };
     const apiMutate = async (url, method, body) => {
       calls.push(`${method} ${url}`);
-      const res = await send(method, url, { body: body || {} });
-      return res.statusCode >= 200 && res.statusCode < 300 ? json(res) : null;
+      return settle(await send(method, url, { body: body || {} }));
     };
     return { api, apiMutate, calls };
   }
@@ -170,11 +182,14 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
     shell = G.tcCreateV6Shell(doc, {
       root, window: win,
       onLaunchTemplate: (id) => pending.push(live.launchTemplate(id)),
-      onRender: (route) => pending.push(live.handleRoute(route))
+      onRender: (route) => pending.push(live.handleRoute(route)),
+      onSendChat: (text) => pending.push(live.sendChat(text)),
+      onChangeDelegate: (nodeId, projectId) => pending.push(live.changeDelegate(nodeId, projectId)),
+      onRefreshChat: () => pending.push(live.refresh())
     });
     pending.push(live.handleRoute(shell.getRoute()));
     const settle = async () => { while (pending.length) await pending.shift(); };
-    return { G, shell, root, win, live, calls, settle };
+    return { G, shell, root, win, live, calls, settle, doc };
   }
 
   /**
@@ -317,6 +332,52 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.ok(calls.includes('GET /api/sessions/e2e-conversation-idle/status'));
       assert.ok(!calls.some((c) => c.includes('/conversation/events')), 'no session, so no event fetch');
       assert.match(root.innerHTML, /e2e-conversation-idle/);
+    });
+
+    it('a project route opens the Project Delegate Chat with its PM, and a refused send shows the server\'s reason (#3047)', async () => {
+      const pmId = seedProject('e2echat-PM');
+      seedProject('e2echat-A');
+      store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(pmId);
+      const { root, calls, settle, live, doc } = mountShell('#/projects/e2echat');
+      await settle();
+      assert.ok(calls.includes('GET /api/sessions/e2echat-PM/status'), JSON.stringify(calls));
+      assert.ok(calls.includes('GET /api/sessions/e2echat-PM/peek?lines=80'));
+      assert.match(root.innerHTML, /Talking to: <strong>e2echat-PM<\/strong> \(#\d+\) · Designated Project Delegate/);
+      assert.match(root.innerHTML, /<option value="\d+" selected>e2echat-PM<\/option>/);
+      assert.match(root.innerHTML, /Could not read live output/, 'a Web UI session has no pane to peek');
+
+      const input = doc.getElementById('v6ChatInput');
+      input.value = 'status please';
+      input.dispatch('input');
+      doc.getElementById('v6ChatForm').dispatch('submit');
+      await settle();
+      assert.ok(calls.includes('POST /api/sessions/e2echat-PM/command'));
+      // The seeded session has no bound launch, so the command route's own
+      // startup admission gate refuses first; the chat shows its reason.
+      assert.match(root.innerHTML, /is-error[^>]*>Not sent: This session&#39;s launch is not yet ready \(needs-attention\)\.</);
+      assert.ok(!calls.some((c) => c.startsWith('POST') && c.endsWith('/conversation/events')), 'a refused message is not recorded');
+      assert.match(root.innerHTML, /<textarea id="v6ChatInput"[^>]*>status please<\/textarea>/);
+      assert.equal(typeof live.sendChat, 'function');
+    });
+
+    it('the real B2 route accepts the event the chat records, and the next seq counts deleted events (#3047)', async () => {
+      const projectId = seedProject('e2e-chat-record');
+      const sessionId = seedSession(projectId);
+      const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
+      assert.equal((await send('POST', base, { body: event(1, 'old') })).statusCode, 201);
+      const created = json(await send('GET', base)).events[0];
+      assert.equal((await send('DELETE', `${base}/${created.id}`)).statusCode, 200);
+      const all = json(await send('GET', `${base}?includeDeleted=1`)).events;
+      assert.deepEqual(all.map((e) => e.seq), [1], 'the deleted event still holds seq 1');
+      const res = await send('POST', base, {
+        body: { launchId: 'v6-chat-ui', seq: 2, tier: 'A', adapter: 'v6-chat-ui', role: 'user', content: 'from the chat' }
+      });
+      assert.equal(res.statusCode, 201, res.body);
+      assert.equal((await send('POST', base, {
+        body: { launchId: 'v6-chat-ui', seq: 1, tier: 'A', adapter: 'v6-chat-ui', role: 'user', content: 'reuse' }
+      })).statusCode, 409, 'reusing a deleted event\'s seq is a conflict, which is why the chat reads deleted events');
     });
 
     it('refuses a reused sequence number rather than reordering the conversation', async () => {
