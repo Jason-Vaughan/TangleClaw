@@ -1816,3 +1816,97 @@ describe('the page header holds the Fleet/Classic switcher without overflowing (
     assert.match(body, /flex-wrap:\s*wrap/);
   });
 });
+
+describe('Project Delegate Chat review fixes (#3047)', () => {
+  function mountPair(opts) {
+    const o = opts || {};
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow(o.initialHash || '#/projects/tc-lane');
+    const calls = [];
+    let rows = LANE_ROWS;
+    const map = {
+      '/api/sessions/TC-Lane-PM/status': { active: true, sessionId: 1592 },
+      '/api/sessions/TC-Lane-A/status': { active: true, sessionId: 1660 },
+      '/api/v6/projects/12/sessions/1592/conversation/events': { events: [] },
+      '/api/v6/projects/10/sessions/1660/conversation/events': { events: [] }
+    };
+    const api = async (url) => { calls.push(url); if (url === '/api/projects') return { projects: rows }; return map[url] === undefined ? null : map[url]; };
+    const mutateCalls = [];
+    let release = null;
+    const apiMutate = async (url, method, body) => {
+      mutateCalls.push({ url, body: plain(body) });
+      if (o.hold && url.endsWith('/command')) await new Promise((r) => { release = r; });
+      return { ok: true };
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null });
+    shell = G.tcCreateV6Shell(doc, {
+      root, window: win, storage: null,
+      onRender: (route) => pending.push(live.handleRoute(route)),
+      onSendChat: (text) => pending.push(live.sendChat(text))
+    });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    return { shell, root, doc, win, live, calls, mutateCalls, settle, setRows: (r) => { rows = r; }, release: () => release && release() };
+  }
+
+  it('an unsent message stays with its own chat and never follows the operator to another one', async () => {
+    const m = mountPair();
+    await m.settle();
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'for the PM only';
+    input.dispatch('input');
+    m.win.location.hash = '#/resources/10/conversation';
+    await m.settle();
+    assert.match(m.root.innerHTML, /Talking to: <strong>TC-Lane-A<\/strong>/);
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*><\/textarea>/, 'the other chat starts empty');
+    m.win.location.hash = '#/projects/tc-lane';
+    await m.settle();
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*>for the PM only<\/textarea>/, 'the draft is still there on return');
+  });
+
+  it('a second Enter or Send while the first is still sending is ignored, and the composer is disabled meanwhile', async () => {
+    const m = mountPair({ hold: true });
+    await m.settle();
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'once';
+    input.dispatch('input');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*disabled/);
+    assert.match(m.root.innerHTML, /<button type="submit"[^>]*disabled/);
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.live.sendChat('once');
+    m.release();
+    await m.settle();
+    assert.equal(m.mutateCalls.filter((c) => c.url.endsWith('/command')).length, 1);
+    assert.match(m.root.innerHTML, /Sent to TC-Lane-PM\./);
+  });
+
+  it('Refresh hands the freshly read project rows to the sidebar and its engine filter', async () => {
+    const m = mountPair();
+    await m.settle();
+    m.setRows(LANE_ROWS.concat([{ id: 30, name: 'TC-Lane-New', engine: { id: 'codex' } }]));
+    await m.live.refresh();
+    await m.settle();
+    assert.match(m.root.innerHTML, /TC-Lane-New \(30\)/);
+    assert.match(m.root.innerHTML, /<option value="codex">codex<\/option>/);
+  });
+});
+
+describe('Hide Fleet / Show Fleet keep keyboard focus (#3046)', () => {
+  it('focus moves to the control that undoes the action, rather than to the page', () => {
+    const { doc } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    const hide = doc.getElementById('v6SidebarCollapse');
+    hide.focus();
+    hide.dispatch('click');
+    assert.equal(doc.activeElement, doc.getElementById('v6SidebarExpand'));
+    doc.getElementById('v6SidebarExpand').dispatch('click');
+    assert.equal(doc.activeElement, doc.getElementById('v6SidebarCollapse'));
+  });
+});

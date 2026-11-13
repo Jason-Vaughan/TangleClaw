@@ -652,9 +652,11 @@
       ? `<a id="v6ChatToDelegate" class="btn btn-secondary btn-small"
           href="${escapeHtml(routeHash({ view: 'project', projectId: chat.nodeId }))}">Switch to Delegate: ${escapeHtml(chat.delegate.name)}</a>`
       : '';
-    const disabled = live ? '' : ' disabled';
-    const placeholder = `Message ${name}… (Enter to send, Shift+Enter for newline)`;
     const send = chat.send && CHAT_SEND_KINDS.includes(chat.send.kind) ? chat.send : null;
+    // Disabled while a send is in flight too, so a second Enter cannot type
+    // the same message into the session twice.
+    const disabled = live && !(send && send.kind === 'pending') ? '' : ' disabled';
+    const placeholder = `Message ${name}… (Enter to send, Shift+Enter for newline)`;
     return `<section class="v6-conversation v6-chat" aria-label="Conversation — ${escapeHtml(name)}">
       <header class="v6-chat-header">
         <h2 class="v6-detail-title">${escapeHtml(title)}</h2>
@@ -905,7 +907,8 @@
     if (detail.kind === 'plan') return fleetPlanMarkup(detail.plan);
     if (detail.kind === 'conversation') {
       // The composer's unsent text lives in the shell, not the controller's
-      // view, so a re-render that is not a send keeps it (#3047).
+      // view, so a re-render that is not a send keeps it (#3047); the shell
+      // passes only the draft for this chat's own project.
       const draft = (extras && extras.draft) || '';
       const v = detail.view || {};
       return conversationViewMarkup(Object.assign({}, v, { chat: Object.assign({}, v.chat, { draft }) }));
@@ -1226,12 +1229,28 @@
     async function sendChat(text) {
       const message = String(text || '').trim();
       const chat = current;
-      if (!message || !chat || !getShell()) return;
+      if (!message || !chat || chat.sending || !getShell()) return;
       const name = String(chat.project.name || '');
       if (chat.sessionId == null) {
         showSend({ kind: 'error', message: `Not sent: ${name} has no live session.` });
         return;
       }
+      chat.sending = true;
+      try {
+        await deliverChat(chat, message, name);
+      } finally {
+        chat.sending = false;
+      }
+    }
+
+    /**
+     * The send itself, once {@link sendChat} has claimed it.
+     * @param {object} chat - `current` at send time.
+     * @param {string} message
+     * @param {string} name - The target project's name.
+     * @returns {Promise<void>}
+     */
+    async function deliverChat(chat, message, name) {
       showSend({ kind: 'pending', message: `Sending to ${name}…` });
       const sent = await apiMutate(`/api/sessions/${encodeURIComponent(name)}/command`, 'POST', { command: message, enter: true });
       if (chat !== current) return;
@@ -1312,12 +1331,7 @@
       if (entering || !projects) {
         await loadProjects();
         if (mine !== seq) return;
-        if (projects) {
-          // setProjects arrived with the shell's filters (#3046); an older
-          // shell handle without it just gets no engine filter data.
-          if (typeof shell.setProjects === 'function') shell.setProjects(projects);
-          shell.setTree(synthesizeTreeFromProjects(projects));
-        }
+        showProjects(shell);
       }
       if (entering) {
         const scopeId = encodeURIComponent(route.projectId || route.resourceId || 'global');
@@ -1376,7 +1390,20 @@
       stopPolling();
       await loadProjects();
       if (mine !== seq) return;
+      showProjects(shell);
       await loadRouteDetail(route, mine);
+    }
+
+    /**
+     * Hand the loaded project rows to the shell: its sidebar tree, and the
+     * rows its filters read (setProjects arrived with those filters, #3046;
+     * an older shell handle without it just gets no engine filter data).
+     * @param {object} shell
+     */
+    function showProjects(shell) {
+      if (!projects) return;
+      if (typeof shell.setProjects === 'function') shell.setProjects(projects);
+      shell.setTree(synthesizeTreeFromProjects(projects));
     }
 
     /**
@@ -1464,7 +1491,9 @@
     // The tree as last rendered, filters applied: the fold toggles' positional
     // ids were generated from it, so they are wired from it too.
     let shownTree = [];
-    let chatDraft = '';
+    // Unsent composer text per target project, so text meant for one agent
+    // never appears in, and is never sent from, another one's chat.
+    const chatDrafts = new Map();
 
     function readHash() {
       if (typeof options.getHash === 'function') return options.getHash();
@@ -1493,10 +1522,12 @@
           if (evt && (evt.key === 'Escape' || evt.key === 'Esc')) toggleDrawer(false);
         });
       }
+      // Each moves focus to the control that undoes it: the one clicked is
+      // hidden or gone after the re-render, which would drop focus to the page.
       const collapseBtn = doc.getElementById('v6SidebarCollapse');
-      if (collapseBtn) collapseBtn.addEventListener('click', () => toggleSidebar(true));
+      if (collapseBtn) collapseBtn.addEventListener('click', () => { toggleSidebar(true); focusById('v6SidebarExpand'); });
       const expandBtn = doc.getElementById('v6SidebarExpand');
-      if (expandBtn) expandBtn.addEventListener('click', () => toggleSidebar(false));
+      if (expandBtn) expandBtn.addEventListener('click', () => { toggleSidebar(false); focusById('v6SidebarCollapse'); });
       const collapseAll = doc.getElementById('v6TreeCollapseAll');
       if (collapseAll) collapseAll.addEventListener('click', () => setCollapsedNodes(allNodeKeys(tree)));
       const expandAll = doc.getElementById('v6TreeExpandAll');
@@ -1553,12 +1584,19 @@
       }
     }
 
+    /** @param {string} id */
+    function focusById(id) {
+      const el = doc.getElementById(id);
+      if (el && typeof el.focus === 'function') el.focus();
+    }
+
     /** The chat view's own controls (#3047), when the detail pane shows one. */
     function wireChat() {
       const input = doc.getElementById('v6ChatInput');
       if (input) {
         input.addEventListener('input', (evt) => {
-          chatDraft = String((evt && evt.target && evt.target.value) || '');
+          const key = chatTargetKey();
+          if (key != null) chatDrafts.set(key, String((evt && evt.target && evt.target.value) || ''));
         });
         input.addEventListener('keydown', (evt) => {
           if (chatKeyAction(evt) !== 'send') return;
@@ -1589,10 +1627,16 @@
       }
     }
 
+    /** @returns {string|null} The project the chat on screen talks to, as a draft key. */
+    function chatTargetKey() {
+      const project = detail && detail.kind === 'conversation' && detail.view ? detail.view.project : null;
+      return project && project.id != null ? String(project.id) : null;
+    }
+
     /** Hand the composer's text to the page, unless there is none. */
     function submitChat() {
       const input = doc.getElementById('v6ChatInput');
-      const text = String((input && typeof input.value === 'string' ? input.value : chatDraft) || '').trim();
+      const text = String((input && typeof input.value === 'string' ? input.value : chatDrafts.get(chatTargetKey())) || '').trim();
       if (!text || typeof options.onSendChat !== 'function') return;
       options.onSendChat(text);
     }
@@ -1661,7 +1705,7 @@
             <a id="v6ShellClassicLink" class="btn btn-secondary v6-shell-classic-link" href="#/">← Classic View</a>
             <h1 class="v6-shell-title">${escapeHtml(title)}</h1>
           </div>
-          <div id="v6ShellDetail">${detailMarkup(detail, { draft: chatDraft })}</div>
+          <div id="v6ShellDetail">${detailMarkup(detail, { draft: chatDrafts.get(chatTargetKey()) || '' })}</div>
           <div id="v6ShellWizard">${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation">${modelAttestationMarkup(attestation)}</div>
         </main>
@@ -1787,8 +1831,8 @@
         el.innerHTML = chatPeekMarkup(peek);
         if (atBottom) el.scrollTop = el.scrollHeight;
       },
-      /** Forget the composer's text, once it has been sent. */
-      clearChatDraft() { chatDraft = ''; },
+      /** Forget the chat on screen's composer text, once it has been sent. */
+      clearChatDraft() { chatDrafts.delete(chatTargetKey()); },
       destroy() {
         if (win && typeof win.removeEventListener === 'function') win.removeEventListener('hashchange', handleHashChange);
       }
