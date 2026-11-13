@@ -20,7 +20,7 @@ fails any auto-stub section older than 14 days.
 ## v6.2.2 — Fleet View sidebar, Project Delegate Chat and the Medusa update chip fix
 
 - **Fleet View sidebar** (#3046) — `public/v6-shell.js`, `public/style.css`: the main pane sits beside the sidebar; the sidebar scrolls on its own, hides, folds per project and fleet, and filters by text, engine and one or many project pills, all remembered. The Classic/Fleet switcher is in the page header.
-- **Project Delegate Chat** (#3047) — `public/v6-shell.js`: a project or fleet opens a chat with its Designated Delegate (the `-PM` member by default, changeable from the chat header), with session status, the recorded conversation, live output, and a composer that sends through `POST /api/sessions/:project/command` and records the message in the conversation.
+- **Project Delegate Chat** (#3047) — `public/v6-shell.js`: a project or fleet opens a chat with its Designated Delegate (`public/v6-shell.js#resolveDelegateProject`: the one chosen in the chat header, else `-PM`, `-Master`, role `pm`, first live member, first member), with session status, the recorded conversation, live output, and a composer that sends through `POST /api/sessions/:project/command` and records the message in the conversation.
 - **Medusa update chip** (#3048) — `public/update-beacon.js`: the chip confirms on a second click instead of `confirm()`, keeps a refusal's reason on the chip, and a Hub restart is refused when launchd could not start the Hub again.
 
 ## v6.2.1 — Full-stack soak, adversarial chaos and browser E2E qualification, and the dashboard startup fix

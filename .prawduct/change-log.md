@@ -45,7 +45,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=internal | scope=v622-release -->
 
-- Compiled 3 accepted `changelog.d/` fragments (#3046, #3047, #3048) from PRs #3049 and #3050 into `CHANGELOG.md` section `[6.2.2]` (Fixed, patch tier) using the wrap's own compile/splice/promote functions. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap state. Folded in PR #3050's change-log entry (kept out of that feature PR by Builder Rule #271 cl.3) below, verbatim. PR #3049 (#3048) carried no change-log entry; its record is its fragment and this cut.
+- Compiled 3 accepted `changelog.d/` fragments (#3046, #3047, #3048) from PRs #3049 and #3050 into `CHANGELOG.md` section `[6.2.2]` (Fixed, patch tier) using the wrap's own compile/splice/promote functions. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap state. Folded in PR #3050's change-log entry (kept out of that feature PR by Builder Rule #271 cl.3) below, verbatim. PR #3049 (#3048) carried no change-log entry; its record is its fragment and this cut. During review (PRR-B), the compiled #3047 entry and the release notes were corrected: they gave the Designated Delegate order as `-PM`, `-Master`, first live member, but `resolveDelegateProject` first takes a still-valid configured delegate, then `-PM`, `-Master` and role `pm`, then the first live member, then the first member. The fix also moved v6.2.1 under Recent releases in the release index (TC-Lane-B).
 
 ## 2026-11-13 — v6 Fleet View layout, sidebar filters and Project Delegate Chat (#3046, #3047)
 
