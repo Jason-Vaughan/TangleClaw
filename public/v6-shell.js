@@ -245,6 +245,26 @@
     return logical;
   }
 
+  /** The persisted key for a project node in the sidebar's fold state. */
+  function projectNodeKey(project) { return `p:${project.id}`; }
+
+  /** The persisted key for a fleet node, scoped by its project (fleet ids repeat across projects). */
+  function fleetNodeKey(project, fleet) { return `f:${project.id}/${fleet.id}`; }
+
+  /**
+   * One fold toggle (`▾` open / `▸` folded) for a project or fleet node.
+   * @param {string} id - The button's element id.
+   * @param {string} nodeKey
+   * @param {string} name - What it folds, for the accessible label.
+   * @param {boolean} folded
+   * @returns {string} HTML.
+   */
+  function treeToggleMarkup(id, nodeKey, name, folded) {
+    return `<button type="button" id="${escapeHtml(id)}" class="v6-tree-toggle" data-action="toggle-tree-node"
+      data-node-id="${escapeHtml(nodeKey)}" aria-expanded="${folded ? 'false' : 'true'}"
+      aria-label="${folded ? 'Expand' : 'Collapse'} ${escapeHtml(name)}">${folded ? '▸' : '▾'}</button>`;
+  }
+
   /**
    * The collapsible Logical Project -> Fleet -> Member sidebar (#2981
    * deliverable 2). Plain nested lists with real `<a href="#...">` links —
@@ -253,8 +273,15 @@
    * without that behavior is a worse accessibility bug than not using it),
    * so keyboard reachability comes from the browser's own native tab
    * order rather than a half-built custom interaction model.
+   *
+   * Every project and fleet with something under it carries a fold toggle
+   * (#3046); a folded node's children are not rendered. Toggle ids are
+   * positional (`v6TreeToggle-p<i>`, `v6TreeToggle-f<i>-<j>`) because node
+   * ids are free text and an element id must not be; the real node key rides
+   * on `data-node-id`.
    * @param {ReturnType<typeof buildHierarchyTree>} tree
-   * @param {{activeProjectId?: string, activeFleetId?: string, activeResourceId?: string}} [opts]
+   * @param {{activeProjectId?: string, activeFleetId?: string, activeResourceId?: string,
+   *   collapsed?: Array<string>|Set<string>}} [opts]
    * @returns {string} HTML.
    */
   function sidebarMarkup(tree, opts) {
@@ -262,16 +289,19 @@
     const activeProjectId = options.activeProjectId != null ? String(options.activeProjectId) : null;
     const activeFleetId = options.activeFleetId != null ? String(options.activeFleetId) : null;
     const activeResourceId = options.activeResourceId != null ? String(options.activeResourceId) : null;
+    const collapsed = new Set(options.collapsed || []);
     const list = Array.isArray(tree) ? tree : [];
-    const items = list.map((project) => {
+    const items = list.map((project, pi) => {
       const projectActive = activeProjectId === String(project.id);
       const projectHash = routeHash({ view: 'project', projectId: project.id });
-      const fleetItems = project.fleets.map((fleet) => {
+      const projectFolded = collapsed.has(projectNodeKey(project));
+      const fleetItems = projectFolded ? '' : project.fleets.map((fleet, fi) => {
         const fleetActive = projectActive && activeFleetId === String(fleet.id);
         const fleetHash = routeHash({ view: 'fleet', projectId: project.id, fleetId: fleet.id });
+        const fleetFolded = collapsed.has(fleetNodeKey(project, fleet));
         // #3022: a member with a seat id is a real resource — link it to its
         // B2 Conversation View; one without stays plain text.
-        const memberItems = fleet.members.map((m) => {
+        const memberItems = fleetFolded ? '' : fleet.members.map((m) => {
           const label = `${escapeHtml(m.role)} (${escapeHtml(m.seatId)})`;
           if (!m.seatId) return `<li class="v6-shell-member">${label}</li>`;
           const memberActive = activeResourceId === String(m.seatId);
@@ -280,22 +310,92 @@
             aria-current="${memberActive ? 'page' : 'false'}"
             href="${escapeHtml(memberHash)}" data-route="${escapeHtml(memberHash)}">${label}</a></li>`;
         }).join('');
+        const fleetToggle = fleet.members.length
+          ? treeToggleMarkup(`v6TreeToggle-f${pi}-${fi}`, fleetNodeKey(project, fleet), fleet.displayName, fleetFolded)
+          : '';
         return `<li>
-          <a class="v6-shell-fleet${fleetActive ? ' is-active' : ''}"
+          <div class="v6-tree-row">${fleetToggle}<a class="v6-shell-fleet${fleetActive ? ' is-active' : ''}"
              aria-current="${fleetActive ? 'page' : 'false'}"
-             href="${escapeHtml(fleetHash)}" data-route="${escapeHtml(fleetHash)}">${escapeHtml(fleet.displayName)}</a>
+             href="${escapeHtml(fleetHash)}" data-route="${escapeHtml(fleetHash)}">${escapeHtml(fleet.displayName)}</a></div>
           ${memberItems ? `<ul class="v6-shell-members">${memberItems}</ul>` : ''}
         </li>`;
       }).join('');
+      const projectToggle = project.fleets.length
+        ? treeToggleMarkup(`v6TreeToggle-p${pi}`, projectNodeKey(project), project.displayName, projectFolded)
+        : '';
       return `<li>
-        <a class="v6-shell-project${projectActive ? ' is-active' : ''}"
+        <div class="v6-tree-row">${projectToggle}<a class="v6-shell-project${projectActive ? ' is-active' : ''}"
            aria-current="${projectActive ? 'page' : 'false'}"
-           href="${escapeHtml(projectHash)}" data-route="${escapeHtml(projectHash)}">${escapeHtml(project.displayName)}</a>
+           href="${escapeHtml(projectHash)}" data-route="${escapeHtml(projectHash)}">${escapeHtml(project.displayName)}</a></div>
         ${fleetItems ? `<ul class="v6-shell-fleets">${fleetItems}</ul>` : ''}
       </li>`;
     }).join('');
     return `<ul class="v6-shell-tree">${items}</ul>`;
   }
+
+  /**
+   * Every fold key in `tree`: one per project and one per fleet that has
+   * something to fold — what "Collapse all" folds.
+   * @param {ReturnType<typeof buildHierarchyTree>} tree
+   * @returns {string[]}
+   */
+  function allNodeKeys(tree) {
+    const keys = [];
+    (Array.isArray(tree) ? tree : []).forEach((project) => {
+      if (project.fleets.length) keys.push(projectNodeKey(project));
+      project.fleets.forEach((fleet) => { if (fleet.members.length) keys.push(fleetNodeKey(project, fleet)); });
+    });
+    return keys;
+  }
+
+  /**
+   * A JSON view of a `localStorage`-like store that never throws: a store
+   * that is missing, blocked or full, or a value that is not valid JSON of
+   * the expected kind, reads as the fallback and writes as a no-op. The
+   * shell's remembered layout is a convenience; losing it must never break
+   * the page.
+   * @param {{getItem: Function, setItem: Function}|null} storage
+   * @returns {{get: (key: string, fallback: *, accept: (value: *) => boolean) => *, set: (key: string, value: *) => void}}
+   */
+  function makePrefs(storage) {
+    return {
+      get(key, fallback, accept) {
+        let value;
+        try {
+          const raw = storage ? storage.getItem(key) : null;
+          if (raw == null) return fallback;
+          value = JSON.parse(raw);
+        } catch { // prawduct:allow prawduct/broad-except -- a blocked store (SecurityError) or corrupt JSON (SyntaxError) both mean "nothing remembered"
+          return fallback;
+        }
+        return accept(value) ? value : fallback;
+      },
+      set(key, value) {
+        try {
+          if (storage) storage.setItem(key, JSON.stringify(value));
+        } catch { // prawduct:allow prawduct/broad-except -- a blocked or full store (SecurityError, QuotaExceededError): the setting lasts this page only
+          /* not persisted */
+        }
+      }
+    };
+  }
+
+  /**
+   * The page's own `localStorage`, or null where reading it throws (some
+   * browsers do, with storage blocked).
+   * @param {object|null} win
+   * @returns {object|null}
+   */
+  function defaultStorage(win) {
+    try {
+      return (win && win.localStorage) || null;
+    } catch { // prawduct:allow prawduct/broad-except -- reading window.localStorage throws SecurityError when storage is blocked
+      return null;
+    }
+  }
+
+  const isBoolean = (v) => typeof v === 'boolean';
+  const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
   /** Every metric a B4 telemetry bar carries, in its own listed display order, mirroring `lib/v6/b4-telemetry-header.js#METRIC_KEYS`. */
   const TELEMETRY_METRIC_LABELS = Object.freeze({
@@ -930,9 +1030,13 @@
    * @param {{root: object|string, window?: object, tree?: Array<*>,
    *   telemetry?: object|null, templates?: Array<*>, attestation?: object|null,
    *   detail?: object|null, showWatermark?: boolean, onRender?: (route: object) => void,
-   *   onLaunchTemplate?: (templateId: string) => void}} opts
+   *   onLaunchTemplate?: (templateId: string) => void,
+   *   storage?: {getItem: Function, setItem: Function}|null}} opts - `storage`
+   *   remembers the sidebar layout (#3046); defaults to the page's `localStorage`,
+   *   and `null` keeps it for this page only.
    * @returns {{getRoute: () => object, navigate: (hash: string) => void,
    *   toggleDrawer: (force?: boolean) => void, isDrawerOpen: () => boolean,
+   *   toggleSidebar: (force?: boolean) => void, isSidebarCollapsed: () => boolean,
    *   setTree: (tree: Array<*>) => void, setTelemetry: (bar: object|null) => void,
    *   setTemplates: (templates: Array<*>) => void,
    *   setAttestation: (attestation: object|null) => void,
@@ -950,6 +1054,9 @@
     const showWatermark = options.showWatermark !== false;
     let currentRoute = { view: null };
     let drawerOpen = false;
+    const prefs = makePrefs(options.storage !== undefined ? options.storage : defaultStorage(win));
+    let sidebarCollapsed = prefs.get('tc_v6_sidebar_collapsed', false, isBoolean);
+    let collapsedNodes = new Set(prefs.get('tc_v6_collapsed_nodes', [], isStringArray));
 
     function readHash() {
       if (typeof options.getHash === 'function') return options.getHash();
@@ -978,6 +1085,24 @@
           if (evt && (evt.key === 'Escape' || evt.key === 'Esc')) toggleDrawer(false);
         });
       }
+      const collapseBtn = doc.getElementById('v6SidebarCollapse');
+      if (collapseBtn) collapseBtn.addEventListener('click', () => toggleSidebar(true));
+      const expandBtn = doc.getElementById('v6SidebarExpand');
+      if (expandBtn) expandBtn.addEventListener('click', () => toggleSidebar(false));
+      const collapseAll = doc.getElementById('v6TreeCollapseAll');
+      if (collapseAll) collapseAll.addEventListener('click', () => setCollapsedNodes(allNodeKeys(tree)));
+      const expandAll = doc.getElementById('v6TreeExpandAll');
+      if (expandAll) expandAll.addEventListener('click', () => setCollapsedNodes([]));
+      // Wired by position over the same tree the sidebar rendered, so a
+      // toggle's id and the node it folds always agree.
+      tree.forEach((project, pi) => {
+        const pToggle = doc.getElementById(`v6TreeToggle-p${pi}`);
+        if (pToggle) pToggle.addEventListener('click', () => toggleNode(projectNodeKey(project)));
+        project.fleets.forEach((fleet, fi) => {
+          const fToggle = doc.getElementById(`v6TreeToggle-f${pi}-${fi}`);
+          if (fToggle) fToggle.addEventListener('click', () => toggleNode(fleetNodeKey(project, fleet)));
+        });
+      });
       if (typeof options.onLaunchTemplate === 'function') {
         templates.forEach((t) => {
           const templateId = t && t.id;
@@ -987,24 +1112,63 @@
       }
     }
 
+    /**
+     * What a full re-render would otherwise lose: the sidebar's scroll
+     * position, and which shell control had focus (with its caret), since
+     * replacing `innerHTML` replaces every element.
+     * @returns {{scrollTop: number, focusId: string|null, selection: Array<number>|null}}
+     */
+    function captureViewState() {
+      const sidebar = doc.getElementById('v6ShellSidebar');
+      const active = doc.activeElement;
+      const focusId = active && typeof active.id === 'string' && active.id.startsWith('v6') ? active.id : null;
+      const selection = focusId && typeof active.selectionStart === 'number'
+        ? [active.selectionStart, active.selectionEnd] : null;
+      return { scrollTop: (sidebar && sidebar.scrollTop) || 0, focusId, selection };
+    }
+
+    /** @param {ReturnType<typeof captureViewState>} saved */
+    function restoreViewState(saved) {
+      const sidebar = doc.getElementById('v6ShellSidebar');
+      if (sidebar && saved.scrollTop) sidebar.scrollTop = saved.scrollTop;
+      if (!saved.focusId) return;
+      const el = doc.getElementById(saved.focusId);
+      if (!el || doc.activeElement === el || typeof el.focus !== 'function') return;
+      el.focus();
+      if (saved.selection && typeof el.setSelectionRange === 'function') {
+        el.setSelectionRange(saved.selection[0], saved.selection[1]);
+      }
+    }
+
     function render() {
       currentRoute = parseRoute(readHash());
       if (!root) return;
+      const saved = captureViewState();
       const title = routeTitle(currentRoute);
+      if (root.classList) root.classList.toggle('v6-shell-root--sidebar-collapsed', sidebarCollapsed);
       root.innerHTML = `
         <a id="v6ShellSkipLink" class="v6-shell-skip-link" href="#v6ShellMain">Skip to main content</a>
         <button type="button" id="v6ShellDrawerToggle" class="v6-shell-drawer-toggle"
           aria-expanded="${drawerOpen ? 'true' : 'false'}" aria-controls="v6ShellSidebar">☰ Menu</button>
         <nav id="v6ShellSidebar" class="v6-shell-sidebar${drawerOpen ? ' is-open' : ''}" aria-label="Fleet navigation">
+          <div class="v6-sidebar-header">
+            <button type="button" id="v6SidebarCollapse" class="btn btn-secondary btn-small v6-sidebar-collapse"
+              data-action="toggle-sidebar-drawer" aria-controls="v6ShellSidebar" aria-expanded="true">« Hide Fleet</button>
+            <button type="button" id="v6TreeExpandAll" class="btn btn-secondary btn-small">Expand all</button>
+            <button type="button" id="v6TreeCollapseAll" class="btn btn-secondary btn-small">Collapse all</button>
+          </div>
           ${sidebarMarkup(tree, {
             activeProjectId: currentRoute.projectId,
             activeFleetId: currentRoute.fleetId,
-            activeResourceId: currentRoute.resourceId
+            activeResourceId: currentRoute.resourceId,
+            collapsed: collapsedNodes
           })}
         </nav>
         ${telemetryHeaderMarkup(telemetry)}
         <main id="v6ShellMain" class="v6-shell-view" tabindex="-1" aria-label="${escapeHtml(title)}">
           <div class="v6-shell-header">
+            ${sidebarCollapsed ? `<button type="button" id="v6SidebarExpand" class="btn btn-secondary v6-sidebar-expand"
+              data-action="toggle-sidebar-drawer" aria-controls="v6ShellSidebar" aria-expanded="false">» Show Fleet</button>` : ''}
             <a id="v6ShellClassicLink" class="btn btn-secondary v6-shell-classic-link" href="#/">← Classic View</a>
             <h1 class="v6-shell-title">${escapeHtml(title)}</h1>
           </div>
@@ -1015,12 +1179,38 @@
         ${watermarkFooterMarkup(showWatermark)}
       `;
       wireControls();
+      restoreViewState(saved);
       if (typeof options.onRender === 'function') options.onRender(currentRoute);
     }
 
     function toggleDrawer(force) {
       drawerOpen = typeof force === 'boolean' ? force : !drawerOpen;
       render();
+    }
+
+    /**
+     * Hide or show the desktop sidebar column (#3046), remembered across
+     * visits. The mobile `☰ Menu` drawer is separate and unaffected.
+     * @param {boolean} [force] - Collapse when true, expand when false; flip when omitted.
+     */
+    function toggleSidebar(force) {
+      sidebarCollapsed = typeof force === 'boolean' ? force : !sidebarCollapsed;
+      prefs.set('tc_v6_sidebar_collapsed', sidebarCollapsed);
+      render();
+    }
+
+    /** @param {Iterable<string>} keys - The full set of folded node keys. */
+    function setCollapsedNodes(keys) {
+      collapsedNodes = new Set(keys);
+      prefs.set('tc_v6_collapsed_nodes', [...collapsedNodes]);
+      render();
+    }
+
+    /** @param {string} key - A project or fleet fold key. */
+    function toggleNode(key) {
+      const next = new Set(collapsedNodes);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      setCollapsedNodes(next);
     }
 
     function navigate(hash) {
@@ -1046,6 +1236,8 @@
       navigate,
       toggleDrawer,
       isDrawerOpen() { return drawerOpen; },
+      toggleSidebar,
+      isSidebarCollapsed() { return sidebarCollapsed; },
       setTree(nextTree) { tree = buildHierarchyTree(nextTree || []); render(); },
       setTelemetry(bar) { telemetry = bar || null; render(); },
       setTemplates(nextTemplates) { templates = Array.isArray(nextTemplates) ? nextTemplates : []; render(); },

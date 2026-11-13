@@ -3849,6 +3849,10 @@ html[data-theme="light"] .tc-bg-watermark img {
 .v6-shell-root {
   display: grid;
   grid-template-columns: 260px 1fr;
+  /* #3046: explicit rows. With none, the sidebar's `grid-row: 1 / -1`
+     spanned only the single explicit row 1, so row 1 grew to the full
+     sidebar height and pushed the main view below the bottom of it. */
+  grid-template-rows: auto 1fr auto;
   gap: 16px;
   align-items: start;
 }
@@ -3878,6 +3882,12 @@ html[data-theme="light"] .tc-bg-watermark img {
   grid-row: 1 / -1;
   border-right: 1px solid var(--border-color, #2a2f36);
   padding-right: 12px;
+  /* #3046: its own scroll container, so a long fleet list scrolls beside
+     the main view instead of stretching the page. */
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 110px);
+  overflow-y: auto;
 }
 .v6-shell-tree,
 .v6-shell-fleets,
@@ -3909,10 +3919,12 @@ html[data-theme="light"] .tc-bg-watermark img {
 }
 .v6-shell-view {
   grid-column: 2;
+  grid-row: 2;
   min-width: 0;
 }
 .v6-telemetry-header {
   grid-column: 2;
+  grid-row: 1;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -3944,6 +3956,7 @@ html[data-theme="light"] .tc-bg-watermark img {
 }
 .v6-shell-watermark {
   grid-column: 2;
+  grid-row: 3;
   text-align: center;
   opacity: 0.5;
   font-size: 0.8em;
@@ -4043,5 +4056,57 @@ html[data-theme="light"] .tc-bg-watermark img {
   .v6-telemetry-header,
   .v6-shell-watermark {
     grid-column: 1;
+    grid-row: auto;
   }
+  .v6-shell-root {
+    grid-template-rows: none;
+  }
+  .v6-shell-sidebar {
+    position: static;
+    max-height: none;
+  }
+  /* The ☰ Menu drawer owns the sidebar on a phone; Hide Fleet is desktop-only. */
+  .v6-sidebar-collapse {
+    display: none;
+  }
+}
+/* #3046: collapsible sidebar column (desktop only) and fold toggles. */
+@media (min-width: 761px) {
+  .v6-shell-root--sidebar-collapsed {
+    grid-template-columns: 0 1fr;
+  }
+  .v6-shell-root--sidebar-collapsed .v6-shell-sidebar {
+    display: none;
+  }
+}
+.v6-sidebar-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.v6-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.v6-tree-row > a {
+  flex: 1;
+  min-width: 0;
+}
+.v6-tree-toggle {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  line-height: 1;
+}
+.v6-tree-toggle:hover,
+.v6-tree-toggle:focus-visible {
+  background: var(--accent-bg, rgba(86, 211, 100, 0.12));
 }

@@ -968,3 +968,233 @@ describe('page wiring (#3022 deliverable a) — index.html and ui.js', () => {
     assert.match(block, /v6Shell\.navigate\(await v6Live\.enterHash\(\)\)/);
   });
 });
+
+// ── #3046 (Car V622-W1-A): layout, scroll, focus, collapsible drawer and tree nodes ──
+
+/**
+ * An in-memory stand-in for `localStorage` (string values, like the real one).
+ * @param {object} [seed] - Initial key/value pairs; values are stored as given.
+ * @returns {{getItem: Function, setItem: Function, removeItem: Function, data: object}}
+ */
+function makeStorage(seed) {
+  const data = Object.assign(Object.create(null), seed || {});
+  return {
+    data,
+    getItem(key) { return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : null; },
+    setItem(key, value) { data[key] = String(value); },
+    removeItem(key) { delete data[key]; }
+  };
+}
+
+/**
+ * Mount a shell on a mini-dom root with an injectable storage.
+ * @param {object} [opts] - Extra `tcCreateV6Shell` options, plus `initialHash`.
+ * @returns {{shell: object, doc: object, win: object, root: object, G: object}}
+ */
+function mountShell(opts) {
+  const G = loadV6Shell();
+  const { doc } = makeDocument([]);
+  const root = doc.createElement('div');
+  root.id = 'v6ShellRoot';
+  withIdParsingInnerHTML(root, doc);
+  doc.body.appendChild(root);
+  doc._register(root);
+  const win = makeFakeWindow((opts && opts.initialHash) || '#/projects/tc-lane');
+  const shell = G.tcCreateV6Shell(doc, Object.assign({ root, window: win }, opts || {}));
+  return { shell, doc, win, root, G };
+}
+
+const TWO_GROUP_TREE = [
+  { id: 'tc-lane', displayName: 'TC-Lane', fleets: [{ id: 'tc-lane', displayName: 'TC-Lane Fleet',
+    members: [{ seatId: '11', role: 'TC-Lane-A' }, { seatId: '12', role: 'TC-Lane-PM' }] }] },
+  { id: 'medusa', displayName: 'Medusa', fleets: [{ id: 'medusa', displayName: 'Medusa Fleet',
+    members: [{ seatId: '21', role: 'Medusa-PM' }] }] }
+];
+
+describe('public/style.css grid rows (#3046)', () => {
+  const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  function ruleBodyFor(selector) {
+    const re = new RegExp(`${selector.replace(/[.#]/g, '\\$&')}\\s*\\{([^}]*)\\}`);
+    const match = CSS.match(re);
+    return match ? match[1] : null;
+  }
+
+  it('gives the root explicit rows, so the sidebar\'s 1 / -1 spans all of them and the main view starts at the top', () => {
+    const body = ruleBodyFor('.v6-shell-root');
+    assert.match(body, /grid-template-rows:\s*auto\s+1fr\s+auto/);
+  });
+
+  it('pins the telemetry header, main view and footer to rows 1, 2 and 3 of column 2', () => {
+    assert.match(ruleBodyFor('.v6-telemetry-header'), /grid-row:\s*1;/);
+    assert.match(ruleBodyFor('.v6-shell-view'), /grid-row:\s*2;/);
+    assert.match(ruleBodyFor('.v6-shell-watermark'), /grid-row:\s*3;/);
+  });
+
+  it('makes the sidebar its own sticky scroll container', () => {
+    const body = ruleBodyFor('.v6-shell-sidebar');
+    assert.match(body, /position:\s*sticky/);
+    assert.match(body, /max-height:\s*calc\(100vh - 110px\)/);
+    assert.match(body, /overflow-y:\s*auto/);
+  });
+
+  it('collapses the sidebar column only on desktop, where the mobile drawer is not in charge', () => {
+    const desktop = CSS.slice(CSS.indexOf('@media (min-width: 761px)'));
+    assert.ok(CSS.includes('@media (min-width: 761px)'), 'a desktop-only block must exist');
+    assert.match(desktop, /\.v6-shell-root--sidebar-collapsed\s*\{\s*grid-template-columns:\s*0\s+1fr;/);
+    assert.match(desktop, /\.v6-shell-root--sidebar-collapsed \.v6-shell-sidebar\s*\{\s*display:\s*none;/);
+  });
+});
+
+describe('tcCreateV6Shell — sidebar scroll and focus survive a re-render (#3046)', () => {
+  it('keeps the sidebar\'s scroll position across a re-render', () => {
+    const { shell, doc } = mountShell({ tree: TWO_GROUP_TREE });
+    doc.getElementById('v6ShellSidebar').scrollTop = 240;
+    shell.setTelemetry(null);
+    assert.equal(doc.getElementById('v6ShellSidebar').scrollTop, 240);
+  });
+
+  it('gives focus back to the same control, caret included, after a re-render', () => {
+    const { shell, doc } = mountShell({ tree: TWO_GROUP_TREE });
+    const before = doc.getElementById('v6SidebarCollapse');
+    before.selectionStart = 2;
+    before.selectionEnd = 4;
+    before.focus();
+    let range = null;
+    shell.setTelemetry(null);
+    const after = doc.getElementById('v6SidebarCollapse');
+    assert.notEqual(after, before, 'the re-render replaced the element');
+    assert.equal(doc.activeElement, after);
+    after.setSelectionRange = (s, e) => { range = [s, e]; };
+    after.focus();
+    shell.setTelemetry(null);
+    const third = doc.getElementById('v6SidebarCollapse');
+    assert.equal(doc.activeElement, third);
+    assert.equal(range, null, 'an element with no caret has none restored');
+  });
+
+  it('restores a caret position through setSelectionRange when the new element supports it', () => {
+    const { shell, doc } = mountShell({ tree: TWO_GROUP_TREE });
+    const before = doc.getElementById('v6SidebarCollapse');
+    before.selectionStart = 3;
+    before.selectionEnd = 5;
+    before.focus();
+    const seen = [];
+    const realGet = doc.getElementById;
+    doc.getElementById = (id) => {
+      const el = realGet(id);
+      if (el && id === 'v6SidebarCollapse' && el !== before) el.setSelectionRange = (s, e) => seen.push([s, e]);
+      return el;
+    };
+    shell.setTelemetry(null);
+    assert.deepEqual(seen, [[3, 5]]);
+  });
+
+  it('leaves focus alone when nothing inside the shell had it', () => {
+    const { shell, doc } = mountShell({ tree: TWO_GROUP_TREE });
+    doc.activeElement = null;
+    shell.setTelemetry(null);
+    assert.equal(doc.activeElement, null);
+  });
+});
+
+describe('tcCreateV6Shell — collapsible sidebar drawer (#3046)', () => {
+  it('Hide Fleet collapses the sidebar, shows Show Fleet in the header, and remembers it', () => {
+    const storage = makeStorage();
+    const { shell, doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    assert.equal(shell.isSidebarCollapsed(), false);
+    assert.match(root.innerHTML, /data-action="toggle-sidebar-drawer"/);
+    doc.getElementById('v6SidebarCollapse').dispatch('click');
+    assert.equal(shell.isSidebarCollapsed(), true);
+    assert.equal(root.classList.contains('v6-shell-root--sidebar-collapsed'), true);
+    assert.ok(doc.getElementById('v6SidebarExpand'), 'Show Fleet must render while collapsed');
+    assert.match(root.innerHTML, /» Show Fleet/);
+    assert.equal(storage.data.tc_v6_sidebar_collapsed, 'true');
+  });
+
+  it('Show Fleet expands it again and remembers that too', () => {
+    const storage = makeStorage({ tc_v6_sidebar_collapsed: 'true' });
+    const { shell, doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    assert.equal(shell.isSidebarCollapsed(), true, 'a remembered collapse is restored on mount');
+    doc.getElementById('v6SidebarExpand').dispatch('click');
+    assert.equal(shell.isSidebarCollapsed(), false);
+    assert.equal(root.classList.contains('v6-shell-root--sidebar-collapsed'), false);
+    assert.doesNotMatch(root.innerHTML, /» Show Fleet/);
+    assert.equal(storage.data.tc_v6_sidebar_collapsed, 'false');
+  });
+
+  it('a storage that throws on every call does not break the mount or the toggle', () => {
+    const storage = { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } };
+    const { shell, doc } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    doc.getElementById('v6SidebarCollapse').dispatch('click');
+    assert.equal(shell.isSidebarCollapsed(), true);
+  });
+
+  it('a corrupt stored value is ignored rather than trusted', () => {
+    const storage = makeStorage({ tc_v6_sidebar_collapsed: '{not json', tc_v6_collapsed_nodes: '"a string"' });
+    const { shell, root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    assert.equal(shell.isSidebarCollapsed(), false);
+    assert.match(root.innerHTML, /v6-shell-fleets/);
+  });
+});
+
+describe('tcCreateV6Shell — collapsible project and fleet nodes (#3046)', () => {
+  it('gives every project and fleet that has children a fold toggle, with its node id and state', () => {
+    const { root } = mountShell({ tree: TWO_GROUP_TREE });
+    const toggles = root.innerHTML.match(/data-action="toggle-tree-node"/g) || [];
+    assert.equal(toggles.length, 4, 'two projects and two fleets');
+    assert.match(root.innerHTML, /data-node-id="p:tc-lane"[^>]*aria-expanded="true"/);
+    assert.match(root.innerHTML, /data-node-id="f:tc-lane\/tc-lane"/);
+  });
+
+  it('a project or fleet with nothing under it gets no toggle', () => {
+    const { root } = mountShell({ tree: [{ id: 'solo', displayName: 'Solo', fleets: [] }] });
+    assert.doesNotMatch(root.innerHTML, /toggle-tree-node/);
+  });
+
+  it('folding a project hides its fleets, unfolding shows them, and the state is remembered', () => {
+    const storage = makeStorage();
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    doc.getElementById('v6TreeToggle-p0').dispatch('click');
+    assert.doesNotMatch(root.innerHTML, /TC-Lane Fleet/);
+    assert.match(root.innerHTML, /Medusa Fleet/, 'only the folded project hides');
+    assert.match(root.innerHTML, /data-node-id="p:tc-lane"[^>]*aria-expanded="false"/);
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_collapsed_nodes), ['p:tc-lane']);
+    doc.getElementById('v6TreeToggle-p0').dispatch('click');
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_collapsed_nodes), []);
+  });
+
+  it('folding a fleet hides only its members', () => {
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE });
+    doc.getElementById('v6TreeToggle-f0-0').dispatch('click');
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+    assert.doesNotMatch(root.innerHTML, /TC-Lane-PM \(12\)/);
+    assert.match(root.innerHTML, /Medusa-PM \(21\)/);
+  });
+
+  it('a remembered fold is restored on mount', () => {
+    const storage = makeStorage({ tc_v6_collapsed_nodes: JSON.stringify(['p:medusa']) });
+    const { root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    assert.doesNotMatch(root.innerHTML, /Medusa Fleet/);
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+  });
+
+  it('Collapse all folds every project and fleet; Expand all unfolds them', () => {
+    const storage = makeStorage();
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    doc.getElementById('v6TreeCollapseAll').dispatch('click');
+    assert.doesNotMatch(root.innerHTML, /Fleet<\/a>/);
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_collapsed_nodes).sort(),
+      ['f:medusa/medusa', 'f:tc-lane/tc-lane', 'p:medusa', 'p:tc-lane']);
+    doc.getElementById('v6TreeExpandAll').dispatch('click');
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+    assert.match(root.innerHTML, /Medusa-PM \(21\)/);
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_collapsed_nodes), []);
+  });
+
+  it('a fold toggle names what it folds for a screen reader, escaped', () => {
+    const { root } = mountShell({ tree: [{ id: 'x', displayName: '<b>X</b>', fleets: [{ id: 'f', displayName: 'F', members: [{ seatId: '1', role: 'r' }] }] }] });
+    assert.match(root.innerHTML, /aria-label="Collapse &lt;b&gt;X&lt;\/b&gt;"/);
+    assert.doesNotMatch(root.innerHTML, /<b>X<\/b>/);
+  });
+});
