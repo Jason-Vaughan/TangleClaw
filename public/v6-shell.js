@@ -394,6 +394,76 @@
     }
   }
 
+  /**
+   * The sidebar tree as the operator's filters leave it (#3046). Text
+   * matching a project or fleet name keeps all of its members; otherwise it
+   * keeps the members whose name matches. An engine keeps the members whose
+   * project row runs it (a member with no row cannot be shown to run it). A
+   * non-empty group set keeps only those logical projects. A fleet or
+   * project left with no members is dropped. Pure.
+   * @param {ReturnType<typeof buildHierarchyTree>} tree
+   * @param {{text?: string, engine?: string, groups?: Iterable<string>}} filters
+   * @param {Map<string, {engine?: {id?: string}|null}>} projectsById - Project rows keyed by id.
+   * @returns {ReturnType<typeof buildHierarchyTree>}
+   */
+  function filterTree(tree, filters, projectsById) {
+    const f = filters || {};
+    const text = typeof f.text === 'string' ? f.text.trim().toLowerCase() : '';
+    const engine = typeof f.engine === 'string' ? f.engine : '';
+    const groups = new Set(f.groups || []);
+    const rows = projectsById && typeof projectsById.get === 'function' ? projectsById : new Map();
+    const has = (value) => String(value || '').toLowerCase().includes(text);
+    const runsEngine = (m) => {
+      const row = rows.get(String(m.seatId));
+      return Boolean(row && row.engine && row.engine.id === engine);
+    };
+    return (Array.isArray(tree) ? tree : [])
+      .filter((project) => !groups.size || groups.has(String(project.id)))
+      .map((project) => {
+        const projectHit = !text || has(project.displayName);
+        const fleets = project.fleets.map((fleet) => {
+          const fleetHit = projectHit || has(fleet.displayName);
+          const members = fleet.members.filter((m) => (fleetHit || has(m.role)) && (!engine || runsEngine(m)));
+          return Object.assign({}, fleet, { members });
+        }).filter((fleet) => fleet.members.length);
+        return Object.assign({}, project, { fleets });
+      })
+      .filter((project) => project.fleets.length);
+  }
+
+  /**
+   * The sidebar's filter controls (#3046): text search, an engine select
+   * (one option per engine a project runs), a pill per logical project, a
+   * Multi toggle and All. Ids are positional for the same reason the fold
+   * toggles' are.
+   * @param {{tree: ReturnType<typeof buildHierarchyTree>, engines: string[], text: string,
+   *   engine: string, groups: Set<string>, multi: boolean}} view
+   * @returns {string} HTML.
+   */
+  function filterControlsMarkup(view) {
+    const engineOptions = ['<option value="">All Engines</option>'].concat(view.engines.map((id) => (
+      `<option value="${escapeHtml(id)}"${id === view.engine ? ' selected' : ''}>${escapeHtml(id)}</option>`
+    ))).join('');
+    const pills = view.tree.map((project, i) => {
+      const on = view.groups.has(String(project.id));
+      return `<button type="button" id="v6GroupPill-${i}" class="v6-filter-pill${on ? ' is-active' : ''}"
+        data-group-id="${escapeHtml(project.id)}" aria-pressed="${on ? 'true' : 'false'}">${escapeHtml(project.displayName)}</button>`;
+    }).join('');
+    return `<div class="v6-sidebar-filters" role="search" aria-label="Filter the fleet tree">
+      <input type="search" id="v6FilterSearch" class="filter-input v6-filter-search" placeholder="Filter…"
+        aria-label="Filter projects by name" autocomplete="off" spellcheck="false" value="${escapeHtml(view.text)}">
+      <select id="v6FilterEngine" class="filter-input v6-filter-engine" aria-label="Filter by engine">${engineOptions}</select>
+      <div class="v6-filter-pills" role="group" aria-label="Show projects">
+        <button type="button" id="v6FilterAll" class="v6-filter-pill${view.groups.size ? '' : ' is-active'}"
+          aria-pressed="${view.groups.size ? 'false' : 'true'}">All</button>
+        ${pills}
+        <button type="button" id="v6FilterMulti" class="v6-filter-pill v6-filter-multi${view.multi ? ' is-active' : ''}"
+          data-action="toggle-multi-filter" aria-pressed="${view.multi ? 'true' : 'false'}"
+          title="Select several projects at once (or Ctrl/Cmd/Shift-click a pill)">Multi</button>
+      </div>
+    </div>`;
+  }
+
   const isBoolean = (v) => typeof v === 'boolean';
   const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
@@ -965,7 +1035,12 @@
       if (entering || !projects) {
         await loadProjects();
         if (mine !== seq) return;
-        if (projects) shell.setTree(synthesizeTreeFromProjects(projects));
+        if (projects) {
+          // setProjects arrived with the shell's filters (#3046); an older
+          // shell handle without it just gets no engine filter data.
+          if (typeof shell.setProjects === 'function') shell.setProjects(projects);
+          shell.setTree(synthesizeTreeFromProjects(projects));
+        }
       }
       if (entering) {
         const scopeId = encodeURIComponent(route.projectId || route.resourceId || 'global');
@@ -1037,6 +1112,7 @@
    * @returns {{getRoute: () => object, navigate: (hash: string) => void,
    *   toggleDrawer: (force?: boolean) => void, isDrawerOpen: () => boolean,
    *   toggleSidebar: (force?: boolean) => void, isSidebarCollapsed: () => boolean,
+   *   selectGroup: (id: string, additive?: boolean) => void, setProjects: (rows: Array<object>) => void,
    *   setTree: (tree: Array<*>) => void, setTelemetry: (bar: object|null) => void,
    *   setTemplates: (templates: Array<*>) => void,
    *   setAttestation: (attestation: object|null) => void,
@@ -1057,6 +1133,14 @@
     const prefs = makePrefs(options.storage !== undefined ? options.storage : defaultStorage(win));
     let sidebarCollapsed = prefs.get('tc_v6_sidebar_collapsed', false, isBoolean);
     let collapsedNodes = new Set(prefs.get('tc_v6_collapsed_nodes', [], isStringArray));
+    let projectRows = new Map();
+    let filterText = '';
+    let filterEngine = '';
+    let selectedGroups = new Set(prefs.get('tc_v6_selected_groups', [], isStringArray));
+    let multiMode = prefs.get('tc_v6_filter_multi_mode', false, isBoolean);
+    // The tree as last rendered, filters applied: the fold toggles' positional
+    // ids were generated from it, so they are wired from it too.
+    let shownTree = [];
 
     function readHash() {
       if (typeof options.getHash === 'function') return options.getHash();
@@ -1093,9 +1177,41 @@
       if (collapseAll) collapseAll.addEventListener('click', () => setCollapsedNodes(allNodeKeys(tree)));
       const expandAll = doc.getElementById('v6TreeExpandAll');
       if (expandAll) expandAll.addEventListener('click', () => setCollapsedNodes([]));
+      const search = doc.getElementById('v6FilterSearch');
+      if (search) {
+        search.addEventListener('input', (evt) => {
+          filterText = String((evt && evt.target && evt.target.value) || '');
+          render();
+        });
+      }
+      const engineSelect = doc.getElementById('v6FilterEngine');
+      if (engineSelect) {
+        engineSelect.addEventListener('change', (evt) => {
+          filterEngine = String((evt && evt.target && evt.target.value) || '');
+          render();
+        });
+      }
+      const allPill = doc.getElementById('v6FilterAll');
+      if (allPill) allPill.addEventListener('click', () => setSelectedGroups([]));
+      const multiPill = doc.getElementById('v6FilterMulti');
+      if (multiPill) {
+        multiPill.addEventListener('click', () => {
+          multiMode = !multiMode;
+          prefs.set('tc_v6_filter_multi_mode', multiMode);
+          render();
+        });
+      }
+      tree.forEach((project, i) => {
+        const pill = doc.getElementById(`v6GroupPill-${i}`);
+        if (pill) {
+          pill.addEventListener('click', (evt) => {
+            selectGroup(String(project.id), Boolean(evt && (evt.ctrlKey || evt.metaKey || evt.shiftKey)));
+          });
+        }
+      });
       // Wired by position over the same tree the sidebar rendered, so a
       // toggle's id and the node it folds always agree.
-      tree.forEach((project, pi) => {
+      shownTree.forEach((project, pi) => {
         const pToggle = doc.getElementById(`v6TreeToggle-p${pi}`);
         if (pToggle) pToggle.addEventListener('click', () => toggleNode(projectNodeKey(project)));
         project.fleets.forEach((fleet, fi) => {
@@ -1145,6 +1261,7 @@
       if (!root) return;
       const saved = captureViewState();
       const title = routeTitle(currentRoute);
+      shownTree = filterTree(tree, { text: filterText, engine: filterEngine, groups: selectedGroups }, projectRows);
       if (root.classList) root.classList.toggle('v6-shell-root--sidebar-collapsed', sidebarCollapsed);
       root.innerHTML = `
         <a id="v6ShellSkipLink" class="v6-shell-skip-link" href="#v6ShellMain">Skip to main content</a>
@@ -1157,12 +1274,15 @@
             <button type="button" id="v6TreeExpandAll" class="btn btn-secondary btn-small">Expand all</button>
             <button type="button" id="v6TreeCollapseAll" class="btn btn-secondary btn-small">Collapse all</button>
           </div>
-          ${sidebarMarkup(tree, {
+          ${filterControlsMarkup({
+            tree, engines: engineIds(), text: filterText, engine: filterEngine, groups: selectedGroups, multi: multiMode
+          })}
+          ${shownTree.length ? sidebarMarkup(shownTree, {
             activeProjectId: currentRoute.projectId,
             activeFleetId: currentRoute.fleetId,
             activeResourceId: currentRoute.resourceId,
             collapsed: collapsedNodes
-          })}
+          }) : '<p class="v6-sidebar-empty">No projects match these filters.</p>'}
         </nav>
         ${telemetryHeaderMarkup(telemetry)}
         <main id="v6ShellMain" class="v6-shell-view" tabindex="-1" aria-label="${escapeHtml(title)}">
@@ -1206,6 +1326,38 @@
       render();
     }
 
+    /** @returns {string[]} Every engine id a known project runs, sorted, for the engine select. */
+    function engineIds() {
+      const ids = new Set();
+      projectRows.forEach((row) => { if (row && row.engine && row.engine.id) ids.add(String(row.engine.id)); });
+      return [...ids].sort();
+    }
+
+    /** @param {Iterable<string>} ids - The logical project ids to show; empty shows all. */
+    function setSelectedGroups(ids) {
+      selectedGroups = new Set(ids);
+      prefs.set('tc_v6_selected_groups', [...selectedGroups]);
+      render();
+    }
+
+    /**
+     * Pick a logical project pill. Additive (Multi mode, or a
+     * Ctrl/Cmd/Shift-click) toggles it in the selection; otherwise it
+     * becomes the only selection, or clears it when it already was.
+     * @param {string} id
+     * @param {boolean} [additive]
+     */
+    function selectGroup(id, additive) {
+      const key = String(id);
+      if (additive || multiMode) {
+        const next = new Set(selectedGroups);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        setSelectedGroups(next);
+        return;
+      }
+      setSelectedGroups(selectedGroups.size === 1 && selectedGroups.has(key) ? [] : [key]);
+    }
+
     /** @param {string} key - A project or fleet fold key. */
     function toggleNode(key) {
       const next = new Set(collapsedNodes);
@@ -1238,6 +1390,12 @@
       isDrawerOpen() { return drawerOpen; },
       toggleSidebar,
       isSidebarCollapsed() { return sidebarCollapsed; },
+      selectGroup,
+      setProjects(rows) {
+        projectRows = new Map((Array.isArray(rows) ? rows : [])
+          .filter((r) => r && r.id != null).map((r) => [String(r.id), r]));
+        render();
+      },
       setTree(nextTree) { tree = buildHierarchyTree(nextTree || []); render(); },
       setTelemetry(bar) { telemetry = bar || null; render(); },
       setTemplates(nextTemplates) { templates = Array.isArray(nextTemplates) ? nextTemplates : []; render(); },
@@ -1254,6 +1412,7 @@
   global.tcV6RouteTitle = routeTitle;
   global.tcV6BuildHierarchyTree = buildHierarchyTree;
   global.tcV6SidebarMarkup = sidebarMarkup;
+  global.tcV6FilterTree = filterTree;
   global.tcV6TelemetryHeaderMarkup = telemetryHeaderMarkup;
   global.tcV6FleetWizardMarkup = fleetWizardMarkup;
   global.tcV6ModelAttestationMarkup = modelAttestationMarkup;

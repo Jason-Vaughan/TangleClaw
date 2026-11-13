@@ -953,9 +953,20 @@ describe('page wiring (#3022 deliverable a) — index.html and ui.js', () => {
   const HTML = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const UI = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
 
-  it('puts #v6ViewToggleBtn in .toolbar-right beside #newBtn', () => {
-    const toolbar = HTML.slice(HTML.indexOf('<div class="toolbar-right">'), HTML.indexOf('id="newBtn"'));
-    assert.match(toolbar, /<button type="button" class="btn btn-secondary" id="v6ViewToggleBtn" aria-label="Switch between Fleet Shell \(v6\) and Classic View">Fleet Shell \(v6\)<\/button>/);
+  // #3046 (Gate 0, Charter A673 v1.1): the switcher moved from the Classic
+  // toolbar into the page header, so it stays put while the toolbar hides.
+  it('puts #v6ViewToggleBtn in the header\'s .dash-actions, and nowhere in the Classic toolbar', () => {
+    const actions = HTML.slice(HTML.indexOf('<div class="dash-actions">'), HTML.indexOf('id="masterToggle"'));
+    assert.match(actions, /<button type="button" class="dash-action v6-view-toggle" id="v6ViewToggleBtn" aria-label="Switch between Fleet Shell \(v6\) and Classic View">Fleet Shell \(v6\)<\/button>/);
+    const toolbar = HTML.slice(HTML.indexOf('<nav class="toolbar"'), HTML.indexOf('</nav>', HTML.indexOf('<nav class="toolbar"')));
+    assert.doesNotMatch(toolbar, /v6ViewToggleBtn/);
+    assert.equal(HTML.match(/id="v6ViewToggleBtn"/g).length, 1);
+  });
+
+  it('ui.js hides the Classic toolbar while the Fleet View shows, and hands the shell its project rows', () => {
+    const block = UI.slice(UI.indexOf("if (typeof window.tcCreateV6Shell === 'function')"));
+    assert.match(block, /const v6ClassicToolbar = document\.querySelector\('\.toolbar'\);/);
+    assert.match(block, /if \(v6ClassicToolbar\) v6ClassicToolbar\.classList\.toggle\('hidden', active\);/);
   });
 
   it('ui.js mounts the live controller and wires the toggle to it', () => {
@@ -1196,5 +1207,174 @@ describe('tcCreateV6Shell — collapsible project and fleet nodes (#3046)', () =
     const { root } = mountShell({ tree: [{ id: 'x', displayName: '<b>X</b>', fleets: [{ id: 'f', displayName: 'F', members: [{ seatId: '1', role: 'r' }] }] }] });
     assert.match(root.innerHTML, /aria-label="Collapse &lt;b&gt;X&lt;\/b&gt;"/);
     assert.doesNotMatch(root.innerHTML, /<b>X<\/b>/);
+  });
+});
+
+// ── #3046 (Car V622-W1-A): single- and multi-select filters for the sidebar tree ──
+
+const FILTER_PROJECTS = [
+  { id: 11, name: 'TC-Lane-A', engine: { id: 'claude' } },
+  { id: 12, name: 'TC-Lane-PM', engine: { id: 'codex' } },
+  { id: 21, name: 'Medusa-PM', engine: { id: 'claude' } }
+];
+
+describe('tcV6FilterTree (#3046)', () => {
+  const G = loadV6Shell();
+  const tree = () => G.tcV6BuildHierarchyTree(TWO_GROUP_TREE);
+  const byId = () => new Map(FILTER_PROJECTS.map((p) => [String(p.id), p]));
+  const names = (t) => plain(t).flatMap((p) => p.fleets.flatMap((f) => f.members.map((m) => m.role)));
+
+  it('with no filters returns the whole tree', () => {
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), {}, byId())), ['TC-Lane-A', 'TC-Lane-PM', 'Medusa-PM']);
+  });
+
+  it('text matching a member keeps only matching members; matching a project keeps all of its members', () => {
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { text: '-pm' }, byId())), ['TC-Lane-PM', 'Medusa-PM']);
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { text: 'medusa' }, byId())), ['Medusa-PM']);
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { text: 'TC-LANE FLEET' }, byId())), ['TC-Lane-A', 'TC-Lane-PM']);
+  });
+
+  it('drops a project or fleet left with no members', () => {
+    const out = plain(G.tcV6FilterTree(tree(), { text: 'Lane-A' }, byId()));
+    assert.deepEqual(out.map((p) => p.id), ['tc-lane']);
+  });
+
+  it('engine keeps members whose project runs it, and drops members with no project row', () => {
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { engine: 'claude' }, byId())), ['TC-Lane-A', 'Medusa-PM']);
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { engine: 'claude' }, new Map())), []);
+  });
+
+  it('a group set keeps only those logical projects, whatever the other filters say', () => {
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { groups: ['medusa'] }, byId())), ['Medusa-PM']);
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { groups: ['medusa', 'tc-lane'] }, byId())), ['TC-Lane-A', 'TC-Lane-PM', 'Medusa-PM']);
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { groups: ['tc-lane'], engine: 'codex' }, byId())), ['TC-Lane-PM']);
+  });
+
+  it('filters combine', () => {
+    assert.deepEqual(names(G.tcV6FilterTree(tree(), { text: 'pm', engine: 'claude', groups: ['medusa', 'tc-lane'] }, byId())), ['Medusa-PM']);
+  });
+});
+
+describe('tcCreateV6Shell — filter controls (#3046)', () => {
+  function mountWithProjects(opts) {
+    const m = mountShell(Object.assign({ tree: TWO_GROUP_TREE }, opts || {}));
+    m.shell.setProjects(FILTER_PROJECTS);
+    return m;
+  }
+
+  it('renders search, engine (one option per engine in use), one pill per logical project, Multi and All', () => {
+    const { root } = mountWithProjects();
+    assert.match(root.innerHTML, /id="v6FilterSearch"/);
+    assert.match(root.innerHTML, /<option value="">All Engines<\/option><option value="claude">claude<\/option><option value="codex">codex<\/option>/);
+    assert.match(root.innerHTML, /id="v6GroupPill-0"[^>]*>TC-Lane</);
+    assert.match(root.innerHTML, /id="v6GroupPill-1"[^>]*>Medusa</);
+    assert.match(root.innerHTML, /id="v6FilterMulti"[^>]*data-action="toggle-multi-filter"[^>]*aria-pressed="false"/);
+    assert.match(root.innerHTML, /id="v6FilterAll"[^>]*aria-pressed="true"/);
+  });
+
+  it('typing in search filters the tree immediately and keeps focus in the box', () => {
+    const { doc, root } = mountWithProjects();
+    const box = doc.getElementById('v6FilterSearch');
+    box.focus();
+    box.value = 'medusa';
+    box.dispatch('input');
+    assert.doesNotMatch(root.innerHTML, /TC-Lane-A \(11\)/);
+    assert.match(root.innerHTML, /Medusa-PM \(21\)/);
+    assert.match(root.innerHTML, /id="v6FilterSearch"[^>]*value="medusa"/);
+    assert.equal(doc.activeElement, doc.getElementById('v6FilterSearch'));
+  });
+
+  it('choosing an engine filters by it and keeps it selected', () => {
+    const { doc, root } = mountWithProjects();
+    const select = doc.getElementById('v6FilterEngine');
+    select.value = 'codex';
+    select.dispatch('change');
+    assert.match(root.innerHTML, /TC-Lane-PM \(12\)/);
+    assert.doesNotMatch(root.innerHTML, /TC-Lane-A \(11\)/);
+    assert.match(root.innerHTML, /<option value="codex" selected>/);
+  });
+
+  it('single mode: a pill shows only its project, a second pill replaces it, re-clicking the only one clears it', () => {
+    const storage = makeStorage();
+    const { doc, root } = mountWithProjects({ storage });
+    doc.getElementById('v6GroupPill-1').dispatch('click');
+    assert.doesNotMatch(root.innerHTML, /TC-Lane Fleet/);
+    assert.match(root.innerHTML, /id="v6GroupPill-1"[^>]*aria-pressed="true"/);
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['medusa']);
+    doc.getElementById('v6GroupPill-0').dispatch('click');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['tc-lane']);
+    doc.getElementById('v6GroupPill-0').dispatch('click');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), []);
+    assert.match(root.innerHTML, /Medusa Fleet/);
+  });
+
+  it('Multi mode: pills add to and remove from the selection, and the mode is remembered', () => {
+    const storage = makeStorage();
+    const { doc, root } = mountWithProjects({ storage });
+    doc.getElementById('v6FilterMulti').dispatch('click');
+    assert.equal(storage.data.tc_v6_filter_multi_mode, 'true');
+    assert.match(root.innerHTML, /id="v6FilterMulti"[^>]*aria-pressed="true"/);
+    doc.getElementById('v6GroupPill-0').dispatch('click');
+    doc.getElementById('v6GroupPill-1').dispatch('click');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['tc-lane', 'medusa']);
+    doc.getElementById('v6GroupPill-0').dispatch('click');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['medusa']);
+  });
+
+  it('a Ctrl/Cmd/Shift-click adds to the selection even in single mode', () => {
+    const { shell, root } = mountWithProjects();
+    shell.selectGroup('tc-lane', false);
+    shell.selectGroup('medusa', true);
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+    assert.match(root.innerHTML, /Medusa Fleet/);
+    assert.match(root.innerHTML, /id="v6FilterAll"[^>]*aria-pressed="false"/);
+  });
+
+  it('All clears the selection', () => {
+    const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) });
+    const { doc, root } = mountWithProjects({ storage });
+    assert.doesNotMatch(root.innerHTML, /TC-Lane Fleet/, 'a remembered selection is restored on mount');
+    doc.getElementById('v6FilterAll').dispatch('click');
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), []);
+  });
+
+  it('says so when nothing matches, and fold toggles follow the filtered tree', () => {
+    const { doc, root } = mountWithProjects();
+    const box = doc.getElementById('v6FilterSearch');
+    box.value = 'medusa';
+    box.dispatch('input');
+    assert.match(root.innerHTML, /id="v6TreeToggle-p0"[^>]*data-node-id="p:medusa"/, 'positional ids follow the filtered tree');
+    box.value = 'zzz-nothing';
+    box.dispatch('input');
+    assert.match(root.innerHTML, /No projects match these filters\./);
+  });
+
+  it('escapes a hostile engine id and project name in the controls', () => {
+    const { shell, root } = mountShell({ tree: [{ id: 'x', displayName: '<i>x</i>', fleets: [] }] });
+    shell.setProjects([{ id: 1, name: 'x', engine: { id: '"><script>' } }]);
+    assert.doesNotMatch(root.innerHTML, /<script>|<i>x<\/i>/);
+  });
+});
+
+describe('tcV6CreateLiveController hands the shell its project rows (#3046)', () => {
+  it('passes the loaded rows to setProjects, so the engine filter and its options have data', async () => {
+    const G = loadV6Shell();
+    const rows = [{ id: 11, name: 'TC-Lane-A', engine: { id: 'claude' } }, { id: 12, name: 'TC-Lane-PM', engine: { id: 'codex' } }];
+    const api = async (url) => (url === '/api/projects' ? { projects: rows } : null);
+    const seen = [];
+    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setDetail() {},
+      setProjects(r) { seen.push(plain(r)); } };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null });
+    await live.handleRoute({ view: 'settings', settingsPath: '' });
+    assert.deepEqual(seen, [rows]);
+  });
+
+  it('a shell without setProjects (an older caller) is not broken by it', async () => {
+    const G = loadV6Shell();
+    const api = async (url) => (url === '/api/projects' ? { projects: [{ id: 1, name: 'a' }] } : null);
+    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setDetail() {} };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null });
+    await live.handleRoute({ view: 'settings', settingsPath: '' });
   });
 });

@@ -3966,6 +3966,16 @@ html[data-theme="light"] .tc-bg-watermark img {
 #v6ViewToggleBtn.is-active {
   border-color: #56d364;
 }
+/* #3046: the switcher lives in the page header, styled to stand out from
+   the panel toggles beside it. */
+.v6-view-toggle {
+  border: 1px solid #56d364;
+  color: #56d364;
+  font-weight: 600;
+}
+.v6-view-toggle.is-active {
+  background: var(--accent-bg, rgba(86, 211, 100, 0.12));
+}
 .v6-shell-header {
   display: flex;
   flex-wrap: wrap;
@@ -4109,4 +4119,43 @@ html[data-theme="light"] .tc-bg-watermark img {
 .v6-tree-toggle:hover,
 .v6-tree-toggle:focus-visible {
   background: var(--accent-bg, rgba(86, 211, 100, 0.12));
+}
+/* #3046: the sidebar's own filters. */
+.v6-sidebar-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.v6-filter-search,
+.v6-filter-engine {
+  width: 100%;
+  box-sizing: border-box;
+}
+.v6-filter-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.v6-filter-pill {
+  padding: 2px 8px;
+  border: 1px solid var(--border-color, #2a2f36);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 0.85em;
+  cursor: pointer;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.v6-filter-pill.is-active {
+  border-color: #56d364;
+  background: var(--accent-bg, rgba(86, 211, 100, 0.12));
+}
+.v6-filter-multi {
+  border-style: dashed;
+}
+.v6-sidebar-empty {
+  opacity: 0.7;
+  font-size: 0.9em;
 }

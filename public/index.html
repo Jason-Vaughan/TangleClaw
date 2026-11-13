@@ -70,6 +70,11 @@
       <span class="dash-stat"><span class="dash-stat-label">UP</span><span class="dash-stat-up" id="statUptime">--</span></span>
     </div>
     <div class="dash-actions">
+      <!-- #3022/#3046: one-click switch between the v6 Fleet Shell and Classic
+           View. It sits in the header, not the Classic toolbar, because the
+           toolbar hides while the Fleet View shows; ui.js wires the click and
+           keeps the label in step with the route. -->
+      <button type="button" class="dash-action v6-view-toggle" id="v6ViewToggleBtn" aria-label="Switch between Fleet Shell (v6) and Classic View">Fleet Shell (v6)</button>
       <button class="dash-action" id="masterToggle" aria-expanded="false" aria-controls="masterPanel"
               title="Project Master — the global assistant above all projects; what it may write is the access level on its control bar">
         &#129504; Master <span class="master-dot" id="masterDot" aria-hidden="true"></span>
@@ -451,9 +456,6 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
       <div class="tag-row" id="tagRow" role="toolbar" aria-label="Filter by tag"></div>
     </div>
     <div class="toolbar-right">
-      <!-- #3022: one-click switch between the v6 Fleet Shell and Classic View;
-           ui.js wires the click and keeps the label in step with the route. -->
-      <button type="button" class="btn btn-secondary" id="v6ViewToggleBtn" aria-label="Switch between Fleet Shell (v6) and Classic View">Fleet Shell (v6)</button>
       <button class="btn btn-primary" id="newBtn" aria-label="Create new project">+ New</button>
     </div>
   </nav>
