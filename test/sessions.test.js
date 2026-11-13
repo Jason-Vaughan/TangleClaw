@@ -484,6 +484,111 @@ describe('sessions', () => {
         });
       });
 
+      // #3053 — a Medusa checkout is often a Medusa PM session's workspace and
+      // registered as "Medusa-PM", so every launch on such a host printed the
+      // contract as UNAVAILABLE. "Medusa-PM" is now a second candidate name,
+      // vetted exactly as "Medusa" is: the name finds it, the contract
+      // corroborates it.
+      describe('#3053: a project named "Medusa-PM" is the second candidate', () => {
+        const created = [];
+
+        /**
+         * Register a project under `name`, optionally holding a contract doc.
+         * @param {string} name - Project name to register
+         * @param {string|null} contract - Contract text, or null for none
+         * @param {string} [dirName] - Directory name, when it must differ from `name`
+         * @returns {string} The project's directory
+         */
+        function registerCheckout(name, contract, dirName = name) {
+          const dir = path.join(projectsDir, dirName);
+          fs.mkdirSync(dir, { recursive: true });
+          if (contract !== null) {
+            fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
+            fs.writeFileSync(path.join(dir, medusa.CONTRACT_RELATIVE_PATH), contract);
+          }
+          created.push(store.projects.create({ name, path: dir, engine: 'claude' }));
+          return dir;
+        }
+
+        /** @returns {string} The prime prompt for the opted-in fixture project. */
+        function prime() {
+          const project = store.projects.getByName('prime-test');
+          const engine = store.engines.get('claude');
+          return sessions.generatePrimePrompt(project, engine, { medusaWorkspaceId: 'prime-test-cafe0123' });
+        }
+
+        beforeEach(() => {
+          delete process.env.MEDUSA_CONTRACT_PATH;
+          store.projectConfig.save(projDir, { medusaEnabled: true });
+        });
+
+        afterEach(() => {
+          while (created.length) {
+            const p = created.pop();
+            store.projects.delete(p.id);
+            fs.rmSync(p.path, { recursive: true, force: true });
+          }
+        });
+
+        it('resolves the contract from a "Medusa-PM" checkout when no "Medusa" is registered', () => {
+          const dir = registerCheckout('Medusa-PM', '# PM Checkout Contract\nRegister then drain.\n');
+          const prompt = prime();
+          assert.ok(prompt.includes('# PM Checkout Contract'), 'the contract is injected');
+          assert.equal(prompt.includes('consumer contract — UNAVAILABLE'), false);
+          assert.ok(prompt.includes(dir), 'the resolved source is named');
+        });
+
+        it('matches the name case-insensitively, like "Medusa"', () => {
+          registerCheckout('MEDUSA-pm', '# Mixed Case Contract\n');
+          assert.ok(prime().includes('# Mixed Case Contract'));
+        });
+
+        it('falls back to "Medusa-PM" when a "Medusa" is registered but carries no contract', () => {
+          // Its own directory name: '.../Medusa' would be a string prefix of
+          // '.../Medusa-PM' and make the not-named assertion vacuous.
+          const unrelated = registerCheckout('Medusa', null, 'unrelated-medusa');
+          const pm = registerCheckout('Medusa-PM', '# PM Checkout Contract\n');
+          const prompt = prime();
+          assert.ok(prompt.includes('# PM Checkout Contract'), 'the corroborated second candidate wins');
+          assert.ok(prompt.includes(pm));
+          assert.equal(prompt.includes(unrelated), false, 'the uncorroborated "Medusa" is still never named');
+        });
+
+        it('prefers a corroborated "Medusa" over a corroborated "Medusa-PM"', () => {
+          registerCheckout('Medusa', '# Medusa Contract\n');
+          registerCheckout('Medusa-PM', '# PM Checkout Contract\n');
+          const prompt = prime();
+          assert.ok(prompt.includes('# Medusa Contract'));
+          assert.equal(prompt.includes('# PM Checkout Contract'), false, '"Medusa" is tried first');
+        });
+
+        it('gives "Medusa-PM" no free pass: without a contract it is not a checkout, and is never named', () => {
+          const dir = registerCheckout('Medusa-PM', '  \n');
+          const prompt = prime();
+          assert.ok(prompt.includes('consumer contract — UNAVAILABLE'), 'absence is still surfaced');
+          assert.ok(prompt.includes('no local Medusa checkout identified'), 'reports no checkout, not a broken one');
+          assert.equal(prompt.includes(dir), false, 'an uncorroborated candidate must not be named');
+        });
+
+        it('matches the exact name only: a project merely starting with "Medusa-PM" is not a candidate', () => {
+          const dir = registerCheckout('Medusa-PM-old', '# Stale Contract\n');
+          const prompt = prime();
+          assert.equal(prompt.includes('# Stale Contract'), false);
+          assert.equal(prompt.includes(dir), false);
+          assert.ok(prompt.includes('consumer contract — UNAVAILABLE'));
+        });
+
+        it('lets the env override win over a corroborated "Medusa-PM"', () => {
+          registerCheckout('Medusa-PM', '# PM Checkout Contract\n');
+          const envDoc = path.join(projDir, 'fixture-contract.md');
+          fs.writeFileSync(envDoc, '# Override Contract\n');
+          process.env.MEDUSA_CONTRACT_PATH = envDoc;
+          const prompt = prime();
+          assert.ok(prompt.includes('# Override Contract'));
+          assert.equal(prompt.includes('# PM Checkout Contract'), false);
+        });
+      });
+
       it('tells the session participation is event-driven, not a boot task (#557)', () => {
         const contractFile = path.join(projDir, 'fixture-contract.md');
         fs.writeFileSync(contractFile, '# Fixture Consumer Contract\nRegister then drain.\n');
