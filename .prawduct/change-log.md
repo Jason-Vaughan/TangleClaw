@@ -41,6 +41,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-14 — v6.2.8 release cut (Milestone #75)
+
+<!-- prawduct: type=internal | scope=v628-release -->
+
+- Compiled 3 accepted `changelog.d/` fragments (#3066, #3071, #3073) from PR #3074 into `CHANGELOG.md` section `[6.2.8]` (Fixed, patch tier) using the wrap's own compile/splice/promote functions. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap state. Folded in PR #3074's change-log entry below, verbatim. Builder Rule #271 cl.3 kept it out of the feature PR.
+- Tier disclosure (Ruling A731): #3066 (history search and Recents) and #3071 (rename from the chat) are new features. The fragments were first chartered `.added`, which `lib/wrap-steps/version-bump.js` would have computed as 6.3.0. To keep the v6.2.x patch train, PM and Arc chose `.fixed` (charter A730 v1.1), so this release is the patch 6.2.8.
+- #3073 (the Open Hood link) was folded into W1-A by charter A730 v1.2 / Ruling A732, which grew this release's envelope to 12 paths. W1-A's real-browser check was deferred to the Operator walkthrough, as the entry below says.
+
+## 2026-11-14 — v6 chat: rename a member, history search with Recents, Open Hood path (#3071, #3066, #3073)
+
+<!-- prawduct: type=fix | scope=v628-w1a -->
+
+Car V628-W1-A, Chunks 01-03.
+
+- #3071: ✎ in the chat identity strip opens an inline rename form → PATCH /api/projects/:name; disabled while a session is live; the form stays open with the typed name on any refusal; the server's orphan-risk refusal (no code; text pinned by workspace-rename-check's renameWarningFor) is shown with Rename anyway → confirmOrphanRisk: true; success refreshes rows, tree, delegate picker and header.
+- #3066: the sidebar 🕓 (#3068's reserved slot) and a 🕓 in the chat actions open a history panel: member recents, summary or transcript search for the member or the whole fleet (one search per member, merged best match first, failures named), a read-only snapshot and Reference in chat. Secrets-flagged transcripts are marked and never quoted; a generation counter drops overtaken answers; the panel follows the chat across members and renames but not across a refresh.
+- #3073: Open Hood links to /session/<name>; session.js#sessionProjectName also reads ?project= on /session.html.
+- Fragments are .fixed per Ruling A731 (a 6.2.8 patch).
+- Tests restated with the requirement: six Open Hood URL assertions, V627's disabled future-slot assertion, and one in-branch rename test.
+- Browser check owed: the connected Chrome cannot reach this host's loopback.
+
 ## 2026-11-14 — v6.2.7 release cut (Milestone #74)
 
 <!-- prawduct: type=internal | scope=v627-release -->

@@ -4,6 +4,13 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.2.8] - 2026-11-14
+
+### Fixed
+- The v6 Fleet sidebar's `🕓` button, and a `🕓` among the chat's own buttons, now open a chat history and recents panel (#3066). With no search it lists the chat member's recent saved sessions, newest first; a search looks through wrap summaries or full transcripts, either for that member or for every member of its fleet at once, and names the member and session of each match, best match first (a member whose history cannot be read is named rather than hiding the rest). Opening a result shows that session read-only — its wrap summary and, for a search, the transcript lines that match — with a **Reference in chat** button that adds `[member session #id · date] snippet` to the message you are writing. The panel follows the chat when you switch to another member. A transcript flagged for possible secrets is marked, and its lines are never quoted into a chat (the reference falls back to the wrap summary).
+- A fleet member can now be renamed from the v6 chat (#3071): a `✎` button in the chat header opens an inline form (Save, Cancel or Escape), and the new name goes through the same project rename the Classic settings use. The header, the sidebar tree and the delegate picker show the new name at once, and any warning the rename raises (for example about scripts that name the old folder) is shown with it. A project with a live session cannot be renamed — the button is disabled and its tip says to stop the session first — anything else the server refuses, such as a name already taken, is shown with the server's own reason, and a refused rename keeps the name you typed. A member whose old folder holds Claude or Codex engine state that the rename would leave behind gets the server's warning with a **Rename anyway** button.
+- The v6 chat's `>_` Open Hood (Live Terminal) link now opens the terminal page (#3073). It pointed at `/session.html?project=<name>`, which the session page read as a project called "session.html", so the page never loaded; it now uses `/session/<name>`, the path the server serves. The session page also accepts the older `/session.html?project=<name>` form, so bookmarked links work too.
+
 ## [6.2.7] - 2026-11-14
 
 ### Fixed
