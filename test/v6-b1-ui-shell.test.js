@@ -3628,12 +3628,28 @@ describe('higher-contrast outlines and surfaces in the chat window (#3068)', () 
     assert.match(body('[data-theme="light"] .v6-shell-root'), /--v6-outline: #8c959f;/);
   });
 
-  it('gives the chat header, events, under-the-hood drawer and composer 1.5px outlines and a surface fill', () => {
-    for (const sel of ['.v6-chat-header', '.v6-conversation-event', '.v6-chat-under-hood', '.v6-chat-input']) {
+  it('gives the chat header, events and under-the-hood drawer 1.5px outlines and a surface fill', () => {
+    for (const sel of ['.v6-chat-header', '.v6-conversation-event', '.v6-chat-under-hood']) {
       assert.match(body(sel), /border: 1\.5px solid var\(--v6-outline, #3d444d\);/, sel);
       assert.match(body(sel), /background: var\(--v6-surface, #0d0d0d\);/, sel);
     }
     assert.match(body('.v6-shell-sidebar'), /border-right: 1\.5px solid var\(--v6-outline, #3d444d\);/);
+  });
+
+  it('gives the composer a 2px outline and a green focus ring (PRR-B R1 B2)', () => {
+    assert.match(body('.v6-chat-input'), /border: 2px solid var\(--v6-outline, #3d444d\);/);
+    assert.match(body('.v6-chat-input'), /background: var\(--v6-surface, #0d0d0d\);/);
+    assert.match(css, /\.v6-chat-input:focus,\s*\.v6-chat-input:focus-visible \{\s*outline: none;\s*border-color: #56d364;\s*box-shadow: 0 0 0 2px rgba\(86, 211, 100, 0\.35\);\s*\}/);
+  });
+
+  it('gives user and assistant turns distinct left accent bars (PRR-B R1 B1)', () => {
+    assert.match(body('.v6-conversation-event.is-assistant'), /border-left: 3px solid #56d364;/);
+    assert.match(body('.v6-conversation-event.is-user'), /border-left: 3px solid #58a6ff;/);
+    const G = loadV6Shell();
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 1,
+      events: [{ seq: 1, role: 'user', content: 'hi' }, { seq: 2, role: 'assistant', content: 'hello' }], chat: { status: 'active', members: [] } });
+    assert.match(html, /class="v6-conversation-event is-user"/, 'the class the user bar keys on is rendered');
+    assert.match(html, /class="v6-conversation-event is-assistant"/);
   });
 });
 

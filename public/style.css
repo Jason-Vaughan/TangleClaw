@@ -4398,8 +4398,13 @@ html[data-theme="light"] .tc-bg-watermark img {
 .v6-conversation-event.is-live {
   border-style: dashed;
 }
+/* #3068: each turn has its own left accent — green for the agent, blue for
+   the operator — so a stream of turns reads at a glance. */
 .v6-conversation-event.is-assistant {
   border-left: 3px solid #56d364;
+}
+.v6-conversation-event.is-user {
+  border-left: 3px solid #58a6ff;
 }
 .v6-chat-question.is-asking {
   padding: 8px 10px;
@@ -4540,9 +4545,16 @@ html[data-theme="light"] .tc-bg-watermark img {
   font: inherit;
   padding: 8px;
   border-radius: 4px;
-  border: 1.5px solid var(--v6-outline, #3d444d);
+  border: 2px solid var(--v6-outline, #3d444d);
   background: var(--v6-surface, #0d0d0d);
   color: inherit;
+}
+/* #3068: the composer shows clearly when it has focus. */
+.v6-chat-input:focus,
+.v6-chat-input:focus-visible {
+  outline: none;
+  border-color: #56d364;
+  box-shadow: 0 0 0 2px rgba(86, 211, 100, 0.35);
 }
 .v6-chat-send-status {
   margin: 0;
