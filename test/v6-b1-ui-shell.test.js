@@ -3027,9 +3027,19 @@ describe('tcV6ExtractLiveTurns keeps indented replies after a tool line (#3057)'
     assert.deepEqual(afterBlank.turns[1], { role: 'assistant', text: 'Listed.' });
   });
 
-  it('a 4+-space line after a blank is no longer tool output (the blank ends the tool block)', () => {
-    const out = run(['> check', '● Ran npm test', '', '    indented after the blank'], 'antigravity');
-    assert.deepEqual(out.turns[1], { role: 'assistant', text: 'indented after the blank' });
+  it('tool output with a blank line inside it stays out of the chat; the next 2-space line is the reply (cumulative review)', () => {
+    const claude = run(['> status?', '⏺ Bash(git status)', '  ⎿  On branch main', '', '     nothing to commit, working tree clean',
+      '', '  The tree is clean.'], 'claude');
+    assert.deepEqual(claude.turns, [{ role: 'user', text: 'status?' }, { role: 'assistant', text: 'The tree is clean.' }]);
+    const codex = run(['› test', '• Ran npm test', '  └ 12 passing', '', '    0 failing', '  All green.'], 'codex');
+    assert.deepEqual(codex.turns, [{ role: 'user', text: 'test' }, { role: 'assistant', text: 'All green.' }]);
+    const ag = run(['❯ go', '● Ran npm test', '', '    deeper output after the blank', '  Done.'], 'antigravity');
+    assert.deepEqual(ag.turns, [{ role: 'user', text: 'go' }, { role: 'assistant', text: 'Done.' }]);
+  });
+
+  it('a blank line between reply paragraphs keeps both in one turn', () => {
+    const out = run(['> go', '⏺ First paragraph.', '', '  Second paragraph.'], 'claude');
+    assert.deepEqual(out.turns[1], { role: 'assistant', text: 'First paragraph.\nSecond paragraph.' });
   });
 });
 
@@ -3242,5 +3252,15 @@ describe('the busy clock in the mounted shell and live controller (#3057)', () =
     await silent.polls[silent.polls.length - 1]();
     assert.equal(silent.activity().innerHTML, '', 'a fourth read with no engine activity ends it');
     assert.equal(silent.ticks.size, 0);
+  });
+});
+
+describe('the busy pill keeps its time visible on a phone (#3057 browser check)', () => {
+  it('is a flex row whose label truncates while the dots and time keep their width', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(css, /\.v6-chat-activity\.is-busy \{[^}]*display: inline-flex;/);
+    assert.match(css, /\.v6-chat-activity-label \{\s*min-width: 0;\s*overflow: hidden;\s*text-overflow: ellipsis;\s*white-space: nowrap;\s*\}/);
+    assert.match(css, /\.v6-chat-activity-dots,\s*\.v6-chat-activity-timer \{\s*flex: none;\s*\}/);
+    assert.match(css, /\.v6-chat-git-badge\.is-dirty \{ border-color: #d4a72c; \}/, 'amber border only, readable text in both themes');
   });
 });

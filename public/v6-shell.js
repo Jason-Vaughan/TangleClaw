@@ -839,9 +839,9 @@
       // eslint-disable-next-line no-control-regex
       const line = raw.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\s+$/, '');
       const text = line.trim();
-      // A blank line ends a tool's output (#3057): what follows it is not
-      // indented under the tool any more.
-      if (!text) { block = null; return; }
+      // A blank line decides nothing: tool output can hold blank lines, and
+      // the next line's indent says whether it is still output (#3057).
+      if (!text) return;
       const indented = /^\s/.test(line);
       const prompt = LIVE_PROMPT.exec(text);
       if (prompt && !indented) {
