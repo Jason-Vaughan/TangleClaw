@@ -3274,3 +3274,37 @@ describe('Open Hood matches the chat\'s compact buttons (#3057, PM)', () => {
     assert.match(css, /\.v6-chat-actions \.v6-open-hood \{\s*display: inline-flex;\s*margin-bottom: 0;\s*text-decoration: none;\s*\}/);
   });
 });
+
+describe('pane and repo text reaching the chat header and busy line is escaped (#3057, TC-Lane-C R-Gate B1/B2)', () => {
+  const G = loadV6Shell();
+  const hostile = '<img src=x onerror=alert(1)>';
+
+  it('B1: a busy label taken from the pane renders escaped, on first render and through setLive', () => {
+    const live = plain(G.tcV6ExtractLiveTurns(['> go', `✶ ${hostile}… (esc to interrupt)`], 'claude', []));
+    assert.equal(live.activity, `${hostile}…`, 'the extractor hands the label on as raw pane text');
+    const chatView = (l) => ({ project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [], chat: { mode: 'direct', status: 'active', members: [], live: l } });
+    const { shell, root, doc } = mountShell({ tree: TWO_GROUP_TREE, storage: null, setInterval: () => 1, clearInterval: () => {},
+      detail: { kind: 'conversation', view: chatView(null) } });
+    shell.setDetail({ kind: 'conversation', view: chatView(live) });
+    const first = root.innerHTML.slice(root.innerHTML.indexOf('id="v6ChatActivity"'), root.innerHTML.indexOf('id="v6ChatForm"'));
+    assert.match(first, /class="v6-chat-activity-label">&lt;img src=x onerror=alert\(1\)&gt;</);
+    assert.doesNotMatch(first, /<img/);
+    shell.setLive({ peek: null, live: Object.assign({}, live, { activity: `${hostile} again` }) });
+    const polled = doc.getElementById('v6ChatActivity').innerHTML;
+    assert.match(polled, /class="v6-chat-activity-label">&lt;img src=x onerror=alert\(1\)&gt; again</);
+    assert.doesNotMatch(polled, /<img/);
+  });
+
+  it('B2: a version or latest tag from the repo renders escaped in its badge', () => {
+    const header = (project) => {
+      const html = G.tcV6ConversationViewMarkup({ project: Object.assign({ id: 12, name: 'P' }, project), sessionId: 1, events: [], chat: { status: 'active', members: [] } });
+      return html.slice(html.indexOf('class="v6-chat-talking-to"'), html.indexOf('class="v6-chat-actions"'));
+    };
+    const fromVersion = header({ version: '<b>x</b>' });
+    assert.match(fromVersion, /v6-chat-version-badge[^>]*>&lt;b&gt;x&lt;\/b&gt;</);
+    assert.doesNotMatch(fromVersion, /<b>x/);
+    const fromTag = header({ version: null, git: { latestTag: `v1${hostile}` } });
+    assert.match(fromTag, /v6-chat-version-badge[^>]*>v1&lt;img src=x onerror=alert\(1\)&gt;</);
+    assert.doesNotMatch(fromTag, /<img/);
+  });
+});
