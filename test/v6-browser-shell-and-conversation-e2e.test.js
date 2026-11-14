@@ -509,6 +509,26 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.match(header, /id="v6ChatSettings"[^>]*title="Project Settings" aria-label="Project Settings"/);
     });
 
+    it('a chat shows the server\'s real telemetry inside its one header row, each chip with a tip (#3063)', async () => {
+      const pid = seedProject('e2e-onerow');
+      store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(pid);
+      const { root, settle, calls } = mountShell(`#/resources/${pid}/conversation`);
+      await settle();
+      assert.ok(calls.some((c) => /\/api\/v6\/projects\/[^/]+\/telemetry\?scope=global$/.test(c)), JSON.stringify(calls));
+      const html = root.innerHTML;
+      assert.equal((html.match(/class="v6-telemetry-header"/g) || []).length, 1, 'one bar');
+      const header = html.slice(html.indexOf('<header class="v6-chat-header">'), html.indexOf('</header>'));
+      assert.ok(header.indexOf('class="v6-chat-identity"') < header.indexOf('class="v6-telemetry-header"'));
+      assert.ok(header.indexOf('class="v6-telemetry-header"') < header.indexOf('class="v6-chat-actions"'));
+      const version = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'version.json'), 'utf8')).version;
+      assert.match(header, /<span class="v6-telemetry-chip is-observed" title="Active sessions: \d+ — live sessions on this TangleClaw server \(observed\)">/);
+      assert.match(header, new RegExp(`<span class="v6-telemetry-chip is-observed" title="Version: ${version.replace(/\./g, '\\.')} — the TangleClaw version this server runs \\(observed\\)">`));
+      assert.match(header, /<span class="v6-telemetry-chip is-unavailable" title="Tokens: no reading — model tokens used; not collected yet \(unavailable\)">/);
+      assert.ok(root.classList.contains('v6-shell-root--chat'), 'so the unavailable chips are hidden by the chat-scoped rule');
+    });
+
     it('the real B2 route accepts the event the chat records, and the next seq counts deleted events (#3047)', async () => {
       const projectId = seedProject('e2e-chat-record');
       const sessionId = seedSession(projectId);

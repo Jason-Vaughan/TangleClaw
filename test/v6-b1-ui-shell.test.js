@@ -3409,7 +3409,8 @@ describe('the chat header is one compact row of identity and icons (#3059)', () 
 
   it('the delegate select keeps its accessible name, gains a tooltip, and its visible label text is gone', () => {
     const h = header(G.tcV6ConversationViewMarkup(view()));
-    assert.match(h, /<label class="v6-chat-delegate-label"><span class="sr-only">Delegate<\/span>\s*<select id="v6ChatDelegate"[^>]*aria-label="Choose who this project's chat talks to" title="Switch Designated Project Delegate">/);
+    // Restated by #3063: the tooltip now leads with what the select does, then the #3059 wording.
+    assert.match(h, /<label class="v6-chat-delegate-label"><span class="sr-only">Delegate<\/span>\s*<select id="v6ChatDelegate"[^>]*aria-label="Choose who this project's chat talks to" title="Choose who this project's chat talks to — Switch Designated Project Delegate">/);
   });
 
   it('in a chat the route heading and the group heading are hidden from sight but kept for screen readers', () => {
@@ -3437,5 +3438,85 @@ describe('the delegate chip escapes the delegate name in its title and accessibl
     assert.match(chip, /aria-label="Switch to Delegate: &lt;b&gt;x&lt;\/b&gt;&quot;"/);
     assert.match(chip, /<span aria-hidden="true">⇄<\/span> &lt;b&gt;x&lt;\/b&gt;&quot;<\/a>$/);
     assert.doesNotMatch(chip, /<b>x/);
+  });
+});
+
+// ── #3063 (Car V626-W1-A): telemetry and the chat header share one condensed row ──
+
+describe('telemetry chips say what they measure (#3063)', () => {
+  const G = loadV6Shell();
+  const bar = { scope: 'global', metrics: {
+    activeSessions: { value: 23, confidence: 'observed' },
+    health: { value: 'healthy', confidence: 'estimated' },
+    versionDrift: { value: '6.2.5', confidence: 'observed' }
+  } };
+  const titles = (html) => [...html.matchAll(/<span class="v6-telemetry-chip[^"]*" title="([^"]*)">/g)].map((m) => m[1]);
+
+  it('every chip has a tip with its value, its meaning and how sure the reading is', () => {
+    assert.deepEqual(titles(G.tcV6TelemetryHeaderMarkup(bar)), [
+      'Tokens: no reading — model tokens used; not collected yet (unavailable)',
+      'Quota window: no reading — engine usage-quota window; not collected yet (unavailable)',
+      'Context: no reading — how full a session&#39;s context window is; not collected yet (unavailable)',
+      'Active sessions: 23 — live sessions on this TangleClaw server (observed)',
+      'Health: healthy — server health; estimated only from this server answering (estimated)',
+      'Medusa: no reading — Medusa messages waiting to be read; not collected yet (unavailable)',
+      'Version: 6.2.5 — the TangleClaw version this server runs (observed)'
+    ]);
+  });
+
+  it('a hostile metric value is escaped in the tip and in the chip', () => {
+    const html = G.tcV6TelemetryHeaderMarkup({ scope: 'global', metrics: { versionDrift: { value: '"><img src=x onerror=alert(1)>', confidence: 'observed' } } });
+    assert.match(html, /title="Version: &quot;&gt;&lt;img src=x onerror=alert\(1\)&gt; — the TangleClaw version this server runs \(observed\)"/);
+    assert.doesNotMatch(html, /<img/);
+  });
+
+  it('a chip with no reading stays in the page (B4 keeps every metric)', () => {
+    const html = G.tcV6TelemetryHeaderMarkup(bar);
+    assert.equal((html.match(/class="v6-telemetry-chip /g) || []).length, 7);
+    assert.equal((html.match(/v6-telemetry-chip is-unavailable/g) || []).length, 4);
+  });
+});
+
+describe('in a chat the telemetry bar sits inside the chat header row (#3063)', () => {
+  const G = loadV6Shell();
+  const bar = { scope: 'global', metrics: { activeSessions: { value: 23, confidence: 'observed' } } };
+  const chatView = { project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [], chat: { mode: 'direct', status: 'active', members: [] } };
+
+  it('the bar renders once, inside .v6-chat-header between the identity strip and the actions', () => {
+    const { root } = mountShell({ tree: TWO_GROUP_TREE, storage: null, telemetry: bar, detail: { kind: 'conversation', view: chatView } });
+    const html = root.innerHTML;
+    assert.equal((html.match(/class="v6-telemetry-header"/g) || []).length, 1, 'one bar, not two');
+    const header = html.slice(html.indexOf('<header class="v6-chat-header">'), html.indexOf('</header>'));
+    const identity = header.indexOf('class="v6-chat-identity"');
+    const telemetry = header.indexOf('class="v6-telemetry-header"');
+    const actions = header.indexOf('class="v6-chat-actions"');
+    assert.ok(identity !== -1 && identity < telemetry && telemetry < actions, 'identity, then telemetry, then actions');
+    assert.ok(html.indexOf('class="v6-telemetry-header"') > html.indexOf('<main id="v6ShellMain"'), 'not in the top grid row');
+  });
+
+  it('with no bar yet, the chat row carries the unavailable placeholder rather than a second row', () => {
+    const { root } = mountShell({ tree: TWO_GROUP_TREE, storage: null, telemetry: null, detail: { kind: 'conversation', view: chatView } });
+    const header = root.innerHTML.slice(root.innerHTML.indexOf('<header class="v6-chat-header">'), root.innerHTML.indexOf('</header>'));
+    assert.match(header, /class="v6-telemetry-header is-unavailable"/);
+    assert.equal((root.innerHTML.match(/v6-telemetry-header/g) || []).length, 1);
+  });
+
+  it('outside a chat the bar returns to its own row above the main view', () => {
+    const { root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null, telemetry: bar, detail: { kind: 'conversation', view: chatView } });
+    shell.setDetail(null);
+    const html = root.innerHTML;
+    assert.equal((html.match(/class="v6-telemetry-header"/g) || []).length, 1);
+    assert.ok(html.indexOf('class="v6-telemetry-header"') < html.indexOf('<main id="v6ShellMain"'));
+  });
+
+  it('a conversation rendered without a bar (the pure markup call) draws none', () => {
+    assert.doesNotMatch(G.tcV6ConversationViewMarkup(chatView), /v6-telemetry-header/);
+  });
+
+  it('in a chat the chips are one-line pills and a chip with no reading is hidden', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(css, /\.v6-shell-root--chat \.v6-telemetry-chip \{\s*flex-direction: row;\s*align-items: center;\s*gap: 4px;\s*padding: 1px 8px;\s*border-radius: 999px;\s*font-size: 0\.8em;/);
+    assert.match(css, /\.v6-shell-root--chat \.v6-telemetry-chip\.is-unavailable \{\s*display: none;\s*\}/);
+    assert.match(css, /\.v6-shell-root--chat \.v6-telemetry-header \{\s*margin-bottom: 0;/);
   });
 });

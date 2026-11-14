@@ -514,6 +514,22 @@
   });
 
   /**
+   * What each telemetry metric means, for its chip's hover tip (#3063). Only
+   * active sessions, health and version are supplied by the server today
+   * (`server.js#_v6LiveTelemetryMetrics`); the rest have no collector yet,
+   * and say so rather than describe a reading nobody takes.
+   */
+  const TELEMETRY_METRIC_HELP = Object.freeze({
+    tokens: 'model tokens used; not collected yet',
+    quotaWindow: 'engine usage-quota window; not collected yet',
+    contextUtilization: 'how full a session\'s context window is; not collected yet',
+    activeSessions: 'live sessions on this TangleClaw server',
+    health: 'server health; estimated only from this server answering',
+    pendingMedusaMessages: 'Medusa messages waiting to be read; not collected yet',
+    versionDrift: 'the TangleClaw version this server runs'
+  });
+
+  /**
    * Render a B4 telemetry bar snapshot (#2981 B4 render hook) — the exact
    * shape `lib/v6/b4-telemetry-header.js#assembleTelemetryBar` returns, so
    * a future BRIDGE-2b route can feed this directly with no reshaping.
@@ -528,7 +544,9 @@
       const metric = bar.metrics[key] || { value: null, confidence: 'unavailable' };
       const label = TELEMETRY_METRIC_LABELS[key];
       const valueText = metric.value == null ? '—' : escapeHtml(String(metric.value));
-      return `<span class="v6-telemetry-chip is-${escapeHtml(metric.confidence)}" title="${escapeHtml(label)}">
+      // #3063: the tip says what the metric is and how sure the reading is.
+      const tip = `${label}: ${metric.value == null ? 'no reading' : String(metric.value)} — ${TELEMETRY_METRIC_HELP[key]} (${metric.confidence})`;
+      return `<span class="v6-telemetry-chip is-${escapeHtml(metric.confidence)}" title="${escapeHtml(tip)}">
         <span class="v6-telemetry-label">${escapeHtml(label)}</span>
         <span class="v6-telemetry-value">${valueText}</span>
       </span>`;
@@ -631,7 +649,8 @@
    * @param {{project: {id?: *, name?: string}|null, sessionId?: number|null,
    *   events?: Array<{seq?: number, role?: string, content?: string, redacted?: number}>|null,
    *   error?: string|null, chat?: object}} view - `chat.sidebarCollapsed` adds a Show Fleet
-   *   button and `chat.activityElapsed` is the busy line's time (#3057).
+   *   button and `chat.activityElapsed` is the busy line's time (#3057); `chat.telemetry`, when
+   *   given (null included), is the telemetry bar drawn inside the header row (#3063).
    * @returns {string} HTML.
    */
   function conversationViewMarkup(view) {
@@ -679,7 +698,7 @@
     const delegatePicker = delegateMode && members.length
       ? `<label class="v6-chat-delegate-label"><span class="sr-only">Delegate</span>
           <select id="v6ChatDelegate" class="filter-input v6-chat-delegate" data-action="change-project-delegate"
-            aria-label="Choose who this project's chat talks to" title="Switch Designated Project Delegate">${members.map((m) => (
+            aria-label="Choose who this project's chat talks to" title="Choose who this project's chat talks to — Switch Designated Project Delegate">${members.map((m) => (
               `<option value="${escapeHtml(m.id)}"${String(m.id) === String(v.project.id) ? ' selected' : ''}>${escapeHtml(m.name)}</option>`
             )).join('')}</select>
         </label>`
@@ -724,6 +743,7 @@
             <span class="v6-chat-mode" aria-hidden="true">${delegateMode ? 'Delegate' : 'Direct'}</span>
             <span class="v6-chat-pill is-${status}">${CHAT_STATUS_LABELS[status]}</span>${chatRepoBadgesMarkup(v.project)}</p>
         </div>
+        ${chat.telemetry !== undefined ? telemetryHeaderMarkup(chat.telemetry) : ''}
         <div class="v6-chat-actions">
           ${startButton}${startFleetButton}${delegatePicker}${toDelegate}
           <a class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood" href="${escapeHtml(hoodHref)}" title="Open Hood (Live Terminal)" aria-label="Open Hood (Live Terminal)"><span aria-hidden="true">&gt;_</span></a>
@@ -1420,8 +1440,10 @@
       const sidebarCollapsed = Boolean(extras && extras.sidebarCollapsed);
       const activityElapsed = (extras && extras.activityElapsed) || '';
       const v = detail.view || {};
+      // #3063: in a chat the telemetry bar shares the chat's header row.
+      const telemetry = extras && 'telemetry' in extras ? extras.telemetry : undefined;
       return conversationViewMarkup(Object.assign({}, v, {
-        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed })
+        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry })
       }));
     }
     if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
@@ -2705,7 +2727,7 @@
             }
           }) : '<p class="v6-sidebar-empty">No projects match these filters.</p>'}
         </nav>
-        ${telemetryHeaderMarkup(telemetry)}
+        ${inChat ? '' : telemetryHeaderMarkup(telemetry)}
         <main id="v6ShellMain" class="v6-shell-view" tabindex="-1" aria-label="${escapeHtml(title)}">
           <div class="v6-shell-header">
             ${sidebarCollapsed ? `<button type="button" id="v6SidebarExpand" class="btn btn-secondary v6-sidebar-expand"
@@ -2715,7 +2737,7 @@
           <div id="v6ShellDetail">${detailMarkup(detail, {
             draft: chatDrafts.get(chatTargetKey()) || '', hoodOpen: chatHoodOpen,
             fleetArmed: fleetArmedKey != null && fleetArmedKey === chatTargetKey(),
-            sidebarCollapsed, activityElapsed
+            sidebarCollapsed, activityElapsed, telemetry
           })}</div>
           <div id="v6ShellWizard"${inChat ? ' hidden' : ''}>${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation"${inChat ? ' hidden' : ''}>${modelAttestationMarkup(attestation)}</div>
