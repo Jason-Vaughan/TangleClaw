@@ -17,6 +17,12 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.2.8 — Chat history search and Recents, renaming a member from the chat, and the Open Hood link fix
+
+- **Chat history and Recents** (#3066) — `public/v6-shell.js`: the sidebar's `🕓` (the slot v6.2.7 reserved) and a `🕓` among the chat's buttons open a history panel: the member's recent sessions, and a search of wrap summaries or transcripts for that member or the whole fleet (one `/api/continuity/:project/search` per member, merged), with a read-only snapshot and "Reference in chat". Transcripts flagged as holding secrets are marked and never quoted.
+- **Rename a member from the chat** (#3071) — a `✎` button in the chat header opens an inline rename form that uses the same `PATCH /api/projects/:name` rename as Classic settings; it is disabled while the member's session is live, and the header, sidebar and delegate picker update at once.
+- **Open Hood link fix** (#3073) — the chat's `>_` link now opens `/session/<name>`; `public/session.js` also accepts `/session.html?project=<name>`.
+
 ## v6.2.7 — A Fleet Shell link on every Classic page, a four-icon sidebar and a higher-contrast chat
 
 - **Fleet Shell link on Classic pages** (#3065) — `public/session.html` (`#sessionV6Link`, pointed at that session's own conversation by `public/session.js#loadProject`) and `public/openclaw-view.html` (`#openclawV6Link`) link into the v6 Fleet Shell; the dashboard already had `#v6ViewToggleBtn`.
