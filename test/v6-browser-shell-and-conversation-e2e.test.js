@@ -32,6 +32,7 @@ const { execFileSync } = require('node:child_process');
 const store = require('../lib/store');
 const { handleRequest } = require('../server');
 const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
+const { initRepo } = require('./_temp-repo');
 
 /**
  * Load the real shipped public/v6-shell.js into a fresh sandbox.
@@ -441,7 +442,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       const pid = seedProject(name);
       const dir = path.join(tempDir, name);
       const git = (...args) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: dir, stdio: 'ignore' });
-      git('init', '-q', '-b', 'feat/e2e-badge');
+      initRepo(dir, ['-b', 'feat/e2e-badge']);
       git('commit', '--allow-empty', '-q', '-m', 'init');
       git('tag', 'v9.9.9');
       fs.writeFileSync(path.join(dir, 'uncommitted.txt'), 'x');
