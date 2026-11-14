@@ -41,6 +41,26 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-13 — v6.2.5 release cut (Milestone #72)
+
+<!-- prawduct: type=internal | scope=v625-release -->
+
+- Compiled the one accepted `changelog.d/` fragment (#3059) from PR #3061 into `CHANGELOG.md` section `[6.2.5]` (Fixed, patch tier) using the wrap's own compile/splice/promote functions. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap state. Folded in PR #3061's change-log entry below, verbatim. Builder Rule #271 cl.3 kept it out of the feature PR.
+- PR #3061's entry was written at its first head. Review then added a test that pins the HTML-escaping of the delegate name in the `#v6ChatToDelegate` title and `aria-label` (Charter A708 guardrail 4; TC-Lane-C R-Gate B1, because removing both escapes had failed no test). The merged code is the R2 head, 97201986.
+- The entry's owed browser check was not run before merge (the connected Chrome could not reach the builder's loopback server). The release ships without that visual check; the unit and end-to-end tests cover the markup.
+
+## 2026-11-13 — v6 chat: the lane being talked to in the sidebar, and a one-row icon toolbar (#3059)
+
+<!-- prawduct: type=fix | scope=v625-w1a -->
+
+Car V625-W1-A, Chunk 01.
+
+- render() passes activeResourceId: currentRoute.resourceId || chatTargetKey(), so a project or fleet route marks its resolved delegate lane .is-active / aria-current="page" in the sidebar; active lane weight 700 with an inset left accent, active project/fleet weight 700.
+- In a chat the root gets v6-shell-root--chat; the route h1 and the group h2 are hidden from sight (sr-only rules), kept for screen readers.
+- .v6-chat-header is one wrapping row: identity strip (Show Fleet when collapsed, name, session, Delegate/Direct chip, status, version/branch; full detail as an escaped title and sr-only text) and icon controls (>_ Open Hood, ↻ Refresh conversation, ⚙ Project Settings, each title + aria-label; delegate select with sr-only label and a title; ⇄ delegate chip). Ids kept.
+- Tests restated with the requirement: the Talking-to text pins, the delegate-chip text, and V624's Show Fleet position and Open Hood markup.
+- Browser check owed: the connected Chrome could not reach this host's loopback scratch server.
+
 ## 2026-11-13 — v6.2.4 release cut (Milestone #71)
 
 <!-- prawduct: type=internal | scope=v624-release -->

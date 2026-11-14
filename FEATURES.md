@@ -17,6 +17,11 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.2.5 — The active lane marked in the Fleet sidebar and a one-row icon chat toolbar
+
+- **Active lane in the sidebar** (#3059) — `public/v6-shell.js` `render()`: the Fleet sidebar marks the lane a chat talks to (`.is-active`, `aria-current="page"`), including a chat opened from its project or fleet that resolved to the Designated Project Delegate; the active lane, project and fleet are bold, and the lane has a left accent.
+- **One-row chat toolbar** (#3059) — `public/v6-shell.js#conversationViewMarkup`: the chat header is one compact row, with an identity strip (name, session, Delegate or Direct, status, version and branch, in full as a hover tip) and icon buttons (`>_` Open Hood, `↻` Refresh, `⚙` Project Settings), each with a `title` and `aria-label`. In a chat, the route and group headings are hidden visually but kept for screen readers.
+
 ## v6.2.4 — Chat replies after tool lines, Show Fleet in the chat, a busy timer and project version and branch badges
 
 - **Replies after tool lines** (#3057) — `public/v6-shell.js#extractLiveTurns`: under a tool line, only a `⎿`/`└` line or a line indented four or more spaces is tool output, so a reply indented by two spaces (Antigravity's prose) is shown as a bubble, even after a blank line.

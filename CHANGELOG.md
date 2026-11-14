@@ -4,6 +4,11 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.2.5] - 2026-11-13
+
+### Fixed
+- The v6 Fleet sidebar now marks the lane a chat is talking to, even when the chat was opened from its project or fleet and resolved to the Designated Project Delegate (#3059); the active lane, project and fleet are bold, and the lane also gets an accent on its left edge. The chat's four-row header is now one compact row: the lane's name, session, Delegate or Direct, status, version and branch on the left, with the full detail as a hover tooltip, and icon buttons with hover tips on the right — `>_` Open Hood (Live Terminal), `↻` Refresh conversation and `⚙` Project Settings — beside the delegate picker. The page's "Conversation — Resource" heading and the group heading are hidden from sight in a chat but kept for screen readers.
+
 ## [6.2.4] - 2026-11-13
 
 ### Fixed
