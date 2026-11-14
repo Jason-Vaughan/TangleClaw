@@ -525,7 +525,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       const version = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'version.json'), 'utf8')).version;
       assert.match(header, /<span class="v6-telemetry-chip is-observed" title="Active sessions: \d+ — live sessions on this TangleClaw server \(observed\)">/);
       assert.match(header, new RegExp(`<span class="v6-telemetry-chip is-observed" title="Version: ${version.replace(/\./g, '\\.')} — the TangleClaw version this server runs \\(observed\\)">`));
-      assert.match(header, /<span class="v6-telemetry-chip is-unavailable" title="Tokens: no reading — model tokens used; not collected yet \(unavailable\)">/);
+      assert.match(header, /<span class="v6-telemetry-chip is-unavailable" title="Tokens: no reading yet — model tokens used \(unavailable\)">/);
       assert.ok(root.classList.contains('v6-shell-root--chat'), 'so the unavailable chips are hidden by the chat-scoped rule');
     });
 

@@ -514,18 +514,19 @@
   });
 
   /**
-   * What each telemetry metric means, for its chip's hover tip (#3063). Only
-   * active sessions, health and version are supplied by the server today
-   * (`server.js#_v6LiveTelemetryMetrics`); the rest have no collector yet,
-   * and say so rather than describe a reading nobody takes.
+   * What each telemetry metric means, for its chip's hover tip (#3063) — the
+   * meaning only: whether there is a reading is said from the metric itself,
+   * so a metric that gains a collector (today the server supplies only active
+   * sessions, health and version, `server.js#_v6LiveTelemetryMetrics`) never
+   * reads as uncollected beside its own value.
    */
   const TELEMETRY_METRIC_HELP = Object.freeze({
-    tokens: 'model tokens used; not collected yet',
-    quotaWindow: 'engine usage-quota window; not collected yet',
-    contextUtilization: 'how full a session\'s context window is; not collected yet',
+    tokens: 'model tokens used',
+    quotaWindow: 'engine usage-quota window',
+    contextUtilization: 'how full a session\'s context window is',
     activeSessions: 'live sessions on this TangleClaw server',
-    health: 'server health; estimated only from this server answering',
-    pendingMedusaMessages: 'Medusa messages waiting to be read; not collected yet',
+    health: 'server health',
+    pendingMedusaMessages: 'Medusa messages waiting to be read',
     versionDrift: 'the TangleClaw version this server runs'
   });
 
@@ -545,7 +546,7 @@
       const label = TELEMETRY_METRIC_LABELS[key];
       const valueText = metric.value == null ? '—' : escapeHtml(String(metric.value));
       // #3063: the tip says what the metric is and how sure the reading is.
-      const tip = `${label}: ${metric.value == null ? 'no reading' : String(metric.value)} — ${TELEMETRY_METRIC_HELP[key]} (${metric.confidence})`;
+      const tip = `${label}: ${metric.value == null ? 'no reading yet' : String(metric.value)} — ${TELEMETRY_METRIC_HELP[key]} (${metric.confidence})`;
       return `<span class="v6-telemetry-chip is-${escapeHtml(metric.confidence)}" title="${escapeHtml(tip)}">
         <span class="v6-telemetry-label">${escapeHtml(label)}</span>
         <span class="v6-telemetry-value">${valueText}</span>

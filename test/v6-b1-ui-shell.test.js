@@ -3454,14 +3454,20 @@ describe('telemetry chips say what they measure (#3063)', () => {
 
   it('every chip has a tip with its value, its meaning and how sure the reading is', () => {
     assert.deepEqual(titles(G.tcV6TelemetryHeaderMarkup(bar)), [
-      'Tokens: no reading — model tokens used; not collected yet (unavailable)',
-      'Quota window: no reading — engine usage-quota window; not collected yet (unavailable)',
-      'Context: no reading — how full a session&#39;s context window is; not collected yet (unavailable)',
+      'Tokens: no reading yet — model tokens used (unavailable)',
+      'Quota window: no reading yet — engine usage-quota window (unavailable)',
+      'Context: no reading yet — how full a session&#39;s context window is (unavailable)',
       'Active sessions: 23 — live sessions on this TangleClaw server (observed)',
-      'Health: healthy — server health; estimated only from this server answering (estimated)',
-      'Medusa: no reading — Medusa messages waiting to be read; not collected yet (unavailable)',
+      'Health: healthy — server health (estimated)',
+      'Medusa: no reading yet — Medusa messages waiting to be read (unavailable)',
       'Version: 6.2.5 — the TangleClaw version this server runs (observed)'
     ]);
+  });
+
+  it('a metric that gains a reading never reads as uncollected beside its value (cumulative review)', () => {
+    const tips = titles(G.tcV6TelemetryHeaderMarkup({ scope: 'global', metrics: { tokens: { value: 1234, confidence: 'observed' } } }));
+    assert.equal(tips[0], 'Tokens: 1234 — model tokens used (observed)');
+    assert.doesNotMatch(tips.join('\n'), /not collected/);
   });
 
   it('a hostile metric value is escaped in the tip and in the chip', () => {
