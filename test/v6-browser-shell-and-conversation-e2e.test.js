@@ -381,7 +381,8 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       await settle();
       assert.ok(calls.includes('GET /api/sessions/e2echat-PM/status'), JSON.stringify(calls));
       assert.ok(calls.includes('GET /api/sessions/e2echat-PM/peek?lines=80'));
-      assert.match(root.innerHTML, /Talking to: <strong>e2echat-PM<\/strong> \(#\d+\) · Designated Project Delegate/);
+      // Restated by #3059: the lead-in and the mode are screen-reader text in the compact toolbar.
+      assert.match(root.innerHTML, /Talking to: <\/span><strong>e2echat-PM<\/strong> \(#\d+\)<span class="sr-only"> · Designated Project Delegate<\/span>/);
       assert.match(root.innerHTML, /<option value="\d+" selected>e2echat-PM<\/option>/);
       assert.match(root.innerHTML, /Could not read live output/, 'a Web UI session has no pane to peek');
 
@@ -488,6 +489,24 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.ok(calls.includes('POST /api/sessions/e2e-busy-refused/command'));
       assert.match(root.innerHTML, /is-error[^>]*>Not sent:/);
       assert.match(root.innerHTML, /<p id="v6ChatActivity" class="v6-chat-activity" aria-live="polite"><\/p>/);
+    });
+
+    it('a project route marks its delegate lane in the sidebar and shows the one-row icon toolbar (#3059)', async () => {
+      const pmId = seedProject('e2eside-PM');
+      seedProject('e2eside-A');
+      store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(pmId);
+      const { root, settle } = mountShell('#/projects/e2eside');
+      await settle();
+      assert.match(root.innerHTML, /Talking to: <\/span><strong>e2eside-PM<\/strong>/, 'the chat resolved to the PM delegate');
+      const active = [...root.innerHTML.matchAll(/<a class="v6-shell-member-link[^"]*\bis-active"\s+aria-current="page"[^>]*href="([^"]+)"/g)].map((x) => x[1]);
+      assert.deepEqual(active, [`#/resources/${pmId}/conversation`], 'exactly the delegate lane is marked');
+      assert.ok(root.classList.contains('v6-shell-root--chat'), 'the route and group headings are hidden in the chat');
+      const header = root.innerHTML.slice(root.innerHTML.indexOf('<header class="v6-chat-header">'), root.innerHTML.indexOf('</header>'));
+      assert.match(header, /v6-open-hood" href="\/session\.html\?project=e2eside-PM" title="Open Hood \(Live Terminal\)" aria-label="Open Hood \(Live Terminal\)"/);
+      assert.match(header, /id="v6ChatRefresh"[^>]*title="Refresh conversation" aria-label="Refresh conversation"/);
+      assert.match(header, /id="v6ChatSettings"[^>]*title="Project Settings" aria-label="Project Settings"/);
     });
 
     it('the real B2 route accepts the event the chat records, and the next seq counts deleted events (#3047)', async () => {

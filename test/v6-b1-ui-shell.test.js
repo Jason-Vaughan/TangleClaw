@@ -1488,8 +1488,10 @@ describe('tcV6ConversationViewMarkup — chat (#3047)', () => {
 
   it('names who you are talking to, as the project\'s delegate, with its session and status', () => {
     const html = G.tcV6ConversationViewMarkup(base());
-    assert.match(html, /Talking to: <strong>TC-Lane-PM<\/strong> \(#1592\)/);
-    assert.match(html, /Designated Project Delegate/);
+    // Restated by #3059: "Talking to:" and the mode are screen-reader text and a tooltip around a compact strip.
+    assert.match(html, /Talking to: <\/span><strong>TC-Lane-PM<\/strong> \(#1592\)<span class="sr-only"> · Designated Project Delegate<\/span>/);
+    assert.match(html, /<p class="v6-chat-talking-to" title="Talking to TC-Lane-PM \(#1592\) · Designated Project Delegate · Active">/);
+    assert.match(html, /<span class="v6-chat-mode" aria-hidden="true">Delegate<\/span>/);
     assert.match(html, /class="v6-chat-pill is-active">Active</);
     assert.match(html, /<h2 class="v6-detail-title">TC-Lane<\/h2>/);
   });
@@ -1505,7 +1507,8 @@ describe('tcV6ConversationViewMarkup — chat (#3047)', () => {
       { project: { id: 10, name: 'TC-Lane-A' } }));
     assert.match(html, /Direct Session/);
     assert.doesNotMatch(html, /v6ChatDelegate/);
-    assert.match(html, /<a id="v6ChatToDelegate"[^>]*href="#\/projects\/tc-lane"[^>]*>Switch to Delegate: TC-Lane-PM<\/a>/);
+    // Restated by #3059: a compact chip, its full meaning in its title and accessible name.
+    assert.match(html, /<a id="v6ChatToDelegate"[^>]*href="#\/projects\/tc-lane"[^>]*title="Switch to Delegate: TC-Lane-PM" aria-label="Switch to Delegate: TC-Lane-PM"><span aria-hidden="true">⇄<\/span> TC-Lane-PM<\/a>/);
   });
 
   it('a direct session that is the delegate needs no switch link', () => {
@@ -1645,7 +1648,7 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     await m.settle();
     assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/status'));
     assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=80'));
-    assert.match(m.root.innerHTML, /Talking to: <strong>TC-Lane-PM<\/strong> \(#1592\)/);
+    assert.match(m.root.innerHTML, /Talking to: <\/span><strong>TC-Lane-PM<\/strong> \(#1592\)/);
     assert.match(m.root.innerHTML, /pm line 1/);
     assert.match(m.root.innerHTML, /earlier/);
   });
@@ -1653,7 +1656,7 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
   it('a remembered delegate is used', async () => {
     const m = mountChat({ storage: makeStorage({ tc_v6_project_delegates: JSON.stringify({ 'tc-lane': '10' }) }) });
     await m.settle();
-    assert.match(m.root.innerHTML, /Talking to: <strong>TC-Lane-A<\/strong> \(#1660\)/);
+    assert.match(m.root.innerHTML, /Talking to: <\/span><strong>TC-Lane-A<\/strong> \(#1660\)/);
     assert.match(m.root.innerHTML, /class="v6-chat-pill is-idle">Idle</);
   });
 
@@ -1665,7 +1668,7 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     select.dispatch('change');
     await m.settle();
     assert.deepEqual(JSON.parse(m.storage.data.tc_v6_project_delegates), { 'tc-lane': '10' });
-    assert.match(m.root.innerHTML, /Talking to: <strong>TC-Lane-A<\/strong>/);
+    assert.match(m.root.innerHTML, /Talking to: <\/span><strong>TC-Lane-A<\/strong>/);
   });
 
   it('a member route is a direct session, with the way back to the delegate', async () => {
@@ -1884,7 +1887,7 @@ describe('Project Delegate Chat review fixes (#3047)', () => {
     input.dispatch('input');
     m.win.location.hash = '#/resources/10/conversation';
     await m.settle();
-    assert.match(m.root.innerHTML, /Talking to: <strong>TC-Lane-A<\/strong>/);
+    assert.match(m.root.innerHTML, /Talking to: <\/span><strong>TC-Lane-A<\/strong>/);
     assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*><\/textarea>/, 'the other chat starts empty');
     m.win.location.hash = '#/projects/tc-lane';
     await m.settle();
@@ -1944,7 +1947,7 @@ describe('Project Delegate Chat review fixes (#3047)', () => {
     assert.deepEqual(commands.map((c) => c.url), ['/api/sessions/TC-Lane-PM/command']);
     assert.deepEqual(events.map((c) => [c.url, c.body.content, c.body.role]),
       [['/api/v6/projects/12/sessions/1592/conversation/events', 'record me', 'user']]);
-    assert.match(m.root.innerHTML, /Talking to: <strong>TC-Lane-A<\/strong>/, 'the chat on screen is still the one the operator moved to');
+    assert.match(m.root.innerHTML, /Talking to: <\/span><strong>TC-Lane-A<\/strong>/, 'the chat on screen is still the one the operator moved to');
     assert.doesNotMatch(m.root.innerHTML, /Sent to TC-Lane-PM/, 'no stale outcome line lands in the other chat');
   });
 
@@ -3076,10 +3079,11 @@ describe('» Show Fleet from the chat (#3057)', () => {
   const G = loadV6Shell();
   const chatView = { project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [], chat: { mode: 'direct', status: 'active', members: [] } };
 
-  it('leads .v6-chat-actions only while the sidebar is collapsed', () => {
+  // Restated by #3059: the button moved from the head of the actions to the head of the identity strip.
+  it('leads the chat toolbar\'s identity strip only while the sidebar is collapsed', () => {
     const shown = G.tcV6ConversationViewMarkup(Object.assign({}, chatView, { chat: Object.assign({}, chatView.chat, { sidebarCollapsed: true }) }));
-    const actions = shown.slice(shown.indexOf('class="v6-chat-actions"'));
-    assert.match(actions, /^class="v6-chat-actions">\s*<button type="button" id="v6ChatShowFleet" class="btn btn-secondary btn-small v6-chat-show-fleet"\s+data-action="toggle-sidebar-drawer" aria-controls="v6ShellSidebar" aria-expanded="false"\s+aria-label="Show Fleet sidebar" title="Restore the Fleet sidebar">» Show Fleet<\/button>/);
+    const actions = shown.slice(shown.indexOf('class="v6-chat-identity"'));
+    assert.match(actions, /^class="v6-chat-identity"><button type="button" id="v6ChatShowFleet" class="btn btn-secondary btn-small v6-chat-show-fleet"\s+data-action="toggle-sidebar-drawer" aria-controls="v6ShellSidebar" aria-expanded="false"\s+aria-label="Show Fleet sidebar" title="Restore the Fleet sidebar">» Show Fleet<\/button>/);
     assert.doesNotMatch(G.tcV6ConversationViewMarkup(chatView), /v6ChatShowFleet/);
   });
 
@@ -3269,7 +3273,8 @@ describe('Open Hood matches the chat\'s compact buttons (#3057, PM)', () => {
   const G = loadV6Shell();
   it('is a small button without an underline inside .v6-chat-actions', () => {
     const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 1, events: [], chat: { status: 'active', members: [] } });
-    assert.match(html, /<a class="btn btn-secondary btn-small v6-open-hood" href="\/session\.html\?project=P">Open Hood \(Live Terminal\)<\/a>/);
+    // Restated by #3059: Open Hood is now a >_ icon button, named by its title and aria-label.
+    assert.match(html, /<a class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood" href="\/session\.html\?project=P" title="Open Hood \(Live Terminal\)" aria-label="Open Hood \(Live Terminal\)"><span aria-hidden="true">&gt;_<\/span><\/a>/);
     const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
     assert.match(css, /\.v6-chat-actions \.v6-open-hood \{\s*display: inline-flex;\s*margin-bottom: 0;\s*text-decoration: none;\s*\}/);
   });
@@ -3306,5 +3311,131 @@ describe('pane and repo text reaching the chat header and busy line is escaped (
     const fromTag = header({ version: null, git: { latestTag: `v1${hostile}` } });
     assert.match(fromTag, /v6-chat-version-badge[^>]*>v1&lt;img src=x onerror=alert\(1\)&gt;</);
     assert.doesNotMatch(fromTag, /<img/);
+  });
+});
+
+// ── #3059 (Car V625-W1-A): the lane being talked to in the sidebar, and a one-row icon toolbar ──
+
+describe('the sidebar marks the lane the chat talks to (#3059)', () => {
+  /**
+   * A shell and live controller on `hash`, over a TC-Lane group whose PM is the delegate.
+   * @param {string} hash
+   */
+  function mountRoute(hash) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const rows = [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }, { id: 10, name: 'TC-Lane-A', engine: { id: 'claude' } }];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: rows };
+      if (/\/status$/.test(url)) return { active: true, sessionId: 1 };
+      if (/conversation\/events$/.test(url)) return { events: [] };
+      if (/\/peek\?lines=80$/.test(url)) return { lines: [] };
+      return null;
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null,
+      setInterval: () => 0, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow(hash), storage: null, setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    /** @returns {Array<string>} The member links marked active, as their hrefs. */
+    const activeMembers = () => [...root.innerHTML.matchAll(/<a class="v6-shell-member-link[^"]*\bis-active"\s+aria-current="page"[^>]*href="([^"]+)"/g)].map((x) => x[1]);
+    return { root, settle, activeMembers };
+  }
+
+  it('a project route marks its delegate member active, with aria-current="page"', async () => {
+    const m = mountRoute('#/projects/tc-lane');
+    await m.settle();
+    assert.match(m.root.innerHTML, /Talking to: <\/span><strong>TC-Lane-PM<\/strong>/, 'the chat resolved to the PM delegate');
+    assert.deepEqual(m.activeMembers(), ['#/resources/12/conversation']);
+  });
+
+  it('a fleet route marks the same delegate, and a member route marks the member it names', async () => {
+    const fleet = mountRoute('#/projects/tc-lane/fleets/tc-lane');
+    await fleet.settle();
+    assert.deepEqual(fleet.activeMembers(), ['#/resources/12/conversation']);
+    const direct = mountRoute('#/resources/10/conversation');
+    await direct.settle();
+    assert.deepEqual(direct.activeMembers(), ['#/resources/10/conversation']);
+  });
+
+  it('a route with no chat marks no member', async () => {
+    const m = mountRoute('#/settings/help');
+    await m.settle();
+    assert.deepEqual(m.activeMembers(), []);
+  });
+
+  it('the active lane is bold, tinted and accented on its left edge', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(css, /\.v6-shell-member-link\.is-active \{\s*background: var\(--accent-bg[^;]*;\s*font-weight: 700;\s*box-shadow: inset 3px 0 0 #56d364;\s*\}/);
+    assert.match(css, /\.v6-shell-project\.is-active,\s*\.v6-shell-fleet\.is-active \{[^}]*font-weight: 700;/);
+  });
+});
+
+describe('the chat header is one compact row of identity and icons (#3059)', () => {
+  const G = loadV6Shell();
+  const view = (chat, project) => ({ project: Object.assign({ id: 12, name: 'TC-Lane-PM' }, project), sessionId: 1592, events: [],
+    chat: Object.assign({ mode: 'delegate', nodeId: 'tc-lane', nodeName: 'TC-Lane', status: 'active',
+      members: [{ id: '10', name: 'TC-Lane-A' }, { id: '12', name: 'TC-Lane-PM' }] }, chat || {}) });
+  const header = (html) => html.slice(html.indexOf('<header class="v6-chat-header">'), html.indexOf('</header>'));
+
+  it('Open Hood, Refresh and Project Settings are icon buttons named by title and aria-label, ids kept', () => {
+    const h = header(G.tcV6ConversationViewMarkup(view()));
+    assert.match(h, /class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood"[^>]*title="Open Hood \(Live Terminal\)" aria-label="Open Hood \(Live Terminal\)"><span aria-hidden="true">&gt;_<\/span><\/a>/);
+    assert.match(h, /<button type="button" id="v6ChatRefresh" class="btn btn-secondary btn-small v6-chat-icon-btn" title="Refresh conversation" aria-label="Refresh conversation"><span aria-hidden="true">↻<\/span><\/button>/);
+    assert.match(h, /<button type="button" id="v6ChatSettings" class="btn btn-secondary btn-small v6-chat-icon-btn" title="Project Settings" aria-label="Project Settings"><span aria-hidden="true">⚙<\/span><\/button>/);
+    assert.doesNotMatch(h, />Refresh<|>Project Settings<|>Open Hood \(Live Terminal\)</, 'no word labels left in the toolbar');
+  });
+
+  it('the identity strip carries the full detail as a tooltip and screen-reader text, and short chips on screen', () => {
+    const delegate = header(G.tcV6ConversationViewMarkup(view()));
+    assert.match(delegate, /<div class="v6-chat-identity">\s*<p class="v6-chat-talking-to" title="Talking to TC-Lane-PM \(#1592\) · Designated Project Delegate · Active"><span class="sr-only">Talking to: <\/span><strong>TC-Lane-PM<\/strong> \(#1592\)<span class="sr-only"> · Designated Project Delegate<\/span>/);
+    assert.match(delegate, /<span class="v6-chat-mode" aria-hidden="true">Delegate<\/span>/);
+    const direct = header(G.tcV6ConversationViewMarkup(view({ mode: 'direct', status: 'idle' }, { id: 10, name: 'TC-Lane-A' })));
+    assert.match(direct, /title="Talking to TC-Lane-A \(#1592\) · Direct Session · Idle"/);
+    assert.match(direct, /<span class="v6-chat-mode" aria-hidden="true">Direct<\/span>/);
+  });
+
+  it('the identity tooltip escapes the project name', () => {
+    const h = header(G.tcV6ConversationViewMarkup(view({}, { name: 'x"><img src=x onerror=alert(1)>' })));
+    assert.match(h, /title="Talking to x&quot;&gt;&lt;img src=x onerror=alert\(1\)&gt; \(#1592\)/);
+    assert.doesNotMatch(h, /<img/);
+  });
+
+  it('the delegate select keeps its accessible name, gains a tooltip, and its visible label text is gone', () => {
+    const h = header(G.tcV6ConversationViewMarkup(view()));
+    assert.match(h, /<label class="v6-chat-delegate-label"><span class="sr-only">Delegate<\/span>\s*<select id="v6ChatDelegate"[^>]*aria-label="Choose who this project's chat talks to" title="Switch Designated Project Delegate">/);
+  });
+
+  it('in a chat the route heading and the group heading are hidden from sight but kept for screen readers', () => {
+    const { root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null, initialHash: '#/resources/12/conversation',
+      detail: { kind: 'conversation', view: view() } });
+    assert.ok(root.classList.contains('v6-shell-root--chat'));
+    assert.match(root.innerHTML, /<h1 class="v6-shell-title">/, 'the h1 is still in the page');
+    assert.match(root.innerHTML, /<h2 class="v6-detail-title">TC-Lane<\/h2>/);
+    shell.setDetail(null);
+    assert.equal(root.classList.contains('v6-shell-root--chat'), false, 'other views keep their heading');
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(css, /\.v6-shell-root--chat \.v6-shell-title,\s*\.v6-chat-header \.v6-detail-title \{\s*position: absolute;\s*width: 1px;\s*height: 1px;[^}]*clip: rect\(0, 0, 0, 0\);/);
+    assert.match(css, /\.v6-chat-header \{\s*display: flex;\s*flex-wrap: wrap;\s*align-items: center;\s*justify-content: space-between;/);
+    assert.match(css, /\.v6-chat-icon-btn \{\s*min-width: 44px;/, 'icon buttons keep a 44px target');
+  });
+});
+
+describe('the delegate chip escapes the delegate name in its title and accessible name (#3059, Charter A708 guardrail 4)', () => {
+  const G = loadV6Shell();
+  it('a hostile delegate name renders escaped in the title, the aria-label and the text', () => {
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 10, name: 'TC-Lane-A' }, sessionId: 1, events: [],
+      chat: { mode: 'direct', nodeId: 'tc-lane', status: 'active', members: [], delegate: { id: '12', name: '<b>x</b>"' } } });
+    const chip = html.slice(html.indexOf('<a id="v6ChatToDelegate"'), html.indexOf('</a>', html.indexOf('<a id="v6ChatToDelegate"')) + 4);
+    assert.match(chip, /title="Switch to Delegate: &lt;b&gt;x&lt;\/b&gt;&quot;"/);
+    assert.match(chip, /aria-label="Switch to Delegate: &lt;b&gt;x&lt;\/b&gt;&quot;"/);
+    assert.match(chip, /<span aria-hidden="true">⇄<\/span> &lt;b&gt;x&lt;\/b&gt;&quot;<\/a>$/);
+    assert.doesNotMatch(chip, /<b>x/);
   });
 });
