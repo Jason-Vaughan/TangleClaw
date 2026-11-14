@@ -28,6 +28,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const vm = require('node:vm');
+const { execFileSync } = require('node:child_process');
 const store = require('../lib/store');
 const { handleRequest } = require('../server');
 const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
@@ -433,6 +434,59 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.match(root.innerHTML, /v6-chat-chip is-ready" title="\.tangleclaw\/secrets\/image-2\.png"/);
       assert.equal(fs.readFileSync(path.join(dir, 'image.png'), 'utf8'), 'ORIGINAL', 'the existing file was not overwritten');
       assert.equal(fs.readFileSync(path.join(dir, 'image-2.png'), 'utf8'), 'NEW');
+    });
+
+    it('the chat header shows the project\'s own tag and dirty branch from the real /api/projects row (#3057)', async () => {
+      const name = 'e2e-badges';
+      const pid = seedProject(name);
+      const dir = path.join(tempDir, name);
+      const git = (...args) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: dir, stdio: 'ignore' });
+      git('init', '-q', '-b', 'feat/e2e-badge');
+      git('commit', '--allow-empty', '-q', '-m', 'init');
+      git('tag', 'v9.9.9');
+      fs.writeFileSync(path.join(dir, 'uncommitted.txt'), 'x');
+      const row = JSON.parse((await send('GET', '/api/projects')).body).projects.find((p) => p.name === name);
+      assert.equal(row.git.branch, 'feat/e2e-badge', 'the field the badge reads');
+      assert.equal(row.git.latestTag, 'v9.9.9');
+      assert.equal(row.git.dirty, true);
+      const { root, settle } = mountShell(`#/resources/${pid}/conversation`);
+      await settle();
+      const header = root.innerHTML.slice(root.innerHTML.indexOf('class="v6-chat-talking-to"'), root.innerHTML.indexOf('class="v6-chat-actions"'));
+      assert.match(header, new RegExp(`<span class="v6-chat-version-badge"[^>]*>${(row.version || 'v9.9.9').replace(/\./g, '\\.')}</span>`));
+      assert.match(header, /<span class="v6-chat-git-badge is-dirty"[^>]*>⎇ feat\/e2e-badge\*<\/span>/);
+    });
+
+    it('with the sidebar hidden the chat offers » Show Fleet, and it brings the sidebar back (#3057)', async () => {
+      const pid = seedProject('e2e-show-fleet');
+      const { root, settle, shell, doc } = mountShell(`#/resources/${pid}/conversation`);
+      await settle();
+      assert.doesNotMatch(root.innerHTML, /id="v6ChatShowFleet"/);
+      shell.toggleSidebar(true);
+      await settle();
+      assert.match(root.innerHTML, /<button type="button" id="v6ChatShowFleet"/);
+      assert.match(root.innerHTML, /<button type="button" id="v6SidebarExpand"/);
+      doc.getElementById('v6ChatShowFleet').dispatch('click');
+      await settle();
+      assert.equal(shell.isSidebarCollapsed(), false);
+      assert.doesNotMatch(root.innerHTML, /id="v6ChatShowFleet"/);
+    });
+
+    it('a send the real command route refuses does not leave the chat reading as Working (#3057)', async () => {
+      const pid = seedProject('e2e-busy-refused');
+      store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(pid);
+      const { root, settle, calls, doc } = mountShell(`#/resources/${pid}/conversation`);
+      await settle();
+      assert.doesNotMatch(root.innerHTML, /v6-chat-activity is-busy/);
+      const input = doc.getElementById('v6ChatInput');
+      input.value = 'are you there?';
+      input.dispatch('input');
+      doc.getElementById('v6ChatForm').dispatch('submit');
+      await settle();
+      assert.ok(calls.includes('POST /api/sessions/e2e-busy-refused/command'));
+      assert.match(root.innerHTML, /is-error[^>]*>Not sent:/);
+      assert.match(root.innerHTML, /<p id="v6ChatActivity" class="v6-chat-activity" aria-live="polite"><\/p>/);
     });
 
     it('the real B2 route accepts the event the chat records, and the next seq counts deleted events (#3047)', async () => {

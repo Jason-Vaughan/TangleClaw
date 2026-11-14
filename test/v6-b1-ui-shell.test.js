@@ -2116,7 +2116,8 @@ describe('Above-the-Hood chat view (#3052)', () => {
   it('pins the question the assistant is waiting on, and shows what it is busy doing, above the composer', () => {
     const html = G.tcV6ConversationViewMarkup(view({ live: { turns: [], question: 'Should I <push>?', activity: 'Running command' } }));
     assert.match(html, /<div id="v6ChatQuestion" class="v6-chat-question is-asking"[^>]*>[\s\S]*Should I &lt;push&gt;\?/);
-    assert.match(html, /<p id="v6ChatActivity" class="v6-chat-activity is-busy"[^>]*>Running command<\/p>/);
+    // Restated by #3057: the busy line now carries animated dots and an elapsed time after its label.
+    assert.match(html, /<p id="v6ChatActivity" class="v6-chat-activity is-busy"[^>]*><span class="v6-chat-activity-label">Running command<\/span><span class="v6-chat-activity-dots" aria-hidden="true"><\/span> <span id="v6ChatActivityTimer" class="v6-chat-activity-timer" aria-hidden="true">0s<\/span><\/p>/);
     assert.ok(html.indexOf('v6ChatQuestion') < html.indexOf('v6ChatForm'));
   });
 
@@ -2990,5 +2991,256 @@ describe('Claude tool-status lines are not reply text (PRR-B R2)', () => {
   it('a reply sentence that happens to start with one of those verbs is kept', () => {
     const out = plain(G.tcV6ExtractLiveTurns(['> how?', '⏺ Read the docs first, then try again.', '⏺ Ranking the options, I prefer B.'], 'claude', []));
     assert.equal(out.turns[1].text, 'Read the docs first, then try again.\nRanking the options, I prefer B.');
+  });
+});
+
+describe('tcV6ExtractLiveTurns keeps indented replies after a tool line (#3057)', () => {
+  const G = loadV6Shell();
+  const run = (lines, engine) => plain(G.tcV6ExtractLiveTurns(lines, engine, []));
+
+  it('antigravity: a 2-space reply right under ● Explored, with a list and a second paragraph, is one assistant turn', () => {
+    const out = run(['❯ what is the difference?', '● Explored 1 file (ctrl+o to expand)',
+      '  Here is the exact distinction:', '  1. A blocker stops the launch.', '  2. A warning does not.',
+      '', '  - Both are logged.', '  Want me to change it?'], 'antigravity');
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'what is the difference?' },
+      { role: 'assistant', text: 'Here is the exact distinction:\n1. A blocker stops the launch.\n2. A warning does not.\n- Both are logged.\nWant me to change it?' }
+    ]);
+    assert.equal(out.question, 'Want me to change it?');
+  });
+
+  it('a reply indented after a blank line under each engine\'s own tool line is kept', () => {
+    const toolLines = { antigravity: '● Ran npm test', claude: '⏺ Ran npm test', codex: '• Ran npm test',
+      aider: 'Applied edit to test/a.test.js', mystery: '● Ran npm test' };
+    Object.keys(toolLines).forEach((engine) => {
+      const out = run(['> go', toolLines[engine], '', '  All tests pass.'], engine);
+      assert.deepEqual(out.turns, [{ role: 'user', text: 'go' }, { role: 'assistant', text: 'All tests pass.' }], engine);
+    });
+  });
+
+  it('tool output is still dropped: ⎿ and └ lines at any indent, and 4+-space lines right under a tool line', () => {
+    const claude = run(['> check', '⏺ Bash(npm test)', '  ⎿  265 passing', '     0 failing', '  The suite is green.'], 'claude');
+    assert.deepEqual(claude.turns[1], { role: 'assistant', text: 'The suite is green.' });
+    const codex = run(['› check', '• Ran npm test', '  └ 12 passing', '    0 failing', '  Done.'], 'codex');
+    assert.deepEqual(codex.turns[1], { role: 'assistant', text: 'Done.' });
+    const afterBlank = run(['> check', '⏺ Bash(ls)', '', '  ⎿  a.txt', 'Listed.'], 'claude');
+    assert.deepEqual(afterBlank.turns[1], { role: 'assistant', text: 'Listed.' });
+  });
+
+  it('a 4+-space line after a blank is no longer tool output (the blank ends the tool block)', () => {
+    const out = run(['> check', '● Ran npm test', '', '    indented after the blank'], 'antigravity');
+    assert.deepEqual(out.turns[1], { role: 'assistant', text: 'indented after the blank' });
+  });
+});
+
+// ── #3057 (Car V624-W1-A): Show Fleet from the chat, the busy clock, and the target's version and branch ──
+
+describe('chat header version and branch badges (#3057)', () => {
+  const G = loadV6Shell();
+  const view = (project) => ({ project: Object.assign({ id: 12, name: 'TC-Lane-PM' }, project), sessionId: 1,
+    events: [], chat: { mode: 'direct', status: 'active', members: [] } });
+  const header = (html) => html.slice(html.indexOf('class="v6-chat-talking-to"'), html.indexOf('class="v6-chat-actions"'));
+
+  it('shows the project version and its git branch inside .v6-chat-talking-to', () => {
+    const html = header(G.tcV6ConversationViewMarkup(view({ version: '6.2.3', git: { branch: 'main', dirty: false, latestTag: 'v6.2.2' } })));
+    assert.match(html, /<span class="v6-chat-version-badge" title="This project's version">6\.2\.3<\/span>/);
+    assert.match(html, /<span class="v6-chat-git-badge" title="Git branch">⎇ main<\/span>/);
+  });
+
+  it('falls back to the latest tag, stars only a branch known to be dirty, and escapes both', () => {
+    const tagged = header(G.tcV6ConversationViewMarkup(view({ version: null, git: { branch: 'fix/<x>', dirty: true, latestTag: 'v1.0.0' } })));
+    assert.match(tagged, /v6-chat-version-badge[^>]*>v1\.0\.0</);
+    assert.match(tagged, /<span class="v6-chat-git-badge is-dirty" title="Git branch, with uncommitted changes">⎇ fix\/&lt;x&gt;\*<\/span>/);
+    const unknown = header(G.tcV6ConversationViewMarkup(view({ git: { branch: 'main', dirty: null } })));
+    assert.match(unknown, /<span class="v6-chat-git-badge" title="Git branch">⎇ main<\/span>/);
+    assert.doesNotMatch(unknown, /v6-chat-version-badge/);
+  });
+
+  it('renders no badge for a row with neither field', () => {
+    const html = header(G.tcV6ConversationViewMarkup(view({})));
+    assert.doesNotMatch(html, /v6-chat-version-badge|v6-chat-git-badge/);
+  });
+});
+
+describe('» Show Fleet from the chat (#3057)', () => {
+  const G = loadV6Shell();
+  const chatView = { project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [], chat: { mode: 'direct', status: 'active', members: [] } };
+
+  it('leads .v6-chat-actions only while the sidebar is collapsed', () => {
+    const shown = G.tcV6ConversationViewMarkup(Object.assign({}, chatView, { chat: Object.assign({}, chatView.chat, { sidebarCollapsed: true }) }));
+    const actions = shown.slice(shown.indexOf('class="v6-chat-actions"'));
+    assert.match(actions, /^class="v6-chat-actions">\s*<button type="button" id="v6ChatShowFleet" class="btn btn-secondary btn-small v6-chat-show-fleet"\s+data-action="toggle-sidebar-drawer" aria-controls="v6ShellSidebar" aria-expanded="false"\s+aria-label="Show Fleet sidebar" title="Restore the Fleet sidebar">» Show Fleet<\/button>/);
+    assert.doesNotMatch(G.tcV6ConversationViewMarkup(chatView), /v6ChatShowFleet/);
+  });
+
+  it('in the mounted shell, both Show Fleet controls appear once the sidebar hides, and the chat one restores it', () => {
+    const { shell, doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: chatView } });
+    assert.doesNotMatch(root.innerHTML, /id="v6ChatShowFleet"/);
+    doc.getElementById('v6SidebarCollapse').dispatch('click');
+    assert.match(root.innerHTML, /id="v6SidebarExpand"/, 'the header control');
+    assert.match(root.innerHTML, /id="v6ChatShowFleet"/, 'the chat control');
+    const chatButton = doc.getElementById('v6ChatShowFleet');
+    chatButton.focus();
+    chatButton.dispatch('click');
+    assert.equal(shell.isSidebarCollapsed(), false);
+    assert.doesNotMatch(root.innerHTML, /id="v6ChatShowFleet"|id="v6SidebarExpand"/);
+    assert.equal(doc.activeElement, doc.getElementById('v6SidebarCollapse'));
+  });
+
+  it('the header holding » Show Fleet is sticky while the sidebar is collapsed', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(css, /\.v6-shell-root--sidebar-collapsed \.v6-shell-header \{\s*position: sticky;\s*top: 0;/);
+  });
+});
+
+describe('tcV6FormatElapsed and the busy line markup (#3057)', () => {
+  const G = loadV6Shell();
+  it('formats seconds, minutes and hours', () => {
+    assert.deepEqual([0, 999, 1000, 59999, 60000, 72000, 3599000, 3600000, 3723000, -5, NaN].map(G.tcV6FormatElapsed),
+      ['0s', '0s', '1s', '59s', '1m 0s', '1m 12s', '59m 59s', '1h 0m', '1h 2m', '0s', '0s']);
+  });
+
+  it('strips the label\'s static dots and adds animated dots and the time; an empty label reads Working', () => {
+    const chat = (activity) => G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 1, events: [],
+      chat: { status: 'active', members: [], live: { turns: [], question: null, activity }, activityElapsed: '1m 12s' } });
+    [['Thinking…', 'Thinking'], ['Running command...', 'Running command'], ['Working..', 'Working'], ['Reading.', 'Reading'],
+      ['…', 'Working'], ['Compiling', 'Compiling']].forEach(([input, label]) => {
+      assert.match(chat(input), new RegExp(`<span class="v6-chat-activity-label">${label}</span><span class="v6-chat-activity-dots" aria-hidden="true"></span> <span id="v6ChatActivityTimer" class="v6-chat-activity-timer" aria-hidden="true">1m 12s</span>`), input);
+    });
+  });
+
+  it('a pending send reads as Working before the engine reports anything', () => {
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 1, events: [],
+      chat: { status: 'active', members: [], live: null, send: { kind: 'pending', message: 'Sending to P…' } } });
+    assert.match(html, /<p id="v6ChatActivity" class="v6-chat-activity is-busy"[^>]*><span class="v6-chat-activity-label">Working<\/span>/);
+  });
+
+  it('the dots animate, and hold still under reduced motion', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(css, /\.v6-chat-activity-dots::after \{[^}]*content: '\.\.\.';[^}]*animation: v6-chat-dots [^;]*steps\(4, end\) infinite;/);
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.v6-chat-activity-dots::after \{ animation: none; width: auto; \}/);
+  });
+});
+
+describe('the busy clock in the mounted shell and live controller (#3057)', () => {
+  /**
+   * A chat on a fake clock: `peeks` are what each read of the pane shows.
+   * @param {Array<Array<string>>} peeks
+   */
+  function mountBusyChat(peeks) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    let n = 0;
+    let clock = 1000000;
+    const rows = [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: rows };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
+      if (/conversation\/events/.test(url)) return { events: [] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: peeks[Math.min(n++, peeks.length - 1)] };
+      return null;
+    };
+    const polls = [];
+    const ticks = new Map();
+    let nextTick = 0;
+    const cleared = [];
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => ({ ok: true }), storage: null,
+      setInterval: (fn) => { polls.push(fn); return polls.length - 1; }, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
+      now: () => clock,
+      setInterval: (fn, ms) => { assert.equal(ms, 1000); const id = `t${nextTick++}`; ticks.set(id, fn); return id; },
+      clearInterval: (id) => { cleared.push(id); ticks.delete(id); },
+      onRender: (r) => pending.push(live.handleRoute(r)), onSendChat: (t) => pending.push(live.sendChat(t)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    const advance = (ms) => { clock += ms; [...ticks.values()].forEach((fn) => fn()); };
+    const activity = () => doc.getElementById('v6ChatActivity');
+    return { shell, doc, root, polls, ticks, cleared, settle, advance, activity, live };
+  }
+
+  // The mini DOM registers elements by id only: a full render is read from
+  // the root's markup, an in-place update from the element it changed.
+  const timerIn = (html) => { const m = /id="v6ChatActivityTimer"[^>]*>([^<]*)</.exec(html); return m ? m[1] : null; };
+  const labelIn = (html) => { const m = /class="v6-chat-activity-label">([^<]*)</.exec(html); return m ? m[1] : null; };
+
+  it('the elapsed time ticks each second while busy, keeps its start across polls, and stops with its ticker once idle', async () => {
+    const busy = ['> go', '✶ Thinking… (esc to interrupt)'];
+    const m = mountBusyChat([busy, busy, ['> go', '⏺ Done.']]);
+    await m.settle();
+    assert.match(m.root.innerHTML, /<p id="v6ChatActivity" class="v6-chat-activity is-busy"/);
+    assert.equal(labelIn(m.root.innerHTML), 'Thinking');
+    assert.equal(timerIn(m.root.innerHTML), '0s');
+    assert.equal(m.ticks.size, 1);
+    m.advance(1000);
+    assert.equal(m.doc.getElementById('v6ChatActivityTimer').innerHTML, '1s');
+    m.advance(71000);
+    assert.equal(m.doc.getElementById('v6ChatActivityTimer').innerHTML, '1m 12s');
+    await m.polls[0]();
+    assert.equal(timerIn(m.activity().innerHTML), '1m 12s', 'a poll that is still busy keeps the start');
+    assert.equal(m.activity().className, 'v6-chat-activity is-busy');
+    assert.equal(m.ticks.size, 1, 'one ticker, not one per poll');
+    await m.polls[0]();
+    assert.equal(m.activity().className, 'v6-chat-activity');
+    assert.equal(m.activity().innerHTML, '');
+    assert.equal(m.ticks.size, 0);
+    assert.equal(m.cleared.length, 1);
+  });
+
+  it('a full re-render keeps the running time, and destroy() stops the ticker', async () => {
+    const busy = ['> go', '✶ Thinking… (esc to interrupt)'];
+    const m = mountBusyChat([busy]);
+    await m.settle();
+    m.advance(5000);
+    m.shell.toggleSidebar(true);
+    assert.equal(timerIn(m.root.innerHTML), '5s');
+    assert.equal(m.ticks.size, 1);
+    m.shell.destroy();
+    assert.equal(m.ticks.size, 0);
+  });
+
+  it('a sent message reads as Working at once and stays so until the engine takes over, then follows the engine', async () => {
+    const before = ['> earlier', '⏺ Earlier reply.'];
+    const m = mountBusyChat([before, before, before, ['> earlier', '⏺ Earlier reply.', '> go', '✶ Running… (esc to interrupt)']]);
+    await m.settle();
+    assert.doesNotMatch(m.root.innerHTML, /is-busy/, 'idle before the send');
+    m.doc.getElementById('v6ChatInput').value = 'go';
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.settle();
+    assert.equal(labelIn(m.root.innerHTML), 'Working', 'Working after delivery, before the pane shows anything');
+    m.advance(3000);
+    await m.polls[m.polls.length - 1]();
+    assert.equal(labelIn(m.activity().innerHTML), 'Working');
+    await m.polls[m.polls.length - 1]();
+    assert.equal(labelIn(m.activity().innerHTML), 'Running', 'the engine\'s own label takes over');
+    assert.equal(timerIn(m.activity().innerHTML), '3s', 'one clock from the send onwards');
+  });
+
+  it('a just-sent chat stops reading as Working once a new reply appears, or after three reads with neither', async () => {
+    const before = ['> earlier', '⏺ Earlier reply.'];
+    const replied = mountBusyChat([before, ['> earlier', '⏺ Earlier reply.', '> go', '⏺ Done already.']]);
+    await replied.settle();
+    replied.doc.getElementById('v6ChatInput').value = 'go';
+    replied.doc.getElementById('v6ChatForm').dispatch('submit');
+    await replied.settle();
+    assert.doesNotMatch(replied.root.innerHTML, /is-busy/, 'a reply already on screen ends the wait');
+    assert.equal(replied.ticks.size, 0);
+
+    const silent = mountBusyChat([before]);
+    await silent.settle();
+    silent.doc.getElementById('v6ChatInput').value = 'go';
+    silent.doc.getElementById('v6ChatForm').dispatch('submit');
+    await silent.settle();
+    assert.equal(labelIn(silent.root.innerHTML), 'Working', 'first read after the send');
+    await silent.polls[silent.polls.length - 1]();
+    await silent.polls[silent.polls.length - 1]();
+    assert.equal(labelIn(silent.activity().innerHTML), 'Working', 'still waiting at the third read');
+    await silent.polls[silent.polls.length - 1]();
+    assert.equal(silent.activity().innerHTML, '', 'a fourth read with no engine activity ends it');
+    assert.equal(silent.ticks.size, 0);
   });
 });
