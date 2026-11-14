@@ -4094,6 +4094,15 @@ html[data-theme="light"] .tc-bg-watermark img {
   .v6-shell-root--sidebar-collapsed .v6-shell-sidebar {
     display: none;
   }
+  /* #3057: with the sidebar hidden, » Show Fleet stays in view while the
+     page scrolls, instead of only at the very top of the main pane. */
+  .v6-shell-root--sidebar-collapsed .v6-shell-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    padding: 6px 0;
+    background: var(--bg, #000);
+  }
 }
 .v6-sidebar-header {
   display: flex;
@@ -4247,8 +4256,12 @@ html[data-theme="light"] .tc-bg-watermark img {
   align-items: center;
   gap: 8px;
 }
+/* #3057: a link styled as the compact buttons beside it — same box, no
+   underline; the generic .v6-open-hood's inline-block would undo .btn's flex. */
 .v6-chat-actions .v6-open-hood {
+  display: inline-flex;
   margin-bottom: 0;
+  text-decoration: none;
 }
 .v6-chat-delegate-label {
   display: inline-flex;
@@ -4315,7 +4328,9 @@ html[data-theme="light"] .tc-bg-watermark img {
   margin: 0;
 }
 .v6-chat-activity.is-busy {
-  display: inline-block;
+  /* #3057: a row, so a long label truncates and the dots and time stay. */
+  display: inline-flex;
+  align-items: baseline;
   align-self: flex-start;
   padding: 2px 10px;
   border-radius: 999px;
@@ -4327,6 +4342,53 @@ html[data-theme="light"] .tc-bg-watermark img {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* #3057: dots that build up (. .. ...) after the busy label, and its
+   elapsed time; with reduced motion the dots hold still at three. */
+.v6-chat-activity-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.v6-chat-activity-dots,
+.v6-chat-activity-timer {
+  flex: none;
+}
+.v6-chat-activity-dots::after {
+  content: '...';
+  display: inline-block;
+  width: 0;
+  overflow: hidden;
+  vertical-align: bottom;
+  animation: v6-chat-dots 1.2s steps(4, end) infinite;
+}
+@keyframes v6-chat-dots {
+  to { width: 1.2em; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .v6-chat-activity-dots::after { animation: none; width: auto; }
+}
+.v6-chat-activity-timer {
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+/* #3057: the chat target's own version and git branch, beside its status. */
+.v6-chat-version-badge,
+.v6-chat-git-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.8em;
+  border: 1px solid var(--border-color, #2a2f36);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+/* The amber border marks uncommitted changes; the text keeps the theme's own
+   colour, which reads in both themes (amber text fell to ~2:1 on light). */
+.v6-chat-git-badge.is-dirty { border-color: #d4a72c; }
 .v6-chat-under-hood > summary {
   cursor: pointer;
   opacity: 0.85;

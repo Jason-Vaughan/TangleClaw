@@ -497,6 +497,9 @@
 
   /** How often an open chat re-reads its session's live output (#3047). */
   const CHAT_POLL_MS = 4000;
+
+  /** Reads of a just-sent chat that may show no engine activity before it stops reading as Working (#3057). */
+  const AWAIT_REPLY_POLLS = 3;
   const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
   /** Every metric a B4 telemetry bar carries, in its own listed display order, mirroring `lib/v6/b4-telemetry-header.js#METRIC_KEYS`. */
@@ -627,7 +630,8 @@
    * messages yet".
    * @param {{project: {id?: *, name?: string}|null, sessionId?: number|null,
    *   events?: Array<{seq?: number, role?: string, content?: string, redacted?: number}>|null,
-   *   error?: string|null}} view
+   *   error?: string|null, chat?: object}} view - `chat.sidebarCollapsed` adds a Show Fleet
+   *   button and `chat.activityElapsed` is the busy line's time (#3057).
    * @returns {string} HTML.
    */
   function conversationViewMarkup(view) {
@@ -698,15 +702,21 @@
     const startFleetButton = offlineMembers
       ? `<button type="button" id="v6ChatStartFleet" class="btn btn-secondary btn-small v6-chat-start-fleet" data-action="start-chat-fleet">${fleetLabel}</button>`
       : '';
+    // #3057: with the sidebar hidden, the chat itself offers to bring it back.
+    const showFleetButton = chat.sidebarCollapsed
+      ? `<button type="button" id="v6ChatShowFleet" class="btn btn-secondary btn-small v6-chat-show-fleet"
+          data-action="toggle-sidebar-drawer" aria-controls="v6ShellSidebar" aria-expanded="false"
+          aria-label="Show Fleet sidebar" title="Restore the Fleet sidebar">» Show Fleet</button>`
+      : '';
     const placeholder = `Message ${name}… (Enter to send, Shift+Enter for newline)`;
     return `<section class="v6-conversation v6-chat" aria-label="Conversation — ${escapeHtml(name)}">
       <header class="v6-chat-header">
         <h2 class="v6-detail-title">${escapeHtml(title)}</h2>
         <p class="v6-chat-talking-to">Talking to: <strong>${escapeHtml(name)}</strong>${session} · ${delegateMode ? 'Designated Project Delegate' : 'Direct Session'}
-          <span class="v6-chat-pill is-${status}">${CHAT_STATUS_LABELS[status]}</span></p>
+          <span class="v6-chat-pill is-${status}">${CHAT_STATUS_LABELS[status]}</span>${chatRepoBadgesMarkup(v.project)}</p>
         <div class="v6-chat-actions">
-          ${startButton}${startFleetButton}${delegatePicker}${toDelegate}
-          <a class="btn btn-secondary v6-open-hood" href="${escapeHtml(hoodHref)}">Open Hood (Live Terminal)</a>
+          ${showFleetButton}${startButton}${startFleetButton}${delegatePicker}${toDelegate}
+          <a class="btn btn-secondary btn-small v6-open-hood" href="${escapeHtml(hoodHref)}">Open Hood (Live Terminal)</a>
           <button type="button" id="v6ChatRefresh" class="btn btn-secondary btn-small">Refresh</button>
           <button type="button" id="v6ChatSettings" class="btn btn-secondary btn-small">Project Settings</button>
         </div>
@@ -719,7 +729,7 @@
         <button type="button" id="v6ChatStartBanner" class="btn btn-primary btn-small" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>
         <a class="v6-chat-classic-launch" href="#/">Open Classic View to launch ${escapeHtml(name)}</a></p>`}
       ${chatQuestionMarkup(live && live.question)}
-      ${chatActivityMarkup(live && live.activity)}
+      ${chatActivityMarkup(chatBusyLabel(chat), chat.activityElapsed)}
       <form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form" aria-label="Message ${escapeHtml(name)}">
         <div id="v6ChatAttachments" class="v6-chat-attachments" aria-live="polite">${attachmentChipsMarkup(chat.attachments)}</div>
         <textarea id="v6ChatInput" class="v6-chat-input" name="message" rows="3" aria-label="Message to ${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}"${disabled}>${escapeHtml(chat.draft || '')}</textarea>
@@ -829,6 +839,8 @@
       // eslint-disable-next-line no-control-regex
       const line = raw.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\s+$/, '');
       const text = line.trim();
+      // A blank line decides nothing: tool output can hold blank lines, and
+      // the next line's indent says whether it is still output (#3057).
       if (!text) return;
       const indented = /^\s/.test(line);
       const prompt = LIVE_PROMPT.exec(text);
@@ -852,7 +864,9 @@
         activity = text.replace(/^[✶✻✽✢⠀-⣿\s]+/, '').replace(/\s*\(?esc to interrupt\)?/i, '').trim() || 'Working…';
         return;
       }
-      if (indented && block === 'tool') return;
+      // Under a tool line, only its output marker or a deeper indent is
+      // output; Antigravity indents its reply prose by two spaces (#3057).
+      if (indented && block === 'tool' && (/^[⎿└]/.test(text) || /^\s{4,}/.test(line))) return;
       if (tools.some((re) => re.test(text))) {
         block = 'tool';
         return;
@@ -911,9 +925,73 @@
     return question ? `<span class="v6-chat-question-label">Waiting on you:</span> ${escapeHtml(question)}` : '';
   }
 
-  /** @param {string|null} activity - What the engine is busy doing. @returns {string} HTML. */
-  function chatActivityMarkup(activity) {
-    return `<p id="v6ChatActivity" class="v6-chat-activity${activity ? ' is-busy' : ''}" aria-live="polite">${activity ? escapeHtml(activity) : ''}</p>`;
+  /**
+   * The chat target's own repo version and git branch (#3057), which can
+   * differ from the server version in the top bar. A branch with
+   * uncommitted changes is starred; `dirty: null` means unknown and is not.
+   * @param {object|null} project - A `/api/projects` row.
+   * @returns {string} HTML; empty when the row carries neither.
+   */
+  function chatRepoBadgesMarkup(project) {
+    const git = project && project.git && typeof project.git === 'object' ? project.git : {};
+    const version = (project && project.version) || git.latestTag || '';
+    const branch = git.branch || '';
+    const dirty = git.dirty === true;
+    return (version ? ` <span class="v6-chat-version-badge" title="This project's version">${escapeHtml(version)}</span>` : '')
+      + (branch ? ` <span class="v6-chat-git-badge${dirty ? ' is-dirty' : ''}" title="${dirty ? 'Git branch, with uncommitted changes' : 'Git branch'}">⎇ ${escapeHtml(branch)}${dirty ? '*' : ''}</span>` : '');
+  }
+
+  /**
+   * What the chat is busy with (#3057): what the engine reports, else
+   * `Working` while a send is on its way.
+   * @param {object} chat - A conversation view's `chat`.
+   * @returns {string|null}
+   */
+  function chatBusyLabel(chat) {
+    const live = chat && chat.live;
+    if (live && live.activity) return live.activity;
+    return chat && chat.send && chat.send.kind === 'pending' ? 'Working' : null;
+  }
+
+  /** Trailing dots a busy label ends with; the animated ones replace them (#3057). */
+  const TRAILING_ELLIPSIS = /\s*(?:\.{1,3}|…)\s*$/;
+
+  /**
+   * Elapsed time for the busy indicator (#3057): `0s`, `59s`, `1m 12s`, `1h 2m`.
+   * @param {number} ms
+   * @returns {string}
+   */
+  function formatElapsed(ms) {
+    const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h) return `${h}h ${m}m`;
+    return m ? `${m}m ${s}s` : `${s}s`;
+  }
+
+  /**
+   * @param {string|null} activity - What the engine is busy doing.
+   * @param {string} [elapsed] - How long it has been busy, as {@link formatElapsed} writes it.
+   * @returns {string} HTML.
+   */
+  function chatActivityMarkup(activity, elapsed) {
+    return `<p id="v6ChatActivity" class="v6-chat-activity${activity ? ' is-busy' : ''}" aria-live="polite">${chatActivityInner(activity, elapsed)}</p>`;
+  }
+
+  /**
+   * The busy line's contents (#3057): the label without its static dots,
+   * animated dots, and the elapsed time. Only the label is announced; the
+   * dots and the ticking time are hidden from assistive tech.
+   * @param {string|null} activity
+   * @param {string} [elapsed]
+   * @returns {string} HTML.
+   */
+  function chatActivityInner(activity, elapsed) {
+    if (!activity) return '';
+    const label = String(activity).replace(TRAILING_ELLIPSIS, '') || 'Working';
+    return `<span class="v6-chat-activity-label">${escapeHtml(label)}</span><span class="v6-chat-activity-dots" aria-hidden="true"></span>`
+      + ` <span id="v6ChatActivityTimer" class="v6-chat-activity-timer" aria-hidden="true">${escapeHtml(elapsed || '0s')}</span>`;
   }
 
   /** The secure-clipboard route's limit on one decoded file (`lib/secure-clipboard.js` MAX_FILE_BYTES). */
@@ -1329,8 +1407,12 @@
       const draft = (extras && extras.draft) || '';
       const hoodOpen = Boolean(extras && extras.hoodOpen);
       const fleetArmed = Boolean(extras && extras.fleetArmed);
+      const sidebarCollapsed = Boolean(extras && extras.sidebarCollapsed);
+      const activityElapsed = (extras && extras.activityElapsed) || '';
       const v = detail.view || {};
-      return conversationViewMarkup(Object.assign({}, v, { chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed }) }));
+      return conversationViewMarkup(Object.assign({}, v, {
+        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed })
+      }));
     }
     if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
     if (detail.kind === 'recovery') return recoveryConsoleMarkup(detail.view);
@@ -1490,6 +1572,10 @@
     // the view last handed to the shell — what a send or a poll acts on.
     let current = null;
     let pollId = null;
+    // #3057: a message the session received whose reply has not shown yet:
+    // the chat reads as Working until the engine reports its own activity,
+    // a new reply appears, or a few polls pass with neither.
+    let awaitingReply = null;
     // Set when a sidebar click leads to a different route (#3053), so that
     // route reloads the project rows before it shows anything.
     let freshNext = false;
@@ -1541,10 +1627,42 @@
      * @returns {object|null}
      */
     function liveView(res, project, events) {
-      if (!res || !Array.isArray(res.lines)) return null;
-      const engine = project && project.engine && project.engine.id ? String(project.engine.id) : '';
-      const said = (Array.isArray(events) ? events : []).filter((e) => e && e.role === 'user').map((e) => e.content);
-      return extractLiveTurns(res.lines, engine, said);
+      let live = null;
+      if (res && Array.isArray(res.lines)) {
+        const engine = project && project.engine && project.engine.id ? String(project.engine.id) : '';
+        const said = (Array.isArray(events) ? events : []).filter((e) => e && e.role === 'user').map((e) => e.content);
+        live = extractLiveTurns(res.lines, engine, said);
+      }
+      return awaitReply(live, project);
+    }
+
+    /**
+     * @param {{turns?: Array<{role: string, text: string}>}|null} live
+     * @returns {string|null} The newest assistant reply the pane shows.
+     */
+    function lastReply(live) {
+      const turns = live && Array.isArray(live.turns) ? live.turns : [];
+      for (let i = turns.length - 1; i >= 0; i--) if (turns[i] && turns[i].role === 'assistant') return turns[i].text;
+      return null;
+    }
+
+    /**
+     * Keep a just-sent chat busy (#3057) until its engine takes over: the
+     * engine's own activity or a new reply ends the wait, and so do
+     * {@link AWAIT_REPLY_POLLS} reads with neither, so it never sticks.
+     * @param {object|null} live - What the pane shows.
+     * @param {object} project - The chat's target.
+     * @returns {object|null} `live`, reading `Working` while the wait lasts.
+     */
+    function awaitReply(live, project) {
+      const wait = awaitingReply;
+      if (!wait || !project || String(project.id) !== wait.projectId) return live;
+      if ((live && live.activity) || lastReply(live) !== wait.reply || wait.reads >= AWAIT_REPLY_POLLS) {
+        awaitingReply = null;
+        return live;
+      }
+      wait.reads += 1;
+      return Object.assign({ turns: [], question: null }, live, { activity: 'Working' });
     }
 
     /**
@@ -1758,7 +1876,9 @@
      */
     async function deliverChat(chat, message, name) {
       showSend({ kind: 'pending', message: `Sending to ${name}…` });
+      const before = chat.view && chat.view.chat ? lastReply(chat.view.chat.live) : null;
       const sent = await apiMutate(`/api/sessions/${encodeURIComponent(name)}/command`, 'POST', { command: message, enter: true });
+      if (sent) awaitingReply = { projectId: String(chat.project.id), reply: before, reads: 0 };
       // Once it is in the session the draft is spent, even if the operator
       // has moved to another chat meanwhile: left saved, it would come back
       // pre-filled and one Enter would send it twice.
@@ -2145,10 +2265,12 @@
    *   onSendChat?: (text: string) => void, onChangeDelegate?: (nodeId: string, projectId: string) => void,
    *   onRefreshChat?: () => void, onOpenProjectSettings?: (projectName: string) => void,
    *   onAttachFiles?: (files: Array<object>) => void, onRemoveAttachment?: (index: number) => void,
-   *   onStartSession?: () => void, onStartFleet?: () => void, onTreeLinkClick?: (hash: string) => void}} opts - `storage`
+   *   onStartSession?: () => void, onStartFleet?: () => void, onTreeLinkClick?: (hash: string) => void,
+   *   now?: () => number, setInterval?: (fn: Function, ms: number) => *, clearInterval?: (id: *) => void}} opts - `storage`
    *   remembers the sidebar layout (#3046); defaults to the page's `localStorage`,
    *   and `null` keeps it for this page only. The `on*Chat`/delegate/settings
-   *   callbacks are the chat view's controls (#3047).
+   *   callbacks are the chat view's controls (#3047). `now` and the interval pair
+   *   drive the busy line's elapsed time (#3057); they default to the page's.
    * @returns {{getRoute: () => object, navigate: (hash: string) => void,
    *   toggleDrawer: (force?: boolean) => void, isDrawerOpen: () => boolean,
    *   toggleSidebar: (force?: boolean) => void, isSidebarCollapsed: () => boolean,
@@ -2195,6 +2317,15 @@
     // The chat whose Start fleet button has been clicked once (#3053).
     let fleetArmedKey = null;
     let scrolledChatKey = null;
+    // #3057: when the chat on screen became busy, and the 1 s ticker that
+    // advances its elapsed time while it stays busy.
+    const now = typeof options.now === 'function' ? options.now : () => Date.now();
+    const startTicker = typeof options.setInterval === 'function' ? options.setInterval
+      : (win && typeof win.setInterval === 'function' ? (fn, ms) => win.setInterval(fn, ms) : null);
+    const stopTicker = typeof options.clearInterval === 'function' ? options.clearInterval
+      : (win && typeof win.clearInterval === 'function' ? (id) => win.clearInterval(id) : () => {});
+    let busy = null;
+    let tickerId = null;
 
     function readHash() {
       if (typeof options.getHash === 'function') return options.getHash();
@@ -2229,6 +2360,8 @@
       if (collapseBtn) collapseBtn.addEventListener('click', () => { toggleSidebar(true); focusById('v6SidebarExpand'); });
       const expandBtn = doc.getElementById('v6SidebarExpand');
       if (expandBtn) expandBtn.addEventListener('click', () => { toggleSidebar(false); focusById('v6SidebarCollapse'); });
+      const chatShowFleet = doc.getElementById('v6ChatShowFleet');
+      if (chatShowFleet) chatShowFleet.addEventListener('click', () => { toggleSidebar(false); focusById('v6SidebarCollapse'); });
       const collapseAll = doc.getElementById('v6TreeCollapseAll');
       if (collapseAll) collapseAll.addEventListener('click', () => setCollapsedNodes(allNodeKeys(tree)));
       const expandAll = doc.getElementById('v6TreeExpandAll');
@@ -2390,6 +2523,36 @@
       return project && project.id != null ? String(project.id) : null;
     }
 
+    /** @returns {string|null} What the chat on screen is busy with, if anything (#3057). */
+    function busyLabelNow() {
+      return detail && detail.kind === 'conversation' && detail.view ? chatBusyLabel(detail.view.chat) : null;
+    }
+
+    /**
+     * Start, keep or stop the busy clock (#3057). It keeps its start while
+     * the same chat stays busy, whatever the label says, and stops — with
+     * its ticker — once that chat is idle or off screen.
+     * @returns {string} The elapsed time to show, or '' when idle.
+     */
+    function syncBusy() {
+      const key = chatTargetKey();
+      if (!busyLabelNow() || key == null) {
+        busy = null;
+        if (tickerId != null) { stopTicker(tickerId); tickerId = null; }
+        return '';
+      }
+      if (!busy || busy.key !== key) busy = { key, since: now() };
+      if (tickerId == null && startTicker) tickerId = startTicker(tickBusy, 1000);
+      return formatElapsed(now() - busy.since);
+    }
+
+    /** Advance the busy line's elapsed time in place, once a second. */
+    function tickBusy() {
+      const elapsed = syncBusy();
+      const timer = doc.getElementById('v6ChatActivityTimer');
+      if (timer && elapsed) timer.innerHTML = escapeHtml(elapsed);
+    }
+
     /**
      * The composer's ways in for files (#3053): the Attach button and its
      * hidden input, a drop anywhere on the composer, and a paste of files or
@@ -2498,6 +2661,7 @@
       // #3053: the template wizard and attestation pills are not chat
       // content; they stay in the page (and wired) but out of sight.
       const inChat = Boolean(detail && detail.kind === 'conversation');
+      const activityElapsed = syncBusy();
       if (root.classList) root.classList.toggle('v6-shell-root--sidebar-collapsed', sidebarCollapsed);
       root.innerHTML = `
         <a id="v6ShellSkipLink" class="v6-shell-skip-link" href="#v6ShellMain">Skip to main content</a>
@@ -2533,7 +2697,8 @@
           </div>
           <div id="v6ShellDetail">${detailMarkup(detail, {
             draft: chatDrafts.get(chatTargetKey()) || '', hoodOpen: chatHoodOpen,
-            fleetArmed: fleetArmedKey != null && fleetArmedKey === chatTargetKey()
+            fleetArmed: fleetArmedKey != null && fleetArmedKey === chatTargetKey(),
+            sidebarCollapsed, activityElapsed
           })}</div>
           <div id="v6ShellWizard"${inChat ? ' hidden' : ''}>${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation"${inChat ? ' hidden' : ''}>${modelAttestationMarkup(attestation)}</div>
@@ -2688,9 +2853,11 @@
           q.className = `v6-chat-question${live && live.question ? ' is-asking' : ''}`;
         }
         const a = doc.getElementById('v6ChatActivity');
+        const elapsed = syncBusy();
         if (a) {
-          a.innerHTML = live && live.activity ? escapeHtml(live.activity) : '';
-          a.className = `v6-chat-activity${live && live.activity ? ' is-busy' : ''}`;
+          const label = busyLabelNow();
+          a.innerHTML = chatActivityInner(label, elapsed);
+          a.className = `v6-chat-activity${label ? ' is-busy' : ''}`;
         }
       },
       /**
@@ -2699,6 +2866,8 @@
        */
       clearChatDraft(projectId) { chatDrafts.delete(projectId != null ? String(projectId) : chatTargetKey()); },
       destroy() {
+        if (tickerId != null) { stopTicker(tickerId); tickerId = null; }
+        busy = null;
         if (win && typeof win.removeEventListener === 'function') win.removeEventListener('hashchange', handleHashChange);
       }
     };
@@ -2728,6 +2897,7 @@
   global.tcV6ResolveRouteProject = resolveRouteProject;
   global.tcV6ResolveDelegateProject = resolveDelegateProject;
   global.tcV6ChatKeyAction = chatKeyAction;
+  global.tcV6FormatElapsed = formatElapsed;
   global.tcV6ExtractLiveTurns = extractLiveTurns;
   global.tcV6SanitizeUploadName = sanitizeUploadName;
   global.tcV6FilesFromEvent = filesFromEvent;
