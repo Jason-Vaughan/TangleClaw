@@ -1229,17 +1229,11 @@ describe('tcCreateV6Shell — collapsible project and fleet nodes (#3046)', () =
     assert.match(root.innerHTML, /TC-Lane Fleet/);
   });
 
-  it('Collapse all folds every project and fleet; Expand all unfolds them', () => {
-    const storage = makeStorage();
-    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage });
-    doc.getElementById('v6TreeCollapseAll').dispatch('click');
-    assert.doesNotMatch(root.innerHTML, /Fleet<\/a>/);
-    assert.deepEqual(JSON.parse(storage.data.tc_v6_collapsed_nodes).sort(),
-      ['f:medusa/medusa', 'f:tc-lane/tc-lane', 'p:medusa', 'p:tc-lane']);
-    doc.getElementById('v6TreeExpandAll').dispatch('click');
-    assert.match(root.innerHTML, /TC-Lane Fleet/);
-    assert.match(root.innerHTML, /Medusa-PM \(21\)/);
-    assert.deepEqual(JSON.parse(storage.data.tc_v6_collapsed_nodes), []);
+  // Restated by #3068: the Operator found Expand all did not help and the toolbar dropped it, with Collapse all.
+  it('the Expand all and Collapse all buttons are gone; each project and fleet keeps its own fold toggle', () => {
+    const { root } = mountShell({ tree: TWO_GROUP_TREE });
+    assert.doesNotMatch(root.innerHTML, /v6TreeExpandAll|v6TreeCollapseAll|>Expand all<|>Collapse all</);
+    assert.equal((root.innerHTML.match(/data-action="toggle-tree-node"/g) || []).length, 4);
   });
 
   it('a fold toggle names what it folds for a screen reader, escaped', () => {
@@ -1301,18 +1295,21 @@ describe('tcCreateV6Shell — filter controls (#3046)', () => {
     return m;
   }
 
-  it('renders search, engine (one option per engine in use), one pill per logical project, Multi and All', () => {
-    const { root } = mountWithProjects();
+  // Restated by #3068: the pills, All and Multi became one fleet picker; search and engine sit behind the search toggle.
+  it('renders a fleet picker (All Fleets, then one option per logical project) and, once opened, search and engine', () => {
+    const { root, doc } = mountWithProjects();
+    assert.match(root.innerHTML, /<select id="v6FilterFleet"[^>]*aria-label="Show fleet"[^>]*><option value="" selected>All Fleets<\/option><option value="tc-lane">TC-Lane<\/option><option value="medusa">Medusa<\/option><\/select>/);
+    assert.doesNotMatch(root.innerHTML, /v6GroupPill|v6FilterMulti|v6FilterAll/);
+    assert.match(root.innerHTML, /<div id="v6SidebarSearch"[^>]*hidden>/, 'search and engine start hidden');
+    doc.getElementById('v6SidebarSearchToggle').dispatch('click');
+    assert.match(root.innerHTML, /<div id="v6SidebarSearch" class="v6-sidebar-filters" role="search" aria-label="Filter the fleet tree">/);
     assert.match(root.innerHTML, /id="v6FilterSearch"/);
     assert.match(root.innerHTML, /<option value="">All Engines<\/option><option value="claude">claude<\/option><option value="codex">codex<\/option>/);
-    assert.match(root.innerHTML, /id="v6GroupPill-0"[^>]*>TC-Lane</);
-    assert.match(root.innerHTML, /id="v6GroupPill-1"[^>]*>Medusa</);
-    assert.match(root.innerHTML, /id="v6FilterMulti"[^>]*data-action="toggle-multi-filter"[^>]*aria-pressed="false"/);
-    assert.match(root.innerHTML, /id="v6FilterAll"[^>]*aria-pressed="true"/);
   });
 
   it('typing in search filters the tree immediately and keeps focus in the box', () => {
     const { doc, root } = mountWithProjects();
+    doc.getElementById('v6SidebarSearchToggle').dispatch('click'); // #3068: search sits behind its toggle
     const box = doc.getElementById('v6FilterSearch');
     box.focus();
     box.value = 'medusa';
@@ -1325,6 +1322,7 @@ describe('tcCreateV6Shell — filter controls (#3046)', () => {
 
   it('choosing an engine filters by it and keeps it selected', () => {
     const { doc, root } = mountWithProjects();
+    doc.getElementById('v6SidebarSearchToggle').dispatch('click'); // #3068: search sits behind its toggle
     const select = doc.getElementById('v6FilterEngine');
     select.value = 'codex';
     select.dispatch('change');
@@ -1333,47 +1331,58 @@ describe('tcCreateV6Shell — filter controls (#3046)', () => {
     assert.match(root.innerHTML, /<option value="codex" selected>/);
   });
 
-  it('single mode: a pill shows only its project, a second pill replaces it, re-clicking the only one clears it', () => {
+  // Restated by #3068: choosing in the picker replaces the pills' single mode.
+  it('picking a fleet shows only it, picking another replaces it, and All Fleets clears it; remembered', () => {
     const storage = makeStorage();
     const { doc, root } = mountWithProjects({ storage });
-    doc.getElementById('v6GroupPill-1').dispatch('click');
+    const pick = (value) => { const el = doc.getElementById('v6FilterFleet'); el.value = value; el.dispatch('change'); };
+    pick('medusa');
     assert.doesNotMatch(root.innerHTML, /TC-Lane Fleet/);
-    assert.match(root.innerHTML, /id="v6GroupPill-1"[^>]*aria-pressed="true"/);
+    assert.match(root.innerHTML, /<option value="medusa" selected>Medusa<\/option>/);
     assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['medusa']);
-    doc.getElementById('v6GroupPill-0').dispatch('click');
+    pick('tc-lane');
     assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['tc-lane']);
-    doc.getElementById('v6GroupPill-0').dispatch('click');
+    pick('tc-lane');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['tc-lane'], 'choosing the same fleet keeps it, unlike the old pill toggle');
+    pick('');
     assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), []);
     assert.match(root.innerHTML, /Medusa Fleet/);
   });
 
-  it('Multi mode: pills add to and remove from the selection, and the mode is remembered', () => {
-    const storage = makeStorage();
-    const { doc, root } = mountWithProjects({ storage });
-    doc.getElementById('v6FilterMulti').dispatch('click');
-    assert.equal(storage.data.tc_v6_filter_multi_mode, 'true');
-    assert.match(root.innerHTML, /id="v6FilterMulti"[^>]*aria-pressed="true"/);
-    doc.getElementById('v6GroupPill-0').dispatch('click');
-    doc.getElementById('v6GroupPill-1').dispatch('click');
-    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['tc-lane', 'medusa']);
-    doc.getElementById('v6GroupPill-0').dispatch('click');
-    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['medusa']);
+  // Restated by #3068: Multi mode is removed; a several-fleet selection it saved still filters, and says so.
+  it('a remembered several-fleet selection keeps filtering and shows as "Several fleets (2)" rather than All Fleets', () => {
+    const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['tc-lane', 'medusa']), tc_v6_filter_multi_mode: 'true' });
+    const { root } = mountWithProjects({ storage });
+    assert.match(root.innerHTML, /<option value="">All Fleets<\/option><option value="" disabled selected>Several fleets \(2\)<\/option>/);
+    assert.doesNotMatch(root.innerHTML, /<option value="" selected>All Fleets/);
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+    assert.match(root.innerHTML, /Medusa Fleet/);
+    assert.doesNotMatch(root.innerHTML, /v6FilterMulti/);
   });
 
-  it('a Ctrl/Cmd/Shift-click adds to the selection even in single mode', () => {
+  // Restated by #3068: no pills to Ctrl-click; the additive selectGroup API remains.
+  it('the additive selectGroup API still adds to the selection, and the picker says how many', () => {
     const { shell, root } = mountWithProjects();
     shell.selectGroup('tc-lane', false);
+    assert.match(root.innerHTML, /<option value="tc-lane" selected>TC-Lane<\/option>/);
     shell.selectGroup('medusa', true);
     assert.match(root.innerHTML, /TC-Lane Fleet/);
     assert.match(root.innerHTML, /Medusa Fleet/);
-    assert.match(root.innerHTML, /id="v6FilterAll"[^>]*aria-pressed="false"/);
+    assert.match(root.innerHTML, /<option value="" disabled selected>Several fleets \(2\)<\/option>/);
+    shell.selectGroup('medusa', false);
+    shell.selectGroup('medusa', false);
+    assert.match(root.innerHTML, /<option value="" selected>All Fleets<\/option>/, 'a non-additive repeat still clears');
   });
 
-  it('All clears the selection', () => {
+  // Restated by #3068: All Fleets in the picker replaces the All pill.
+  it('a remembered fleet is restored on mount, selected in the picker, and All Fleets clears it', () => {
     const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) });
     const { doc, root } = mountWithProjects({ storage });
     assert.doesNotMatch(root.innerHTML, /TC-Lane Fleet/, 'a remembered selection is restored on mount');
-    doc.getElementById('v6FilterAll').dispatch('click');
+    assert.match(root.innerHTML, /<option value="medusa" selected>Medusa<\/option>/);
+    const el = doc.getElementById('v6FilterFleet');
+    el.value = '';
+    el.dispatch('change');
     assert.match(root.innerHTML, /TC-Lane Fleet/);
     assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), []);
   });
@@ -3524,5 +3533,106 @@ describe('in a chat the telemetry bar sits inside the chat header row (#3063)', 
     assert.match(css, /\.v6-shell-root--chat \.v6-telemetry-chip \{\s*flex-direction: row;\s*align-items: center;\s*gap: 4px;\s*padding: 1px 8px;\s*border-radius: 999px;\s*font-size: 0\.8em;/);
     assert.match(css, /\.v6-shell-root--chat \.v6-telemetry-chip\.is-unavailable \{\s*display: none;\s*\}/);
     assert.match(css, /\.v6-shell-root--chat \.v6-telemetry-header \{\s*margin-bottom: 0;/);
+  });
+});
+
+// ── #3068 (Car V627-W1-A): four-icon sidebar toolbar, fleet picker, higher-contrast chat ──
+
+describe('the sidebar\'s four-icon toolbar (#3068)', () => {
+  const projects = [{ id: 11, name: 'TC-Lane-A', engine: { id: 'claude' } }, { id: 21, name: 'Medusa-PM', engine: { id: 'codex' } }];
+  function mount(opts) {
+    const m = mountShell(Object.assign({ tree: TWO_GROUP_TREE, storage: null }, opts || {}));
+    m.shell.setProjects(projects);
+    return m;
+  }
+
+  it('renders four symbol-only icons, each named by its title and aria-label, in a toolbar', () => {
+    const { root } = mount();
+    const bar = root.innerHTML.slice(root.innerHTML.indexOf('role="toolbar"'), root.innerHTML.indexOf('id="v6FilterFleet"'));
+    assert.match(bar, /aria-label="Fleet sidebar tools"/);
+    const icon = (id) => new RegExp(`<button type="button" id="${id}" class="btn btn-secondary btn-small v6-sidebar-icon[^"]*"[^>]*>`).exec(bar);
+    assert.match(icon('v6SidebarCollapse')[0], /class="[^"]*v6-sidebar-collapse"[^>]*data-action="toggle-sidebar-drawer"[^>]*title="Hide Fleet sidebar" aria-label="Hide Fleet sidebar"/);
+    assert.match(icon('v6SidebarModeFleet')[0], /aria-pressed="true"[^>]*title="Fleet view" aria-label="Fleet view"/);
+    assert.match(icon('v6SidebarSearchToggle')[0], /aria-controls="v6SidebarSearch" aria-expanded="false" aria-pressed="false"[^>]*title="Search projects and filter by engine"/);
+    assert.match(icon('v6SidebarFutureSlot')[0], / disabled[^>]*title="Recent chats \(coming soon\)" aria-label="Recent chats \(coming soon\)"/);
+    for (const glyph of ['«', '❖', '🔍', '🕓']) assert.match(bar, new RegExp(`<span aria-hidden="true">${glyph}</span>`));
+    assert.doesNotMatch(bar, />« Hide Fleet<|>Expand all<|>Collapse all</, 'no words on the toolbar');
+  });
+
+  it('the fleet-view icon is the only mode today: clicking it keeps it pressed and changes nothing', () => {
+    const { doc, root } = mount();
+    const before = root.innerHTML;
+    doc.getElementById('v6SidebarModeFleet').dispatch('click');
+    assert.equal(root.innerHTML, before);
+  });
+
+  it('the search icon opens search and engine; closing it clears both, so a hidden filter never narrows the tree', () => {
+    const { doc, root } = mount();
+    doc.getElementById('v6SidebarSearchToggle').dispatch('click');
+    assert.match(root.innerHTML, /id="v6SidebarSearchToggle"[^>]*aria-expanded="true" aria-pressed="true"[^>]*title="Hide search and engine filter"/);
+    assert.doesNotMatch(root.innerHTML, /<div id="v6SidebarSearch"[^>]*hidden>/);
+    assert.equal(doc.activeElement, doc.getElementById('v6SidebarSearchToggle'), 'focus stays on the toggle');
+    const box = doc.getElementById('v6FilterSearch');
+    box.value = 'medusa';
+    box.dispatch('input');
+    const engine = doc.getElementById('v6FilterEngine');
+    engine.value = 'codex';
+    engine.dispatch('change');
+    assert.doesNotMatch(root.innerHTML, /TC-Lane Fleet/);
+    doc.getElementById('v6SidebarSearchToggle').dispatch('click');
+    assert.match(root.innerHTML, /<div id="v6SidebarSearch"[^>]*hidden>/);
+    assert.match(root.innerHTML, /id="v6FilterSearch"[^>]*value=""/);
+    assert.match(root.innerHTML, /<option value="" selected>All Engines|<option value="">All Engines<\/option><option value="claude">/);
+    assert.doesNotMatch(root.innerHTML, /<option value="codex" selected>/);
+    assert.match(root.innerHTML, /TC-Lane Fleet/, 'the tree is whole again');
+  });
+
+  it('a filter in force stays in sight: re-renders keep the panel open, and only closing (which clears) hides it', () => {
+    const { doc, root, shell } = mount();
+    doc.getElementById('v6SidebarSearchToggle').dispatch('click');
+    const box = doc.getElementById('v6FilterSearch');
+    box.value = 'tc';
+    box.dispatch('input');
+    shell.setTree(TWO_GROUP_TREE);
+    shell.setProjects(projects);
+    assert.doesNotMatch(root.innerHTML, /<div id="v6SidebarSearch"[^>]*hidden>/);
+    assert.match(root.innerHTML, /id="v6FilterSearch"[^>]*value="tc"/);
+  });
+
+  it('the fleet picker escapes a hostile project name and id', () => {
+    const { root } = mountShell({ tree: [{ id: '"><img src=x>', displayName: '<b>x</b>', fleets: [] }], storage: null });
+    const picker = root.innerHTML.slice(root.innerHTML.indexOf('<select id="v6FilterFleet"'), root.innerHTML.indexOf('</select>', root.innerHTML.indexOf('<select id="v6FilterFleet"')));
+    assert.match(picker, /<option value="&quot;&gt;&lt;img src=x&gt;">&lt;b&gt;x&lt;\/b&gt;<\/option>/);
+    assert.doesNotMatch(picker, /<b>x|<img/);
+  });
+
+  it('the toolbar, picker and search panel are styled for it', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(css, /\.v6-sidebar-filters\[hidden\] \{\s*display: none;\s*\}/, 'hidden must win over the panel\'s display rule');
+    assert.match(css, /\.v6-sidebar-icon \{\s*min-width: 44px;/);
+    assert.match(css, /\.v6-sidebar-icon\[aria-pressed="true"\] \{\s*border-color: #56d364;/);
+    assert.match(css, /\.v6-filter-fleet \{\s*width: 100%;/);
+    assert.doesNotMatch(css, /\.v6-filter-pill|\.v6-filter-multi/, 'the pills\' rules went with the pills');
+  });
+});
+
+describe('higher-contrast outlines and surfaces in the chat window (#3068)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  const body = (selector) => {
+    const m = new RegExp(`(^|\\n)${selector.replace(/[.[\]"=]/g, '\\$&')} \\{([^}]*)\\}`).exec(css);
+    return m ? m[2] : '';
+  };
+
+  it('defines the outline and surface on the shell, with a lighter outline for the light theme', () => {
+    assert.match(body('.v6-shell-root'), /--v6-outline: #3d444d;\s*--v6-surface: var\(--card-bg, #0d0d0d\);/);
+    assert.match(body('[data-theme="light"] .v6-shell-root'), /--v6-outline: #8c959f;/);
+  });
+
+  it('gives the chat header, events, under-the-hood drawer and composer 1.5px outlines and a surface fill', () => {
+    for (const sel of ['.v6-chat-header', '.v6-conversation-event', '.v6-chat-under-hood', '.v6-chat-input']) {
+      assert.match(body(sel), /border: 1\.5px solid var\(--v6-outline, #3d444d\);/, sel);
+      assert.match(body(sel), /background: var\(--v6-surface, #0d0d0d\);/, sel);
+    }
+    assert.match(body('.v6-shell-sidebar'), /border-right: 1\.5px solid var\(--v6-outline, #3d444d\);/);
   });
 });

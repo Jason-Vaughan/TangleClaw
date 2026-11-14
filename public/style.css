@@ -3853,6 +3853,10 @@ html[data-theme="light"] .tc-bg-watermark img {
 
 /* ── v6 Fleet-First route-based shell (#2981, V6-08 / B1) ── */
 .v6-shell-root {
+  /* #3068: the chat window's outlines and surfaces, stronger than the
+     default border; the light theme gets a lighter outline. */
+  --v6-outline: #3d444d;
+  --v6-surface: var(--card-bg, #0d0d0d);
   display: grid;
   grid-template-columns: 260px 1fr;
   /* #3046: explicit rows. With none, the sidebar's `grid-row: 1 / -1`
@@ -3861,6 +3865,9 @@ html[data-theme="light"] .tc-bg-watermark img {
   grid-template-rows: auto 1fr auto;
   gap: 16px;
   align-items: start;
+}
+[data-theme="light"] .v6-shell-root {
+  --v6-outline: #8c959f;
 }
 .v6-shell-skip-link {
   position: absolute;
@@ -3886,7 +3893,7 @@ html[data-theme="light"] .tc-bg-watermark img {
      main view's own content onto the sidebar's narrow (260px) column. */
   grid-column: 1;
   grid-row: 1 / -1;
-  border-right: 1px solid var(--border-color, #2a2f36);
+  border-right: 1.5px solid var(--v6-outline, #3d444d);
   padding-right: 12px;
   /* #3046: its own scroll container, so a long fleet list scrolls beside
      the main view instead of stretching the page. */
@@ -4065,9 +4072,10 @@ html[data-theme="light"] .tc-bg-watermark img {
   gap: 6px;
 }
 .v6-conversation-event {
-  border: 1px solid var(--border-color, #2a2f36);
+  border: 1.5px solid var(--v6-outline, #3d444d);
   border-radius: 4px;
   padding: 6px 8px;
+  background: var(--v6-surface, #0d0d0d);
 }
 .v6-conversation-role {
   display: block;
@@ -4151,6 +4159,27 @@ html[data-theme="light"] .tc-bg-watermark img {
   gap: 6px;
   margin-bottom: 10px;
 }
+/* #3068: four symbol-only icons, each a 44px square. */
+.v6-sidebar-icon {
+  min-width: 44px;
+  font-size: 16px;
+}
+.v6-sidebar-icon[aria-pressed="true"] {
+  border-color: #56d364;
+  background: var(--accent-bg, rgba(86, 211, 100, 0.12));
+}
+.v6-sidebar-icon:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.v6-fleet-picker {
+  display: block;
+  margin-bottom: 10px;
+}
+.v6-filter-fleet {
+  width: 100%;
+  box-sizing: border-box;
+}
 .v6-tree-row {
   display: flex;
   align-items: center;
@@ -4188,28 +4217,10 @@ html[data-theme="light"] .tc-bg-watermark img {
   width: 100%;
   box-sizing: border-box;
 }
-.v6-filter-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.v6-filter-pill {
-  padding: 2px 8px;
-  border: 1px solid var(--border-color, #2a2f36);
-  border-radius: 999px;
-  background: transparent;
-  color: inherit;
-  font-size: 0.85em;
-  cursor: pointer;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-.v6-filter-pill.is-active {
-  border-color: #56d364;
-  background: var(--accent-bg, rgba(86, 211, 100, 0.12));
-}
-.v6-filter-multi {
-  border-style: dashed;
+/* #3068: the search panel is hidden until its toggle opens it; the
+   display rule above would otherwise override the hidden attribute. */
+.v6-sidebar-filters[hidden] {
+  display: none;
 }
 .v6-sidebar-empty {
   opacity: 0.7;
@@ -4282,6 +4293,10 @@ html[data-theme="light"] .tc-bg-watermark img {
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
+  padding: 6px 8px;
+  border: 1.5px solid var(--v6-outline, #3d444d);
+  border-radius: 6px;
+  background: var(--v6-surface, #0d0d0d);
 }
 .v6-chat-identity {
   display: flex;
@@ -4461,6 +4476,12 @@ html[data-theme="light"] .tc-bg-watermark img {
 /* The amber border marks uncommitted changes; the text keeps the theme's own
    colour, which reads in both themes (amber text fell to ~2:1 on light). */
 .v6-chat-git-badge.is-dirty { border-color: #d4a72c; }
+.v6-chat-under-hood {
+  border: 1.5px solid var(--v6-outline, #3d444d);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--v6-surface, #0d0d0d);
+}
 .v6-chat-under-hood > summary {
   cursor: pointer;
   opacity: 0.85;
@@ -4519,8 +4540,8 @@ html[data-theme="light"] .tc-bg-watermark img {
   font: inherit;
   padding: 8px;
   border-radius: 4px;
-  border: 1px solid var(--border-color, #2a2f36);
-  background: var(--input-bg, transparent);
+  border: 1.5px solid var(--v6-outline, #3d444d);
+  background: var(--v6-surface, #0d0d0d);
   color: inherit;
 }
 .v6-chat-send-status {

@@ -339,20 +339,6 @@
     return `<ul class="v6-shell-tree">${items}</ul>`;
   }
 
-  /**
-   * Every fold key in `tree`: one per project and one per fleet that has
-   * something to fold — what "Collapse all" folds.
-   * @param {ReturnType<typeof buildHierarchyTree>} tree
-   * @returns {string[]}
-   */
-  function allNodeKeys(tree) {
-    const keys = [];
-    (Array.isArray(tree) ? tree : []).forEach((project) => {
-      if (project.fleets.length) keys.push(projectNodeKey(project));
-      project.fleets.forEach((fleet) => { if (fleet.members.length) keys.push(fleetNodeKey(project, fleet)); });
-    });
-    return keys;
-  }
 
   /**
    * A JSON view of a `localStorage`-like store that never throws: a store
@@ -443,36 +429,53 @@
   }
 
   /**
-   * The sidebar's filter controls (#3046): text search, an engine select
-   * (one option per engine a project runs), a pill per logical project, a
-   * Multi toggle and All. Ids are positional for the same reason the fold
-   * toggles' are.
+   * The sidebar's four-icon toolbar (#3068): hide the sidebar, the fleet view
+   * (the only mode today, so always pressed), the search toggle, and a slot
+   * reserved for a later feature. Symbols only: each is named by its title
+   * and aria-label.
+   * @param {boolean} searchOpen - Whether the search and engine filters show.
+   * @returns {string} HTML.
+   */
+  function sidebarIconBarMarkup(searchOpen) {
+    const icon = (id, label, glyph, extra) => `<button type="button" id="${id}" class="btn btn-secondary btn-small v6-sidebar-icon${extra.cls || ''}"${extra.attrs || ''}
+      title="${label}" aria-label="${label}"><span aria-hidden="true">${glyph}</span></button>`;
+    return `<div class="v6-sidebar-header v6-sidebar-iconbar" role="toolbar" aria-label="Fleet sidebar tools">
+      ${icon('v6SidebarCollapse', 'Hide Fleet sidebar', '«', { cls: ' v6-sidebar-collapse', attrs: ' data-action="toggle-sidebar-drawer" aria-controls="v6ShellSidebar" aria-expanded="true"' })}
+      ${icon('v6SidebarModeFleet', 'Fleet view', '❖', { attrs: ' aria-pressed="true"' })}
+      ${icon('v6SidebarSearchToggle', searchOpen ? 'Hide search and engine filter' : 'Search projects and filter by engine', '🔍',
+        { attrs: ` aria-controls="v6SidebarSearch" aria-expanded="${searchOpen}" aria-pressed="${searchOpen}"` })}
+      ${icon('v6SidebarFutureSlot', 'Recent chats (coming soon)', '🕓', { attrs: ' disabled' })}
+    </div>`;
+  }
+
+  /**
+   * The sidebar's filters (#3068, replacing #3046's pills and Multi toggle):
+   * a fleet picker, always shown in the fleet view, and the search box and
+   * engine select, shown only while the search toggle is open. A selection
+   * of several fleets (the old Multi mode, or the additive API) shows as
+   * such rather than as "All Fleets".
    * @param {{tree: ReturnType<typeof buildHierarchyTree>, engines: string[], text: string,
-   *   engine: string, groups: Set<string>, multi: boolean}} view
+   *   engine: string, groups: Set<string>, searchOpen: boolean}} view
    * @returns {string} HTML.
    */
   function filterControlsMarkup(view) {
     const engineOptions = ['<option value="">All Engines</option>'].concat(view.engines.map((id) => (
       `<option value="${escapeHtml(id)}"${id === view.engine ? ' selected' : ''}>${escapeHtml(id)}</option>`
     ))).join('');
-    const pills = view.tree.map((project, i) => {
-      const on = view.groups.has(String(project.id));
-      return `<button type="button" id="v6GroupPill-${i}" class="v6-filter-pill${on ? ' is-active' : ''}"
-        data-group-id="${escapeHtml(project.id)}" aria-pressed="${on ? 'true' : 'false'}">${escapeHtml(project.displayName)}</button>`;
-    }).join('');
-    return `<div class="v6-sidebar-filters" role="search" aria-label="Filter the fleet tree">
-      <input type="search" id="v6FilterSearch" class="filter-input v6-filter-search" placeholder="Filter…"
-        aria-label="Filter projects by name" autocomplete="off" spellcheck="false" value="${escapeHtml(view.text)}">
-      <select id="v6FilterEngine" class="filter-input v6-filter-engine" aria-label="Filter by engine">${engineOptions}</select>
-      <div class="v6-filter-pills" role="group" aria-label="Show projects">
-        <button type="button" id="v6FilterAll" class="v6-filter-pill${view.groups.size ? '' : ' is-active'}"
-          aria-pressed="${view.groups.size ? 'false' : 'true'}">All</button>
-        ${pills}
-        <button type="button" id="v6FilterMulti" class="v6-filter-pill v6-filter-multi${view.multi ? ' is-active' : ''}"
-          data-action="toggle-multi-filter" aria-pressed="${view.multi ? 'true' : 'false'}"
-          title="Select several projects at once (or Ctrl/Cmd/Shift-click a pill)">Multi</button>
-      </div>
-    </div>`;
+    const one = view.groups.size === 1 ? [...view.groups][0] : null;
+    const fleetOptions = [`<option value=""${view.groups.size ? '' : ' selected'}>All Fleets</option>`]
+      .concat(view.groups.size > 1 ? [`<option value="" disabled selected>Several fleets (${view.groups.size})</option>`] : [])
+      .concat(view.tree.map((project) => (
+        `<option value="${escapeHtml(project.id)}"${String(project.id) === one ? ' selected' : ''}>${escapeHtml(project.displayName)}</option>`
+      ))).join('');
+    return `<label class="v6-fleet-picker"><span class="sr-only">Fleet</span>
+        <select id="v6FilterFleet" class="filter-input v6-filter-fleet" aria-label="Show fleet" title="Show one fleet, or all of them">${fleetOptions}</select>
+      </label>
+      <div id="v6SidebarSearch" class="v6-sidebar-filters" role="search" aria-label="Filter the fleet tree"${view.searchOpen ? '' : ' hidden'}>
+        <input type="search" id="v6FilterSearch" class="filter-input v6-filter-search" placeholder="Filter…"
+          aria-label="Filter projects by name" autocomplete="off" spellcheck="false" value="${escapeHtml(view.text)}">
+        <select id="v6FilterEngine" class="filter-input v6-filter-engine" aria-label="Filter by engine">${engineOptions}</select>
+      </div>`;
   }
 
   /**
@@ -2336,7 +2339,10 @@
     let filterText = '';
     let filterEngine = '';
     let selectedGroups = new Set(prefs.get('tc_v6_selected_groups', [], isStringArray));
-    let multiMode = prefs.get('tc_v6_filter_multi_mode', false, isBoolean);
+    // #3068: whether the search and engine filters show. They can only be
+    // set while it is open, and closing clears them, so a filter in force is
+    // never out of sight.
+    let searchToggled = false;
     // The tree as last rendered, filters applied: the fold toggles' positional
     // ids were generated from it, so they are wired from it too.
     let shownTree = [];
@@ -2395,10 +2401,15 @@
       if (expandBtn) expandBtn.addEventListener('click', () => { toggleSidebar(false); focusById('v6SidebarCollapse'); });
       const chatShowFleet = doc.getElementById('v6ChatShowFleet');
       if (chatShowFleet) chatShowFleet.addEventListener('click', () => { toggleSidebar(false); focusById('v6SidebarCollapse'); });
-      const collapseAll = doc.getElementById('v6TreeCollapseAll');
-      if (collapseAll) collapseAll.addEventListener('click', () => setCollapsedNodes(allNodeKeys(tree)));
-      const expandAll = doc.getElementById('v6TreeExpandAll');
-      if (expandAll) expandAll.addEventListener('click', () => setCollapsedNodes([]));
+      const searchToggle = doc.getElementById('v6SidebarSearchToggle');
+      if (searchToggle) searchToggle.addEventListener('click', () => { toggleSearch(); focusById('v6SidebarSearchToggle'); });
+      const fleetPicker = doc.getElementById('v6FilterFleet');
+      if (fleetPicker) {
+        fleetPicker.addEventListener('change', (evt) => {
+          const value = String((evt && evt.target && evt.target.value) || '');
+          setSelectedGroups(value ? [value] : []);
+        });
+      }
       wireChat();
       wireStart();
       wireTreeLinks();
@@ -2416,24 +2427,6 @@
           render();
         });
       }
-      const allPill = doc.getElementById('v6FilterAll');
-      if (allPill) allPill.addEventListener('click', () => setSelectedGroups([]));
-      const multiPill = doc.getElementById('v6FilterMulti');
-      if (multiPill) {
-        multiPill.addEventListener('click', () => {
-          multiMode = !multiMode;
-          prefs.set('tc_v6_filter_multi_mode', multiMode);
-          render();
-        });
-      }
-      tree.forEach((project, i) => {
-        const pill = doc.getElementById(`v6GroupPill-${i}`);
-        if (pill) {
-          pill.addEventListener('click', (evt) => {
-            selectGroup(String(project.id), Boolean(evt && (evt.ctrlKey || evt.metaKey || evt.shiftKey)));
-          });
-        }
-      });
       // Wired by position over the same tree the sidebar rendered, so a
       // toggle's id and the node it folds always agree.
       shownTree.forEach((project, pi) => {
@@ -2706,14 +2699,9 @@
         <button type="button" id="v6ShellDrawerToggle" class="v6-shell-drawer-toggle"
           aria-expanded="${drawerOpen ? 'true' : 'false'}" aria-controls="v6ShellSidebar">☰ Menu</button>
         <nav id="v6ShellSidebar" class="v6-shell-sidebar${drawerOpen ? ' is-open' : ''}" aria-label="Fleet navigation">
-          <div class="v6-sidebar-header">
-            <button type="button" id="v6SidebarCollapse" class="btn btn-secondary btn-small v6-sidebar-collapse"
-              data-action="toggle-sidebar-drawer" aria-controls="v6ShellSidebar" aria-expanded="true">« Hide Fleet</button>
-            <button type="button" id="v6TreeExpandAll" class="btn btn-secondary btn-small">Expand all</button>
-            <button type="button" id="v6TreeCollapseAll" class="btn btn-secondary btn-small">Collapse all</button>
-          </div>
+          ${sidebarIconBarMarkup(searchOpen())}
           ${filterControlsMarkup({
-            tree, engines: engineIds(), text: filterText, engine: filterEngine, groups: selectedGroups, multi: multiMode
+            tree, engines: engineIds(), text: filterText, engine: filterEngine, groups: selectedGroups, searchOpen: searchOpen()
           })}
           ${shownTree.length ? sidebarMarkup(shownTree, {
             activeProjectId: currentRoute.projectId,
@@ -2787,16 +2775,36 @@
       render();
     }
 
+    /** @returns {boolean} Whether the search and engine filters show (#3068). */
+    function searchOpen() {
+      return searchToggled;
+    }
+
     /**
-     * Pick a logical project pill. Additive (Multi mode, or a
-     * Ctrl/Cmd/Shift-click) toggles it in the selection; otherwise it
-     * becomes the only selection, or clears it when it already was.
+     * Open or close the search and engine filters (#3068). Closing clears
+     * both, so a filter the operator can no longer see never narrows the tree.
+     */
+    function toggleSearch() {
+      if (searchToggled) {
+        searchToggled = false;
+        filterText = '';
+        filterEngine = '';
+      } else {
+        searchToggled = true;
+      }
+      render();
+    }
+
+    /**
+     * Select a logical project (API; the sidebar's own picker sets the
+     * selection directly, #3068). Additive toggles it in the selection;
+     * otherwise it becomes the only selection, or clears it when it already was.
      * @param {string} id
      * @param {boolean} [additive]
      */
     function selectGroup(id, additive) {
       const key = String(id);
-      if (additive || multiMode) {
+      if (additive) {
         const next = new Set(selectedGroups);
         if (next.has(key)) next.delete(key); else next.add(key);
         setSelectedGroups(next);
