@@ -4,6 +4,11 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.2.6] - 2026-11-14
+
+### Fixed
+- In the v6 chat, the telemetry bar and the chat header are now one condensed row (#3063): the telemetry pills sit between the lane's identity strip and the icon buttons instead of a separate row above them. In a chat the telemetry chips are one-line pills, and a metric with no reading (today tokens, quota window, context use and pending Medusa messages, which have no collector yet) is left out of sight. Every telemetry chip now has a hover tip saying what it measures, its value and how sure the reading is — for example "Active sessions: 23 — live sessions on this TangleClaw server (observed)" and "Health: healthy — server health (estimated)". The delegate picker's tip now says what it does: "Choose who this project's chat talks to".
+
 ## [6.2.5] - 2026-11-13
 
 ### Fixed

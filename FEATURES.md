@@ -17,6 +17,11 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.2.6 — Telemetry and the chat header in one condensed row
+
+- **One condensed header row** (#3063) — `public/v6-shell.js#conversationViewMarkup`: in a chat, the telemetry bar is drawn inside the chat header, between the lane's identity strip and the icon buttons, instead of as its own row above it; outside a chat it keeps its own row.
+- **Telemetry chips that explain themselves** (#3063) — every telemetry chip has a hover tip giving its value, what it measures and how sure the reading is. In a chat, the chips are one-line pills and a metric with no reading is hidden (it stays in the page). Today only active sessions, health and version are collected (`server.js#_v6LiveTelemetryMetrics`).
+
 ## v6.2.5 — The active lane marked in the Fleet sidebar and a one-row icon chat toolbar
 
 - **Active lane in the sidebar** (#3059) — `public/v6-shell.js` `render()`: the Fleet sidebar marks the lane a chat talks to (`.is-active`, `aria-current="page"`), including a chat opened from its project or fleet that resolved to the Designated Project Delegate; the active lane, project and fleet are bold, and the lane has a left accent.
