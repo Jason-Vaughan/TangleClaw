@@ -529,6 +529,27 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.ok(root.classList.contains('v6-shell-root--chat'), 'so the unavailable chips are hidden by the chat-scoped rule');
     });
 
+    it('the sidebar\'s four icons and fleet picker work over the real project list (#3068)', async () => {
+      seedProject('e2epick-PM');
+      seedProject('e2epick-A');
+      seedProject('e2eother-PM');
+      const { root, settle, doc } = mountShell('#/projects/e2epick');
+      await settle();
+      for (const id of ['v6SidebarCollapse', 'v6SidebarModeFleet', 'v6SidebarSearchToggle', 'v6SidebarFutureSlot']) {
+        assert.match(root.innerHTML, new RegExp(`id="${id}"`), id);
+      }
+      const picker = root.innerHTML.slice(root.innerHTML.indexOf('<select id="v6FilterFleet"'), root.innerHTML.indexOf('</select>', root.innerHTML.indexOf('<select id="v6FilterFleet"')));
+      const pick = /<option value="([^"]+)">e2epick<\/option>/.exec(picker);
+      assert.ok(pick, `the real e2epick group is offered: ${picker.slice(0, 400)}`);
+      assert.match(picker, />Workspace Projects</, 'a lone project lands in the standalone group, offered too');
+      const el = doc.getElementById('v6FilterFleet');
+      el.value = pick[1];
+      el.dispatch('change');
+      await settle();
+      assert.match(root.innerHTML, /e2epick-PM/);
+      assert.doesNotMatch(root.innerHTML.slice(root.innerHTML.indexOf('class="v6-shell-tree"')), /e2eother-PM/, 'only the picked fleet is in the tree');
+    });
+
     it('the real B2 route accepts the event the chat records, and the next seq counts deleted events (#3047)', async () => {
       const projectId = seedProject('e2e-chat-record');
       const sessionId = seedSession(projectId);
