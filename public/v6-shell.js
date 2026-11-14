@@ -430,13 +430,15 @@
 
   /**
    * The sidebar's four-icon toolbar (#3068): hide the sidebar, the fleet view
-   * (the only mode today, so always pressed), the search toggle, and a slot
-   * reserved for a later feature. Symbols only: each is named by its title
+   * (the only mode today, so always pressed), the search toggle, and chat
+   * history and recents (#3066). Symbols only: each is named by its title
    * and aria-label.
    * @param {boolean} searchOpen - Whether the search and engine filters show.
+   * @param {boolean} [historyOpen] - Whether the history panel shows (#3066).
    * @returns {string} HTML.
    */
-  function sidebarIconBarMarkup(searchOpen) {
+  function sidebarIconBarMarkup(searchOpen, historyOpen) {
+    historyOpen = Boolean(historyOpen);
     const icon = (id, label, glyph, extra) => `<button type="button" id="${id}" class="btn btn-secondary btn-small v6-sidebar-icon${extra.cls || ''}"${extra.attrs || ''}
       title="${label}" aria-label="${label}"><span aria-hidden="true">${glyph}</span></button>`;
     return `<div class="v6-sidebar-header v6-sidebar-iconbar" role="toolbar" aria-label="Fleet sidebar tools">
@@ -444,8 +446,119 @@
       ${icon('v6SidebarModeFleet', 'Fleet view', '❖', { attrs: ' aria-pressed="true"' })}
       ${icon('v6SidebarSearchToggle', searchOpen ? 'Hide search and engine filter' : 'Search projects and filter by engine', '🔍',
         { attrs: ` aria-controls="v6SidebarSearch" aria-expanded="${searchOpen}" aria-pressed="${searchOpen}"` })}
-      ${icon('v6SidebarFutureSlot', 'Recent chats (coming soon)', '🕓', { attrs: ' disabled' })}
+      ${icon('v6SidebarFutureSlot', historyOpen ? 'Hide chat history and recents' : 'Chat history and recents', '🕓',
+        { attrs: ` aria-controls="v6HistoryPanel" aria-expanded="${historyOpen}" aria-pressed="${historyOpen}"` })}
     </div>`;
+  }
+
+  /**
+   * The sidebar's chat history and recents panel (#3066). Searches this
+   * chat's member or its whole fleet (one search per member, merged), lists
+   * recent sessions when no query is set, and shows one past session read-only
+   * with a button that puts a reference to it in the chat's message. Every
+   * value from the server is escaped.
+   * @param {{form: {scope: string, kind: string, q: string}, chatOpen: boolean, data: object|null}} view
+   * @returns {string} HTML.
+   */
+  function historyPanelMarkup(view) {
+    const form = view.form;
+    const data = view.data || {};
+    if (!view.chatOpen) {
+      return `<section id="v6HistoryPanel" class="v6-history" aria-label="Chat history and recents">
+        <p class="v6-history-status" role="status">Open a chat to see its history.</p>
+      </section>`;
+    }
+    const member = String(data.member || '');
+    const fleet = data.fleet || { name: '', count: 1 };
+    const option = (value, label, on) => `<option value="${value}"${on ? ' selected' : ''}>${label}</option>`;
+    const status = data.status === 'loading' ? 'Loading…'
+      : data.status === 'error' ? `Could not load history: ${escapeHtml(data.error || 'the server refused it')}`
+        : data.status === 'ready' ? historyCountLine(data) : '';
+    const items = Array.isArray(data.items) ? data.items : [];
+    const list = items.map((it, i) => {
+      const hits = (Array.isArray(it.hits) ? it.hits : []).slice(0, 2).map((h) => (
+        `<span class="v6-history-hit"><span class="v6-history-hit-loc">${escapeHtml(h.loc)}</span> ${escapeHtml(h.line)}</span>`
+      )).join('');
+      const count = it.matchCount ? ` · ${escapeHtml(it.matchCount)} hit${it.matchCount === 1 ? '' : 's'}` : '';
+      const secret = it.secretsFlagged ? ' <span class="v6-history-secret" title="Transcript flagged for possible secrets">⚠ secrets</span>' : '';
+      return `<li class="v6-history-row"><button type="button" id="v6HistoryItem-${i}" class="v6-history-item">
+          <span class="v6-history-who">${escapeHtml(it.member)}</span> session #${escapeHtml(it.sid)}
+          <span class="v6-history-date">${escapeHtml(it.date || 'undated')}${count}${secret}</span></button>${hits}</li>`;
+    }).join('');
+    const notes = (Array.isArray(data.notes) ? data.notes : []).map((n) => `<p class="v6-history-note">${escapeHtml(n)}</p>`).join('');
+    return `<section id="v6HistoryPanel" class="v6-history" aria-label="Chat history and recents">
+      <form id="v6HistoryForm" class="v6-history-form" role="search" aria-label="Search chat history">
+        <label class="sr-only" for="v6HistoryScope">Search in</label>
+        <select id="v6HistoryScope" class="filter-input">${option('member', escapeHtml(member || 'This member'), form.scope !== 'fleet')}${
+          option('fleet', `Whole fleet${fleet.name ? ` (${escapeHtml(fleet.name)})` : ''} · ${escapeHtml(fleet.count)}`, form.scope === 'fleet')}</select>
+        <label class="sr-only" for="v6HistoryKind">Search</label>
+        <select id="v6HistoryKind" class="filter-input">${option('summaries', 'Summaries', form.kind !== 'transcripts')}${option('transcripts', 'Transcripts', form.kind === 'transcripts')}</select>
+        <input type="search" id="v6HistorySearch" class="filter-input" placeholder="Search history…" aria-label="Search chat history"
+          autocomplete="off" spellcheck="false" value="${escapeHtml(form.q)}">
+        <button type="submit" id="v6HistorySearchBtn" class="btn btn-secondary btn-small">Search</button>
+      </form>
+      <p class="v6-history-status" role="status">${status}</p>${notes}
+      ${items.length ? `<ol id="v6HistoryResults" class="v6-history-results">${list}</ol>` : ''}
+      ${data.snapshot ? historySnapshotMarkup(data.snapshot) : ''}
+    </section>`;
+  }
+
+  /**
+   * @param {{mode: string, items: Array<object>, q?: string, scopeLabel?: string}} data
+   * @returns {string} HTML-safe text: how many recent sessions or matches are shown.
+   */
+  function historyCountLine(data) {
+    const n = Array.isArray(data.items) ? data.items.length : 0;
+    if (data.mode === 'search') {
+      return n ? `${n} session${n === 1 ? '' : 's'} match “${escapeHtml(data.q || '')}”` : `No sessions match “${escapeHtml(data.q || '')}”.`;
+    }
+    return n ? `${n} recent session${n === 1 ? '' : 's'}, newest first` : 'No saved sessions yet.';
+  }
+
+  /**
+   * One past session, read-only (#3066): its wrap summary, any transcript
+   * excerpts for the query, and the reference button.
+   * @param {{member: string, sid: string, date?: string, sections: Array<{name: string, body: string}>,
+   *   excerpts: Array<{loc: string, snippet: string}>, note?: string, error?: string}} snap
+   * @returns {string} HTML.
+   */
+  function historySnapshotMarkup(snap) {
+    const sections = (Array.isArray(snap.sections) ? snap.sections : []).map((sec) => (
+      `<div class="v6-history-section"><strong>${escapeHtml(sec.name)}</strong><div>${escapeHtml(sec.body)}</div></div>`
+    )).join('') || '<p class="v6-history-note">No wrap summary for this session.</p>';
+    const excerpts = (Array.isArray(snap.excerpts) ? snap.excerpts : []).map((e) => (
+      `<div class="v6-history-hit"><span class="v6-history-hit-loc">${escapeHtml(e.loc)}</span> ${escapeHtml(e.snippet)}</div>`
+    )).join('');
+    return `<div id="v6HistorySnapshot" class="v6-history-snapshot" role="region" aria-label="${escapeHtml(`${snap.member} session ${snap.sid}`)}">
+      <div class="v6-history-snapshot-head"><strong>${escapeHtml(snap.member)} · session #${escapeHtml(snap.sid)}</strong>
+        <span class="v6-history-date">${escapeHtml(snap.date || '')}</span></div>
+      ${snap.error ? `<p class="v6-history-note">${escapeHtml(snap.error)}</p>` : sections}
+      ${snap.secretsFlagged ? `<p class="v6-history-secret" role="note">⚠ This transcript was flagged for possible secrets (${escapeHtml((snap.secretTypes || []).join(', ') || 'pattern types only')}). Its lines are shown here but are never copied into a chat.</p>` : ''}
+      ${excerpts ? `<div class="v6-history-excerpts">${excerpts}</div>` : ''}${snap.note ? `<p class="v6-history-note">${escapeHtml(snap.note)}</p>` : ''}
+      <div class="v6-history-actions">
+        <button type="button" id="v6HistoryReference" class="btn btn-primary btn-small"
+          title="Put a reference to this session in the message" aria-label="Reference ${escapeHtml(snap.member)} session ${escapeHtml(snap.sid)} in chat">Reference in chat</button>
+        <button type="button" id="v6HistorySnapshotClose" class="btn btn-secondary btn-small">Close</button>
+      </div>
+    </div>`;
+  }
+
+  /**
+   * The text Reference in chat adds to a message (#3066): which member and
+   * session, and a short piece of what it said (from the wrap summary when
+   * the transcript was flagged for possible secrets).
+   * @param {object} snap - A snapshot as {@link historySnapshotMarkup} takes.
+   * @returns {string}
+   */
+  function historyReferenceText(snap) {
+    // A transcript flagged for possible secrets is never quoted into a chat:
+    // its reference falls back to the wrap summary.
+    const first = (!snap.secretsFlagged && Array.isArray(snap.excerpts) && snap.excerpts[0] && snap.excerpts[0].snippet)
+      || ((Array.isArray(snap.sections) ? snap.sections : []).map((sec) => String(sec.body || '').split('\n').find((l) => l.trim())).find(Boolean))
+      || '';
+    const snippet = String(first).replace(/\s+/g, ' ').trim();
+    const head = `[${snap.member} session #${snap.sid}${snap.date ? ` · ${snap.date}` : ''}]`;
+    return snippet ? `${head} ${snippet.length > 200 ? `${snippet.slice(0, 199)}…` : snippet}` : head;
   }
 
   /**
@@ -510,6 +623,19 @@
 
   /** How often an open chat re-reads its session's live output (#3047). */
   const CHAT_POLL_MS = 4000;
+
+  /**
+   * The start of the server's refusal for a rename that would orphan engine
+   * state (`lib/workspace-rename-check.js#renameWarningFor`, #2864); it
+   * carries no code of its own, and the text is pinned by that module's tests.
+   */
+  const ORPHAN_RISK_WARNING = /^WARNING: renaming ".*" to ".*" will orphan /;
+
+  /** The most sessions the history panel lists at once (#3066). */
+  const HISTORY_ITEM_CAP = 30;
+
+  /** The characters a project name may use, as `lib/projects.js#PROJECT_NAME_REGEX` allows (#3071). */
+  const PROJECT_NAME_CHARS = /^[a-zA-Z0-9 _-]+$/;
 
   /** Reads of a just-sent chat that may show no engine activity before it stops reading as Working (#3057). */
   const AWAIT_REPLY_POLLS = 3;
@@ -655,6 +781,41 @@
   }
 
   /**
+   * The chat target's rename control (#3071): a pencil that opens an inline
+   * form. A project with a live session cannot be renamed (the server refuses,
+   * and a rename moves its directory), so the pencil is disabled and says why.
+   * @param {string} name - The project's current name.
+   * @param {boolean} liveSession - Whether it has a session (active or idle).
+   * @param {{open?: boolean, draft?: string|null, warning?: string|null}} [rename] - The form's state:
+   *   open, the text typed so far (kept across a refusal), and the server's
+   *   orphan-risk warning when it asked for confirmation.
+   * @returns {string} HTML.
+   */
+  function chatRenameMarkup(name, liveSession, rename) {
+    const n = escapeHtml(name);
+    const r = rename || {};
+    if (r.open && !liveSession) {
+      const value = escapeHtml(r.draft != null ? r.draft : name);
+      const confirm = r.warning
+        ? `<p id="v6ChatRenameWarning" class="v6-chat-rename-warning" role="alert">${escapeHtml(r.warning)}</p>
+          <button type="button" id="v6ChatRenameConfirm" class="btn btn-primary btn-small"
+            title="Rename even though the old folder's engine state stays behind">Rename anyway</button>`
+        : '';
+      return `<form id="v6ChatRenameForm" class="v6-chat-rename" data-action="rename-project-form" aria-label="Rename ${n}">
+          <label class="sr-only" for="v6ChatRenameInput">New name for ${n}</label>
+          <input id="v6ChatRenameInput" class="filter-input v6-chat-rename-input" name="name" value="${value}"
+            maxlength="64" autocomplete="off" spellcheck="false" title="Letters, digits, spaces, dashes and underscores">
+          <button type="submit" id="v6ChatRenameSave" class="btn btn-primary btn-small">Save</button>
+          <button type="button" id="v6ChatRenameCancel" class="btn btn-secondary btn-small">Cancel</button>
+          ${confirm}
+        </form>`;
+    }
+    const label = liveSession ? `Stop ${name}'s session to rename it` : `Rename ${name}`;
+    return `<button type="button" id="v6ChatRename" class="btn btn-secondary btn-small v6-chat-icon-btn"
+        title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"${liveSession ? ' disabled' : ''}><span aria-hidden="true">✎</span></button>`;
+  }
+
+  /**
    * Render the B2 Conversation View for one legacy project (#3022
    * deliverable e): its replayed conversation events and an ADR 0026
    * "Open Hood" link to the live terminal page. With no live session it
@@ -675,7 +836,9 @@
       </section>`;
     }
     const name = String(v.project.name || '');
-    const hoodHref = `/session.html?project=${encodeURIComponent(name)}`;
+    // #3073: the server serves the terminal page at /session/<name>; the
+    // ?project= form resolved to the name "session.html" and never loaded.
+    const hoodHref = `/session/${encodeURIComponent(name)}`;
     const chat = v.chat || {};
     const status = CHAT_STATUS_LABELS[chat.status] ? chat.status : (v.sessionId == null ? 'offline' : 'active');
     const liveSession = status !== 'offline';
@@ -756,11 +919,13 @@
           <p class="v6-chat-talking-to" title="${escapeHtml(identityTip)}"><span class="sr-only">Talking to: </span><strong>${escapeHtml(name)}</strong>${session}<span class="sr-only"> · ${modeText}</span>
             <span class="v6-chat-mode" aria-hidden="true">${delegateMode ? 'Delegate' : 'Direct'}</span>
             <span class="v6-chat-pill is-${status}">${CHAT_STATUS_LABELS[status]}</span>${chatRepoBadgesMarkup(v.project)}</p>
+          ${chatRenameMarkup(name, liveSession, chat.rename)}
         </div>
         ${chat.telemetry !== undefined ? telemetryHeaderMarkup(chat.telemetry) : ''}
         <div class="v6-chat-actions">
           ${startButton}${startFleetButton}${delegatePicker}${toDelegate}
           <a class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood" href="${escapeHtml(hoodHref)}" title="Open Hood (Live Terminal)" aria-label="Open Hood (Live Terminal)"><span aria-hidden="true">&gt;_</span></a>
+          ${iconButton('v6ChatHistory', escapeHtml(`History and recents for ${name}`), '🕓')}
           ${iconButton('v6ChatRefresh', 'Refresh conversation', '↻')}
           ${iconButton('v6ChatSettings', 'Project Settings', '⚙')}
         </div>
@@ -1451,13 +1616,14 @@
       const draft = (extras && extras.draft) || '';
       const hoodOpen = Boolean(extras && extras.hoodOpen);
       const fleetArmed = Boolean(extras && extras.fleetArmed);
+      const rename = (extras && extras.rename) || null;
       const sidebarCollapsed = Boolean(extras && extras.sidebarCollapsed);
       const activityElapsed = (extras && extras.activityElapsed) || '';
       const v = detail.view || {};
       // #3063: in a chat the telemetry bar shares the chat's header row.
       const telemetry = extras && 'telemetry' in extras ? extras.telemetry : undefined;
       return conversationViewMarkup(Object.assign({}, v, {
-        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry })
+        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename })
       }));
     }
     if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
@@ -1622,6 +1788,12 @@
     // the chat reads as Working until the engine reports its own activity,
     // a new reply appears, or a few polls pass with neither.
     let awaitingReply = null;
+    // #3066: what the history panel last showed, so a snapshot keeps the list beside it.
+    let historyState = null;
+    // Each history request's generation: an answer that arrives after a
+    // newer request was made is dropped, so a slow search never overwrites a
+    // newer one and a late list never closes a snapshot just opened (#3066).
+    let historyGen = 0;
     // Set when a sidebar click leads to a different route (#3053), so that
     // route reloads the project rows before it shows anything.
     let freshNext = false;
@@ -2234,6 +2406,154 @@
     }
 
     /**
+     * Who the history panel searches (#3066): the chat's member, or every
+     * member of its group (a project in no group is a fleet of one).
+     * @param {string} scope - 'member' or 'fleet'.
+     * @returns {Array<string>} Project names.
+     */
+    function historyTargets(scope) {
+      const name = String(current.project.name || '');
+      const members = current.ctx && Array.isArray(current.ctx.members) ? current.ctx.members.map((m) => m.name).filter(Boolean) : [];
+      return scope === 'fleet' && members.length ? members : [name];
+    }
+
+    /**
+     * Load the history panel (#3066): with no query, the targets' recent
+     * sessions, newest first; with one, each target's search, merged with
+     * the best matches first. A target that fails is named in a note rather
+     * than failing the rest.
+     * @param {{scope: string, kind: string, q: string}} form
+     * @returns {Promise<void>}
+     */
+    async function loadHistory(form) {
+      const chat = current;
+      const shell = getShell();
+      if (!chat || !shell || typeof shell.setHistory !== 'function') return;
+      const gen = ++historyGen;
+      const f = form || {};
+      const q = String(f.q || '').trim();
+      const targets = historyTargets(f.scope);
+      const fleet = { name: (chat.ctx && chat.ctx.nodeName) || '', count: historyTargets('fleet').length };
+      const notes = [];
+      const lists = await Promise.all(targets.map(async (member) => {
+        const base = `/api/continuity/${encodeURIComponent(member)}`;
+        const url = q ? `${base}/search?q=${encodeURIComponent(q)}${f.kind === 'transcripts' ? '&scope=transcripts' : ''}` : `${base}/sessions`;
+        const res = await api(url);
+        if (!res || !Array.isArray(res.sessions)) {
+          notes.push(`Could not read ${member}'s history: ${api.lastError || 'no answer'}`);
+          return [];
+        }
+        return res.sessions.map((s) => ({
+          member, sid: String(s.sid), date: s.date || '', matchCount: Number(s.matchCount) || 0, secretsFlagged: Boolean(s.secretsFlagged),
+          hits: (Array.isArray(s.hits) ? s.hits : []).map((h) => ({ loc: String(h.section || h.source || ''), line: String(h.line || '') }))
+        }));
+      }));
+      if (chat !== current || gen !== historyGen) return;
+      const byDate = (a, b) => String(b.date).localeCompare(String(a.date));
+      let items = [].concat(...lists);
+      items = q ? items.sort((a, b) => (b.matchCount - a.matchCount) || byDate(a, b)) : items.sort(byDate);
+      historyState = {
+        status: notes.length && !items.length ? 'error' : 'ready',
+        error: notes.length && !items.length ? notes.join(' ') : null,
+        notes: notes.length && items.length ? notes : [],
+        mode: q ? 'search' : 'recents', q, member: String(chat.project.name || ''), fleet,
+        items: items.slice(0, HISTORY_ITEM_CAP), snapshot: null
+      };
+      shell.setHistory(historyState);
+    }
+
+    /**
+     * Open one past session read-only in the history panel (#3066): its wrap
+     * summary and, for a query, the transcript lines that match it.
+     * @param {{member: string, sid: string, q?: string}} pick
+     * @returns {Promise<void>}
+     */
+    async function openHistorySession(pick) {
+      const chat = current;
+      const shell = getShell();
+      if (!chat || !shell || typeof shell.setHistory !== 'function' || !pick) return;
+      const gen = ++historyGen;
+      const base = `/api/continuity/${encodeURIComponent(pick.member)}/sessions/${encodeURIComponent(pick.sid)}`;
+      const q = String(pick.q || '').trim();
+      const [detailRes, transcriptRes] = await Promise.all([
+        api(base),
+        q ? api(`${base}/transcript/search?q=${encodeURIComponent(q)}`) : Promise.resolve(null)
+      ]);
+      if (chat !== current || gen !== historyGen) return;
+      const summary = detailRes && detailRes.summary && detailRes.summary.sections ? detailRes.summary.sections : {};
+      const snapshot = {
+        member: pick.member, sid: String(pick.sid),
+        date: (detailRes && detailRes.session && detailRes.session.date) || '',
+        sections: Object.entries(summary).filter(([, body]) => body).map(([name, body]) => ({ name, body: String(body) })),
+        excerpts: transcriptRes && transcriptRes.available && Array.isArray(transcriptRes.excerpts)
+          ? transcriptRes.excerpts.slice(0, 5).map((e) => ({ loc: [e.role, e.timestamp].filter(Boolean).join(' · '), snippet: String(e.snippet || '') }))
+          : [],
+        note: transcriptRes && !transcriptRes.available ? (transcriptRes.reason || 'No transcript captured for this session.') : '',
+        secretsFlagged: Boolean((detailRes && detailRes.transcript && detailRes.transcript.secretsFlagged)
+          || (detailRes && detailRes.session && detailRes.session.secretsFlagged)
+          || (transcriptRes && transcriptRes.secretsFlagged)),
+        secretTypes: [].concat((detailRes && detailRes.transcript && detailRes.transcript.secretTypes) || [],
+          (transcriptRes && transcriptRes.secretTypes) || []).filter((t, i, all) => all.indexOf(t) === i),
+        error: detailRes ? '' : `Could not open this session: ${api.lastError || 'no answer'}`
+      };
+      historyState = Object.assign({}, historyState, { snapshot });
+      shell.setHistory(historyState);
+    }
+
+    /**
+     * Rename the chat's target (#3071) through the operator-only project
+     * route, then reload the rows, tree, delegate picker and chat in place, so
+     * the new name shows everywhere at once. The checks here mirror the
+     * server's own so an obvious mistake is caught without a round trip; the
+     * server's reason is shown for anything it refuses (a live session, a name
+     * already taken).
+     * @param {string} oldName
+     * @param {string} newName
+     * @param {{confirmOrphanRisk?: boolean}} [opts] - The operator's yes to the server's orphan-risk warning.
+     * @returns {Promise<void>}
+     */
+    async function renameProject(oldName, newName, opts) {
+      const chat = current;
+      const shell = getShell();
+      if (!chat || !shell) return;
+      const done = (result) => { if (typeof shell.renameResult === 'function') shell.renameResult(result); };
+      const from = String(oldName || '');
+      const to = String(newName || '').trim();
+      if (!to || to === from) {
+        showSend({ kind: 'error', message: `Not renamed: give ${from} a different name.` });
+        done({ ok: false });
+        return;
+      }
+      if (!PROJECT_NAME_CHARS.test(to)) {
+        showSend({ kind: 'error', message: 'Not renamed: use only letters, digits, spaces, dashes and underscores.' });
+        done({ ok: false });
+        return;
+      }
+      const confirmed = Boolean(opts && opts.confirmOrphanRisk);
+      showSend({ kind: 'pending', message: `Renaming ${from} to ${to}…` });
+      const body = confirmed ? { name: to, confirmOrphanRisk: true } : { name: to };
+      const res = await apiMutate(`/api/projects/${encodeURIComponent(from)}`, 'PATCH', body);
+      if (chat !== current) return;
+      if (!res) {
+        const reason = api.lastError || 'the server refused it';
+        // The old folder holds engine state a rename would leave behind: the
+        // server wants an explicit yes, so ask for one rather than dead-end.
+        if (!confirmed && ORPHAN_RISK_WARNING.test(reason)) {
+          showSend({ kind: 'warning', message: `${from} has engine state its rename would leave behind; read the warning, then choose Rename anyway or Cancel.` });
+          done({ ok: false, warning: reason });
+          return;
+        }
+        showSend({ kind: 'error', message: `Not renamed: ${reason}` });
+        done({ ok: false });
+        return;
+      }
+      done({ ok: true });
+      await refresh();
+      const warnings = Array.isArray(res.warnings) ? res.warnings.filter(Boolean) : [];
+      showSend({ kind: warnings.length ? 'warning' : 'ok', message: `Renamed ${from} to ${to}.${warnings.map((w) => ` ${w}`).join('')}` });
+    }
+
+    /**
      * Start every offline member of the group on screen, one at a time, then
      * reload and report how many started and why any did not.
      * @returns {Promise<void>}
@@ -2291,7 +2611,7 @@
 
     return {
       handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, attachFiles, removeAttachment,
-      startSession, startFleet, treeLinkClicked,
+      startSession, startFleet, treeLinkClicked, renameProject, loadHistory, openHistorySession,
       getProjects() { return projects; }
     };
   }
@@ -2312,6 +2632,9 @@
    *   onRefreshChat?: () => void, onOpenProjectSettings?: (projectName: string) => void,
    *   onAttachFiles?: (files: Array<object>) => void, onRemoveAttachment?: (index: number) => void,
    *   onStartSession?: () => void, onStartFleet?: () => void, onTreeLinkClick?: (hash: string) => void,
+   *   onRenameProject?: (oldName: string, newName: string, opts?: {confirmOrphanRisk: boolean}) => void,
+   *   onHistoryLoad?: (form: {scope: string, kind: string, q: string}) => void,
+   *   onHistoryOpenSession?: (pick: {member: string, sid: string, q: string, kind: string}) => void,
    *   now?: () => number, setInterval?: (fn: Function, ms: number) => *, clearInterval?: (id: *) => void}} opts - `storage`
    *   remembers the sidebar layout (#3046); defaults to the page's `localStorage`,
    *   and `null` keeps it for this page only. The `on*Chat`/delegate/settings
@@ -2365,6 +2688,21 @@
     let chatHoodOpen = prefs.get('tc_v6_chat_under_hood_open', false, isBoolean);
     // The chat whose Start fleet button has been clicked once (#3053).
     let fleetArmedKey = null;
+    // The chat whose rename form is open (#3071), the name typed into it
+    // (kept across a refusal), and the server's orphan-risk warning if it
+    // asked for confirmation.
+    let renameOpenKey = null;
+    let renameDraft = null;
+    let renameWarning = null;
+    // #3066: the history panel — open or not, its search form, and the last
+    // results or snapshot the page handed back.
+    let historyOpen = false;
+    let historyForm = { scope: 'member', kind: 'summaries', q: '' };
+    let historyData = null;
+    // Whose history the panel last asked for (project id and name): a
+    // refresh of the same chat keeps the panel; another member, or this one
+    // renamed, reloads it.
+    let historyFor = null;
     let scrolledChatKey = null;
     // #3057: when the chat on screen became busy, and the 1 s ticker that
     // advances its elapsed time while it stays busy.
@@ -2411,6 +2749,7 @@
       if (expandBtn) expandBtn.addEventListener('click', () => { toggleSidebar(false); focusById('v6SidebarCollapse'); });
       const chatShowFleet = doc.getElementById('v6ChatShowFleet');
       if (chatShowFleet) chatShowFleet.addEventListener('click', () => { toggleSidebar(false); focusById('v6SidebarCollapse'); });
+      wireHistory();
       const searchToggle = doc.getElementById('v6SidebarSearchToggle');
       if (searchToggle) searchToggle.addEventListener('click', () => { toggleSearch(); focusById('v6SidebarSearchToggle'); });
       const fleetPicker = doc.getElementById('v6FilterFleet');
@@ -2422,6 +2761,7 @@
       }
       wireChat();
       wireStart();
+      wireRename();
       wireTreeLinks();
       const search = doc.getElementById('v6FilterSearch');
       if (search) {
@@ -2488,6 +2828,139 @@
         render();
         options.onStartFleet();
       });
+    }
+
+    /** @returns {string|null} The chat target's id and name, as the history panel tracks it (#3066). */
+    function historyWho() {
+      const project = detail && detail.kind === 'conversation' && detail.view ? detail.view.project : null;
+      return project && project.id != null ? `${project.id}|${project.name || ''}` : null;
+    }
+
+    /** Ask the page for history with the panel's current form (#3066). */
+    function requestHistory() {
+      if (chatTargetKey() == null || typeof options.onHistoryLoad !== 'function') return;
+      historyFor = historyWho();
+      historyData = Object.assign({}, historyData, { status: 'loading', snapshot: null, items: [] });
+      render();
+      options.onHistoryLoad(Object.assign({}, historyForm));
+    }
+
+    /**
+     * The history panel (#3066): the clock opens and closes it (loading the
+     * chat's recents as it opens), the form searches, a result opens its
+     * snapshot, and Reference in chat adds the snapshot's reference to this
+     * chat's message.
+     */
+    function wireHistory() {
+      // The chat's own clock (#3066): open this member's history in the
+      // sidebar, revealing a hidden sidebar or a shut phone drawer first so
+      // the panel never opens out of sight.
+      const fromChat = doc.getElementById('v6ChatHistory');
+      if (fromChat) {
+        fromChat.addEventListener('click', () => {
+          if (sidebarCollapsed) {
+            sidebarCollapsed = false;
+            prefs.set('tc_v6_sidebar_collapsed', false);
+          }
+          drawerOpen = true;
+          historyOpen = true;
+          historyForm = Object.assign({}, historyForm, { scope: 'member' });
+          requestHistory();
+          focusById('v6SidebarFutureSlot');
+        });
+      }
+      const toggle = doc.getElementById('v6SidebarFutureSlot');
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          historyOpen = !historyOpen;
+          // With no chat open there is nothing to load; the panel says so.
+          if (historyOpen && chatTargetKey() != null) requestHistory(); else render();
+          focusById('v6SidebarFutureSlot');
+        });
+      }
+      const form = doc.getElementById('v6HistoryForm');
+      if (form) {
+        form.addEventListener('submit', (evt) => {
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          const value = (id) => { const el = doc.getElementById(id); return el && typeof el.value === 'string' ? el.value : ''; };
+          historyForm = {
+            scope: value('v6HistoryScope') === 'fleet' ? 'fleet' : 'member',
+            kind: value('v6HistoryKind') === 'transcripts' ? 'transcripts' : 'summaries',
+            q: value('v6HistorySearch').trim()
+          };
+          requestHistory();
+        });
+      }
+      const items = historyData && Array.isArray(historyData.items) ? historyData.items : [];
+      items.forEach((it, i) => {
+        const button = doc.getElementById(`v6HistoryItem-${i}`);
+        if (!button || typeof options.onHistoryOpenSession !== 'function') return;
+        button.addEventListener('click', () => options.onHistoryOpenSession({ member: it.member, sid: it.sid, q: historyForm.q, kind: historyForm.kind }));
+      });
+      const close = doc.getElementById('v6HistorySnapshotClose');
+      if (close) close.addEventListener('click', () => { historyData = Object.assign({}, historyData, { snapshot: null }); render(); });
+      const reference = doc.getElementById('v6HistoryReference');
+      if (reference) {
+        reference.addEventListener('click', () => {
+          const key = chatTargetKey();
+          const snap = historyData && historyData.snapshot;
+          if (key == null || !snap) return;
+          const text = historyReferenceText(snap);
+          const draft = chatDrafts.get(key) || '';
+          chatDrafts.set(key, draft ? `${draft.replace(/\s+$/, '')}\n${text}` : text);
+          render();
+          focusById('v6ChatInput');
+        });
+      }
+    }
+
+    /**
+     * The chat target's rename control (#3071): the pencil opens the form,
+     * Cancel or Escape closes it, and Save hands the new name to the page.
+     */
+    function wireRename() {
+      const open = doc.getElementById('v6ChatRename');
+      if (open) {
+        open.addEventListener('click', () => {
+          renameOpenKey = chatTargetKey();
+          renameDraft = null;
+          renameWarning = null;
+          render();
+          focusById('v6ChatRenameInput');
+        });
+      }
+      const form = doc.getElementById('v6ChatRenameForm');
+      if (!form) return;
+      const close = () => { renameOpenKey = null; renameDraft = null; renameWarning = null; render(); focusById('v6ChatRename'); };
+      const cancel = doc.getElementById('v6ChatRenameCancel');
+      if (cancel) cancel.addEventListener('click', close);
+      const input = doc.getElementById('v6ChatRenameInput');
+      if (input) {
+        input.addEventListener('keydown', (evt) => {
+          if (evt && (evt.key === 'Escape' || evt.key === 'Esc')) close();
+        });
+        input.addEventListener('input', (evt) => {
+          renameDraft = String((evt && evt.target && evt.target.value) || '');
+          renameWarning = null;
+        });
+      }
+      // The form stays open, with what was typed, until the page reports
+      // the rename done: a refusal must not throw the operator's text away.
+      // Rename anyway sends the kept draft (typing updates it). The orphan
+      // risk belongs to the OLD folder, so the warning holds for any new
+      // name the operator settles on.
+      const send = (confirmOrphanRisk) => {
+        const project = detail && detail.view ? detail.view.project : null;
+        if (!project || typeof options.onRenameProject !== 'function') return;
+        if (!confirmOrphanRisk || renameDraft == null) renameDraft = String((input && input.value) || '');
+        options.onRenameProject(String(project.name || ''), renameDraft.trim(), confirmOrphanRisk ? { confirmOrphanRisk: true } : undefined);
+      };
+      form.addEventListener('submit', (evt) => {
+        if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+        send(false);
+      });
+      const confirm = doc.getElementById('v6ChatRenameConfirm');
+      if (confirm) confirm.addEventListener('click', () => send(true));
     }
 
     /** Report every sidebar link click, with its hash, so the page can refresh (#3053). */
@@ -2709,7 +3182,8 @@
         <button type="button" id="v6ShellDrawerToggle" class="v6-shell-drawer-toggle"
           aria-expanded="${drawerOpen ? 'true' : 'false'}" aria-controls="v6ShellSidebar">☰ Menu</button>
         <nav id="v6ShellSidebar" class="v6-shell-sidebar${drawerOpen ? ' is-open' : ''}" aria-label="Fleet navigation">
-          ${sidebarIconBarMarkup(searchOpen())}
+          ${sidebarIconBarMarkup(searchOpen(), historyOpen)}
+          ${historyOpen ? historyPanelMarkup({ form: historyForm, chatOpen: chatTargetKey() != null, data: historyData }) : ''}
           ${filterControlsMarkup({
             tree, engines: engineIds(), text: filterText, engine: filterEngine, groups: selectedGroups, searchOpen: searchOpen()
           })}
@@ -2736,6 +3210,8 @@
           <div id="v6ShellDetail">${detailMarkup(detail, {
             draft: chatDrafts.get(chatTargetKey()) || '', hoodOpen: chatHoodOpen,
             fleetArmed: fleetArmedKey != null && fleetArmedKey === chatTargetKey(),
+            rename: renameOpenKey != null && renameOpenKey === chatTargetKey()
+              ? { open: true, draft: renameDraft, warning: renameWarning } : null,
             sidebarCollapsed, activityElapsed, telemetry
           })}</div>
           <div id="v6ShellWizard"${inChat ? ' hidden' : ''}>${fleetWizardMarkup(templates)}</div>
@@ -2870,7 +3346,18 @@
       setTelemetry(bar) { telemetry = bar || null; render(); },
       setTemplates(nextTemplates) { templates = Array.isArray(nextTemplates) ? nextTemplates : []; render(); },
       setAttestation(nextAttestation) { attestation = nextAttestation || null; render(); },
-      setDetail(nextDetail) { detail = nextDetail || null; render(); },
+      setDetail(nextDetail) {
+        detail = nextDetail || null;
+        // #3066: an open history panel follows the chat to another member (or
+        // this one renamed); a reload of the same chat, which passes through a
+        // loading view, keeps the list and any snapshot open.
+        if (historyOpen && chatTargetKey() != null && historyWho() !== historyFor) {
+          historyData = null;
+          requestHistory();
+          return;
+        }
+        render();
+      },
       /**
        * Replace only the chat's live output panel (#3047): a poll every few
        * seconds must not rebuild the page under an operator mid-message.
@@ -2918,6 +3405,28 @@
           a.className = `v6-chat-activity${label ? ' is-busy' : ''}`;
         }
       },
+      /**
+       * The history panel's results or snapshot, from the page (#3066).
+       * @param {object|null} data
+       */
+      setHistory(data) { historyData = data || null; render(); },
+      /**
+       * The outcome of a rename (#3071): done closes the form; a refusal keeps
+       * it open with the typed name, and an orphan-risk refusal shows the
+       * server's warning with a Rename anyway button.
+       * @param {{ok: boolean, warning?: string|null}} result
+       */
+      renameResult(result) {
+        if (result && result.ok) {
+          renameOpenKey = null;
+          renameDraft = null;
+          renameWarning = null;
+        } else {
+          renameWarning = (result && result.warning) || null;
+        }
+        render();
+      },
+      isHistoryOpen() { return historyOpen; },
       /**
        * Forget a chat's composer text once it has been sent.
        * @param {*} [projectId] - The project it was sent to; the chat on screen when omitted.

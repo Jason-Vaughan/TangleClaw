@@ -4,9 +4,24 @@
 
 // ── Extract Project Name from URL ──
 
-const projectName = decodeURIComponent(
-  window.location.pathname.replace(/^\/session\//, '').replace(/\/$/, '')
-);
+/**
+ * The project this page shows: the `/session/<name>` path, or (#3073) the
+ * `?project=<name>` query on `/session.html` or `/session`, which older and
+ * bookmarked links use — read from the path alone, those resolved to the
+ * name "session.html" and the page never loaded.
+ * @returns {string}
+ */
+function sessionProjectName() {
+  const pathname = window.location.pathname;
+  if (pathname === '/session.html' || pathname === '/session' || pathname === '/session/') {
+    return new URLSearchParams(window.location.search || '').get('project') || '';
+  }
+  return decodeURIComponent(
+    window.location.pathname.replace(/^\/session\//, '').replace(/\/$/, '')
+  );
+}
+
+const projectName = sessionProjectName();
 
 // ── State ──
 

@@ -8226,6 +8226,11 @@ if (typeof window.tcCreateV6Shell === 'function') {
     onStartSession() { v6Live.startSession(); },
     onStartFleet() { v6Live.startFleet(); },
     onTreeLinkClick(hash) { v6Live.treeLinkClicked(hash); },
+    // #3071: rename the chat's target from its header.
+    onRenameProject(oldName, newName, opts) { v6Live.renameProject(oldName, newName, opts); },
+    // #3066: the sidebar's chat history and recents panel.
+    onHistoryLoad(form) { v6Live.loadHistory(form); },
+    onHistoryOpenSession(pick) { v6Live.openHistorySession(pick); },
     onRender(route) {
       const active = Boolean(route && route.view);
       if (v6ShellRoot) v6ShellRoot.classList.toggle('hidden', !active);

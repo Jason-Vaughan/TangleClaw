@@ -504,7 +504,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.deepEqual(active, [`#/resources/${pmId}/conversation`], 'exactly the delegate lane is marked');
       assert.ok(root.classList.contains('v6-shell-root--chat'), 'the route and group headings are hidden in the chat');
       const header = root.innerHTML.slice(root.innerHTML.indexOf('<header class="v6-chat-header">'), root.innerHTML.indexOf('</header>'));
-      assert.match(header, /v6-open-hood" href="\/session\.html\?project=e2eside-PM" title="Open Hood \(Live Terminal\)" aria-label="Open Hood \(Live Terminal\)"/);
+      assert.match(header, /v6-open-hood" href="\/session\/e2eside-PM" title="Open Hood \(Live Terminal\)" aria-label="Open Hood \(Live Terminal\)"/);
       assert.match(header, /id="v6ChatRefresh"[^>]*title="Refresh conversation" aria-label="Refresh conversation"/);
       assert.match(header, /id="v6ChatSettings"[^>]*title="Project Settings" aria-label="Project Settings"/);
     });
@@ -548,6 +548,77 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       await settle();
       assert.match(root.innerHTML, /e2epick-PM/);
       assert.doesNotMatch(root.innerHTML.slice(root.innerHTML.indexOf('class="v6-shell-tree"')), /e2eother-PM/, 'only the picked fleet is in the tree');
+    });
+
+    it('renaming the chat\'s target from its header goes through the real route and shows everywhere at once (#3071)', async () => {
+      const pid = seedProject('e2e-rename-old');
+      const { root, settle, calls, doc, live } = mountShell(`#/resources/${pid}/conversation`);
+      await settle();
+      assert.match(root.innerHTML, /<strong>e2e-rename-old<\/strong>/);
+      doc.getElementById('v6ChatRename').dispatch('click');
+      doc.getElementById('v6ChatRenameInput').value = 'e2e-rename-new';
+      const pending = live.renameProject('e2e-rename-old', 'e2e-rename-new');
+      await pending;
+      await settle();
+      assert.ok(calls.includes('PATCH /api/projects/e2e-rename-old'), JSON.stringify(calls));
+      assert.ok(fs.existsSync(path.join(tempDir, 'e2e-rename-new')), 'the real route moved the directory');
+      assert.equal(fs.existsSync(path.join(tempDir, 'e2e-rename-old')), false);
+      assert.match(root.innerHTML, /Talking to: <\/span><strong>e2e-rename-new<\/strong>/, 'the header shows the new name');
+      assert.match(root.innerHTML, /e2e-rename-new \(\d+\)/, 'and the sidebar row');
+      assert.match(root.innerHTML, /is-ok[^>]*>Renamed e2e-rename-old to e2e-rename-new\./);
+    });
+
+    it('the real route refuses to rename a project with a live session, and the chat shows why (#3071)', async () => {
+      const pid = seedProject('e2e-rename-live');
+      store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(pid);
+      const { root, settle, live } = mountShell(`#/resources/${pid}/conversation`);
+      await settle();
+      assert.match(root.innerHTML, /id="v6ChatRename"[^>]*disabled>/, 'the pencil is off for a live session');
+      await live.renameProject('e2e-rename-live', 'e2e-rename-other');
+      await settle();
+      assert.match(root.innerHTML, /is-error[^>]*>Not renamed: Cannot rename while a session is active</);
+      assert.ok(fs.existsSync(path.join(tempDir, 'e2e-rename-live')), 'nothing moved');
+    });
+
+    it('the history panel lists, searches across the fleet and opens real saved sessions, and references one in chat (#3066)', async () => {
+      const continuity = require('../lib/continuity');
+      const pmId = seedProject('e2ehist-PM');
+      seedProject('e2ehist-A');
+      store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(pmId);
+      continuity.writeWrapSummary(path.join(tempDir, 'e2ehist-PM'), '41', { meta: { date: '2026-11-10' }, sections: { Decisions: 'Ship the history panel on Friday.' } });
+      continuity.writeWrapSummary(path.join(tempDir, 'e2ehist-A'), '42', { meta: { date: '2026-11-12' }, sections: { Decisions: 'Review the history panel.' } });
+      const { root, settle, doc, live, calls } = mountShell(`#/resources/${pmId}/conversation`);
+      await settle();
+      doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+      await live.loadHistory({ scope: 'member', kind: 'summaries', q: '' });
+      await settle();
+      assert.ok(calls.includes('GET /api/continuity/e2ehist-PM/sessions'), JSON.stringify(calls));
+      assert.match(root.innerHTML, /<span class="v6-history-who">e2ehist-PM<\/span> session #41/);
+      await live.loadHistory({ scope: 'fleet', kind: 'summaries', q: 'history panel' });
+      await settle();
+      assert.ok(calls.includes('GET /api/continuity/e2ehist-A/search?q=history%20panel'), 'the fleet search asked each member');
+      assert.match(root.innerHTML, /e2ehist-PM<\/span> session #41/);
+      assert.match(root.innerHTML, /e2ehist-A<\/span> session #42/);
+      await live.openHistorySession({ member: 'e2ehist-PM', sid: '41', q: '' });
+      await settle();
+      assert.match(root.innerHTML, /<strong>Decisions<\/strong><div>Ship the history panel on Friday\.<\/div>/);
+      doc.getElementById('v6HistoryReference').dispatch('click');
+      assert.match(root.innerHTML, /<textarea id="v6ChatInput"[^>]*>\[e2ehist-PM session #41 · 2026-11-10\] Ship the history panel on Friday\.<\/textarea>/);
+    });
+
+    it('Open Hood\'s /session/<name> link is served by the real handler (#3073)', async () => {
+      const pid = seedProject('e2e-hood');
+      const { root, settle } = mountShell(`#/resources/${pid}/conversation`);
+      await settle();
+      const href = /v6-open-hood" href="([^"]+)"/.exec(root.innerHTML)[1];
+      assert.equal(href, '/session/e2e-hood');
+      const page = await send('GET', href, { operator: false });
+      assert.equal(page.statusCode, 200);
+      assert.match(page.body, /session\.js/, 'the session page itself, which reads the name from this path');
     });
 
     it('the real B2 route accepts the event the chat records, and the next seq counts deleted events (#3047)', async () => {

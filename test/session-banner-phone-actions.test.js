@@ -242,3 +242,35 @@ describe('#3065 a Fleet Shell (v6) link on every Classic page', () => {
     await assert.doesNotReject(loadWith({ id: 7, name: 'demo', groups: [], actions: [] }, false));
   });
 });
+
+describe('the session page reads its project from the URL, path or ?project= (#3073)', () => {
+  const vm = require('node:vm');
+  const { liftDeclaration } = require('./helpers/lift');
+  const SESSION_JS = fs.readFileSync(path.join(PUBLIC, 'session.js'), 'utf8');
+  /** Run the real sessionProjectName under a given location. */
+  const nameAt = (pathname, search) => {
+    const ctx = { window: { location: { pathname, search: search || '' } }, URLSearchParams, decodeURIComponent };
+    vm.createContext(ctx);
+    vm.runInContext(liftDeclaration(SESSION_JS, 'function sessionProjectName()'), ctx);
+    return vm.runInContext('sessionProjectName()', ctx);
+  };
+
+  it('the canonical /session/<name> path, decoded, with or without a trailing slash', () => {
+    assert.equal(nameAt('/session/TC-Lane-A'), 'TC-Lane-A');
+    assert.equal(nameAt('/session/TiLT%20v2/'), 'TiLT v2');
+  });
+
+  it('/session.html?project= and /session?project= resolve to the query\'s project, not to "session.html"', () => {
+    assert.equal(nameAt('/session.html', '?project=TV-PM'), 'TV-PM');
+    assert.equal(nameAt('/session', '?project=A%20B'), 'A B');
+    assert.equal(nameAt('/session/', '?project=C'), 'C');
+  });
+
+  it('/session.html with no project names none, rather than "session.html"', () => {
+    assert.equal(nameAt('/session.html', ''), '');
+  });
+
+  it('the page computes its project through that function', () => {
+    assert.match(SESSION_JS, /const projectName = sessionProjectName\(\);/);
+  });
+});

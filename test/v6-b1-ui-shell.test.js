@@ -578,7 +578,7 @@ describe('tcV6FleetPlanMarkup / tcV6ConversationViewMarkup (#3022 deliverables d
       project: { id: 7, name: 'TiLT v2' }, sessionId: 99,
       events: [{ seq: 1, role: 'user', content: 'hello <script>' }, { seq: 2, role: 'assistant', content: 'hi' }]
     });
-    assert.match(html, /href="\/session\.html\?project=TiLT%20v2"/);
+    assert.match(html, /href="\/session\/TiLT%20v2"/);
     assert.match(html, /Open Hood \(Live Terminal\)/);
     assert.match(html, /hello &lt;script&gt;/);
     assert.match(html, /is-assistant/);
@@ -815,7 +815,7 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     assert.ok(calls.includes('/api/v6/projects/11/sessions/501/conversation/events'));
     assert.ok(calls.includes('/api/v6/projects/11/sessions/501/attestations'));
     assert.match(root.innerHTML, /ship it/);
-    assert.match(root.innerHTML, /\/session\.html\?project=TC-Lane-B/);
+    assert.match(root.innerHTML, /\/session\/TC-Lane-B/);
     assert.match(root.innerHTML, /v6-model-attestation is-estimated[\s\S]*Claude Code/);
   });
 
@@ -864,7 +864,7 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     assert.ok(calls.includes('/api/v6/projects/11/sessions/501/conversation/events'), JSON.stringify(calls));
     assert.ok(calls.includes('/api/v6/projects/11/sessions/501/attestations'));
     assert.match(root.innerHTML, /ship it/);
-    assert.match(root.innerHTML, /\/session\.html\?project=TC-Lane-B/);
+    assert.match(root.innerHTML, /\/session\/TC-Lane-B/);
     assert.match(root.innerHTML, /v6-model-attestation is-estimated[\s\S]*Claude Code/);
   });
 
@@ -883,7 +883,7 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     win.location.hash = '#/projects/workspace';
     await settle();
     assert.ok(calls.includes('/api/sessions/TangleClaw/status'), JSON.stringify(calls));
-    assert.match(root.innerHTML, /\/session\.html\?project=TangleClaw/);
+    assert.match(root.innerHTML, /\/session\/TangleClaw/);
     assert.match(root.innerHTML, /No live session/);
   });
 
@@ -3283,7 +3283,7 @@ describe('Open Hood matches the chat\'s compact buttons (#3057, PM)', () => {
   it('is a small button without an underline inside .v6-chat-actions', () => {
     const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 1, events: [], chat: { status: 'active', members: [] } });
     // Restated by #3059: Open Hood is now a >_ icon button, named by its title and aria-label.
-    assert.match(html, /<a class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood" href="\/session\.html\?project=P" title="Open Hood \(Live Terminal\)" aria-label="Open Hood \(Live Terminal\)"><span aria-hidden="true">&gt;_<\/span><\/a>/);
+    assert.match(html, /<a class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood" href="\/session\/P" title="Open Hood \(Live Terminal\)" aria-label="Open Hood \(Live Terminal\)"><span aria-hidden="true">&gt;_<\/span><\/a>/);
     const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
     assert.match(css, /\.v6-chat-actions \.v6-open-hood \{\s*display: inline-flex;\s*margin-bottom: 0;\s*text-decoration: none;\s*\}/);
   });
@@ -3554,7 +3554,9 @@ describe('the sidebar\'s four-icon toolbar (#3068)', () => {
     assert.match(icon('v6SidebarCollapse')[0], /class="[^"]*v6-sidebar-collapse"[^>]*data-action="toggle-sidebar-drawer"[^>]*title="Hide Fleet sidebar" aria-label="Hide Fleet sidebar"/);
     assert.match(icon('v6SidebarModeFleet')[0], /aria-pressed="true"[^>]*title="Fleet view" aria-label="Fleet view"/);
     assert.match(icon('v6SidebarSearchToggle')[0], /aria-controls="v6SidebarSearch" aria-expanded="false" aria-pressed="false"[^>]*title="Search projects and filter by engine"/);
-    assert.match(icon('v6SidebarFutureSlot')[0], / disabled[^>]*title="Recent chats \(coming soon\)" aria-label="Recent chats \(coming soon\)"/);
+    // Restated by #3066: the reserved slot became the chat history and recents toggle.
+    assert.match(icon('v6SidebarFutureSlot')[0], /aria-controls="v6HistoryPanel" aria-expanded="false" aria-pressed="false"[^>]*title="Chat history and recents" aria-label="Chat history and recents"/);
+    assert.doesNotMatch(icon('v6SidebarFutureSlot')[0], / disabled/);
     for (const glyph of ['«', '❖', '🔍', '🕓']) assert.match(bar, new RegExp(`<span aria-hidden="true">${glyph}</span>`));
     assert.doesNotMatch(bar, />« Hide Fleet<|>Expand all<|>Collapse all</, 'no words on the toolbar');
   });
@@ -3681,5 +3683,580 @@ describe('a remembered fleet that is gone does not trap the picker (#3068, cumul
     const single = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa', 'gone']) }) });
     assert.match(single.root.innerHTML, /<option value="medusa" selected>Medusa<\/option>/);
     assert.doesNotMatch(single.root.innerHTML, /disabled selected/);
+  });
+});
+
+// ── #3071 (Car V628-W1-A): rename a fleet member from the chat header ──
+
+describe('the chat\'s rename control (#3071)', () => {
+  const G = loadV6Shell();
+  const view = (status, name, extra) => ({ project: { id: 12, name: name || 'TC-Lane-A' }, sessionId: status === 'offline' ? null : 1, events: [],
+    chat: Object.assign({ mode: 'direct', status, members: [] }, extra || {}) });
+
+  it('offers a pencil to rename a project with no live session', () => {
+    const html = G.tcV6ConversationViewMarkup(view('offline'));
+    assert.match(html, /<button type="button" id="v6ChatRename" class="btn btn-secondary btn-small v6-chat-icon-btn"\s+title="Rename TC-Lane-A" aria-label="Rename TC-Lane-A"><span aria-hidden="true">✎<\/span><\/button>/);
+  });
+
+  it('disables it, and says why, while the project has a session (the server refuses and a rename moves its directory)', () => {
+    for (const status of ['active', 'idle']) {
+      const html = G.tcV6ConversationViewMarkup(view(status));
+      assert.match(html, /id="v6ChatRename"[^>]*title="Stop TC-Lane-A&#39;s session to rename it" aria-label="Stop TC-Lane-A&#39;s session to rename it" disabled>/, status);
+    }
+  });
+
+  it('the open form carries the current name, escaped, and never opens over a live session', () => {
+    const hostile = 'x"><img src=x onerror=alert(1)>';
+    const open = G.tcV6ConversationViewMarkup(view('offline', hostile, { rename: { open: true } }));
+    assert.match(open, /<form id="v6ChatRenameForm"[^>]*aria-label="Rename x&quot;&gt;&lt;img src=x onerror=alert\(1\)&gt;">/);
+    assert.match(open, /<input id="v6ChatRenameInput"[^>]*value="x&quot;&gt;&lt;img src=x onerror=alert\(1\)&gt;"/);
+    assert.doesNotMatch(open, /<img/);
+    assert.doesNotMatch(G.tcV6ConversationViewMarkup(view('active', 'P', { rename: { open: true } })), /v6ChatRenameForm/);
+  });
+});
+
+describe('renaming through the mounted shell (#3071)', () => {
+  const chatView = { project: { id: 12, name: 'TC-Lane-A' }, sessionId: null, events: [], chat: { mode: 'direct', status: 'offline', members: [] } };
+
+  it('the pencil opens the form with focus in it; Cancel and Escape close it and return focus to the pencil', () => {
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: chatView } });
+    // The mini DOM's dispatch carries no key, so capture the input's keydown
+    // handler as it is wired and call it with a real-shaped event.
+    const keydowns = new Map();
+    const register = doc._register.bind(doc);
+    doc._register = (el) => {
+      const add = el.addEventListener.bind(el);
+      el.addEventListener = (type, fn) => { if (type === 'keydown') keydowns.set(el.id, fn); return add(type, fn); };
+      return register(el);
+    };
+    doc.getElementById('v6ChatRename').dispatch('click');
+    assert.match(root.innerHTML, /id="v6ChatRenameForm"/);
+    assert.equal(doc.activeElement, doc.getElementById('v6ChatRenameInput'));
+    doc.getElementById('v6ChatRenameCancel').dispatch('click');
+    assert.doesNotMatch(root.innerHTML, /id="v6ChatRenameForm"/);
+    assert.equal(doc.activeElement, doc.getElementById('v6ChatRename'));
+    doc.getElementById('v6ChatRename').dispatch('click');
+    keydowns.get('v6ChatRenameInput')({ key: 'Enter' });
+    assert.match(root.innerHTML, /id="v6ChatRenameForm"/, 'another key leaves the form open');
+    keydowns.get('v6ChatRenameInput')({ key: 'Escape' });
+    assert.doesNotMatch(root.innerHTML, /id="v6ChatRenameForm"/);
+  });
+
+  // Restated after the cumulative Critic (R1 blocking): the form closes only once the rename is done.
+  it('Save hands the old and the trimmed new name to the page; the form stays open until the page reports it done', () => {
+    const calls = [];
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: chatView },
+      onRenameProject: (from, to, opts) => calls.push([from, to, opts]) });
+    doc.getElementById('v6ChatRename').dispatch('click');
+    doc.getElementById('v6ChatRenameInput').value = '  TC-Lane-Alpha  ';
+    doc.getElementById('v6ChatRenameForm').dispatch('submit');
+    assert.deepEqual(calls, [['TC-Lane-A', 'TC-Lane-Alpha', undefined]]);
+    assert.match(root.innerHTML, /id="v6ChatRenameForm"/, 'still open while the rename is in flight');
+    shell.renameResult({ ok: true });
+    assert.doesNotMatch(root.innerHTML, /id="v6ChatRenameForm"/);
+  });
+
+  it('a refusal keeps the form open with the name the operator typed (cumulative review R1)', () => {
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: chatView },
+      onRenameProject: () => {} });
+    doc.getElementById('v6ChatRename').dispatch('click');
+    doc.getElementById('v6ChatRenameInput').value = 'Taken-Name';
+    doc.getElementById('v6ChatRenameForm').dispatch('submit');
+    shell.renameResult({ ok: false });
+    assert.match(root.innerHTML, /<input id="v6ChatRenameInput"[^>]*value="Taken-Name"/);
+  });
+
+  it('an orphan-risk refusal shows the server\'s warning and a Rename anyway that resends with confirmOrphanRisk', () => {
+    const calls = [];
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: chatView },
+      onRenameProject: (from, to, opts) => calls.push([from, to, opts]) });
+    doc.getElementById('v6ChatRename').dispatch('click');
+    doc.getElementById('v6ChatRenameInput').value = 'New';
+    doc.getElementById('v6ChatRenameForm').dispatch('submit');
+    shell.renameResult({ ok: false, warning: 'WARNING: renaming "/a" to "/b" will orphan claude engine state <keyed>' });
+    assert.match(root.innerHTML, /<p id="v6ChatRenameWarning" class="v6-chat-rename-warning" role="alert">WARNING: renaming &quot;\/a&quot; to &quot;\/b&quot; will orphan claude engine state &lt;keyed&gt;<\/p>/);
+    doc.getElementById('v6ChatRenameConfirm').dispatch('click');
+    assert.deepEqual(plain(calls[1]), ['TC-Lane-A', 'New', { confirmOrphanRisk: true }]);
+  });
+});
+
+describe('the live controller renames the chat\'s target (#3071)', () => {
+  /**
+   * A controller over one offline project, with a scripted PATCH outcome.
+   * @param {object|null} patchResult - What apiMutate resolves for the PATCH.
+   * @param {string} [lastError]
+   */
+  function mountRename(patchResult, lastError) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    let rows = [{ id: 12, name: 'TC-Lane-A', engine: { id: 'claude' } }];
+    const calls = [];
+    const api = async (url) => {
+      calls.push(`GET ${url}`);
+      if (url === '/api/projects') return { projects: rows };
+      if (/\/status$/.test(url)) return { active: false };
+      return null;
+    };
+    api.lastError = null;
+    const apiMutate = async (url, method, body) => {
+      calls.push(`${method} ${url} ${JSON.stringify(body)}`);
+      if (patchResult) rows = [{ id: 12, name: body.name, engine: { id: 'claude' } }];
+      else api.lastError = lastError || null;
+      return patchResult;
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
+      setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)), onRenameProject: (a, b) => pending.push(live.renameProject(a, b)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    const submit = async (value) => {
+      doc.getElementById('v6ChatRename').dispatch('click');
+      doc.getElementById('v6ChatRenameInput').value = value;
+      doc.getElementById('v6ChatRenameForm').dispatch('submit');
+      await settle();
+    };
+    return { root, calls, settle, submit };
+  }
+  const patches = (calls) => calls.filter((c) => c.startsWith('PATCH'));
+  const status = (root) => (/<p id="v6ChatStatus" class="v6-chat-send-status is-(\w+)"[^>]*>([^<]*)</.exec(root.innerHTML) || []).slice(1);
+
+  it('renames through PATCH /api/projects/<old>, then reloads so the header and sidebar show the new name', async () => {
+    const m = mountRename({ project: { name: 'TC-Lane-Alpha' }, warnings: [] });
+    await m.settle();
+    const before = m.calls.filter((c) => c === 'GET /api/projects').length;
+    await m.submit('TC-Lane-Alpha');
+    assert.deepEqual(patches(m.calls), ['PATCH /api/projects/TC-Lane-A {"name":"TC-Lane-Alpha"}']);
+    assert.ok(m.calls.filter((c) => c === 'GET /api/projects').length > before, 'the rows were reloaded');
+    assert.match(m.root.innerHTML, /Talking to: <\/span><strong>TC-Lane-Alpha<\/strong>/);
+    assert.match(m.root.innerHTML, /TC-Lane-Alpha \(12\)/, 'the sidebar row too');
+    assert.deepEqual(status(m.root), ['ok', 'Renamed TC-Lane-A to TC-Lane-Alpha.']);
+  });
+
+  it('reports the server\'s warnings with the rename', async () => {
+    const m = mountRename({ project: { name: 'B' }, warnings: ['Update your scripts that name the old folder.'] });
+    await m.settle();
+    await m.submit('B');
+    assert.deepEqual(status(m.root), ['warning', 'Renamed TC-Lane-A to B. Update your scripts that name the old folder.']);
+  });
+
+  it('a refusal shows the server\'s reason and changes nothing', async () => {
+    const m = mountRename(null, 'Project "B" already exists');
+    await m.settle();
+    await m.submit('B');
+    assert.equal(patches(m.calls).length, 1);
+    assert.deepEqual(status(m.root), ['error', 'Not renamed: Project &quot;B&quot; already exists']);
+    assert.match(m.root.innerHTML, /<strong>TC-Lane-A<\/strong>/);
+  });
+
+  it('an empty, unchanged or out-of-set name is refused here, with no request', async () => {
+    const m = mountRename({ project: {}, warnings: [] });
+    await m.settle();
+    await m.submit('   ');
+    assert.deepEqual(status(m.root), ['error', 'Not renamed: give TC-Lane-A a different name.']);
+    await m.submit('TC-Lane-A');
+    assert.deepEqual(status(m.root), ['error', 'Not renamed: give TC-Lane-A a different name.']);
+    await m.submit('bad/name');
+    assert.deepEqual(status(m.root), ['error', 'Not renamed: use only letters, digits, spaces, dashes and underscores.']);
+    assert.deepEqual(patches(m.calls), []);
+  });
+});
+
+describe('the controller asks before a rename that would orphan engine state (#3071, cumulative review R2)', () => {
+  it('a refusal carrying the server\'s orphan-risk warning asks; Rename anyway resends with confirmOrphanRisk and completes', async () => {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    let rows = [{ id: 12, name: 'TC-Lane-A', engine: { id: 'claude' } }];
+    const bodies = [];
+    const api = async (url) => (url === '/api/projects' ? { projects: rows } : (/\/status$/.test(url) ? { active: false } : null));
+    // Built by the server's own function, so a change to its wording fails here (cumulative review W4).
+    const warning = require('../lib/workspace-rename-check').renameWarningFor(
+      { hasOrphanRisk: true, affectedEngines: ['claude'], migrationSteps: ['mv ~/.claude/projects/-p-TC-Lane-A ~/.claude/projects/-p-B'] },
+      '/p/TC-Lane-A', '/p/B');
+    const apiMutate = async (url, method, body) => {
+      bodies.push(JSON.parse(JSON.stringify(body)));
+      if (!body.confirmOrphanRisk) { api.lastError = warning; return null; }
+      rows = [{ id: 12, name: body.name, engine: { id: 'claude' } }];
+      return { project: { name: body.name }, warnings: [] };
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null, setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)), onRenameProject: (a, b, o) => pending.push(live.renameProject(a, b, o)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    await settle();
+    doc.getElementById('v6ChatRename').dispatch('click');
+    doc.getElementById('v6ChatRenameInput').value = 'B';
+    doc.getElementById('v6ChatRenameForm').dispatch('submit');
+    await settle();
+    assert.deepEqual(bodies, [{ name: 'B' }], 'the first try asks without confirmation');
+    assert.match(root.innerHTML, /id="v6ChatRenameWarning"[^>]*>WARNING: renaming/);
+    assert.match(root.innerHTML, /is-warning[^>]*>TC-Lane-A has engine state its rename would leave behind/);
+    assert.match(root.innerHTML, /<input id="v6ChatRenameInput"[^>]*value="B"/);
+    doc.getElementById('v6ChatRenameConfirm').dispatch('click');
+    await settle();
+    assert.deepEqual(bodies[1], { name: 'B', confirmOrphanRisk: true });
+    assert.doesNotMatch(root.innerHTML, /id="v6ChatRenameForm"/);
+    assert.match(root.innerHTML, /<strong>B<\/strong>/);
+  });
+});
+
+// ── #3066 (Car V628-W1-A): chat history search, Recents and Reference in chat ──
+
+describe('the history panel markup (#3066)', () => {
+  const G = loadV6Shell();
+  const hostile = '<img src=x onerror=alert(1)>';
+
+  it('is reached from the sidebar clock, which is now live', () => {
+    const { root, doc } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    assert.match(root.innerHTML, /id="v6SidebarFutureSlot"[^>]*aria-expanded="true" aria-pressed="true"[^>]*title="Hide chat history and recents"/);
+    assert.match(root.innerHTML, /<section id="v6HistoryPanel"[^>]*>\s*<p class="v6-history-status" role="status">Open a chat to see its history\.<\/p>/);
+    doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    assert.doesNotMatch(root.innerHTML, /id="v6HistoryPanel"/);
+  });
+
+  it('escapes every server value: member, session, date, hit location and line, sections and excerpts', () => {
+    const chatView = { project: { id: 12, name: 'TC-Lane-A' }, sessionId: 1, events: [], chat: { mode: 'direct', status: 'active', members: [] } };
+    const { root, doc, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: chatView }, onHistoryLoad: () => {} });
+    doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    shell.setHistory({ status: 'ready', mode: 'search', q: hostile, member: hostile, fleet: { name: hostile, count: 2 },
+      items: [{ member: hostile, sid: hostile, date: hostile, matchCount: 2, hits: [{ loc: hostile, line: hostile }] }],
+      notes: [hostile],
+      snapshot: { member: hostile, sid: hostile, date: hostile, sections: [{ name: hostile, body: hostile }], excerpts: [{ loc: hostile, snippet: hostile }], note: hostile } });
+    const panel = root.innerHTML.slice(root.innerHTML.indexOf('<section id="v6HistoryPanel"'), root.innerHTML.indexOf('</section>', root.innerHTML.indexOf('<section id="v6HistoryPanel"')));
+    assert.doesNotMatch(panel, /<img/);
+    assert.ok((panel.match(/&lt;img src=x onerror=alert\(1\)&gt;/g) || []).length >= 12, 'every value shows escaped');
+  });
+
+  it('lists results by member and session, and says how many matched', () => {
+    const chatView = { project: { id: 12, name: 'TC-Lane-A' }, sessionId: 1, events: [], chat: { mode: 'direct', status: 'active', members: [] } };
+    const { root, doc, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: chatView }, onHistoryLoad: () => {} });
+    doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    shell.setHistory({ status: 'ready', mode: 'search', q: 'deploy', member: 'TC-Lane-A', fleet: { name: 'TC-Lane', count: 2 },
+      items: [{ member: 'TC-Lane-PM', sid: '1663', date: '2026-11-13', matchCount: 3, hits: [{ loc: 'Decisions', line: 'deploy on Friday' }] }] });
+    assert.match(root.innerHTML, /<p class="v6-history-status" role="status">1 session match “deploy”<\/p>/);
+    assert.match(root.innerHTML, /<button type="button" id="v6HistoryItem-0" class="v6-history-item">\s*<span class="v6-history-who">TC-Lane-PM<\/span> session #1663\s*<span class="v6-history-date">2026-11-13 · 3 hits<\/span><\/button><span class="v6-history-hit"><span class="v6-history-hit-loc">Decisions<\/span> deploy on Friday<\/span>/);
+    assert.match(root.innerHTML, /<option value="fleet">Whole fleet \(TC-Lane\) · 2<\/option>/);
+  });
+});
+
+describe('the history panel in the mounted shell (#3066)', () => {
+  const chatView = { project: { id: 12, name: 'TC-Lane-A' }, sessionId: 1, events: [], chat: { mode: 'direct', status: 'active', members: [] } };
+  function mount(extra) {
+    const loads = [];
+    const opens = [];
+    const m = mountShell(Object.assign({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: chatView },
+      onHistoryLoad: (f) => loads.push(plain(f)), onHistoryOpenSession: (p) => opens.push(plain(p)) }, extra || {}));
+    return Object.assign(m, { loads, opens });
+  }
+  const snapshot = { member: 'TC-Lane-PM', sid: '1663', date: '2026-11-13', sections: [{ name: 'Decisions', body: 'Ship it on Friday.\nThen tag.' }], excerpts: [] };
+
+  it('opening it loads the chat\'s recents (member scope, no query), and the form searches with what was set', () => {
+    const m = mount();
+    m.doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    assert.deepEqual(m.loads, [{ scope: 'member', kind: 'summaries', q: '' }]);
+    assert.match(m.root.innerHTML, /role="status">Loading…</);
+    m.doc.getElementById('v6HistoryScope').value = 'fleet';
+    m.doc.getElementById('v6HistoryKind').value = 'transcripts';
+    m.doc.getElementById('v6HistorySearch').value = '  deploy ';
+    m.doc.getElementById('v6HistoryForm').dispatch('submit');
+    assert.deepEqual(m.loads[1], { scope: 'fleet', kind: 'transcripts', q: 'deploy' });
+  });
+
+  it('a result opens its session read-only, with the query', () => {
+    const m = mount();
+    m.doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    m.shell.setHistory({ status: 'ready', mode: 'recents', member: 'TC-Lane-A', fleet: { name: 'TC-Lane', count: 2 },
+      items: [{ member: 'TC-Lane-PM', sid: '1663', date: '2026-11-13', matchCount: 0, hits: [] }] });
+    m.doc.getElementById('v6HistoryItem-0').dispatch('click');
+    assert.deepEqual(m.opens, [{ member: 'TC-Lane-PM', sid: '1663', q: '', kind: 'summaries' }]);
+  });
+
+  it('Reference in chat adds the session\'s reference to this chat\'s message, after any text already typed', () => {
+    const m = mount();
+    m.doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'Following up on';
+    input.dispatch('input');
+    m.shell.setHistory({ status: 'ready', mode: 'recents', member: 'TC-Lane-A', fleet: { name: 'TC-Lane', count: 2 }, items: [], snapshot });
+    assert.match(m.root.innerHTML, /<div id="v6HistorySnapshot"[^>]*aria-label="TC-Lane-PM session 1663">/);
+    m.doc.getElementById('v6HistoryReference').dispatch('click');
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*>Following up on\n\[TC-Lane-PM session #1663 · 2026-11-13\] Ship it on Friday\.<\/textarea>/);
+    assert.equal(m.doc.activeElement, m.doc.getElementById('v6ChatInput'));
+  });
+
+  it('a reference prefers the first transcript excerpt and is cut to 200 characters', () => {
+    const m = mount();
+    m.doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    m.shell.setHistory({ status: 'ready', mode: 'search', q: 'x', member: 'A', fleet: { name: '', count: 1 }, items: [],
+      snapshot: { member: 'A', sid: '7', sections: [{ name: 'S', body: 'summary' }], excerpts: [{ loc: 'user', snippet: 'y'.repeat(300) }] } });
+    m.doc.getElementById('v6HistoryReference').dispatch('click');
+    assert.match(m.root.innerHTML, new RegExp(`<textarea id="v6ChatInput"[^>]*>\\[A session #7\\] ${'y'.repeat(199)}…</textarea>`));
+  });
+
+  it('Close leaves the list and drops the snapshot', () => {
+    const m = mount();
+    m.doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    m.shell.setHistory({ status: 'ready', mode: 'recents', member: 'A', fleet: { name: '', count: 1 },
+      items: [{ member: 'A', sid: '7', date: '', matchCount: 0, hits: [] }], snapshot });
+    m.doc.getElementById('v6HistorySnapshotClose').dispatch('click');
+    assert.doesNotMatch(m.root.innerHTML, /id="v6HistorySnapshot"/);
+    assert.match(m.root.innerHTML, /id="v6HistoryItem-0"/);
+  });
+
+  it('an open panel follows the chat to a new target and reloads its recents', () => {
+    const m = mount();
+    m.doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    m.shell.setDetail({ kind: 'conversation', view: Object.assign({}, chatView, { project: { id: 21, name: 'Medusa-PM' } }) });
+    assert.equal(m.loads.length, 2);
+  });
+});
+
+describe('the live controller loads history (#3066)', () => {
+  /**
+   * A controller on TC-Lane-A, whose group also holds TC-Lane-PM.
+   * @param {object} answers - URL -> response (null for a failure).
+   */
+  function mountHistory(answers) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const rows = [{ id: 11, name: 'TC-Lane-A', engine: { id: 'claude' } }, { id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }];
+    const calls = [];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: rows };
+      if (/\/api\/sessions\/[^/]+\/status$/.test(url)) return { active: false };
+      if (url.startsWith('/api/continuity/')) {
+        calls.push(url);
+        const answer = answers[url];
+        if (answer === null) { api.lastError = `refused ${url}`; return null; }
+        return answer || { sessions: [] };
+      }
+      return null;
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/11/conversation'), storage: null, setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)),
+      onHistoryLoad: (f) => pending.push(live.loadHistory(f)), onHistoryOpenSession: (p) => pending.push(live.openHistorySession(p)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    return { root, doc, shell, calls, settle, live };
+  }
+  const rows = (root) => [...root.innerHTML.matchAll(/<span class="v6-history-who">([^<]*)<\/span> session #([^\s<]*)/g)].map((x) => `${x[1]}#${x[2]}`);
+
+  it('member recents: one sessions read, newest first', async () => {
+    const m = mountHistory({ '/api/continuity/TC-Lane-A/sessions': { sessions: [{ sid: '1', date: '2026-11-01' }, { sid: '2', date: '2026-11-09' }] } });
+    await m.settle();
+    m.doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    await m.settle();
+    assert.deepEqual(m.calls, ['/api/continuity/TC-Lane-A/sessions']);
+    assert.deepEqual(rows(m.root), ['TC-Lane-A#2', 'TC-Lane-A#1']);
+    assert.match(m.root.innerHTML, /2 recent sessions, newest first/);
+  });
+
+  it('a fleet search asks every member, merges the answers best match first, and names a member that failed', async () => {
+    const m = mountHistory({
+      '/api/continuity/TC-Lane-A/search?q=deploy&scope=transcripts': { sessions: [{ sid: '5', date: '2026-11-02', matchCount: 1, hits: [{ source: 'user', line: 'deploy?' }] }] },
+      '/api/continuity/TC-Lane-PM/search?q=deploy&scope=transcripts': { sessions: [{ sid: '9', date: '2026-11-01', matchCount: 4, hits: [] }] }
+    });
+    await m.settle();
+    await m.live.loadHistory({ scope: 'fleet', kind: 'transcripts', q: 'deploy' });
+    assert.deepEqual(m.calls.sort(), ['/api/continuity/TC-Lane-A/search?q=deploy&scope=transcripts', '/api/continuity/TC-Lane-PM/search?q=deploy&scope=transcripts']);
+    m.doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    await m.settle();
+    await m.live.loadHistory({ scope: 'fleet', kind: 'transcripts', q: 'deploy' });
+    assert.deepEqual(rows(m.root), ['TC-Lane-PM#9', 'TC-Lane-A#5'], 'four hits outrank one');
+    const failing = mountHistory({ '/api/continuity/TC-Lane-PM/search?q=x': null, '/api/continuity/TC-Lane-A/search?q=x': { sessions: [{ sid: '1', date: '', matchCount: 1, hits: [] }] } });
+    await failing.settle();
+    failing.doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    await failing.settle();
+    await failing.live.loadHistory({ scope: 'fleet', kind: 'summaries', q: 'x' });
+    assert.deepEqual(rows(failing.root), ['TC-Lane-A#1']);
+    assert.match(failing.root.innerHTML, /<p class="v6-history-note">Could not read TC-Lane-PM&#39;s history: refused \/api\/continuity\/TC-Lane-PM\/search\?q=x<\/p>/);
+  });
+
+  it('opening a session shows its wrap summary and, for a query, the transcript lines that match', async () => {
+    const m = mountHistory({
+      '/api/continuity/TC-Lane-PM/sessions/9': { sid: '9', session: { date: '2026-11-01' }, summary: { meta: {}, sections: { Decisions: 'Ship Friday.', Delta: '' } } },
+      '/api/continuity/TC-Lane-PM/sessions/9/transcript/search?q=ship': { available: true, excerpts: [{ role: 'assistant', timestamp: 't1', snippet: 'we ship' }] }
+    });
+    await m.settle();
+    m.doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    await m.settle();
+    await m.live.openHistorySession({ member: 'TC-Lane-PM', sid: '9', q: 'ship' });
+    assert.match(m.root.innerHTML, /<strong>TC-Lane-PM · session #9<\/strong>\s*<span class="v6-history-date">2026-11-01<\/span>/);
+    assert.match(m.root.innerHTML, /<strong>Decisions<\/strong><div>Ship Friday\.<\/div>/);
+    assert.doesNotMatch(m.root.innerHTML, /<strong>Delta<\/strong>/, 'empty sections are left out');
+    assert.match(m.root.innerHTML, /<span class="v6-history-hit-loc">assistant · t1<\/span> we ship/);
+  });
+});
+
+describe('the history panel and rename warning are styled for the narrow sidebar (#3066, #3071)', () => {
+  it('stacks the panel, gives results a 44px target, wraps long text, and keeps the rename warning\'s line breaks', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(css, /\.v6-history \{\s*display: flex;\s*flex-direction: column;/);
+    assert.match(css, /\.v6-history-item \{[^}]*min-height: 44px;[^}]*overflow-wrap: anywhere;/);
+    assert.match(css, /\.v6-history-section > div \{\s*white-space: pre-wrap;/);
+    assert.match(css, /\.v6-chat-rename-warning \{[^}]*white-space: pre-wrap;/);
+  });
+});
+
+describe('history panel fixes from the cumulative review (#3066)', () => {
+  const chatView = { project: { id: 12, name: 'TC-Lane-A' }, sessionId: 1, events: [], chat: { mode: 'direct', status: 'active', members: [] } };
+
+  it('W1: a transcript flagged for secrets is marked in the list and the snapshot, and its lines are never quoted into chat', () => {
+    const loads = [];
+    const { root, doc, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: chatView }, onHistoryLoad: (f) => loads.push(f) });
+    doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    shell.setHistory({ status: 'ready', mode: 'search', q: 'k', member: 'A', fleet: { name: '', count: 1 },
+      items: [{ member: 'A', sid: '7', date: '', matchCount: 1, secretsFlagged: true, hits: [] }],
+      snapshot: { member: 'A', sid: '7', secretsFlagged: true, secretTypes: ['<aws>'], sections: [{ name: 'Decisions', body: 'Rotate the key.' }],
+        excerpts: [{ loc: 'user', snippet: 'AKIA-SECRET-VALUE' }] } });
+    assert.match(root.innerHTML, /<span class="v6-history-secret" title="Transcript flagged for possible secrets">⚠ secrets<\/span>/);
+    assert.match(root.innerHTML, /<p class="v6-history-secret" role="note">⚠ This transcript was flagged for possible secrets \(&lt;aws&gt;\)\./);
+    doc.getElementById('v6HistoryReference').dispatch('click');
+    assert.match(root.innerHTML, /<textarea id="v6ChatInput"[^>]*>\[A session #7\] Rotate the key\.<\/textarea>/);
+    assert.doesNotMatch(root.innerHTML.slice(root.innerHTML.indexOf('<textarea id="v6ChatInput"')), /AKIA-SECRET-VALUE<\/textarea>/);
+  });
+
+  it('W3: a refresh of the same chat keeps the panel and its snapshot; a rename of the member reloads it', () => {
+    const loads = [];
+    const { doc, shell, root } = mountShell({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: chatView }, onHistoryLoad: (f) => loads.push(f) });
+    doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    assert.equal(loads.length, 1);
+    shell.setHistory({ status: 'ready', mode: 'recents', member: 'TC-Lane-A', fleet: { name: '', count: 1 }, items: [],
+      snapshot: { member: 'TC-Lane-A', sid: '3', sections: [], excerpts: [] } });
+    shell.setDetail({ kind: 'loading' });
+    shell.setDetail({ kind: 'conversation', view: chatView });
+    assert.equal(loads.length, 1, 'no reload for the same chat');
+    assert.match(root.innerHTML, /id="v6HistorySnapshot"/, 'the snapshot survived the refresh');
+    shell.setDetail({ kind: 'conversation', view: Object.assign({}, chatView, { project: { id: 12, name: 'TC-Lane-Alpha' } }) });
+    assert.equal(loads.length, 2, 'a rename reloads');
+  });
+});
+
+describe('the controller drops history answers that a newer request overtook (#3066, cumulative review W2)', () => {
+  it('a slow earlier search never overwrites a newer one, and a late list never closes a snapshot opened after it', async () => {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const rows = [{ id: 11, name: 'TC-Lane-A', engine: { id: 'claude' } }];
+    const gates = {};
+    const hold = (url) => new Promise((resolve) => { gates[url] = resolve; });
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: rows };
+      if (/\/status$/.test(url)) return { active: false };
+      if (url.startsWith('/api/continuity/')) return hold(url);
+      return null;
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/11/conversation'), storage: null, setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    while (pending.length) await pending.shift();
+    doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    const tick = () => new Promise((r) => setImmediate(r));
+    const slow = live.loadHistory({ scope: 'member', kind: 'summaries', q: 'old' });
+    await tick();
+    const fast = live.loadHistory({ scope: 'member', kind: 'summaries', q: 'new' });
+    await tick();
+    gates['/api/continuity/TC-Lane-A/search?q=new']({ sessions: [{ sid: '2', date: '', matchCount: 1, hits: [] }] });
+    await fast;
+    gates['/api/continuity/TC-Lane-A/search?q=old']({ sessions: [{ sid: '1', date: '', matchCount: 1, hits: [] }] });
+    await slow;
+    assert.match(root.innerHTML, /session #2/);
+    assert.doesNotMatch(root.innerHTML, /session #1/, 'the overtaken answer was dropped');
+    const list = live.loadHistory({ scope: 'member', kind: 'summaries', q: '' });
+    await tick();
+    const open = live.openHistorySession({ member: 'TC-Lane-A', sid: '2', q: '' });
+    await tick();
+    gates['/api/continuity/TC-Lane-A/sessions/2']({ sid: '2', session: {}, summary: { sections: { Decisions: 'kept' } } });
+    await open;
+    gates['/api/continuity/TC-Lane-A/sessions']({ sessions: [] });
+    await list;
+    assert.match(root.innerHTML, /id="v6HistorySnapshot"/, 'the late list did not close the snapshot');
+    const slowOpen = live.openHistorySession({ member: 'TC-Lane-A', sid: '8', q: '' });
+    await tick();
+    const fastOpen = live.openHistorySession({ member: 'TC-Lane-A', sid: '9', q: '' });
+    await tick();
+    gates['/api/continuity/TC-Lane-A/sessions/9']({ sid: '9', session: {}, summary: { sections: { Decisions: 'nine' } } });
+    await fastOpen;
+    gates['/api/continuity/TC-Lane-A/sessions/8']({ sid: '8', session: {}, summary: { sections: { Decisions: 'eight' } } });
+    await slowOpen;
+    assert.match(root.innerHTML, /TC-Lane-A · session #9/, 'the newer session stays open');
+    assert.doesNotMatch(root.innerHTML, /TC-Lane-A · session #8/);
+  });
+});
+
+describe('the chat\'s own history button and the Open Hood path (#3066, #3073)', () => {
+  const G = loadV6Shell();
+  const chatView = (name) => ({ project: { id: 12, name: name || 'TC-Lane-A' }, sessionId: 1, events: [], chat: { mode: 'direct', status: 'active', members: [] } });
+
+  it('Open Hood links to /session/<name>, the path the server serves, URL-encoded (#3073)', () => {
+    const html = G.tcV6ConversationViewMarkup(chatView('TiLT v2'));
+    assert.match(html, /v6-open-hood" href="\/session\/TiLT%20v2"/);
+    assert.doesNotMatch(html, /session\.html\?project=/);
+  });
+
+  it('the chat actions carry a clock for this member\'s history, its name escaped', () => {
+    const html = G.tcV6ConversationViewMarkup(chatView('a"<b>'));
+    assert.match(html, /<button type="button" id="v6ChatHistory" class="btn btn-secondary btn-small v6-chat-icon-btn" title="History and recents for a&quot;&lt;b&gt;" aria-label="History and recents for a&quot;&lt;b&gt;"><span aria-hidden="true">🕓<\/span><\/button>/);
+  });
+
+  it('it opens the member\'s history in the sidebar, revealing a hidden sidebar and opening the phone drawer', () => {
+    const loads = [];
+    const storage = makeStorage({ tc_v6_sidebar_collapsed: 'true' });
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage, detail: { kind: 'conversation', view: chatView() }, onHistoryLoad: (f) => loads.push(plain(f)) });
+    assert.equal(shell.isSidebarCollapsed(), true);
+    doc.getElementById('v6ChatHistory').dispatch('click');
+    assert.equal(shell.isSidebarCollapsed(), false);
+    assert.equal(storage.data.tc_v6_sidebar_collapsed, 'false');
+    assert.equal(shell.isDrawerOpen(), true);
+    assert.equal(shell.isHistoryOpen(), true);
+    assert.deepEqual(loads, [{ scope: 'member', kind: 'summaries', q: '' }]);
+    assert.match(root.innerHTML, /id="v6HistoryPanel"/);
+  });
+
+  it('a session flagged only on its session record still shows the secrets warning (verify observation)', async () => {
+    const H = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: [{ id: 11, name: 'A', engine: { id: 'claude' } }] };
+      if (/\/status$/.test(url)) return { active: false };
+      if (url === '/api/continuity/A/sessions/old-1') return { sid: 'old-1', session: { secretsFlagged: true }, transcript: null, summary: { sections: { Decisions: 'd' } } };
+      return { sessions: [] };
+    };
+    let shell = null;
+    const pending = [];
+    const live = H.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = H.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/11/conversation'), storage: null, setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    while (pending.length) await pending.shift();
+    doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    await live.openHistorySession({ member: 'A', sid: 'old-1', q: '' });
+    assert.match(root.innerHTML, /<p class="v6-history-secret" role="note">⚠ This transcript was flagged for possible secrets/);
   });
 });
