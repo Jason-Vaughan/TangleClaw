@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.2.5 — The active lane marked in the Fleet sidebar and a one-row icon chat toolbar](v6.2.5.md)
+- [v6.2.6 — Telemetry and the chat header in one condensed row](v6.2.6.md)
 
 ## Recent releases
+
+- [v6.2.5 — The active lane marked in the Fleet sidebar and a one-row icon chat toolbar](v6.2.5.md)
 
 - [v6.2.4 — Chat replies after tool lines, Show Fleet in the chat, a busy timer and project version and branch badges](v6.2.4.md)
 

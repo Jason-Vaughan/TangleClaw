@@ -41,6 +41,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-14 — v6.2.6 release cut (Milestone #73)
+
+<!-- prawduct: type=internal | scope=v626-release -->
+
+- Compiled the one accepted `changelog.d/` fragment (#3063) from PR #3064 into `CHANGELOG.md` section `[6.2.6]` (Fixed, patch tier) using the wrap's own compile/splice/promote functions. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap state. Folded in PR #3064's change-log entry below, verbatim. Builder Rule #271 cl.3 kept it out of the feature PR.
+- PR #3064 merged at its first head (8b180cdc), with no review change after its entry was written. Its owed browser check was deferred to the Operator walkthrough and was not run before merge; the release notes say so.
+- PM's dispatch said to run `npm run release -- --version 6.2.6`. This repo has no `package.json`, so the cut used the same mechanism as v6.2.1 through v6.2.5 (the fragment compile plus `scripts/release-prepare.js`).
+
+## 2026-11-14 — v6 chat: telemetry and the chat header in one condensed row (#3063)
+
+<!-- prawduct: type=fix | scope=v626-w1a -->
+
+Car V626-W1-A, Chunk 01.
+
+- In a chat, render() leaves the top-level telemetry bar out and conversationViewMarkup draws it inside .v6-chat-header between .v6-chat-identity and .v6-chat-actions; outside a chat it keeps its own row.
+- Telemetry chips: in a chat, one-line pills, and .is-unavailable hidden (every chip stays in the DOM); every chip gets an escaped title "<Label>: <value | no reading yet> — <meaning> (<confidence>)". Meanings follow server.js#_v6LiveTelemetryMetrics: only sessions, health (estimated) and version are collected today.
+- Delegate select title: "Choose who this project's chat talks to — Switch Designated Project Delegate".
+- Cumulative Critic R-1: the meanings no longer carry "not collected yet"; a collected metric must not read as uncollected.
+- Test restated with the requirement: V625's delegate-select title pin.
+- Browser check owed: the connected Chrome cannot reach this host's loopback.
+
 ## 2026-11-13 — v6.2.5 release cut (Milestone #72)
 
 <!-- prawduct: type=internal | scope=v625-release -->
