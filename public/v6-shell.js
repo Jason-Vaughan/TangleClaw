@@ -716,7 +716,7 @@
           <span class="v6-chat-pill is-${status}">${CHAT_STATUS_LABELS[status]}</span>${chatRepoBadgesMarkup(v.project)}</p>
         <div class="v6-chat-actions">
           ${showFleetButton}${startButton}${startFleetButton}${delegatePicker}${toDelegate}
-          <a class="btn btn-secondary v6-open-hood" href="${escapeHtml(hoodHref)}">Open Hood (Live Terminal)</a>
+          <a class="btn btn-secondary btn-small v6-open-hood" href="${escapeHtml(hoodHref)}">Open Hood (Live Terminal)</a>
           <button type="button" id="v6ChatRefresh" class="btn btn-secondary btn-small">Refresh</button>
           <button type="button" id="v6ChatSettings" class="btn btn-secondary btn-small">Project Settings</button>
         </div>

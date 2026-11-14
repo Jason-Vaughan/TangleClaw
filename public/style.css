@@ -4256,8 +4256,12 @@ html[data-theme="light"] .tc-bg-watermark img {
   align-items: center;
   gap: 8px;
 }
+/* #3057: a link styled as the compact buttons beside it — same box, no
+   underline; the generic .v6-open-hood's inline-block would undo .btn's flex. */
 .v6-chat-actions .v6-open-hood {
+  display: inline-flex;
   margin-bottom: 0;
+  text-decoration: none;
 }
 .v6-chat-delegate-label {
   display: inline-flex;

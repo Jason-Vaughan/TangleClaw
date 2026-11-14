@@ -3264,3 +3264,13 @@ describe('the busy pill keeps its time visible on a phone (#3057 browser check)'
     assert.match(css, /\.v6-chat-git-badge\.is-dirty \{ border-color: #d4a72c; \}/, 'amber border only, readable text in both themes');
   });
 });
+
+describe('Open Hood matches the chat\'s compact buttons (#3057, PM)', () => {
+  const G = loadV6Shell();
+  it('is a small button without an underline inside .v6-chat-actions', () => {
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 1, events: [], chat: { status: 'active', members: [] } });
+    assert.match(html, /<a class="btn btn-secondary btn-small v6-open-hood" href="\/session\.html\?project=P">Open Hood \(Live Terminal\)<\/a>/);
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(css, /\.v6-chat-actions \.v6-open-hood \{\s*display: inline-flex;\s*margin-bottom: 0;\s*text-decoration: none;\s*\}/);
+  });
+});
