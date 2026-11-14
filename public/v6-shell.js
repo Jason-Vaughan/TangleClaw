@@ -677,16 +677,17 @@
     const session = v.sessionId != null ? ` (#${escapeHtml(v.sessionId)})` : '';
     const members = Array.isArray(chat.members) ? chat.members : [];
     const delegatePicker = delegateMode && members.length
-      ? `<label class="v6-chat-delegate-label">Delegate
+      ? `<label class="v6-chat-delegate-label"><span class="sr-only">Delegate</span>
           <select id="v6ChatDelegate" class="filter-input v6-chat-delegate" data-action="change-project-delegate"
-            aria-label="Choose who this project's chat talks to">${members.map((m) => (
+            aria-label="Choose who this project's chat talks to" title="Switch Designated Project Delegate">${members.map((m) => (
               `<option value="${escapeHtml(m.id)}"${String(m.id) === String(v.project.id) ? ' selected' : ''}>${escapeHtml(m.name)}</option>`
             )).join('')}</select>
         </label>`
       : '';
     const toDelegate = !delegateMode && chat.delegate && chat.nodeId != null && String(chat.delegate.id) !== String(v.project.id)
-      ? `<a id="v6ChatToDelegate" class="btn btn-secondary btn-small"
-          href="${escapeHtml(routeHash({ view: 'project', projectId: chat.nodeId }))}">Switch to Delegate: ${escapeHtml(chat.delegate.name)}</a>`
+      ? `<a id="v6ChatToDelegate" class="btn btn-secondary btn-small v6-chat-to-delegate"
+          href="${escapeHtml(routeHash({ view: 'project', projectId: chat.nodeId }))}"
+          title="Switch to Delegate: ${escapeHtml(chat.delegate.name)}" aria-label="Switch to Delegate: ${escapeHtml(chat.delegate.name)}"><span aria-hidden="true">⇄</span> ${escapeHtml(chat.delegate.name)}</a>`
       : '';
     const send = chat.send && CHAT_SEND_KINDS.includes(chat.send.kind) ? chat.send : null;
     // Disabled while a send is in flight too, so a second Enter cannot type
@@ -709,16 +710,25 @@
           aria-label="Show Fleet sidebar" title="Restore the Fleet sidebar">» Show Fleet</button>`
       : '';
     const placeholder = `Message ${name}… (Enter to send, Shift+Enter for newline)`;
+    // #3059: one compact row. The identity strip says in full, as a tooltip
+    // and to a screen reader, what its short chips show; the controls are
+    // icons, each named by its title and aria-label.
+    const modeText = delegateMode ? 'Designated Project Delegate' : 'Direct Session';
+    const identityTip = `Talking to ${name}${v.sessionId != null ? ` (#${v.sessionId})` : ''} · ${modeText} · ${CHAT_STATUS_LABELS[status]}`;
+    const iconButton = (id, label, glyph) => `<button type="button" id="${id}" class="btn btn-secondary btn-small v6-chat-icon-btn" title="${label}" aria-label="${label}"><span aria-hidden="true">${glyph}</span></button>`;
     return `<section class="v6-conversation v6-chat" aria-label="Conversation — ${escapeHtml(name)}">
       <header class="v6-chat-header">
         <h2 class="v6-detail-title">${escapeHtml(title)}</h2>
-        <p class="v6-chat-talking-to">Talking to: <strong>${escapeHtml(name)}</strong>${session} · ${delegateMode ? 'Designated Project Delegate' : 'Direct Session'}
-          <span class="v6-chat-pill is-${status}">${CHAT_STATUS_LABELS[status]}</span>${chatRepoBadgesMarkup(v.project)}</p>
+        <div class="v6-chat-identity">${showFleetButton}
+          <p class="v6-chat-talking-to" title="${escapeHtml(identityTip)}"><span class="sr-only">Talking to: </span><strong>${escapeHtml(name)}</strong>${session}<span class="sr-only"> · ${modeText}</span>
+            <span class="v6-chat-mode" aria-hidden="true">${delegateMode ? 'Delegate' : 'Direct'}</span>
+            <span class="v6-chat-pill is-${status}">${CHAT_STATUS_LABELS[status]}</span>${chatRepoBadgesMarkup(v.project)}</p>
+        </div>
         <div class="v6-chat-actions">
-          ${showFleetButton}${startButton}${startFleetButton}${delegatePicker}${toDelegate}
-          <a class="btn btn-secondary btn-small v6-open-hood" href="${escapeHtml(hoodHref)}">Open Hood (Live Terminal)</a>
-          <button type="button" id="v6ChatRefresh" class="btn btn-secondary btn-small">Refresh</button>
-          <button type="button" id="v6ChatSettings" class="btn btn-secondary btn-small">Project Settings</button>
+          ${startButton}${startFleetButton}${delegatePicker}${toDelegate}
+          <a class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood" href="${escapeHtml(hoodHref)}" title="Open Hood (Live Terminal)" aria-label="Open Hood (Live Terminal)"><span aria-hidden="true">&gt;_</span></a>
+          ${iconButton('v6ChatRefresh', 'Refresh conversation', '↻')}
+          ${iconButton('v6ChatSettings', 'Project Settings', '⚙')}
         </div>
       </header>
       ${stream}
@@ -2662,7 +2672,12 @@
       // content; they stay in the page (and wired) but out of sight.
       const inChat = Boolean(detail && detail.kind === 'conversation');
       const activityElapsed = syncBusy();
-      if (root.classList) root.classList.toggle('v6-shell-root--sidebar-collapsed', sidebarCollapsed);
+      if (root.classList) {
+        root.classList.toggle('v6-shell-root--sidebar-collapsed', sidebarCollapsed);
+        // #3059: the chat's own toolbar names what it shows, so the route and
+        // group headings are hidden from sight (not from screen readers).
+        root.classList.toggle('v6-shell-root--chat', inChat);
+      }
       root.innerHTML = `
         <a id="v6ShellSkipLink" class="v6-shell-skip-link" href="#v6ShellMain">Skip to main content</a>
         <button type="button" id="v6ShellDrawerToggle" class="v6-shell-drawer-toggle"
@@ -2680,7 +2695,9 @@
           ${shownTree.length ? sidebarMarkup(shownTree, {
             activeProjectId: currentRoute.projectId,
             activeFleetId: currentRoute.fleetId,
-            activeResourceId: currentRoute.resourceId,
+            // #3059: on a project or fleet route the chat talks to its
+            // delegate, and that lane is the one marked in the sidebar.
+            activeResourceId: currentRoute.resourceId || chatTargetKey(),
             collapsed: collapsedNodes,
             memberInfo: (seatId) => {
               const row = projectRows.get(String(seatId));

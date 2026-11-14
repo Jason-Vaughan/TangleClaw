@@ -3921,7 +3921,7 @@ html[data-theme="light"] .tc-bg-watermark img {
 .v6-shell-project.is-active,
 .v6-shell-fleet.is-active {
   background: var(--accent-bg, rgba(86, 211, 100, 0.12));
-  font-weight: 600;
+  font-weight: 700;
 }
 .v6-shell-view {
   grid-column: 2;
@@ -4002,9 +4002,26 @@ html[data-theme="light"] .tc-bg-watermark img {
 .v6-shell-fleet:hover {
   text-decoration: underline;
 }
+/* #3059: the lane the chat talks to stands out — bold, tinted, and an
+   accent on its left edge (an inset shadow, so nothing shifts). */
 .v6-shell-member-link.is-active {
   background: var(--accent-bg, rgba(86, 211, 100, 0.12));
-  font-weight: 600;
+  font-weight: 700;
+  box-shadow: inset 3px 0 0 #56d364;
+}
+/* #3059: in a chat the toolbar names everything, so the route and group
+   headings leave the page visually but stay for screen readers. */
+.v6-shell-root--chat .v6-shell-title,
+.v6-chat-header .v6-detail-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .v6-detail-title {
   font-size: 1.1em;
@@ -4232,12 +4249,43 @@ html[data-theme="light"] .tc-bg-watermark img {
   gap: 10px;
   min-width: 0;
 }
-.v6-chat-header .v6-detail-title {
-  margin-bottom: 4px;
+/* #3059: the chat header is one wrapping row — identity on the left,
+   icon controls on the right. */
+.v6-chat-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.v6-chat-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 .v6-chat-talking-to {
-  margin: 0 0 8px;
+  margin: 0;
   overflow-wrap: anywhere;
+}
+.v6-chat-mode {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.8em;
+  opacity: 0.8;
+  border: 1px solid var(--border-color, #2a2f36);
+}
+.v6-chat-icon-btn {
+  min-width: 44px;
+  font-size: 16px;
+  text-decoration: none;
+}
+.v6-chat-to-delegate {
+  text-decoration: none;
 }
 .v6-chat-pill {
   display: inline-block;
