@@ -17,6 +17,13 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.2.4 — Chat replies after tool lines, Show Fleet in the chat, a busy timer and project version and branch badges
+
+- **Replies after tool lines** (#3057) — `public/v6-shell.js#extractLiveTurns`: under a tool line, only a `⎿`/`└` line or a line indented four or more spaces is tool output, so a reply indented by two spaces (Antigravity's prose) is shown as a bubble, even after a blank line.
+- **Show Fleet in the chat** (#3057) — with the Fleet sidebar hidden, `#v6ChatShowFleet` (`» Show Fleet`) leads the chat's actions, and the page header holding `#v6SidebarExpand` stays in view.
+- **Busy timer** (#3057) — `#v6ChatActivity` shows `Working` from a send until the engine takes over (or three reads pass), animated dots instead of static ones, and the elapsed time (`#v6ChatActivityTimer`, `public/v6-shell.js#formatElapsed`), ticking once a second while busy.
+- **Version and branch badges** (#3057) — `public/v6-shell.js#chatRepoBadgesMarkup`: the chat header shows the target project's version (or latest tag) and git branch from its `GET /api/projects` row, starred only when `git.dirty` is `true`.
+
 ## v6.2.3 — Chat replies as bubbles, chat attachments, inline session start and the Medusa-PM contract fallback
 
 - **Chat replies as bubbles** (#3052) — `public/v6-shell.js#extractLiveTurns`: the Project Delegate Chat reads the agent's replies from the session's live output (Claude Code, Codex, Antigravity, Aider), drops boilerplate, wake prompts, `tc` tool blocks, thinking and tool lines and prompt chrome, and shows them as `ASSISTANT` bubbles. A trailing question is pinned above the composer; a one-line indicator shows when the engine is busy; the raw output sits in a collapsible "Under the Hood" drawer.

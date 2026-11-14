@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.2.3 — Chat replies as bubbles, chat attachments, inline session start and the Medusa-PM contract fallback](v6.2.3.md)
+- [v6.2.4 — Chat replies after tool lines, Show Fleet in the chat, a busy timer and project version and branch badges](v6.2.4.md)
 
 ## Recent releases
+
+- [v6.2.3 — Chat replies as bubbles, chat attachments, inline session start and the Medusa-PM contract fallback](v6.2.3.md)
 
 - [v6.2.2 — Fleet View sidebar, Project Delegate Chat and the Medusa update chip fix](v6.2.2.md)
 
