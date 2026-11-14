@@ -504,7 +504,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.deepEqual(active, [`#/resources/${pmId}/conversation`], 'exactly the delegate lane is marked');
       assert.ok(root.classList.contains('v6-shell-root--chat'), 'the route and group headings are hidden in the chat');
       const header = root.innerHTML.slice(root.innerHTML.indexOf('<header class="v6-chat-header">'), root.innerHTML.indexOf('</header>'));
-      assert.match(header, /v6-open-hood" href="\/session\.html\?project=e2eside-PM" title="Open Hood \(Live Terminal\)" aria-label="Open Hood \(Live Terminal\)"/);
+      assert.match(header, /v6-open-hood" href="\/session\/e2eside-PM" title="Open Hood \(Live Terminal\)" aria-label="Open Hood \(Live Terminal\)"/);
       assert.match(header, /id="v6ChatRefresh"[^>]*title="Refresh conversation" aria-label="Refresh conversation"/);
       assert.match(header, /id="v6ChatSettings"[^>]*title="Project Settings" aria-label="Project Settings"/);
     });
@@ -608,6 +608,17 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.match(root.innerHTML, /<strong>Decisions<\/strong><div>Ship the history panel on Friday\.<\/div>/);
       doc.getElementById('v6HistoryReference').dispatch('click');
       assert.match(root.innerHTML, /<textarea id="v6ChatInput"[^>]*>\[e2ehist-PM session #41 · 2026-11-10\] Ship the history panel on Friday\.<\/textarea>/);
+    });
+
+    it('Open Hood\'s /session/<name> link is served by the real handler (#3073)', async () => {
+      const pid = seedProject('e2e-hood');
+      const { root, settle } = mountShell(`#/resources/${pid}/conversation`);
+      await settle();
+      const href = /v6-open-hood" href="([^"]+)"/.exec(root.innerHTML)[1];
+      assert.equal(href, '/session/e2e-hood');
+      const page = await send('GET', href, { operator: false });
+      assert.equal(page.statusCode, 200);
+      assert.match(page.body, /session\.js/, 'the session page itself, which reads the name from this path');
     });
 
     it('the real B2 route accepts the event the chat records, and the next seq counts deleted events (#3047)', async () => {

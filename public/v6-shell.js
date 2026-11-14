@@ -836,7 +836,9 @@
       </section>`;
     }
     const name = String(v.project.name || '');
-    const hoodHref = `/session.html?project=${encodeURIComponent(name)}`;
+    // #3073: the server serves the terminal page at /session/<name>; the
+    // ?project= form resolved to the name "session.html" and never loaded.
+    const hoodHref = `/session/${encodeURIComponent(name)}`;
     const chat = v.chat || {};
     const status = CHAT_STATUS_LABELS[chat.status] ? chat.status : (v.sessionId == null ? 'offline' : 'active');
     const liveSession = status !== 'offline';
@@ -923,6 +925,7 @@
         <div class="v6-chat-actions">
           ${startButton}${startFleetButton}${delegatePicker}${toDelegate}
           <a class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood" href="${escapeHtml(hoodHref)}" title="Open Hood (Live Terminal)" aria-label="Open Hood (Live Terminal)"><span aria-hidden="true">&gt;_</span></a>
+          ${iconButton('v6ChatHistory', escapeHtml(`History and recents for ${name}`), '🕓')}
           ${iconButton('v6ChatRefresh', 'Refresh conversation', '↻')}
           ${iconButton('v6ChatSettings', 'Project Settings', '⚙')}
         </div>
@@ -2487,6 +2490,7 @@
           : [],
         note: transcriptRes && !transcriptRes.available ? (transcriptRes.reason || 'No transcript captured for this session.') : '',
         secretsFlagged: Boolean((detailRes && detailRes.transcript && detailRes.transcript.secretsFlagged)
+          || (detailRes && detailRes.session && detailRes.session.secretsFlagged)
           || (transcriptRes && transcriptRes.secretsFlagged)),
         secretTypes: [].concat((detailRes && detailRes.transcript && detailRes.transcript.secretTypes) || [],
           (transcriptRes && transcriptRes.secretTypes) || []).filter((t, i, all) => all.indexOf(t) === i),
@@ -2848,6 +2852,23 @@
      * chat's message.
      */
     function wireHistory() {
+      // The chat's own clock (#3066): open this member's history in the
+      // sidebar, revealing a hidden sidebar or a shut phone drawer first so
+      // the panel never opens out of sight.
+      const fromChat = doc.getElementById('v6ChatHistory');
+      if (fromChat) {
+        fromChat.addEventListener('click', () => {
+          if (sidebarCollapsed) {
+            sidebarCollapsed = false;
+            prefs.set('tc_v6_sidebar_collapsed', false);
+          }
+          drawerOpen = true;
+          historyOpen = true;
+          historyForm = Object.assign({}, historyForm, { scope: 'member' });
+          requestHistory();
+          focusById('v6SidebarFutureSlot');
+        });
+      }
       const toggle = doc.getElementById('v6SidebarFutureSlot');
       if (toggle) {
         toggle.addEventListener('click', () => {

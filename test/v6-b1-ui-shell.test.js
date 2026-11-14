@@ -578,7 +578,7 @@ describe('tcV6FleetPlanMarkup / tcV6ConversationViewMarkup (#3022 deliverables d
       project: { id: 7, name: 'TiLT v2' }, sessionId: 99,
       events: [{ seq: 1, role: 'user', content: 'hello <script>' }, { seq: 2, role: 'assistant', content: 'hi' }]
     });
-    assert.match(html, /href="\/session\.html\?project=TiLT%20v2"/);
+    assert.match(html, /href="\/session\/TiLT%20v2"/);
     assert.match(html, /Open Hood \(Live Terminal\)/);
     assert.match(html, /hello &lt;script&gt;/);
     assert.match(html, /is-assistant/);
@@ -815,7 +815,7 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     assert.ok(calls.includes('/api/v6/projects/11/sessions/501/conversation/events'));
     assert.ok(calls.includes('/api/v6/projects/11/sessions/501/attestations'));
     assert.match(root.innerHTML, /ship it/);
-    assert.match(root.innerHTML, /\/session\.html\?project=TC-Lane-B/);
+    assert.match(root.innerHTML, /\/session\/TC-Lane-B/);
     assert.match(root.innerHTML, /v6-model-attestation is-estimated[\s\S]*Claude Code/);
   });
 
@@ -864,7 +864,7 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     assert.ok(calls.includes('/api/v6/projects/11/sessions/501/conversation/events'), JSON.stringify(calls));
     assert.ok(calls.includes('/api/v6/projects/11/sessions/501/attestations'));
     assert.match(root.innerHTML, /ship it/);
-    assert.match(root.innerHTML, /\/session\.html\?project=TC-Lane-B/);
+    assert.match(root.innerHTML, /\/session\/TC-Lane-B/);
     assert.match(root.innerHTML, /v6-model-attestation is-estimated[\s\S]*Claude Code/);
   });
 
@@ -883,7 +883,7 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     win.location.hash = '#/projects/workspace';
     await settle();
     assert.ok(calls.includes('/api/sessions/TangleClaw/status'), JSON.stringify(calls));
-    assert.match(root.innerHTML, /\/session\.html\?project=TangleClaw/);
+    assert.match(root.innerHTML, /\/session\/TangleClaw/);
     assert.match(root.innerHTML, /No live session/);
   });
 
@@ -3283,7 +3283,7 @@ describe('Open Hood matches the chat\'s compact buttons (#3057, PM)', () => {
   it('is a small button without an underline inside .v6-chat-actions', () => {
     const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 1, events: [], chat: { status: 'active', members: [] } });
     // Restated by #3059: Open Hood is now a >_ icon button, named by its title and aria-label.
-    assert.match(html, /<a class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood" href="\/session\.html\?project=P" title="Open Hood \(Live Terminal\)" aria-label="Open Hood \(Live Terminal\)"><span aria-hidden="true">&gt;_<\/span><\/a>/);
+    assert.match(html, /<a class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood" href="\/session\/P" title="Open Hood \(Live Terminal\)" aria-label="Open Hood \(Live Terminal\)"><span aria-hidden="true">&gt;_<\/span><\/a>/);
     const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
     assert.match(css, /\.v6-chat-actions \.v6-open-hood \{\s*display: inline-flex;\s*margin-bottom: 0;\s*text-decoration: none;\s*\}/);
   });
@@ -4204,5 +4204,59 @@ describe('the controller drops history answers that a newer request overtook (#3
     await slowOpen;
     assert.match(root.innerHTML, /TC-Lane-A · session #9/, 'the newer session stays open');
     assert.doesNotMatch(root.innerHTML, /TC-Lane-A · session #8/);
+  });
+});
+
+describe('the chat\'s own history button and the Open Hood path (#3066, #3073)', () => {
+  const G = loadV6Shell();
+  const chatView = (name) => ({ project: { id: 12, name: name || 'TC-Lane-A' }, sessionId: 1, events: [], chat: { mode: 'direct', status: 'active', members: [] } });
+
+  it('Open Hood links to /session/<name>, the path the server serves, URL-encoded (#3073)', () => {
+    const html = G.tcV6ConversationViewMarkup(chatView('TiLT v2'));
+    assert.match(html, /v6-open-hood" href="\/session\/TiLT%20v2"/);
+    assert.doesNotMatch(html, /session\.html\?project=/);
+  });
+
+  it('the chat actions carry a clock for this member\'s history, its name escaped', () => {
+    const html = G.tcV6ConversationViewMarkup(chatView('a"<b>'));
+    assert.match(html, /<button type="button" id="v6ChatHistory" class="btn btn-secondary btn-small v6-chat-icon-btn" title="History and recents for a&quot;&lt;b&gt;" aria-label="History and recents for a&quot;&lt;b&gt;"><span aria-hidden="true">🕓<\/span><\/button>/);
+  });
+
+  it('it opens the member\'s history in the sidebar, revealing a hidden sidebar and opening the phone drawer', () => {
+    const loads = [];
+    const storage = makeStorage({ tc_v6_sidebar_collapsed: 'true' });
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage, detail: { kind: 'conversation', view: chatView() }, onHistoryLoad: (f) => loads.push(plain(f)) });
+    assert.equal(shell.isSidebarCollapsed(), true);
+    doc.getElementById('v6ChatHistory').dispatch('click');
+    assert.equal(shell.isSidebarCollapsed(), false);
+    assert.equal(storage.data.tc_v6_sidebar_collapsed, 'false');
+    assert.equal(shell.isDrawerOpen(), true);
+    assert.equal(shell.isHistoryOpen(), true);
+    assert.deepEqual(loads, [{ scope: 'member', kind: 'summaries', q: '' }]);
+    assert.match(root.innerHTML, /id="v6HistoryPanel"/);
+  });
+
+  it('a session flagged only on its session record still shows the secrets warning (verify observation)', async () => {
+    const H = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: [{ id: 11, name: 'A', engine: { id: 'claude' } }] };
+      if (/\/status$/.test(url)) return { active: false };
+      if (url === '/api/continuity/A/sessions/old-1') return { sid: 'old-1', session: { secretsFlagged: true }, transcript: null, summary: { sections: { Decisions: 'd' } } };
+      return { sessions: [] };
+    };
+    let shell = null;
+    const pending = [];
+    const live = H.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = H.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/11/conversation'), storage: null, setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    while (pending.length) await pending.shift();
+    doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    await live.openHistorySession({ member: 'A', sid: 'old-1', q: '' });
+    assert.match(root.innerHTML, /<p class="v6-history-secret" role="note">⚠ This transcript was flagged for possible secrets/);
   });
 });
