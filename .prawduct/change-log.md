@@ -41,6 +41,37 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-14 — v6.2.7 release cut (Milestone #74)
+
+<!-- prawduct: type=internal | scope=v627-release -->
+
+- Compiled 2 accepted `changelog.d/` fragments (#3065, #3068) from PRs #3069 and #3070 into `CHANGELOG.md` section `[6.2.7]` (Fixed, patch tier) using the wrap's own compile/splice/promote functions. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap state. Folded in both Wave 1 change-log entries below, verbatim. Builder Rule #271 cl.3 had kept them out of their feature PRs.
+- PR #3070's entry was written at its first head (fadad5d8). Review then held it (PRR-B; Arc A724: do not descope), because #3068 also required distinct left accents for user vs. assistant turns and a 2px composer outline with a green focus ring. R2 (57ac6ad5, the merged head) added `.v6-conversation-event.is-user` (3px #58a6ff) and `.v6-chat-input` 2px with a `:focus`/`:focus-visible` #56d364 ring, each pinned by a test. TC-Lane-C had approved the first head against the dispatch summary rather than the issue, then withdrew that approval.
+- Disclosed for the record: #3068 removes features shipped in v6.2.2 #3046: the multi-select fleet filter (the Multi pill and Ctrl/Cmd/Shift-click) and Expand all / Collapse all. That follows the Operator's direction, but it is a removal filed as Fixed. #3065's deliverables 2 (an index.html toolbar switcher) and 4 (an sw.js bump) were descoped under Arc Ruling A720: one descope, labelled option (a) in Arc's direct ruling to TC-Lane-C and Option (C) in its ruling to TC-Lane-B (d512da2c, quoted verbatim in the #3069 entry below); Arc A727 cites it as (a)/(C). Both cars deferred their real-browser check to the Operator walkthrough.
+
+## 2026-11-14 — v6 Fleet sidebar: four-icon toolbar and fleet picker; higher-contrast chat window (#3068)
+
+<!-- prawduct: type=fix | scope=v627-w1a -->
+
+Car V627-W1-A, Chunk 01.
+
+- .v6-sidebar-header became a role=toolbar of four symbol-only buttons (title + aria-label): #v6SidebarCollapse «, #v6SidebarModeFleet ❖ (aria-pressed, the only mode), #v6SidebarSearchToggle 🔍 (opens search + engine; closing clears both), #v6SidebarFutureSlot 🕓 (disabled).
+- Removed: Expand all / Collapse all, the group pills, All, Multi and the tc_v6_filter_multi_mode setting. #v6FilterFleet sets the selection directly (All Fleets or one); a selection it cannot show as one fleet shows a disabled placeholder (Several fleets (N) counting survivors, Fleet not found, Loading fleets…), and the saved choice is never deleted.
+- Chat window: --v6-outline #3d444d (light theme #8c959f) and --v6-surface; 1.5px outlines and a fill on the chat header, events, Under the Hood drawer and composer, and the sidebar edge.
+- Tests restated with the requirement: the #3046 sidebar header, pill, Multi and All tests; the search and engine tests open the toggle first.
+- Browser check owed: the connected Chrome cannot reach this host's loopback.
+
+## 2026-11-14 — A Fleet Shell (v6) link on every Classic page (#3065)
+
+<!-- prawduct: type=fix | scope=v627-w1b -->
+
+Car V627-W1-B.
+
+- `public/session.html` (`#sessionV6Link`, leading `.banner-actions`, ahead of Wrap/Kill per #1478) and `public/openclaw-view.html` (`#openclawV6Link`) link to the v6 Fleet Shell; `public/session.js#loadProject` points the session page's link at `/#/resources/<id>/conversation` once the project id is known.
+- `.v6-view-toggle` in `public/session.css` is self-contained because the OpenClaw view does not load `shared-controls.css`.
+- #3065 deliverables #2 (index.html toolbar switcher) and #4 (sw.js bump) descoped per Ruling A720 Option (C): index.html already has `#v6ViewToggleBtn`, and the touched pages and assets are network-first.
+- 9 tests in `test/session-banner-phone-actions.test.js`, including the real `loadProject` lifted into a VM; each rule mutation-checked.
+
 ## 2026-11-14 — v6.2.6 release cut (Milestone #73)
 
 <!-- prawduct: type=internal | scope=v626-release -->

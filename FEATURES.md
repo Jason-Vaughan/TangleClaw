@@ -17,6 +17,12 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.2.7 — A Fleet Shell link on every Classic page, a four-icon sidebar and a higher-contrast chat
+
+- **Fleet Shell link on Classic pages** (#3065) — `public/session.html` (`#sessionV6Link`, pointed at that session's own conversation by `public/session.js#loadProject`) and `public/openclaw-view.html` (`#openclawV6Link`) link into the v6 Fleet Shell; the dashboard already had `#v6ViewToggleBtn`.
+- **Four-icon sidebar** (#3068) — `public/v6-shell.js`: the Fleet sidebar's header is a toolbar of four symbol-only buttons (hide `«`, fleet view `❖`, search `🔍`, and a disabled `🕓` reserved for recent chats), with one fleet picker (`#v6FilterFleet`: All Fleets or one fleet) instead of the group pills.
+- **Higher-contrast chat** (#3068) — `public/style.css`: thicker, higher-contrast outlines and filled surfaces across the chat window, separate left accents for the agent's (green) and the operator's (blue) messages, and a 2px message box with a green focus ring.
+
 ## v6.2.6 — Telemetry and the chat header in one condensed row
 
 - **One condensed header row** (#3063) — `public/v6-shell.js#conversationViewMarkup`: in a chat, the telemetry bar is drawn inside the chat header, between the lane's identity strip and the icon buttons, instead of as its own row above it; outside a chat it keeps its own row.
