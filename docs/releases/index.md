@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.2.6 — Telemetry and the chat header in one condensed row](v6.2.6.md)
+- [v6.2.7 — A Fleet Shell link on every Classic page, a four-icon sidebar and a higher-contrast chat](v6.2.7.md)
 
 ## Recent releases
+
+- [v6.2.6 — Telemetry and the chat header in one condensed row](v6.2.6.md)
 
 - [v6.2.5 — The active lane marked in the Fleet sidebar and a one-row icon chat toolbar](v6.2.5.md)
 

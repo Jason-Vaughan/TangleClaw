@@ -4,6 +4,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.2.7] - 2026-11-14
+
+### Fixed
+- The Classic session page and the OpenClaw view now have a "Fleet Shell (v6)" link in their banner, so every Classic page has a way into the v6 Fleet Shell, as the dashboard already did (#3065). On a session page the link opens that session's own v6 conversation once the project has loaded, and the shell's default route before then; it sits ahead of the banner's other actions, so Wrap and Kill stay last. Both links are styled in the same green as the dashboard's switcher.
+- The v6 Fleet sidebar's header is now a row of four icons with hover tips (#3068): `«` hides the sidebar, `❖` is the fleet view (the only mode today), `🔍` opens search and the engine filter, and `🕓` is reserved for recent chats (not active yet). The group pills, the Multi toggle and the Expand all and Collapse all buttons are gone: a single fleet picker (All Fleets or one fleet) chooses what the tree shows, each project and fleet keeps its own fold toggle, and a selection of several fleets saved by the old Multi mode still applies and shows as "Several fleets". Closing the search clears its text and engine filter, so a filter you cannot see never hides projects. The chat window's header, messages, Under the Hood drawer and message box, and the sidebar's edge, have thicker, higher-contrast outlines and a filled surface (with a lighter outline in the light theme); the agent's and the operator's messages each carry their own left accent (green and blue), and the message box has a 2px outline with a green focus ring.
+
 ## [6.2.6] - 2026-11-14
 
 ### Fixed
