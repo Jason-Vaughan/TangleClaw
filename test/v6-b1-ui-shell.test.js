@@ -2906,23 +2906,89 @@ describe('the secrets-store listing is read with full operator proof (INT R-Gate
     assert.equal(get.headers['X-TC-Open-Token'], 'tok');
   });
 
-  it('when the listing cannot be read, the name is made unique anyway, so nothing in the store can be overwritten', async () => {
+  it('when the listing cannot be read, nothing is uploaded: the chip says why, since a stored file could be overwritten', async () => {
     const G = loadV6Shell();
     const posts = [];
     const api = async (url, init) => {
-      if (init && init.method === 'GET') { api.lastError = 'CSRF token missing'; return null; }
-      if (init && init.method === 'POST') { const b = JSON.parse(init.body); posts.push(b.filename); return { relPath: `secrets/${b.filename}` }; }
+      if (init && init.method === 'GET') { api.lastError = 'This request is missing a valid CSRF token.'; return null; }
+      if (init && init.method === 'POST') { posts.push(JSON.parse(init.body).filename); return { relPath: 'secrets/x' }; }
       if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM' }] };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1 };
       return null;
     };
-    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setDetail() {}, setProjects() {} };
+    const views = [];
+    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setProjects() {},
+      setDetail(d) { if (d && d.kind === 'conversation') views.push(plain(d.view)); } };
     const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null,
       readFileAsBase64: async () => 'eA==', operatorHeaders: async () => ({}) });
     await live.handleRoute({ view: 'conversation', resourceId: '12' });
     await live.attachFiles([{ name: 'image.png', size: 1 }]);
-    assert.equal(posts.length, 1);
-    assert.notEqual(posts[0], 'image.png');
-    assert.match(posts[0], /^image-[a-z0-9]+\.png$/);
+    assert.deepEqual(posts, [], 'no upload without a checked listing');
+    const chip = views[views.length - 1].chat.attachments[0];
+    assert.equal(chip.status, 'error');
+    assert.match(chip.error, /could not be checked[\s\S]*missing a valid CSRF token/);
+  });
+});
+
+describe('live turns from the pane are HTML-escaped, on first render and on every poll (Lane C B1)', () => {
+  const HOSTILE_A = '<img src=x onerror=alert(1)> done';
+  const HOSTILE_U = '<script>alert(2)</script>';
+
+  it('the chat markup escapes assistant and user live turns', () => {
+    const G = loadV6Shell();
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [],
+      chat: { status: 'active', live: { turns: [{ role: 'user', text: HOSTILE_U }, { role: 'assistant', text: HOSTILE_A }] } } });
+    assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt; done/);
+    assert.match(html, /&lt;script&gt;alert\(2\)&lt;\/script&gt;/);
+    assert.doesNotMatch(html, /<img src=x|<script>alert/);
+  });
+
+  it('a hostile pane line is escaped when first rendered and when a poll swaps the live turns in', async () => {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    let n = 0;
+    const peeks = [[`> ${HOSTILE_U}`, HOSTILE_A], [`> ${HOSTILE_U}`, `<b>bold</b> ${HOSTILE_A}`]];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1 };
+      if (/conversation\/events$/.test(url)) return { events: [] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: peeks[Math.min(n++, 1)] };
+      return null;
+    };
+    const timers = [];
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null,
+      setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
+      onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    while (pending.length) await pending.shift();
+    const first = root.innerHTML.slice(root.innerHTML.indexOf('id="v6ChatLive"'), root.innerHTML.indexOf('id="v6ChatUnderHood"'));
+    assert.match(first, /&lt;img src=x onerror=alert\(1\)&gt; done/);
+    assert.match(first, /&lt;script&gt;alert\(2\)&lt;\/script&gt;/, 'the unrecorded user prompt too');
+    assert.doesNotMatch(first, /<img src=x|<script>alert/);
+    await timers[0]();
+    const polled = doc.getElementById('v6ChatLive').innerHTML;
+    assert.match(polled, /&lt;b&gt;bold&lt;\/b&gt; &lt;img src=x onerror=alert\(1\)&gt; done/);
+    assert.match(polled, /&lt;script&gt;alert\(2\)&lt;\/script&gt;/);
+    assert.doesNotMatch(polled, /<img src=x|<script>alert|<b>bold/);
+  });
+});
+
+describe('Claude tool-status lines are not reply text (PRR-B R2)', () => {
+  const G = loadV6Shell();
+  it('⏺ Ran / Explored / Edited / Read / Searched / Wrote lines and their indented output are dropped', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['> check it', '⏺ Ran npm test', '  ⎿ 265 tests passed', '⏺ Explored 3 files',
+      '⏺ Edited public/ui.js', '⏺ Read lib/x.js', '⏺ Searched for renderCard', '⏺ Wrote notes.md', '⏺ Everything passes.'], 'claude', []));
+    assert.deepEqual(out.turns, [{ role: 'user', text: 'check it' }, { role: 'assistant', text: 'Everything passes.' }]);
+  });
+
+  it('a reply sentence that happens to start with one of those verbs is kept', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['> how?', '⏺ Read the docs first, then try again.', '⏺ Ranking the options, I prefer B.'], 'claude', []));
+    assert.equal(out.turns[1].text, 'Read the docs first, then try again.\nRanking the options, I prefer B.');
   });
 });

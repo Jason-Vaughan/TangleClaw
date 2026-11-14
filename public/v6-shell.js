@@ -765,7 +765,10 @@
 
   /** Per-engine thinking/tool lines; an unknown engine gets all of them. */
   const LIVE_ENGINE_NOISE = Object.freeze({
-    claude: [/^⏺\s+[A-Za-z][\w.-]*\(/, /^[✶✻✽✢]/],
+    // A tool call (`⏺ Bash(…)`) or a tool status line (`⏺ Ran npm test`):
+    // a status verb and no closing punctuation, which keeps a reply sentence
+    // that merely starts with one of those verbs.
+    claude: [/^⏺\s+[A-Za-z][\w.-]*\(/, /^⏺\s+(Ran|Explored|Edited|Read|Searched|Wrote|Updated|Listed|Called|Fetched|Created|Deleted|Added)\b.*[^.!?:]$/, /^[✶✻✽✢]/],
     codex: [/^•\s+(Ran|Explored|Edited|Read|Searched|Updated|Added|Deleted|Called|Running|Listed)\b/, /^▸\s*Thought\b/],
     antigravity: [/^[○●]/],
     aider: [/^Tokens:/, /^Applied edit to /, /^Commit [0-9a-f]{7,}\b/, /^(Repo-map|Main model|Weak model|Git repo|Aider v)\b/, /^Added .+ to the chat\b/]
@@ -993,20 +996,6 @@
   function projectRelative(relPath, filename) {
     const rel = typeof relPath === 'string' && relPath ? relPath.replace(/^\/+/, '') : `secrets/${filename}`;
     return rel.startsWith('.tangleclaw/') ? rel : `.tangleclaw/${rel}`;
-  }
-
-  /**
-   * A file name with a time suffix before its extension (`image.png` ->
-   * `image-lx2k9a.png`), for when the secrets store's own listing could not
-   * be read and a plain name might already be taken there.
-   * @param {string} name
-   * @returns {string}
-   */
-  function uniqueStem(name) {
-    const raw = String(name == null ? '' : name);
-    const dot = raw.lastIndexOf('.');
-    const suffix = `-${Date.now().toString(36)}`;
-    return dot > 0 ? `${raw.slice(0, dot)}${suffix}${raw.slice(dot)}` : `${raw || 'attachment'}${suffix}`;
   }
 
   /** The states an attachment chip can show (each is a CSS modifier). */
@@ -1923,29 +1912,36 @@
       const used = uploadedNames.get(key) || new Set();
       uploadedNames.set(key, used);
       // The project's secrets store may hold files from earlier visits too.
-      // If it cannot be listed, a name is not known to be free, so each one
-      // gets a time suffix rather than risk overwriting a file the store holds.
+      // If it cannot be listed, no name is known to be free and the route
+      // overwrites a file of the same name, so nothing is uploaded.
       let stored = null;
+      let listError = null;
       try {
         const headers = await operatorHeaders();
         const res = await api(`/api/sessions/${encodeURIComponent(chat.project.name)}/secure-clipboard`, { method: 'GET', headers });
         stored = res && Array.isArray(res.files) ? res.files.map((f) => f && f.filename).filter(Boolean) : null;
-      } catch { // prawduct:allow prawduct/broad-except -- an unreadable listing is handled below by making every name unique
+        if (stored === null) listError = api.lastError || 'the server did not answer';
+      } catch (err) { // prawduct:allow prawduct/broad-except -- an unreadable listing fails every attachment closed below, with its reason
         stored = null;
+        listError = (err && err.message) || 'the listing could not be read';
       }
       const unverified = stored === null;
       if (unverified) stored = [];
       const taken = new Set(list.map((a) => a.name).concat([...used], stored));
       const uploads = [];
       (Array.isArray(files) ? files : []).forEach((file) => {
-        const base = unverified ? uniqueStem(file && file.name) : (file && file.name);
-        const item = { id: ++attachSeq, name: sanitizeUploadName(base, taken), status: 'uploading' };
+        const item = { id: ++attachSeq, name: sanitizeUploadName(file && file.name, taken), status: 'uploading' };
         taken.add(item.name);
         used.add(item.name);
         list.push(item);
         if (!(Number(file && file.size) <= MAX_ATTACH_BYTES)) {
           item.status = 'error';
           item.error = 'Over the 5 MB limit for an attachment.';
+          return;
+        }
+        if (unverified) {
+          item.status = 'error';
+          item.error = `Not uploaded: the project's existing attachments could not be checked (${listError}), so a file with this name could be overwritten.`;
           return;
         }
         uploads.push(uploadAttachment(chat.project, key, item, file));
