@@ -3947,6 +3947,30 @@ html[data-theme="light"] .tc-bg-watermark img {
 .v6-telemetry-chip.is-observed { border-color: #56d364; }
 .v6-telemetry-chip.is-estimated { border-color: #d4a72c; }
 .v6-telemetry-chip.is-unavailable { opacity: 0.6; }
+/* #3063: in a chat the telemetry bar sits inside the chat header row, as
+   one-line pills like the status pill; a metric with no reading is left
+   out of sight (its chip stays in the page; outside a chat it still shows,
+   with a tip saying there is no reading yet). */
+.v6-shell-root--chat .v6-telemetry-header {
+  margin-bottom: 0;
+  gap: 6px;
+  align-items: center;
+}
+.v6-shell-root--chat .v6-telemetry-chip {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+.v6-shell-root--chat .v6-telemetry-label {
+  opacity: 0.75;
+}
+.v6-shell-root--chat .v6-telemetry-chip.is-unavailable {
+  display: none;
+}
 .v6-wizard-list {
   list-style: none;
   padding-left: 0;
