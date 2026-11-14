@@ -453,7 +453,8 @@
    * a fleet picker, always shown in the fleet view, and the search box and
    * engine select, shown only while the search toggle is open. A selection
    * of several fleets (the old Multi mode, or the additive API) shows as
-   * such rather than as "All Fleets".
+   * such rather than as "All Fleets", and so does one that names a fleet no
+   * longer there.
    * @param {{tree: ReturnType<typeof buildHierarchyTree>, engines: string[], text: string,
    *   engine: string, groups: Set<string>, searchOpen: boolean}} view
    * @returns {string} HTML.
@@ -462,9 +463,18 @@
     const engineOptions = ['<option value="">All Engines</option>'].concat(view.engines.map((id) => (
       `<option value="${escapeHtml(id)}"${id === view.engine ? ' selected' : ''}>${escapeHtml(id)}</option>`
     ))).join('');
-    const one = view.groups.size === 1 ? [...view.groups][0] : null;
+    // Only fleets still in the tree count: a remembered fleet that is gone
+    // (or not loaded yet) must not leave "All Fleets" looking selected over
+    // an empty tree, where choosing it would change nothing.
+    const known = [...view.groups].filter((id) => view.tree.some((p) => String(p.id) === id));
+    const one = known.length === 1 ? known[0] : null;
+    let placeholder = '';
+    if (view.groups.size && !one) {
+      placeholder = known.length > 1 ? `Several fleets (${known.length})`
+        : (view.tree.length ? 'Fleet not found' : 'Loading fleets…');
+    }
     const fleetOptions = [`<option value=""${view.groups.size ? '' : ' selected'}>All Fleets</option>`]
-      .concat(view.groups.size > 1 ? [`<option value="" disabled selected>Several fleets (${view.groups.size})</option>`] : [])
+      .concat(placeholder ? [`<option value="" disabled selected>${placeholder}</option>`] : [])
       .concat(view.tree.map((project) => (
         `<option value="${escapeHtml(project.id)}"${String(project.id) === one ? ' selected' : ''}>${escapeHtml(project.displayName)}</option>`
       ))).join('');

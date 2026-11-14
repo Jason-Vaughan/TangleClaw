@@ -3636,3 +3636,34 @@ describe('higher-contrast outlines and surfaces in the chat window (#3068)', () 
     assert.match(body('.v6-shell-sidebar'), /border-right: 1\.5px solid var\(--v6-outline, #3d444d\);/);
   });
 });
+
+describe('a remembered fleet that is gone does not trap the picker (#3068, cumulative review)', () => {
+  it('shows "Fleet not found", and All Fleets then brings the whole tree back', () => {
+    const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['gone-fleet']) });
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    assert.match(root.innerHTML, /<option value="">All Fleets<\/option><option value="" disabled selected>Fleet not found<\/option>/);
+    const el = doc.getElementById('v6FilterFleet');
+    el.value = '';
+    el.dispatch('change');
+    assert.match(root.innerHTML, /TC-Lane Fleet/);
+    assert.match(root.innerHTML, /Medusa Fleet/);
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), []);
+  });
+
+  it('before the project list loads it says so, and keeps the remembered choice', () => {
+    const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) });
+    const { root, shell } = mountShell({ tree: [], storage });
+    assert.match(root.innerHTML, /<option value="" disabled selected>Loading fleets…<\/option>/);
+    shell.setTree(TWO_GROUP_TREE);
+    assert.match(root.innerHTML, /<option value="medusa" selected>Medusa<\/option>/);
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['medusa'], 'the saved choice survived the load');
+  });
+
+  it('"Several fleets" counts only fleets still there, and one survivor is simply selected', () => {
+    const several = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['tc-lane', 'medusa', 'gone']) }) });
+    assert.match(several.root.innerHTML, /disabled selected>Several fleets \(2\)</);
+    const single = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa', 'gone']) }) });
+    assert.match(single.root.innerHTML, /<option value="medusa" selected>Medusa<\/option>/);
+    assert.doesNotMatch(single.root.innerHTML, /disabled selected/);
+  });
+});
