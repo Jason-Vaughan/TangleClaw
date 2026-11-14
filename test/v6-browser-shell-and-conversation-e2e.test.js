@@ -582,6 +582,34 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.ok(fs.existsSync(path.join(tempDir, 'e2e-rename-live')), 'nothing moved');
     });
 
+    it('the history panel lists, searches across the fleet and opens real saved sessions, and references one in chat (#3066)', async () => {
+      const continuity = require('../lib/continuity');
+      const pmId = seedProject('e2ehist-PM');
+      seedProject('e2ehist-A');
+      store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(pmId);
+      continuity.writeWrapSummary(path.join(tempDir, 'e2ehist-PM'), '41', { meta: { date: '2026-11-10' }, sections: { Decisions: 'Ship the history panel on Friday.' } });
+      continuity.writeWrapSummary(path.join(tempDir, 'e2ehist-A'), '42', { meta: { date: '2026-11-12' }, sections: { Decisions: 'Review the history panel.' } });
+      const { root, settle, doc, live, calls } = mountShell(`#/resources/${pmId}/conversation`);
+      await settle();
+      doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+      await live.loadHistory({ scope: 'member', kind: 'summaries', q: '' });
+      await settle();
+      assert.ok(calls.includes('GET /api/continuity/e2ehist-PM/sessions'), JSON.stringify(calls));
+      assert.match(root.innerHTML, /<span class="v6-history-who">e2ehist-PM<\/span> session #41/);
+      await live.loadHistory({ scope: 'fleet', kind: 'summaries', q: 'history panel' });
+      await settle();
+      assert.ok(calls.includes('GET /api/continuity/e2ehist-A/search?q=history%20panel'), 'the fleet search asked each member');
+      assert.match(root.innerHTML, /e2ehist-PM<\/span> session #41/);
+      assert.match(root.innerHTML, /e2ehist-A<\/span> session #42/);
+      await live.openHistorySession({ member: 'e2ehist-PM', sid: '41', q: '' });
+      await settle();
+      assert.match(root.innerHTML, /<strong>Decisions<\/strong><div>Ship the history panel on Friday\.<\/div>/);
+      doc.getElementById('v6HistoryReference').dispatch('click');
+      assert.match(root.innerHTML, /<textarea id="v6ChatInput"[^>]*>\[e2ehist-PM session #41 · 2026-11-10\] Ship the history panel on Friday\.<\/textarea>/);
+    });
+
     it('the real B2 route accepts the event the chat records, and the next seq counts deleted events (#3047)', async () => {
       const projectId = seedProject('e2e-chat-record');
       const sessionId = seedSession(projectId);
