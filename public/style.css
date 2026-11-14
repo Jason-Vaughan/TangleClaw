@@ -4326,6 +4326,18 @@ html[data-theme="light"] .tc-bg-watermark img {
 .v6-chat-to-delegate {
   text-decoration: none;
 }
+/* #3071: renaming the chat's target inline, in the identity strip. */
+.v6-chat-rename {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.v6-chat-rename-input {
+  min-width: 0;
+  width: 14em;
+  max-width: 100%;
+}
 .v6-chat-pill {
   display: inline-block;
   margin-left: 6px;

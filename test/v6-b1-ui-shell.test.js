@@ -3683,3 +3683,158 @@ describe('a remembered fleet that is gone does not trap the picker (#3068, cumul
     assert.doesNotMatch(single.root.innerHTML, /disabled selected/);
   });
 });
+
+// ── #3071 (Car V628-W1-A): rename a fleet member from the chat header ──
+
+describe('the chat\'s rename control (#3071)', () => {
+  const G = loadV6Shell();
+  const view = (status, name, extra) => ({ project: { id: 12, name: name || 'TC-Lane-A' }, sessionId: status === 'offline' ? null : 1, events: [],
+    chat: Object.assign({ mode: 'direct', status, members: [] }, extra || {}) });
+
+  it('offers a pencil to rename a project with no live session', () => {
+    const html = G.tcV6ConversationViewMarkup(view('offline'));
+    assert.match(html, /<button type="button" id="v6ChatRename" class="btn btn-secondary btn-small v6-chat-icon-btn"\s+title="Rename TC-Lane-A" aria-label="Rename TC-Lane-A"><span aria-hidden="true">✎<\/span><\/button>/);
+  });
+
+  it('disables it, and says why, while the project has a session (the server refuses and a rename moves its directory)', () => {
+    for (const status of ['active', 'idle']) {
+      const html = G.tcV6ConversationViewMarkup(view(status));
+      assert.match(html, /id="v6ChatRename"[^>]*title="Stop TC-Lane-A&#39;s session to rename it" aria-label="Stop TC-Lane-A&#39;s session to rename it" disabled>/, status);
+    }
+  });
+
+  it('the open form carries the current name, escaped, and never opens over a live session', () => {
+    const hostile = 'x"><img src=x onerror=alert(1)>';
+    const open = G.tcV6ConversationViewMarkup(view('offline', hostile, { renameOpen: true }));
+    assert.match(open, /<form id="v6ChatRenameForm"[^>]*aria-label="Rename x&quot;&gt;&lt;img src=x onerror=alert\(1\)&gt;">/);
+    assert.match(open, /<input id="v6ChatRenameInput"[^>]*value="x&quot;&gt;&lt;img src=x onerror=alert\(1\)&gt;"/);
+    assert.doesNotMatch(open, /<img/);
+    assert.doesNotMatch(G.tcV6ConversationViewMarkup(view('active', 'P', { renameOpen: true })), /v6ChatRenameForm/);
+  });
+});
+
+describe('renaming through the mounted shell (#3071)', () => {
+  const chatView = { project: { id: 12, name: 'TC-Lane-A' }, sessionId: null, events: [], chat: { mode: 'direct', status: 'offline', members: [] } };
+
+  it('the pencil opens the form with focus in it; Cancel and Escape close it and return focus to the pencil', () => {
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: chatView } });
+    // The mini DOM's dispatch carries no key, so capture the input's keydown
+    // handler as it is wired and call it with a real-shaped event.
+    const keydowns = new Map();
+    const register = doc._register.bind(doc);
+    doc._register = (el) => {
+      const add = el.addEventListener.bind(el);
+      el.addEventListener = (type, fn) => { if (type === 'keydown') keydowns.set(el.id, fn); return add(type, fn); };
+      return register(el);
+    };
+    doc.getElementById('v6ChatRename').dispatch('click');
+    assert.match(root.innerHTML, /id="v6ChatRenameForm"/);
+    assert.equal(doc.activeElement, doc.getElementById('v6ChatRenameInput'));
+    doc.getElementById('v6ChatRenameCancel').dispatch('click');
+    assert.doesNotMatch(root.innerHTML, /id="v6ChatRenameForm"/);
+    assert.equal(doc.activeElement, doc.getElementById('v6ChatRename'));
+    doc.getElementById('v6ChatRename').dispatch('click');
+    keydowns.get('v6ChatRenameInput')({ key: 'Enter' });
+    assert.match(root.innerHTML, /id="v6ChatRenameForm"/, 'another key leaves the form open');
+    keydowns.get('v6ChatRenameInput')({ key: 'Escape' });
+    assert.doesNotMatch(root.innerHTML, /id="v6ChatRenameForm"/);
+  });
+
+  it('Save hands the old and the trimmed new name to the page and closes the form', () => {
+    const calls = [];
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: chatView },
+      onRenameProject: (from, to) => calls.push([from, to]) });
+    doc.getElementById('v6ChatRename').dispatch('click');
+    doc.getElementById('v6ChatRenameInput').value = '  TC-Lane-Alpha  ';
+    doc.getElementById('v6ChatRenameForm').dispatch('submit');
+    assert.deepEqual(calls, [['TC-Lane-A', 'TC-Lane-Alpha']]);
+    assert.doesNotMatch(root.innerHTML, /id="v6ChatRenameForm"/);
+  });
+});
+
+describe('the live controller renames the chat\'s target (#3071)', () => {
+  /**
+   * A controller over one offline project, with a scripted PATCH outcome.
+   * @param {object|null} patchResult - What apiMutate resolves for the PATCH.
+   * @param {string} [lastError]
+   */
+  function mountRename(patchResult, lastError) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    let rows = [{ id: 12, name: 'TC-Lane-A', engine: { id: 'claude' } }];
+    const calls = [];
+    const api = async (url) => {
+      calls.push(`GET ${url}`);
+      if (url === '/api/projects') return { projects: rows };
+      if (/\/status$/.test(url)) return { active: false };
+      return null;
+    };
+    api.lastError = null;
+    const apiMutate = async (url, method, body) => {
+      calls.push(`${method} ${url} ${JSON.stringify(body)}`);
+      if (patchResult) rows = [{ id: 12, name: body.name, engine: { id: 'claude' } }];
+      else api.lastError = lastError || null;
+      return patchResult;
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
+      setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)), onRenameProject: (a, b) => pending.push(live.renameProject(a, b)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    const submit = async (value) => {
+      doc.getElementById('v6ChatRename').dispatch('click');
+      doc.getElementById('v6ChatRenameInput').value = value;
+      doc.getElementById('v6ChatRenameForm').dispatch('submit');
+      await settle();
+    };
+    return { root, calls, settle, submit };
+  }
+  const patches = (calls) => calls.filter((c) => c.startsWith('PATCH'));
+  const status = (root) => (/<p id="v6ChatStatus" class="v6-chat-send-status is-(\w+)"[^>]*>([^<]*)</.exec(root.innerHTML) || []).slice(1);
+
+  it('renames through PATCH /api/projects/<old>, then reloads so the header and sidebar show the new name', async () => {
+    const m = mountRename({ project: { name: 'TC-Lane-Alpha' }, warnings: [] });
+    await m.settle();
+    const before = m.calls.filter((c) => c === 'GET /api/projects').length;
+    await m.submit('TC-Lane-Alpha');
+    assert.deepEqual(patches(m.calls), ['PATCH /api/projects/TC-Lane-A {"name":"TC-Lane-Alpha"}']);
+    assert.ok(m.calls.filter((c) => c === 'GET /api/projects').length > before, 'the rows were reloaded');
+    assert.match(m.root.innerHTML, /Talking to: <\/span><strong>TC-Lane-Alpha<\/strong>/);
+    assert.match(m.root.innerHTML, /TC-Lane-Alpha \(12\)/, 'the sidebar row too');
+    assert.deepEqual(status(m.root), ['ok', 'Renamed TC-Lane-A to TC-Lane-Alpha.']);
+  });
+
+  it('reports the server\'s warnings with the rename', async () => {
+    const m = mountRename({ project: { name: 'B' }, warnings: ['Update your scripts that name the old folder.'] });
+    await m.settle();
+    await m.submit('B');
+    assert.deepEqual(status(m.root), ['warning', 'Renamed TC-Lane-A to B. Update your scripts that name the old folder.']);
+  });
+
+  it('a refusal shows the server\'s reason and changes nothing', async () => {
+    const m = mountRename(null, 'Project "B" already exists');
+    await m.settle();
+    await m.submit('B');
+    assert.equal(patches(m.calls).length, 1);
+    assert.deepEqual(status(m.root), ['error', 'Not renamed: Project &quot;B&quot; already exists']);
+    assert.match(m.root.innerHTML, /<strong>TC-Lane-A<\/strong>/);
+  });
+
+  it('an empty, unchanged or out-of-set name is refused here, with no request', async () => {
+    const m = mountRename({ project: {}, warnings: [] });
+    await m.settle();
+    await m.submit('   ');
+    assert.deepEqual(status(m.root), ['error', 'Not renamed: give TC-Lane-A a different name.']);
+    await m.submit('TC-Lane-A');
+    assert.deepEqual(status(m.root), ['error', 'Not renamed: give TC-Lane-A a different name.']);
+    await m.submit('bad/name');
+    assert.deepEqual(status(m.root), ['error', 'Not renamed: use only letters, digits, spaces, dashes and underscores.']);
+    assert.deepEqual(patches(m.calls), []);
+  });
+});

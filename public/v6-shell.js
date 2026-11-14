@@ -511,6 +511,9 @@
   /** How often an open chat re-reads its session's live output (#3047). */
   const CHAT_POLL_MS = 4000;
 
+  /** The characters a project name may use, as `lib/projects.js#PROJECT_NAME_REGEX` allows (#3071). */
+  const PROJECT_NAME_CHARS = /^[a-zA-Z0-9 _-]+$/;
+
   /** Reads of a just-sent chat that may show no engine activity before it stops reading as Working (#3057). */
   const AWAIT_REPLY_POLLS = 3;
   const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
@@ -655,6 +658,31 @@
   }
 
   /**
+   * The chat target's rename control (#3071): a pencil that opens an inline
+   * form. A project with a live session cannot be renamed (the server refuses,
+   * and a rename moves its directory), so the pencil is disabled and says why.
+   * @param {string} name - The project's current name.
+   * @param {boolean} liveSession - Whether it has a session (active or idle).
+   * @param {boolean} open - Whether the form is open.
+   * @returns {string} HTML.
+   */
+  function chatRenameMarkup(name, liveSession, open) {
+    const n = escapeHtml(name);
+    if (open && !liveSession) {
+      return `<form id="v6ChatRenameForm" class="v6-chat-rename" data-action="rename-project-form" aria-label="Rename ${n}">
+          <label class="sr-only" for="v6ChatRenameInput">New name for ${n}</label>
+          <input id="v6ChatRenameInput" class="filter-input v6-chat-rename-input" name="name" value="${n}"
+            maxlength="100" autocomplete="off" spellcheck="false" title="Letters, digits, spaces, dashes and underscores">
+          <button type="submit" id="v6ChatRenameSave" class="btn btn-primary btn-small">Save</button>
+          <button type="button" id="v6ChatRenameCancel" class="btn btn-secondary btn-small">Cancel</button>
+        </form>`;
+    }
+    const label = liveSession ? `Stop ${name}'s session to rename it` : `Rename ${name}`;
+    return `<button type="button" id="v6ChatRename" class="btn btn-secondary btn-small v6-chat-icon-btn"
+        title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"${liveSession ? ' disabled' : ''}><span aria-hidden="true">✎</span></button>`;
+  }
+
+  /**
    * Render the B2 Conversation View for one legacy project (#3022
    * deliverable e): its replayed conversation events and an ADR 0026
    * "Open Hood" link to the live terminal page. With no live session it
@@ -756,6 +784,7 @@
           <p class="v6-chat-talking-to" title="${escapeHtml(identityTip)}"><span class="sr-only">Talking to: </span><strong>${escapeHtml(name)}</strong>${session}<span class="sr-only"> · ${modeText}</span>
             <span class="v6-chat-mode" aria-hidden="true">${delegateMode ? 'Delegate' : 'Direct'}</span>
             <span class="v6-chat-pill is-${status}">${CHAT_STATUS_LABELS[status]}</span>${chatRepoBadgesMarkup(v.project)}</p>
+          ${chatRenameMarkup(name, liveSession, chat.renameOpen)}
         </div>
         ${chat.telemetry !== undefined ? telemetryHeaderMarkup(chat.telemetry) : ''}
         <div class="v6-chat-actions">
@@ -1451,13 +1480,14 @@
       const draft = (extras && extras.draft) || '';
       const hoodOpen = Boolean(extras && extras.hoodOpen);
       const fleetArmed = Boolean(extras && extras.fleetArmed);
+      const renameOpen = Boolean(extras && extras.renameOpen);
       const sidebarCollapsed = Boolean(extras && extras.sidebarCollapsed);
       const activityElapsed = (extras && extras.activityElapsed) || '';
       const v = detail.view || {};
       // #3063: in a chat the telemetry bar shares the chat's header row.
       const telemetry = extras && 'telemetry' in extras ? extras.telemetry : undefined;
       return conversationViewMarkup(Object.assign({}, v, {
-        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry })
+        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, renameOpen })
       }));
     }
     if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
@@ -2234,6 +2264,42 @@
     }
 
     /**
+     * Rename the chat's target (#3071) through the operator-only project
+     * route, then reload the rows, tree, delegate picker and chat in place, so
+     * the new name shows everywhere at once. The checks here mirror the
+     * server's own so an obvious mistake is caught without a round trip; the
+     * server's reason is shown for anything it refuses (a live session, a name
+     * already taken).
+     * @param {string} oldName
+     * @param {string} newName
+     * @returns {Promise<void>}
+     */
+    async function renameProject(oldName, newName) {
+      const chat = current;
+      if (!chat || !getShell()) return;
+      const from = String(oldName || '');
+      const to = String(newName || '').trim();
+      if (!to || to === from) {
+        showSend({ kind: 'error', message: `Not renamed: give ${from} a different name.` });
+        return;
+      }
+      if (!PROJECT_NAME_CHARS.test(to)) {
+        showSend({ kind: 'error', message: 'Not renamed: use only letters, digits, spaces, dashes and underscores.' });
+        return;
+      }
+      showSend({ kind: 'pending', message: `Renaming ${from} to ${to}…` });
+      const res = await apiMutate(`/api/projects/${encodeURIComponent(from)}`, 'PATCH', { name: to });
+      if (chat !== current) return;
+      if (!res) {
+        showSend({ kind: 'error', message: `Not renamed: ${api.lastError || 'the server refused it'}` });
+        return;
+      }
+      await refresh();
+      const warnings = Array.isArray(res.warnings) ? res.warnings.filter(Boolean) : [];
+      showSend({ kind: warnings.length ? 'warning' : 'ok', message: `Renamed ${from} to ${to}.${warnings.map((w) => ` ${w}`).join('')}` });
+    }
+
+    /**
      * Start every offline member of the group on screen, one at a time, then
      * reload and report how many started and why any did not.
      * @returns {Promise<void>}
@@ -2291,7 +2357,7 @@
 
     return {
       handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, attachFiles, removeAttachment,
-      startSession, startFleet, treeLinkClicked,
+      startSession, startFleet, treeLinkClicked, renameProject,
       getProjects() { return projects; }
     };
   }
@@ -2312,6 +2378,7 @@
    *   onRefreshChat?: () => void, onOpenProjectSettings?: (projectName: string) => void,
    *   onAttachFiles?: (files: Array<object>) => void, onRemoveAttachment?: (index: number) => void,
    *   onStartSession?: () => void, onStartFleet?: () => void, onTreeLinkClick?: (hash: string) => void,
+   *   onRenameProject?: (oldName: string, newName: string) => void,
    *   now?: () => number, setInterval?: (fn: Function, ms: number) => *, clearInterval?: (id: *) => void}} opts - `storage`
    *   remembers the sidebar layout (#3046); defaults to the page's `localStorage`,
    *   and `null` keeps it for this page only. The `on*Chat`/delegate/settings
@@ -2365,6 +2432,8 @@
     let chatHoodOpen = prefs.get('tc_v6_chat_under_hood_open', false, isBoolean);
     // The chat whose Start fleet button has been clicked once (#3053).
     let fleetArmedKey = null;
+    // The chat whose rename form is open (#3071).
+    let renameOpenKey = null;
     let scrolledChatKey = null;
     // #3057: when the chat on screen became busy, and the 1 s ticker that
     // advances its elapsed time while it stays busy.
@@ -2422,6 +2491,7 @@
       }
       wireChat();
       wireStart();
+      wireRename();
       wireTreeLinks();
       const search = doc.getElementById('v6FilterSearch');
       if (search) {
@@ -2487,6 +2557,41 @@
         fleetArmedKey = null;
         render();
         options.onStartFleet();
+      });
+    }
+
+    /**
+     * The chat target's rename control (#3071): the pencil opens the form,
+     * Cancel or Escape closes it, and Save hands the new name to the page.
+     */
+    function wireRename() {
+      const open = doc.getElementById('v6ChatRename');
+      if (open) {
+        open.addEventListener('click', () => {
+          renameOpenKey = chatTargetKey();
+          render();
+          focusById('v6ChatRenameInput');
+        });
+      }
+      const form = doc.getElementById('v6ChatRenameForm');
+      if (!form) return;
+      const close = () => { renameOpenKey = null; render(); focusById('v6ChatRename'); };
+      const cancel = doc.getElementById('v6ChatRenameCancel');
+      if (cancel) cancel.addEventListener('click', close);
+      const input = doc.getElementById('v6ChatRenameInput');
+      if (input) {
+        input.addEventListener('keydown', (evt) => {
+          if (evt && (evt.key === 'Escape' || evt.key === 'Esc')) close();
+        });
+      }
+      form.addEventListener('submit', (evt) => {
+        if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+        const project = detail && detail.view ? detail.view.project : null;
+        const next = String((input && input.value) || '').trim();
+        if (!project || typeof options.onRenameProject !== 'function') return;
+        renameOpenKey = null;
+        render();
+        options.onRenameProject(String(project.name || ''), next);
       });
     }
 
@@ -2736,6 +2841,7 @@
           <div id="v6ShellDetail">${detailMarkup(detail, {
             draft: chatDrafts.get(chatTargetKey()) || '', hoodOpen: chatHoodOpen,
             fleetArmed: fleetArmedKey != null && fleetArmedKey === chatTargetKey(),
+            renameOpen: renameOpenKey != null && renameOpenKey === chatTargetKey(),
             sidebarCollapsed, activityElapsed, telemetry
           })}</div>
           <div id="v6ShellWizard"${inChat ? ' hidden' : ''}>${fleetWizardMarkup(templates)}</div>

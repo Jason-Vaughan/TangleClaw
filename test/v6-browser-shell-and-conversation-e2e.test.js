@@ -550,6 +550,38 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.doesNotMatch(root.innerHTML.slice(root.innerHTML.indexOf('class="v6-shell-tree"')), /e2eother-PM/, 'only the picked fleet is in the tree');
     });
 
+    it('renaming the chat\'s target from its header goes through the real route and shows everywhere at once (#3071)', async () => {
+      const pid = seedProject('e2e-rename-old');
+      const { root, settle, calls, doc, live } = mountShell(`#/resources/${pid}/conversation`);
+      await settle();
+      assert.match(root.innerHTML, /<strong>e2e-rename-old<\/strong>/);
+      doc.getElementById('v6ChatRename').dispatch('click');
+      doc.getElementById('v6ChatRenameInput').value = 'e2e-rename-new';
+      const pending = live.renameProject('e2e-rename-old', 'e2e-rename-new');
+      await pending;
+      await settle();
+      assert.ok(calls.includes('PATCH /api/projects/e2e-rename-old'), JSON.stringify(calls));
+      assert.ok(fs.existsSync(path.join(tempDir, 'e2e-rename-new')), 'the real route moved the directory');
+      assert.equal(fs.existsSync(path.join(tempDir, 'e2e-rename-old')), false);
+      assert.match(root.innerHTML, /Talking to: <\/span><strong>e2e-rename-new<\/strong>/, 'the header shows the new name');
+      assert.match(root.innerHTML, /e2e-rename-new \(\d+\)/, 'and the sidebar row');
+      assert.match(root.innerHTML, /is-ok[^>]*>Renamed e2e-rename-old to e2e-rename-new\./);
+    });
+
+    it('the real route refuses to rename a project with a live session, and the chat shows why (#3071)', async () => {
+      const pid = seedProject('e2e-rename-live');
+      store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(pid);
+      const { root, settle, live } = mountShell(`#/resources/${pid}/conversation`);
+      await settle();
+      assert.match(root.innerHTML, /id="v6ChatRename"[^>]*disabled>/, 'the pencil is off for a live session');
+      await live.renameProject('e2e-rename-live', 'e2e-rename-other');
+      await settle();
+      assert.match(root.innerHTML, /is-error[^>]*>Not renamed: Cannot rename while a session is active</);
+      assert.ok(fs.existsSync(path.join(tempDir, 'e2e-rename-live')), 'nothing moved');
+    });
+
     it('the real B2 route accepts the event the chat records, and the next seq counts deleted events (#3047)', async () => {
       const projectId = seedProject('e2e-chat-record');
       const sessionId = seedSession(projectId);
