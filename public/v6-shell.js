@@ -281,7 +281,8 @@
    * on `data-node-id`.
    * @param {ReturnType<typeof buildHierarchyTree>} tree
    * @param {{activeProjectId?: string, activeFleetId?: string, activeResourceId?: string,
-   *   collapsed?: Array<string>|Set<string>}} [opts]
+   *   collapsed?: Array<string>|Set<string>, memberInfo?: (seatId: string) => object|null}} [opts] -
+   *   `memberInfo` gives a member's status indicators (#3053), or null to draw it plain.
    * @returns {string} HTML.
    */
   function sidebarMarkup(tree, opts) {
@@ -301,20 +302,25 @@
         const fleetFolded = collapsed.has(fleetNodeKey(project, fleet));
         // #3022: a member with a seat id is a real resource — link it to its
         // B2 Conversation View; one without stays plain text.
-        const memberItems = fleetFolded ? '' : fleet.members.map((m) => {
+        const memberItems = fleetFolded ? '' : fleet.members.map((m, mi) => {
           const label = `${escapeHtml(m.role)} (${escapeHtml(m.seatId)})`;
           if (!m.seatId) return `<li class="v6-shell-member">${label}</li>`;
           const memberActive = activeResourceId === String(m.seatId);
           const memberHash = routeHash({ view: 'conversation', resourceId: m.seatId });
-          return `<li class="v6-shell-member"><a class="v6-shell-member-link${memberActive ? ' is-active' : ''}"
-            aria-current="${memberActive ? 'page' : 'false'}"
-            href="${escapeHtml(memberHash)}" data-route="${escapeHtml(memberHash)}">${label}</a></li>`;
+          // #3053 item 4: the member's status, when its project row is known.
+          const info = typeof options.memberInfo === 'function' ? options.memberInfo(m.seatId) : null;
+          const stateClass = info ? ` is-${info.state}` : '';
+          const title = info ? ` title="${escapeHtml(info.title)}"` : '';
+          const glyph = info ? `<span class="v6-member-glyph" aria-hidden="true">${info.glyph}</span>` : '';
+          return `<li class="v6-shell-member"><a class="v6-shell-member-link${stateClass}${memberActive ? ' is-active' : ''}"
+            aria-current="${memberActive ? 'page' : 'false'}" id="v6TreeLink-m${pi}-${fi}-${mi}"${title}
+            href="${escapeHtml(memberHash)}" data-route="${escapeHtml(memberHash)}">${glyph}${label}</a>${info ? memberIndicatorsMarkup(info) : ''}</li>`;
         }).join('');
         const fleetToggle = fleet.members.length
           ? treeToggleMarkup(`v6TreeToggle-f${pi}-${fi}`, fleetNodeKey(project, fleet), fleet.displayName, fleetFolded)
           : '';
         return `<li>
-          <div class="v6-tree-row">${fleetToggle}<a class="v6-shell-fleet${fleetActive ? ' is-active' : ''}"
+          <div class="v6-tree-row">${fleetToggle}<a class="v6-shell-fleet${fleetActive ? ' is-active' : ''}" id="v6TreeLink-f${pi}-${fi}"
              aria-current="${fleetActive ? 'page' : 'false'}"
              href="${escapeHtml(fleetHash)}" data-route="${escapeHtml(fleetHash)}">${escapeHtml(fleet.displayName)}</a></div>
           ${memberItems ? `<ul class="v6-shell-members">${memberItems}</ul>` : ''}
@@ -324,7 +330,7 @@
         ? treeToggleMarkup(`v6TreeToggle-p${pi}`, projectNodeKey(project), project.displayName, projectFolded)
         : '';
       return `<li>
-        <div class="v6-tree-row">${projectToggle}<a class="v6-shell-project${projectActive ? ' is-active' : ''}"
+        <div class="v6-tree-row">${projectToggle}<a class="v6-shell-project${projectActive ? ' is-active' : ''}" id="v6TreeLink-p${pi}"
            aria-current="${projectActive ? 'page' : 'false'}"
            href="${escapeHtml(projectHash)}" data-route="${escapeHtml(projectHash)}">${escapeHtml(project.displayName)}</a></div>
         ${fleetItems ? `<ul class="v6-shell-fleets">${fleetItems}</ul>` : ''}
@@ -467,6 +473,22 @@
           title="Select several projects at once (or Ctrl/Cmd/Shift-click a pill)">Multi</button>
       </div>
     </div>`;
+  }
+
+  /**
+   * Whether a scroll container is showing its last line (within a few
+   * pixels). A container that cannot report its geometry is not.
+   * @param {object|null} el
+   * @returns {boolean}
+   */
+  function isAtBottom(el) {
+    return Boolean(el) && typeof el.scrollHeight === 'number'
+      && el.scrollHeight - (el.scrollTop || 0) - (el.clientHeight || 0) < 8;
+  }
+
+  /** @param {object|null} el - Scroll it to its last line. */
+  function pinToBottom(el) {
+    if (el && typeof el.scrollHeight === 'number') el.scrollTop = el.scrollHeight;
   }
 
   const isBoolean = (v) => typeof v === 'boolean';
@@ -619,7 +641,9 @@
     const hoodHref = `/session.html?project=${encodeURIComponent(name)}`;
     const chat = v.chat || {};
     const status = CHAT_STATUS_LABELS[chat.status] ? chat.status : (v.sessionId == null ? 'offline' : 'active');
-    const live = status !== 'offline';
+    const liveSession = status !== 'offline';
+    const live = chat.live || null;
+    const liveTurns = live && Array.isArray(live.turns) ? live.turns : [];
     let stream;
     if (v.error) {
       stream = `<p class="v6-conversation-empty">${escapeHtml(v.error)}</p>`;
@@ -630,13 +654,21 @@
       stream = events.length
         ? `<ol class="v6-conversation-stream">${events.map((e) => (
           `<li class="v6-conversation-event is-${escapeHtml(e && e.role)}">
-            <span class="v6-conversation-role">${escapeHtml(e && e.role)}</span>
+            ${chatRoleMarkup(e && e.role, name)}
             <span class="v6-conversation-content">${escapeHtml(e && e.content)}</span>
           </li>`
         )).join('')}</ol>`
-        : '<p class="v6-conversation-empty">No conversation events recorded for this session yet.</p>';
+        : (liveTurns.length ? '' : '<p class="v6-conversation-empty">No conversation events recorded for this session yet.</p>');
     }
-    const delegateMode = chat.mode === 'delegate';
+    // #3052: the replies the session's live output shows, after what is
+    // recorded; its own list so a poll can replace it without a re-render.
+    stream = `<div id="v6ChatStream" class="v6-chat-stream" tabindex="0">${stream}
+      <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name)}</ol>
+    </div>`;
+    // A member reached directly is still the project's delegate when it is
+    // the one the delegate resolution picks (#3053).
+    const delegateMode = chat.mode === 'delegate'
+      || Boolean(chat.delegate && String(chat.delegate.id) === String(v.project.id));
     const title = delegateMode && chat.nodeName ? chat.nodeName : name;
     const session = v.sessionId != null ? ` (#${escapeHtml(v.sessionId)})` : '';
     const members = Array.isArray(chat.members) ? chat.members : [];
@@ -655,7 +687,17 @@
     const send = chat.send && CHAT_SEND_KINDS.includes(chat.send.kind) ? chat.send : null;
     // Disabled while a send is in flight too, so a second Enter cannot type
     // the same message into the session twice.
-    const disabled = live && !(send && send.kind === 'pending') ? '' : ' disabled';
+    const disabled = liveSession && !(send && send.kind === 'pending') ? '' : ' disabled';
+    // #3053: start an offline target, or every offline member of a group,
+    // from the chat itself. Starting several agents asks a second time.
+    const startButton = liveSession ? '' : `<button type="button" id="v6ChatStart" class="btn btn-primary btn-small v6-chat-start" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>`;
+    const offlineMembers = chat.mode === 'delegate' ? members.filter((m) => m && m.live === false).length : 0;
+    const fleetLabel = chat.fleetArmed
+      ? `Click again to start ${offlineMembers} session${offlineMembers === 1 ? '' : 's'}`
+      : `▶ Start ${escapeHtml(chat.nodeName || name)} (${offlineMembers} offline)`;
+    const startFleetButton = offlineMembers
+      ? `<button type="button" id="v6ChatStartFleet" class="btn btn-secondary btn-small v6-chat-start-fleet" data-action="start-chat-fleet">${fleetLabel}</button>`
+      : '';
     const placeholder = `Message ${name}… (Enter to send, Shift+Enter for newline)`;
     return `<section class="v6-conversation v6-chat" aria-label="Conversation — ${escapeHtml(name)}">
       <header class="v6-chat-header">
@@ -663,23 +705,398 @@
         <p class="v6-chat-talking-to">Talking to: <strong>${escapeHtml(name)}</strong>${session} · ${delegateMode ? 'Designated Project Delegate' : 'Direct Session'}
           <span class="v6-chat-pill is-${status}">${CHAT_STATUS_LABELS[status]}</span></p>
         <div class="v6-chat-actions">
-          ${delegatePicker}${toDelegate}
+          ${startButton}${startFleetButton}${delegatePicker}${toDelegate}
           <a class="btn btn-secondary v6-open-hood" href="${escapeHtml(hoodHref)}">Open Hood (Live Terminal)</a>
           <button type="button" id="v6ChatRefresh" class="btn btn-secondary btn-small">Refresh</button>
           <button type="button" id="v6ChatSettings" class="btn btn-secondary btn-small">Project Settings</button>
         </div>
       </header>
       ${stream}
-      ${live ? `<section class="v6-chat-live" aria-label="Live output">
-        <h3 class="v6-chat-subtitle">Live output</h3>
+      ${liveSession ? `<details id="v6ChatUnderHood" class="v6-chat-under-hood"${chat.hoodOpen ? ' open' : ''}>
+        <summary>🔧 Under the Hood (Raw CLI &amp; Tool Activity)</summary>
         <pre id="v6ChatPeek" class="v6-chat-peek" tabindex="0">${chatPeekMarkup(chat.peek)}</pre>
-      </section>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session — open the Hood to start one.</p>`}
+      </details>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session.
+        <button type="button" id="v6ChatStartBanner" class="btn btn-primary btn-small" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>
+        <a class="v6-chat-classic-launch" href="#/">Open Classic View to launch ${escapeHtml(name)}</a></p>`}
+      ${chatQuestionMarkup(live && live.question)}
+      ${chatActivityMarkup(live && live.activity)}
       <form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form" aria-label="Message ${escapeHtml(name)}">
+        <div id="v6ChatAttachments" class="v6-chat-attachments" aria-live="polite">${attachmentChipsMarkup(chat.attachments)}</div>
         <textarea id="v6ChatInput" class="v6-chat-input" name="message" rows="3" aria-label="Message to ${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}"${disabled}>${escapeHtml(chat.draft || '')}</textarea>
-        <button type="submit" id="v6ChatSend" class="btn btn-primary v6-chat-send-btn"${disabled}>Send</button>
+        <div class="v6-chat-composer-actions">
+          <button type="button" id="v6ChatAttachBtn" class="btn btn-secondary btn-small v6-chat-attach-btn" aria-label="Attach files (or drop or paste them into the message)">📎 Attach</button>
+          <input type="file" id="v6ChatFileInput" class="v6-chat-file-input" multiple hidden>
+          <button type="submit" id="v6ChatSend" class="btn btn-primary v6-chat-send-btn"${disabled}>Send</button>
+        </div>
       </form>
       <p id="v6ChatStatus" class="v6-chat-send-status${send ? ` is-${send.kind}` : ''}" role="status" aria-live="polite">${send ? escapeHtml(send.message) : ''}</p>
     </section>`;
+  }
+
+  /**
+   * Markers for what a session's pane shows besides the conversation itself
+   * (#3052): launch boilerplate, switchboard wakes, `tc` tool blocks, prompt
+   * and status chrome, and each engine's thinking and tool lines. Matched
+   * against a line with its colour codes stripped. Anything not matched is
+   * kept: an unrecognised line is shown, never silently dropped.
+   */
+  const LIVE_NOISE = Object.freeze([
+    /^When the user wants to wrap up/i,
+    /^#{1,6}\s*Medusa consumer contract/i,
+    /TangleClaw'd into existence/i,
+    /^Reading launch context via tc start next/i,
+    /^\[TangleClaw( Switchboard)?\]/,
+    /^\$?\s*tc\s+(message|start|workload|control|rules|whoami|branch|docs|sessions|capabilities)\b/,
+    /^[╭╮╰╯│─━┌┐└┘├┤═║╔╗╚╝\s]+$/,
+    /^[─━═]{3,}/,
+    // The hint as the UI draws it — a line of its own, or a trailing
+    // parenthesis — not a reply that tells the operator to press it.
+    /^esc to (cancel|interrupt)\b|\(esc to (cancel|interrupt)\)\s*$/i,
+    /\?\s*for shortcuts/i,
+    /How'?s the CLI experience/i,
+    // Status bars start with the number: "12.3k tokens", "41% context left".
+    /^[\d.,]+k?\s+tokens?\b/i,
+    /^\d+%\s+(of\s+)?context\b/i,
+    /^(⏎|⌃|ctrl\+)/i
+  ]);
+
+  /** Lines that start a tool block: what is indented under them is the tool's output. */
+  const LIVE_TOOL = Object.freeze([/^…\s*\d+\s+more actions?\s*…?$/i, /^[⎿└]/]);
+
+  /** Per-engine thinking/tool lines; an unknown engine gets all of them. */
+  const LIVE_ENGINE_NOISE = Object.freeze({
+    // A tool call (`⏺ Bash(…)`) or a tool status line (`⏺ Ran npm test`):
+    // a status verb and no closing punctuation, which keeps a reply sentence
+    // that merely starts with one of those verbs.
+    claude: [/^⏺\s+[A-Za-z][\w.-]*\(/, /^⏺\s+(Ran|Explored|Edited|Read|Searched|Wrote|Updated|Listed|Called|Fetched|Created|Deleted|Added)\b.*[^.!?:]$/, /^[✶✻✽✢]/],
+    codex: [/^•\s+(Ran|Explored|Edited|Read|Searched|Updated|Added|Deleted|Called|Running|Listed)\b/, /^▸\s*Thought\b/],
+    antigravity: [/^[○●]/],
+    aider: [/^Tokens:/, /^Applied edit to /, /^Commit [0-9a-f]{7,}\b/, /^(Repo-map|Main model|Weak model|Git repo|Aider v)\b/, /^Added .+ to the chat\b/]
+  });
+
+  /**
+   * A tail line meaning the engine is busy right now: a spinner glyph or the
+   * interrupt hint. Words like "thinking" alone are not enough — a reply can
+   * say them.
+   */
+  const LIVE_BUSY = /\(esc to interrupt\)\s*$|^[\u2736\u273B\u273D\u2722]|^[\u2800-\u28FF]/i;
+
+  /** A prompt line: `> text`, `❯ text` or `› text`, possibly inside a box border. */
+  const LIVE_PROMPT = /^(?:│\s*)?(?:>|❯|›)\s?(.*?)\s*│?$/;
+
+  /** Assistant bullets an engine prefixes its own message lines with. */
+  const LIVE_BULLET = /^(?:⏺|•)\s+/;
+
+  /**
+   * The conversation a session's live output shows (#3052): its assistant
+   * replies, any operator prompt not already recorded, the question the
+   * assistant is waiting on, and what it is busy doing. Display only — the
+   * pane is not a record, so nothing here is written to the B2 conversation.
+   * @param {Array<string>|null} lines - The pane's lines (`GET .../peek`).
+   * @param {string} engine - `claude`, `codex`, `antigravity` or `aider`; anything else uses every engine's markers.
+   * @param {Array<string>} knownUserTexts - User messages already recorded, not to repeat.
+   * @returns {{turns: Array<{role: 'user'|'assistant', text: string}>, question: string|null, activity: string|null}}
+   */
+  function extractLiveTurns(lines, engine, knownUserTexts) {
+    const engineRules = LIVE_ENGINE_NOISE[engine]
+      || Object.keys(LIVE_ENGINE_NOISE).reduce((all, k) => all.concat(LIVE_ENGINE_NOISE[k]), []);
+    const tools = LIVE_TOOL.concat(engineRules);
+    const squash = (t) => String(t).replace(/\s+/g, ' ').trim();
+    // A recorded message can span lines (text, then its Attached lines) and
+    // a long prompt wraps in the pane, so an echo is matched by line, by
+    // prefix, or as a fragment of the message it continues.
+    const sent = (Array.isArray(knownUserTexts) ? knownUserTexts : []).map(squash).filter(Boolean);
+    const knownLines = new Set((Array.isArray(knownUserTexts) ? knownUserTexts : [])
+      .flatMap((t) => String(t).split('\n')).map((t) => t.trim()).filter(Boolean));
+    const recordedAs = (said) => {
+      const one = squash(said);
+      if (knownLines.has(said)) return sent.find((m) => m.includes(one)) || one;
+      return one.length >= 20 ? sent.find((m) => m.startsWith(one)) || null : null;
+    };
+    let echo = null;
+    const turns = [];
+    let reply = [];
+    let activity = null;
+    // An indented line belongs to whatever started the block above it: a tool
+    // line's output is noise, an assistant line's continuation is reply.
+    let block = null;
+    const flush = () => {
+      if (reply.length) turns.push({ role: 'assistant', text: reply.join('\n') });
+      reply = [];
+    };
+    (Array.isArray(lines) ? lines : []).forEach((raw) => {
+      if (typeof raw !== 'string') return;
+      // eslint-disable-next-line no-control-regex
+      const line = raw.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\s+$/, '');
+      const text = line.trim();
+      if (!text) return;
+      const indented = /^\s/.test(line);
+      const prompt = LIVE_PROMPT.exec(text);
+      if (prompt && !indented) {
+        flush();
+        block = null;
+        const said = prompt[1].trim();
+        // An empty prompt is the input box the engine always draws, not the
+        // operator speaking: it neither ends nor starts anything.
+        if (said) {
+          activity = null;
+          echo = recordedAs(said);
+          if (!echo) turns.push({ role: 'user', text: said });
+        }
+        return;
+      }
+      // The rest of a recorded message the pane is still echoing.
+      if (echo && (knownLines.has(text) || echo.includes(squash(text)))) return;
+      echo = null;
+      if (LIVE_BUSY.test(text) && !/Thought for/i.test(text)) {
+        activity = text.replace(/^[✶✻✽✢⠀-⣿\s]+/, '').replace(/\s*\(?esc to interrupt\)?/i, '').trim() || 'Working…';
+        return;
+      }
+      if (indented && block === 'tool') return;
+      if (tools.some((re) => re.test(text))) {
+        block = 'tool';
+        return;
+      }
+      // Chrome and boilerplate are dropped, but do not swallow what follows.
+      if (LIVE_NOISE.some((re) => re.test(text))) {
+        block = null;
+        return;
+      }
+      if (indented && block === 'reply') {
+        reply.push(text);
+        return;
+      }
+      block = 'reply';
+      activity = null;
+      reply.push(text.replace(LIVE_BULLET, ''));
+    });
+    flush();
+    const last = turns[turns.length - 1];
+    const tail = last && last.role === 'assistant' ? last.text.split('\n').pop() : '';
+    return { turns, question: /\?\s*$/.test(tail) ? tail : null, activity };
+  }
+
+  /**
+   * A conversation bubble's role label; an assistant is named for the
+   * project it speaks for, kept out of the label's uppercase styling.
+   * @param {string} role
+   * @param {string} name - The project's name.
+   * @returns {string} HTML.
+   */
+  function chatRoleMarkup(role, name) {
+    const who = role === 'assistant' ? ` <span class="v6-conversation-who">(${escapeHtml(name)})</span>` : '';
+    return `<span class="v6-conversation-role">${escapeHtml(role)}${who}</span>`;
+  }
+
+  /**
+   * The live replies (#3052) as conversation bubbles, marked `is-live` because
+   * they come from the pane, not the record.
+   * @param {Array<{role: string, text: string}>} turns
+   * @param {string} name
+   * @returns {string} HTML list items.
+   */
+  function liveTurnsMarkup(turns, name) {
+    return (Array.isArray(turns) ? turns : []).map((t) => (
+      `<li class="v6-conversation-event is-${escapeHtml(t && t.role)} is-live">${chatRoleMarkup(t && t.role, name)}<span class="v6-conversation-content">${escapeHtml(t && t.text)}</span></li>`
+    )).join('');
+  }
+
+  /** @param {string|null} question - The question the assistant is waiting on. @returns {string} HTML. */
+  function chatQuestionMarkup(question) {
+    return `<div id="v6ChatQuestion" class="v6-chat-question${question ? ' is-asking' : ''}" role="status" aria-live="polite">${chatQuestionInner(question)}</div>`;
+  }
+
+  /** @param {string|null} question @returns {string} HTML for inside the question slot. */
+  function chatQuestionInner(question) {
+    return question ? `<span class="v6-chat-question-label">Waiting on you:</span> ${escapeHtml(question)}` : '';
+  }
+
+  /** @param {string|null} activity - What the engine is busy doing. @returns {string} HTML. */
+  function chatActivityMarkup(activity) {
+    return `<p id="v6ChatActivity" class="v6-chat-activity${activity ? ' is-busy' : ''}" aria-live="polite">${activity ? escapeHtml(activity) : ''}</p>`;
+  }
+
+  /** The secure-clipboard route's limit on one decoded file (`lib/secure-clipboard.js` MAX_FILE_BYTES). */
+  const MAX_ATTACH_BYTES = 5 * 1024 * 1024;
+
+  /**
+   * A file name the secure-clipboard route accepts (#3053):
+   * `[A-Za-z0-9._-]{1,128}`, never `.` or `..`. Spaces and path separators
+   * become `-`, anything else outside that set is dropped, a leading run of
+   * dots or dashes goes (so `../x` cannot climb and `.env` cannot hide), the
+   * extension survives truncation, and a name already in `taken` gets `-2`,
+   * `-3`… before its extension.
+   * @param {string} name - The browser's file name.
+   * @param {Set<string>} taken - Names already used in this chat.
+   * @returns {string}
+   */
+  function sanitizeUploadName(name, taken) {
+    const used = taken || new Set();
+    let clean = String(name == null ? '' : name)
+      .replace(/[\s/\\]+/g, '-')
+      .replace(/[^A-Za-z0-9._-]/g, '')
+      .replace(/-{2,}/g, '-')
+      .replace(/^[.-]+/, '')
+      .replace(/-+$/, '');
+    if (!clean) clean = 'attachment';
+    const extMatch = /(\.[A-Za-z0-9]{1,16})$/.exec(clean);
+    const ext = extMatch && extMatch.index > 0 ? extMatch[1] : '';
+    const stem = ext ? clean.slice(0, -ext.length) : clean;
+    const fit = (suffix) => `${stem.slice(0, 128 - ext.length - suffix.length)}${suffix}${ext}`;
+    let candidate = fit('');
+    for (let n = 2; used.has(candidate); n++) candidate = fit(`-${n}`);
+    return candidate;
+  }
+
+  /**
+   * The files an event carries (#3053): a drop's, a paste's (as files or as
+   * file items, which is how a pasted screenshot arrives), or a file
+   * input's. Anything else carries none.
+   * @param {object|null} evt
+   * @returns {Array<object>}
+   */
+  function filesFromEvent(evt) {
+    const list = (x) => (x && typeof x.length === 'number' ? Array.prototype.slice.call(x) : []);
+    if (!evt) return [];
+    if (evt.dataTransfer && list(evt.dataTransfer.files).length) return list(evt.dataTransfer.files);
+    if (evt.clipboardData) {
+      const files = list(evt.clipboardData.files);
+      if (files.length) return files;
+      return list(evt.clipboardData.items)
+        .filter((item) => item && item.kind === 'file' && typeof item.getAsFile === 'function')
+        .map((item) => item.getAsFile()).filter(Boolean);
+    }
+    return evt.target ? list(evt.target.files) : [];
+  }
+
+  /**
+   * Read a browser File as base64 (no `data:` prefix), the encoding the
+   * secure-clipboard route takes.
+   * @param {Blob} file
+   * @returns {Promise<string>}
+   */
+  function defaultReadFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new global.FileReader();
+      reader.onload = () => resolve(String(reader.result || '').replace(/^data:[^,]*,/, ''));
+      reader.onerror = () => reject(reader.error || new Error('the file could not be read'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  /**
+   * Where a saved attachment is, relative to the project's root — the
+   * agent's working directory. The route reports `relPath` relative to the
+   * project's `.tangleclaw/` directory (`secrets/<file>`), so used as-is it
+   * would send the agent to `<project>/secrets/<file>`, which does not exist.
+   * @param {string|undefined} relPath - The route's `relPath`.
+   * @param {string} filename - The name the file was saved under.
+   * @returns {string}
+   */
+  function projectRelative(relPath, filename) {
+    const rel = typeof relPath === 'string' && relPath ? relPath.replace(/^\/+/, '') : `secrets/${filename}`;
+    return rel.startsWith('.tangleclaw/') ? rel : `.tangleclaw/${rel}`;
+  }
+
+  /** The states an attachment chip can show (each is a CSS modifier). */
+  const ATTACH_STATES = Object.freeze(['uploading', 'ready', 'error']);
+
+  /**
+   * The composer's attachment chips, each removable.
+   * @param {Array<{name: string, status: string, relPath?: string, error?: string}>} items
+   * @returns {string} HTML.
+   */
+  function attachmentChipsMarkup(items) {
+    return (Array.isArray(items) ? items : []).map((a, i) => {
+      const status = ATTACH_STATES.includes(a && a.status) ? a.status : 'uploading';
+      const tip = status === 'error' ? (a.error || 'Could not attach this file.') : (status === 'ready' ? a.relPath : 'Uploading…');
+      return `<span class="v6-chat-chip is-${status}" title="${escapeHtml(tip)}">${escapeHtml(a && a.name)}${status === 'uploading' ? ' …' : ''}
+        <button type="button" id="v6ChatAttachRemove-${i}" class="v6-chat-chip-remove" aria-label="Remove ${escapeHtml(a && a.name)}">×</button></span>`;
+    }).join('');
+  }
+
+  /** Short engine codes for the sidebar badge (#3053); other engines use their first two letters. */
+  const ENGINE_CODES = Object.freeze({ antigravity: 'AG', claude: 'CC', codex: 'CX', aider: 'AI' });
+
+  /** Engine health values the badge colours; anything else is unknown. */
+  const ENGINE_HEALTH = Object.freeze(['operational', 'degraded', 'outage']);
+
+  /** Each member state's glyph and plain title. */
+  const MEMBER_STATES = Object.freeze({
+    live: { glyph: '●', title: 'Live session' },
+    attention: { glyph: '⚠', title: 'Needs attention' },
+    starting: { glyph: '◐', title: 'Starting' },
+    wrapping: { glyph: '◐', title: 'Wrapping' },
+    offline: { glyph: '○', title: 'No live session' }
+  });
+
+  /** @param {*} v - A reason the server gave as text or as `{message}`. @returns {string} */
+  function reasonText(v) {
+    if (!v) return '';
+    if (typeof v === 'string') return v;
+    return String(v.message || v.reason || v.code || '');
+  }
+
+  /**
+   * A sidebar member's status (#3053 item 4, Option A), from its project row
+   * (`GET /api/projects`, as the operator sees it) and the engines' health
+   * (`GET /api/models/status`): its session state, Medusa link and engine.
+   * A live session's launch blocker, held wake or engine error, or a last
+   * session that crashed or left work behind, is "attention".
+   * @param {object|null} row
+   * @param {Object<string, {status?: string}>} health - Engine id -> status.
+   * @returns {{state: string, glyph: string, title: string, medusa: string,
+   *   engine: {code: string, name: string, health: string}|null}}
+   */
+  function memberIndicators(row, health) {
+    const r = row || {};
+    const s = r.session || null;
+    const live = Boolean(s && s.active === true);
+    const sh = r.sessionHealth || null;
+    // The session's status column only ever says 'active' while it is live;
+    // starting and wrapping are their own fields (lib/projects.js
+    // _liveSession: startupReadiness from enrichProject, wrapping from the
+    // project's wrap state).
+    const readiness = live && s.startupReadiness ? s.startupReadiness : null;
+    const wrap = live && s.wrapping && typeof s.wrapping === 'object' ? s.wrapping : null;
+    const reason = (live && (reasonText(s.launchBlocker) || reasonText(s.heldWakeReason) || reasonText(s.lastEngineError)))
+      || (readiness && readiness.state === 'needs-attention'
+        ? `startup needs attention${readiness.blocker ? ` (${readiness.blocker})` : ''}` : '')
+      || (wrap && wrap.stale ? `the wrap looks stuck${wrap.step ? ` at ${wrap.step}` : ''}` : '')
+      || (sh && sh.status === 'crashed' ? 'the last session crashed' : '')
+      || (sh && sh.state === 'left-work' ? 'the last session left work behind' : '');
+    let state = 'offline';
+    if (reason) state = 'attention';
+    else if (wrap) state = 'wrapping';
+    else if (readiness && readiness.state === 'starting') state = 'starting';
+    else if (live) state = 'live';
+    const medusa = r.medusaEnabled === true ? (r.medusaWake === true ? 'on' : 'wake-off') : 'off';
+    let engine = null;
+    if (r.engine && r.engine.id) {
+      const id = String(r.engine.id);
+      const status = health && health[id] && ENGINE_HEALTH.includes(health[id].status) ? health[id].status : 'unknown';
+      engine = { code: ENGINE_CODES[id] || id.slice(0, 2).toUpperCase(), name: String(r.engine.name || id), health: status };
+    }
+    let title = MEMBER_STATES[state].title;
+    if (state === 'attention') title = `Needs attention: ${reason}`;
+    else if (state === 'wrapping' && wrap.step) title = `Wrapping (${wrap.step})`;
+    return { state, glyph: MEMBER_STATES[state].glyph, title, medusa, engine };
+  }
+
+  /** The Medusa link symbol's title, by state. */
+  const MEDUSA_TITLES = Object.freeze({ on: 'Medusa link and wake on', 'wake-off': 'Medusa link on, wake off', off: 'Medusa link off' });
+
+  /**
+   * The right-hand symbols beside a sidebar member (#3053 item 4).
+   * @param {ReturnType<typeof memberIndicators>} info
+   * @returns {string} HTML.
+   */
+  function memberIndicatorsMarkup(info) {
+    const link = `<span class="v6-member-link-status is-${info.medusa}" title="${escapeHtml(MEDUSA_TITLES[info.medusa])}">🔗</span>`;
+    const ai = info.engine
+      ? `<span class="v6-member-ai-status is-${info.engine.health}" title="${escapeHtml(info.engine.name)}: ${info.engine.health === 'unknown' ? 'status unknown' : info.engine.health}">${escapeHtml(info.engine.code)}</span>`
+      : '';
+    return `<span class="v6-member-indicators">${link}${ai}</span>`;
   }
 
   /** The chat header's session pill text, by session state. */
@@ -910,8 +1327,10 @@
       // view, so a re-render that is not a send keeps it (#3047); the shell
       // passes only the draft for this chat's own project.
       const draft = (extras && extras.draft) || '';
+      const hoodOpen = Boolean(extras && extras.hoodOpen);
+      const fleetArmed = Boolean(extras && extras.fleetArmed);
       const v = detail.view || {};
-      return conversationViewMarkup(Object.assign({}, v, { chat: Object.assign({}, v.chat, { draft }) }));
+      return conversationViewMarkup(Object.assign({}, v, { chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed }) }));
     }
     if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
     if (detail.kind === 'recovery') return recoveryConsoleMarkup(detail.view);
@@ -1071,6 +1490,28 @@
     // the view last handed to the shell — what a send or a poll acts on.
     let current = null;
     let pollId = null;
+    // Set when a sidebar click leads to a different route (#3053), so that
+    // route reloads the project rows before it shows anything.
+    let freshNext = false;
+    // #3053: files attached in each chat, by target project id, and the
+    // means to read and upload them (injectable for tests).
+    const attachments = new Map();
+    // Names already uploaded per target this visit: the route overwrites a
+    // file of the same name, so a name is never reused (#3053).
+    const uploadedNames = new Map();
+    let attachSeq = 0;
+    const readFileAsBase64 = deps.readFileAsBase64 || defaultReadFileAsBase64;
+    // The secure-clipboard routes gate even their GET listing with operator
+    // proof, and api()'s own CSRF header only rides on writes, so the token
+    // is added here too, as public/secure-clipboard-ui.js does.
+    const operatorHeaders = deps.operatorHeaders || (async () => {
+      const headers = typeof global.tcOperatorProofHeaders === 'function'
+        ? await global.tcOperatorProofHeaders(api)
+        : { 'Content-Type': 'application/json' };
+      const csrf = typeof global.tcCsrfToken === 'function' ? global.tcCsrfToken() : null;
+      if (csrf) headers['X-CSRF-Token'] = csrf;
+      return headers;
+    });
 
     /** @returns {Object<string, string>} Configured delegates, logical project id -> project id. */
     function delegates() {
@@ -1089,6 +1530,21 @@
      */
     function peekView(res) {
       return res && Array.isArray(res.lines) ? { lines: res.lines } : { error: 'the session did not answer' };
+    }
+
+    /**
+     * The replies, question and activity a peek shows (#3052), read with the
+     * project's own engine, leaving out prompts already recorded.
+     * @param {{lines?: string[]}|null} res
+     * @param {object} project
+     * @param {Array<{role?: string, content?: string}>|null} events
+     * @returns {object|null}
+     */
+    function liveView(res, project, events) {
+      if (!res || !Array.isArray(res.lines)) return null;
+      const engine = project && project.engine && project.engine.id ? String(project.engine.id) : '';
+      const said = (Array.isArray(events) ? events : []).filter((e) => e && e.role === 'user').map((e) => e.content);
+      return extractLiveTurns(res.lines, engine, said);
     }
 
     /**
@@ -1119,7 +1575,9 @@
         nodeId: node ? node.id : null,
         nodeName: node ? node.displayName : '',
         fleetId,
-        members: memberRows.map((p) => ({ id: String(p.id), name: String(p.name || '') })),
+        members: memberRows.map((p) => ({
+          id: String(p.id), name: String(p.name || ''), live: Boolean(p.session && p.session.active === true)
+        })),
         delegate: delegate ? { id: String(delegate.id), name: String(delegate.name || '') } : null
       };
     }
@@ -1155,7 +1613,27 @@
       if (sessionId == null) {
         current.view = { project, sessionId: null, chat };
         shell.setAttestation(pickAttestation(null, project));
-        shell.setDetail({ kind: 'conversation', view: current.view });
+        showChat(shell);
+        // #3053: an offline chat watches its status, so a session started
+        // anywhere turns it Active without a click.
+        if (startTimer) {
+          // One check at a time: a slow status read must not overlap the next
+          // tick, or two loads could each start a poll and leave one stray.
+          let checking = false;
+          pollId = startTimer(async () => {
+            if (mine !== seq) { stopPolling(); return; }
+            if (checking) return;
+            checking = true;
+            try {
+              const now = await api(`/api/sessions/${name}/status`);
+              if (mine !== seq || !(now && now.active && now.sessionId != null)) return;
+              stopPolling();
+              await loadConversation(project, mine, ctx);
+            } finally {
+              checking = false;
+            }
+          }, CHAT_POLL_MS);
+        }
         return;
       }
       const base = `/api/v6/projects/${encodeURIComponent(project.id)}/sessions/${encodeURIComponent(sessionId)}`;
@@ -1167,22 +1645,38 @@
       ]);
       if (mine !== seq) return;
       chat.peek = peekView(peek);
+      chat.live = liveView(peek, project, events && events.events);
       current.view = events
         ? { project, sessionId, events: events.events, chat }
         : { project, sessionId, error: 'Could not load this session’s conversation events.', chat };
       shell.setAttestation(pickAttestation(attestations && attestations.attestations, project));
-      shell.setDetail({ kind: 'conversation', view: current.view });
+      showChat(shell);
       if (startTimer) {
         pollId = startTimer(async () => {
           if (mine !== seq) { stopPolling(); return; }
           const res = await api(peekUrl);
           if (mine !== seq || !current || !current.view) return;
           const next = peekView(res);
-          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next }) });
+          const nextLive = liveView(res, current.project, current.view.events);
+          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next, live: nextLive }) });
           const sh = getShell();
-          if (sh && typeof sh.setPeek === 'function') sh.setPeek(next);
+          if (sh && typeof sh.setLive === 'function') sh.setLive({ peek: next, live: nextLive });
+          else if (sh && typeof sh.setPeek === 'function') sh.setPeek(next);
         }, CHAT_POLL_MS);
       }
+    }
+
+    /**
+     * Hand the chat on screen to the shell, with its attachment chips: they
+     * belong to the target project, not to the view a load built.
+     * @param {object} shell
+     */
+    function showChat(shell) {
+      if (!current || !current.view || !shell) return;
+      current.view = Object.assign({}, current.view, {
+        chat: Object.assign({}, current.view.chat, { attachments: (attachments.get(String(current.project.id)) || []).slice() })
+      });
+      shell.setDetail({ kind: 'conversation', view: current.view });
     }
 
     /** Re-render the chat on screen with a send outcome line. */
@@ -1190,7 +1684,7 @@
       const shell = getShell();
       if (!current || !current.view || !shell) return;
       current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { send: outcome }) });
-      shell.setDetail({ kind: 'conversation', view: current.view });
+      showChat(shell);
     }
 
     /**
@@ -1227,14 +1721,26 @@
      * @returns {Promise<void>}
      */
     async function sendChat(text) {
-      const message = String(text || '').trim();
+      const typed = String(text || '').trim();
       const chat = current;
-      if (!message || !chat || chat.sending || !getShell()) return;
+      if (!chat || chat.sending || !getShell()) return;
+      const files = attachments.get(String(chat.project.id)) || [];
+      const ready = files.filter((a) => a.status === 'ready');
+      const uploading = files.filter((a) => a.status === 'uploading').length;
+      if (!typed && !ready.length && !uploading) return;
       const name = String(chat.project.name || '');
       if (chat.sessionId == null) {
         showSend({ kind: 'error', message: `Not sent: ${name} has no live session.` });
         return;
       }
+      if (uploading) {
+        showSend({ kind: 'error', message: `Not sent: wait for ${uploading} upload${uploading === 1 ? '' : 's'} to finish.` });
+        return;
+      }
+      // Each attachment is referenced by the path the server saved it at, so
+      // the agent can open it; the text and the list are separated by a blank line.
+      const refs = ready.map((a) => `Attached: ${a.relPath}`).join('\n');
+      const message = typed && refs ? `${typed}\n\n${refs}` : (typed || refs);
       chat.sending = true;
       try {
         await deliverChat(chat, message, name);
@@ -1258,6 +1764,7 @@
       // pre-filled and one Enter would send it twice.
       const shellNow = getShell();
       if (sent && shellNow && typeof shellNow.clearChatDraft === 'function') shellNow.clearChatDraft(chat.project.id);
+      if (sent) attachments.delete(String(chat.project.id));
       if (!sent) {
         if (chat === current) showSend({ kind: 'error', message: `Not sent: ${api.lastError || 'the server refused it'}` });
         return;
@@ -1334,10 +1841,13 @@
       stopPolling();
       current = null;
       if (!key) return;
-      if (entering || !projects) {
+      if (entering || !projects || freshNext) {
+        freshNext = false;
         await loadProjects();
         if (mine !== seq) return;
         showProjects(shell);
+        await loadEngineHealth(shell);
+        if (mine !== seq) return;
       }
       if (entering) {
         const scopeId = encodeURIComponent(route.projectId || route.resourceId || 'global');
@@ -1383,6 +1893,101 @@
     }
 
     /**
+     * Attach files to the chat on screen (#3053): each is named for the
+     * secure-clipboard route, refused on its chip when over 5 MB, and
+     * otherwise uploaded into the target project's secrets store
+     * (`POST /api/sessions/:project/secure-clipboard`, with the page's
+     * operator proof), its chip turning ready with the saved path or showing
+     * the server's reason.
+     * @param {Array<{name?: string, size?: number}>} files
+     * @returns {Promise<void>}
+     */
+    async function attachFiles(files) {
+      const chat = current;
+      const shell = getShell();
+      if (!chat || !shell) return;
+      const key = String(chat.project.id);
+      const list = attachments.get(key) || [];
+      attachments.set(key, list);
+      const used = uploadedNames.get(key) || new Set();
+      uploadedNames.set(key, used);
+      // The project's secrets store may hold files from earlier visits too.
+      // If it cannot be listed, no name is known to be free and the route
+      // overwrites a file of the same name, so nothing is uploaded.
+      let stored = null;
+      let listError = null;
+      try {
+        const headers = await operatorHeaders();
+        const res = await api(`/api/sessions/${encodeURIComponent(chat.project.name)}/secure-clipboard`, { method: 'GET', headers });
+        stored = res && Array.isArray(res.files) ? res.files.map((f) => f && f.filename).filter(Boolean) : null;
+        if (stored === null) listError = api.lastError || 'the server did not answer';
+      } catch (err) { // prawduct:allow prawduct/broad-except -- an unreadable listing fails every attachment closed below, with its reason
+        stored = null;
+        listError = (err && err.message) || 'the listing could not be read';
+      }
+      const unverified = stored === null;
+      if (unverified) stored = [];
+      const taken = new Set(list.map((a) => a.name).concat([...used], stored));
+      const uploads = [];
+      (Array.isArray(files) ? files : []).forEach((file) => {
+        const item = { id: ++attachSeq, name: sanitizeUploadName(file && file.name, taken), status: 'uploading' };
+        taken.add(item.name);
+        used.add(item.name);
+        list.push(item);
+        if (!(Number(file && file.size) <= MAX_ATTACH_BYTES)) {
+          item.status = 'error';
+          item.error = 'Over the 5 MB limit for an attachment.';
+          return;
+        }
+        if (unverified) {
+          item.status = 'error';
+          item.error = `Not uploaded: the project's existing attachments could not be checked (${listError}), so a file with this name could be overwritten.`;
+          return;
+        }
+        uploads.push(uploadAttachment(chat.project, key, item, file));
+      });
+      if (chat === current) showChat(shell);
+      await Promise.all(uploads);
+    }
+
+    /**
+     * Upload one attachment and settle its chip, unless the operator has
+     * removed it meanwhile (then the result is dropped).
+     * @returns {Promise<void>}
+     */
+    async function uploadAttachment(project, key, item, file) {
+      let outcome;
+      try {
+        const text = await readFileAsBase64(file);
+        const headers = await operatorHeaders();
+        const res = await api(`/api/sessions/${encodeURIComponent(project.name)}/secure-clipboard`, {
+          method: 'POST', headers, body: JSON.stringify({ text, mode: 'file', filename: item.name, encoding: 'base64' })
+        });
+        outcome = res
+          ? { status: 'ready', relPath: projectRelative(res.relPath, item.name) }
+          : { status: 'error', error: api.lastError || 'The server refused this file.' };
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a file the browser cannot read (permissions, a vanished file) becomes the chip's error, not an unhandled rejection
+        outcome = { status: 'error', error: `Could not read this file: ${err && err.message ? err.message : 'unknown error'}` };
+      }
+      const list = attachments.get(key) || [];
+      const live = list.find((a) => a.id === item.id);
+      if (!live) return;
+      Object.assign(live, outcome);
+      if (current && String(current.project.id) === key) showChat(getShell());
+    }
+
+    /**
+     * Remove the chat on screen's attachment at `index`.
+     * @param {number} index
+     */
+    function removeAttachment(index) {
+      if (!current) return;
+      const list = attachments.get(String(current.project.id)) || [];
+      if (index >= 0 && index < list.length) list.splice(index, 1);
+      showChat(getShell());
+    }
+
+    /**
      * Reload the route on screen with fresh project rows — the chat's
      * Refresh, and what a delegate change needs to take effect.
      * @returns {Promise<void>}
@@ -1397,7 +2002,21 @@
       await loadProjects();
       if (mine !== seq) return;
       showProjects(shell);
+      await loadEngineHealth(shell);
+      if (mine !== seq) return;
       await loadRouteDetail(route, mine);
+    }
+
+    /**
+     * Hand the shell the engines' health for its sidebar badges (#3053); a
+     * failed read leaves the badges' health unknown.
+     * @param {object} shell
+     * @returns {Promise<void>}
+     */
+    async function loadEngineHealth(shell) {
+      if (typeof shell.setEngineHealth !== 'function') return;
+      const res = await api('/api/models/status');
+      if (res && res.status && typeof res.status === 'object') shell.setEngineHealth(res.status);
     }
 
     /**
@@ -1410,6 +2029,66 @@
       if (!projects) return;
       if (typeof shell.setProjects === 'function') shell.setProjects(projects);
       shell.setTree(synthesizeTreeFromProjects(projects));
+    }
+
+    /**
+     * A sidebar link was clicked (#3053): the same route refreshes now; any
+     * other reloads the project rows when its hashchange arrives.
+     * @param {string} hash
+     * @returns {Promise<void>}
+     */
+    async function treeLinkClicked(hash) {
+      const shell = getShell();
+      if (!shell) return;
+      if (String(hash) === routeHash(shell.getRoute())) {
+        await refresh();
+        return;
+      }
+      freshNext = true;
+    }
+
+    /**
+     * Start the chat's offline target (#3053) and reload it in place. A
+     * refusal (stranded wraps to acknowledge, an engine that cannot start)
+     * shows the server's reason, and the banner links to Classic View for the
+     * cases that need its launch dialogs.
+     * @returns {Promise<void>}
+     */
+    async function startSession() {
+      const chat = current;
+      if (!chat || !getShell()) return;
+      showSend({ kind: 'pending', message: `Starting ${chat.project.name}…` });
+      const ok = await apiMutate(`/api/sessions/${encodeURIComponent(chat.project.name)}`, 'POST', {});
+      if (chat !== current) return;
+      if (!ok) {
+        showSend({ kind: 'error', message: `Not started: ${api.lastError || 'the server refused it'}` });
+        return;
+      }
+      await refresh();
+    }
+
+    /**
+     * Start every offline member of the group on screen, one at a time, then
+     * reload and report how many started and why any did not.
+     * @returns {Promise<void>}
+     */
+    async function startFleet() {
+      const chat = current;
+      if (!chat || !getShell()) return;
+      const offline = (chat.ctx && Array.isArray(chat.ctx.members) ? chat.ctx.members : []).filter((m) => m.live === false);
+      if (!offline.length) return;
+      showSend({ kind: 'pending', message: `Starting ${offline.length} session${offline.length === 1 ? '' : 's'}…` });
+      const failures = [];
+      for (const m of offline) {
+        const ok = await apiMutate(`/api/sessions/${encodeURIComponent(m.name)}`, 'POST', {});
+        if (!ok) failures.push(`${m.name}: ${api.lastError || 'the server refused it'}`);
+      }
+      await refresh();
+      const started = offline.length - failures.length;
+      showSend({
+        kind: failures.length ? 'warning' : 'ok',
+        message: `Started ${started} of ${offline.length}.${failures.map((f) => ` ${f}`).join('')}`
+      });
     }
 
     /**
@@ -1444,7 +2123,11 @@
       return tree.length ? routeHash({ view: 'project', projectId: tree[0].id }) : '#/settings/';
     }
 
-    return { handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, getProjects() { return projects; } };
+    return {
+      handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, attachFiles, removeAttachment,
+      startSession, startFleet, treeLinkClicked,
+      getProjects() { return projects; }
+    };
   }
 
   /**
@@ -1460,7 +2143,9 @@
    *   onLaunchTemplate?: (templateId: string) => void,
    *   storage?: {getItem: Function, setItem: Function}|null,
    *   onSendChat?: (text: string) => void, onChangeDelegate?: (nodeId: string, projectId: string) => void,
-   *   onRefreshChat?: () => void, onOpenProjectSettings?: (projectName: string) => void}} opts - `storage`
+   *   onRefreshChat?: () => void, onOpenProjectSettings?: (projectName: string) => void,
+   *   onAttachFiles?: (files: Array<object>) => void, onRemoveAttachment?: (index: number) => void,
+   *   onStartSession?: () => void, onStartFleet?: () => void, onTreeLinkClick?: (hash: string) => void}} opts - `storage`
    *   remembers the sidebar layout (#3046); defaults to the page's `localStorage`,
    *   and `null` keeps it for this page only. The `on*Chat`/delegate/settings
    *   callbacks are the chat view's controls (#3047).
@@ -1468,7 +2153,8 @@
    *   toggleDrawer: (force?: boolean) => void, isDrawerOpen: () => boolean,
    *   toggleSidebar: (force?: boolean) => void, isSidebarCollapsed: () => boolean,
    *   selectGroup: (id: string, additive?: boolean) => void, setProjects: (rows: Array<object>) => void,
-   *   setPeek: (peek: object|null) => void, clearChatDraft: (projectId?: *) => void,
+   *   setEngineHealth: (health: object|null) => void,
+   *   setPeek: (peek: object|null) => void, setLive: (update: object) => void, clearChatDraft: (projectId?: *) => void,
    *   setTree: (tree: Array<*>) => void, setTelemetry: (bar: object|null) => void,
    *   setTemplates: (templates: Array<*>) => void,
    *   setAttestation: (attestation: object|null) => void,
@@ -1490,6 +2176,8 @@
     let sidebarCollapsed = prefs.get('tc_v6_sidebar_collapsed', false, isBoolean);
     let collapsedNodes = new Set(prefs.get('tc_v6_collapsed_nodes', [], isStringArray));
     let projectRows = new Map();
+    // Engine id -> {status}, from /api/models/status, for the sidebar badges (#3053).
+    let engineHealth = {};
     let filterText = '';
     let filterEngine = '';
     let selectedGroups = new Set(prefs.get('tc_v6_selected_groups', [], isStringArray));
@@ -1500,6 +2188,13 @@
     // Unsent composer text per target project, so text meant for one agent
     // never appears in, and is never sent from, another one's chat.
     const chatDrafts = new Map();
+    // #3052: whether the raw-output drawer is open, kept across re-renders,
+    // polls and visits; and which chat was last scrolled to its bottom, so a
+    // chat opens at its newest line once and is then left where the operator puts it.
+    let chatHoodOpen = prefs.get('tc_v6_chat_under_hood_open', false, isBoolean);
+    // The chat whose Start fleet button has been clicked once (#3053).
+    let fleetArmedKey = null;
+    let scrolledChatKey = null;
 
     function readHash() {
       if (typeof options.getHash === 'function') return options.getHash();
@@ -1539,6 +2234,8 @@
       const expandAll = doc.getElementById('v6TreeExpandAll');
       if (expandAll) expandAll.addEventListener('click', () => setCollapsedNodes([]));
       wireChat();
+      wireStart();
+      wireTreeLinks();
       const search = doc.getElementById('v6FilterSearch');
       if (search) {
         search.addEventListener('input', (evt) => {
@@ -1596,6 +2293,52 @@
       if (el && typeof el.focus === 'function') el.focus();
     }
 
+    /**
+     * The chat's start controls (#3053). Start fleet arms on the first
+     * click and starts on the second, within ten seconds: it launches
+     * several agents at once.
+     */
+    function wireStart() {
+      ['v6ChatStart', 'v6ChatStartBanner'].forEach((id) => {
+        const button = doc.getElementById(id);
+        if (button && typeof options.onStartSession === 'function') button.addEventListener('click', () => options.onStartSession());
+      });
+      const fleet = doc.getElementById('v6ChatStartFleet');
+      if (!fleet || typeof options.onStartFleet !== 'function') return;
+      fleet.addEventListener('click', () => {
+        const key = chatTargetKey();
+        if (fleetArmedKey !== key) {
+          fleetArmedKey = key;
+          render();
+          if (typeof global.setTimeout === 'function') {
+            global.setTimeout(() => { if (fleetArmedKey === key) { fleetArmedKey = null; render(); } }, 10000);
+          }
+          return;
+        }
+        fleetArmedKey = null;
+        render();
+        options.onStartFleet();
+      });
+    }
+
+    /** Report every sidebar link click, with its hash, so the page can refresh (#3053). */
+    function wireTreeLinks() {
+      if (typeof options.onTreeLinkClick !== 'function') return;
+      shownTree.forEach((project, pi) => {
+        const report = (id, hash) => {
+          const link = doc.getElementById(id);
+          if (link) link.addEventListener('click', () => options.onTreeLinkClick(hash));
+        };
+        report(`v6TreeLink-p${pi}`, routeHash({ view: 'project', projectId: project.id }));
+        project.fleets.forEach((fleet, fi) => {
+          report(`v6TreeLink-f${pi}-${fi}`, routeHash({ view: 'fleet', projectId: project.id, fleetId: fleet.id }));
+          fleet.members.forEach((m, mi) => {
+            if (m.seatId) report(`v6TreeLink-m${pi}-${fi}-${mi}`, routeHash({ view: 'conversation', resourceId: m.seatId }));
+          });
+        });
+      });
+    }
+
     /** The chat view's own controls (#3047), when the detail pane shows one. */
     function wireChat() {
       const input = doc.getElementById('v6ChatInput');
@@ -1615,6 +2358,14 @@
         form.addEventListener('submit', (evt) => {
           if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
           submitChat();
+        });
+      }
+      wireAttachments();
+      const hood = doc.getElementById('v6ChatUnderHood');
+      if (hood) {
+        hood.addEventListener('toggle', (evt) => {
+          chatHoodOpen = Boolean(evt && evt.target && evt.target.open);
+          prefs.set('tc_v6_chat_under_hood_open', chatHoodOpen);
         });
       }
       const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
@@ -1639,11 +2390,63 @@
       return project && project.id != null ? String(project.id) : null;
     }
 
-    /** Hand the composer's text to the page, unless there is none. */
+    /**
+     * The composer's ways in for files (#3053): the Attach button and its
+     * hidden input, a drop anywhere on the composer, and a paste of files or
+     * a screenshot into the message; plus each chip's remove button.
+     */
+    function wireAttachments() {
+      if (typeof options.onAttachFiles !== 'function') return;
+      const attach = (evt) => {
+        const files = filesFromEvent(evt);
+        if (!files.length) return false;
+        options.onAttachFiles(files);
+        return true;
+      };
+      const input = doc.getElementById('v6ChatFileInput');
+      const button = doc.getElementById('v6ChatAttachBtn');
+      if (button && input) button.addEventListener('click', () => { if (typeof input.click === 'function') input.click(); });
+      if (input) {
+        input.addEventListener('change', (evt) => {
+          attach(evt);
+          if (evt && evt.target) evt.target.value = '';
+        });
+      }
+      const form = doc.getElementById('v6ChatForm');
+      if (form) {
+        form.addEventListener('dragover', (evt) => { if (evt && typeof evt.preventDefault === 'function') evt.preventDefault(); });
+        form.addEventListener('drop', (evt) => {
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          attach(evt);
+        });
+      }
+      const text = doc.getElementById('v6ChatInput');
+      if (text) {
+        // Only a paste that carries files is taken over; pasting text is left alone.
+        text.addEventListener('paste', (evt) => {
+          if (attach(evt) && typeof evt.preventDefault === 'function') evt.preventDefault();
+        });
+      }
+      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      const items = chat && Array.isArray(chat.attachments) ? chat.attachments : [];
+      if (typeof options.onRemoveAttachment === 'function') {
+        items.forEach((_, i) => {
+          const remove = doc.getElementById(`v6ChatAttachRemove-${i}`);
+          if (remove) remove.addEventListener('click', () => options.onRemoveAttachment(i));
+        });
+      }
+    }
+
+    /**
+     * Hand the composer's text to the page, unless there is nothing to send:
+     * no text and no attachment.
+     */
     function submitChat() {
       const input = doc.getElementById('v6ChatInput');
       const text = String((input && typeof input.value === 'string' ? input.value : chatDrafts.get(chatTargetKey())) || '').trim();
-      if (!text || typeof options.onSendChat !== 'function') return;
+      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      const hasFiles = Boolean(chat && Array.isArray(chat.attachments) && chat.attachments.some((a) => a && a.status !== 'error'));
+      if ((!text && !hasFiles) || typeof options.onSendChat !== 'function') return;
       options.onSendChat(text);
     }
 
@@ -1659,13 +2462,24 @@
       const focusId = active && typeof active.id === 'string' && active.id.startsWith('v6') ? active.id : null;
       const selection = focusId && typeof active.selectionStart === 'number'
         ? [active.selectionStart, active.selectionEnd] : null;
-      return { scrollTop: (sidebar && sidebar.scrollTop) || 0, focusId, selection };
+      return {
+        scrollTop: (sidebar && sidebar.scrollTop) || 0, focusId, selection,
+        streamAtBottom: isAtBottom(doc.getElementById('v6ChatStream')),
+        peekAtBottom: isAtBottom(doc.getElementById('v6ChatPeek'))
+      };
     }
 
     /** @param {ReturnType<typeof captureViewState>} saved */
     function restoreViewState(saved) {
       const sidebar = doc.getElementById('v6ShellSidebar');
       if (sidebar && saved.scrollTop) sidebar.scrollTop = saved.scrollTop;
+      // A chat opens at its newest line (#3052); after that it follows new
+      // lines only while the operator is reading the bottom.
+      const key = chatTargetKey();
+      const first = key != null && key !== scrolledChatKey;
+      if (key != null) scrolledChatKey = key;
+      if (first || saved.streamAtBottom) pinToBottom(doc.getElementById('v6ChatStream'));
+      if (first || saved.peekAtBottom) pinToBottom(doc.getElementById('v6ChatPeek'));
       if (!saved.focusId) return;
       const el = doc.getElementById(saved.focusId);
       if (!el || doc.activeElement === el || typeof el.focus !== 'function') return;
@@ -1681,6 +2495,9 @@
       const saved = captureViewState();
       const title = routeTitle(currentRoute);
       shownTree = filterTree(tree, { text: filterText, engine: filterEngine, groups: selectedGroups }, projectRows);
+      // #3053: the template wizard and attestation pills are not chat
+      // content; they stay in the page (and wired) but out of sight.
+      const inChat = Boolean(detail && detail.kind === 'conversation');
       if (root.classList) root.classList.toggle('v6-shell-root--sidebar-collapsed', sidebarCollapsed);
       root.innerHTML = `
         <a id="v6ShellSkipLink" class="v6-shell-skip-link" href="#v6ShellMain">Skip to main content</a>
@@ -1700,7 +2517,11 @@
             activeProjectId: currentRoute.projectId,
             activeFleetId: currentRoute.fleetId,
             activeResourceId: currentRoute.resourceId,
-            collapsed: collapsedNodes
+            collapsed: collapsedNodes,
+            memberInfo: (seatId) => {
+              const row = projectRows.get(String(seatId));
+              return row ? memberIndicators(row, engineHealth) : null;
+            }
           }) : '<p class="v6-sidebar-empty">No projects match these filters.</p>'}
         </nav>
         ${telemetryHeaderMarkup(telemetry)}
@@ -1708,12 +2529,14 @@
           <div class="v6-shell-header">
             ${sidebarCollapsed ? `<button type="button" id="v6SidebarExpand" class="btn btn-secondary v6-sidebar-expand"
               data-action="toggle-sidebar-drawer" aria-controls="v6ShellSidebar" aria-expanded="false">» Show Fleet</button>` : ''}
-            <a id="v6ShellClassicLink" class="btn btn-secondary v6-shell-classic-link" href="#/">← Classic View</a>
             <h1 class="v6-shell-title">${escapeHtml(title)}</h1>
           </div>
-          <div id="v6ShellDetail">${detailMarkup(detail, { draft: chatDrafts.get(chatTargetKey()) || '' })}</div>
-          <div id="v6ShellWizard">${fleetWizardMarkup(templates)}</div>
-          <div id="v6ShellAttestation">${modelAttestationMarkup(attestation)}</div>
+          <div id="v6ShellDetail">${detailMarkup(detail, {
+            draft: chatDrafts.get(chatTargetKey()) || '', hoodOpen: chatHoodOpen,
+            fleetArmed: fleetArmedKey != null && fleetArmedKey === chatTargetKey()
+          })}</div>
+          <div id="v6ShellWizard"${inChat ? ' hidden' : ''}>${fleetWizardMarkup(templates)}</div>
+          <div id="v6ShellAttestation"${inChat ? ' hidden' : ''}>${modelAttestationMarkup(attestation)}</div>
         </main>
         ${watermarkFooterMarkup(showWatermark)}
       `;
@@ -1810,6 +2633,11 @@
       toggleSidebar,
       isSidebarCollapsed() { return sidebarCollapsed; },
       selectGroup,
+      /** @param {Object<string, {status?: string}>|null} health - Engine id -> status (#3053). */
+      setEngineHealth(health) {
+        engineHealth = health && typeof health === 'object' ? health : {};
+        render();
+      },
       setProjects(rows) {
         projectRows = new Map((Array.isArray(rows) ? rows : [])
           .filter((r) => r && r.id != null).map((r) => [String(r.id), r]));
@@ -1826,16 +2654,44 @@
        * @param {{lines?: string[], error?: string}|null} peek
        */
       setPeek(peek) {
+        this.setLive({ peek, live: detail && detail.view && detail.view.chat ? detail.view.chat.live : null });
+      },
+      /**
+       * Replace the chat's live parts only (#3052): its raw output, the
+       * replies extracted from it, the pinned question and the activity
+       * line — never the composer, so a poll every few seconds cannot rebuild
+       * the page under an operator mid-message.
+       * @param {{peek: object|null, live: {turns: Array, question: string|null, activity: string|null}|null}} update
+       */
+      setLive(update) {
         if (!detail || detail.kind !== 'conversation' || !detail.view) return;
+        const peek = update ? update.peek : null;
+        const live = update && update.live ? update.live : null;
+        const name = String((detail.view.project && detail.view.project.name) || '');
         detail = Object.assign({}, detail, {
-          view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { peek }) })
+          view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { peek, live }) })
         });
-        const el = doc.getElementById('v6ChatPeek');
-        if (!el) return;
-        const atBottom = typeof el.scrollHeight === 'number'
-          && el.scrollHeight - (el.scrollTop || 0) - (el.clientHeight || 0) < 8;
-        el.innerHTML = chatPeekMarkup(peek);
-        if (atBottom) el.scrollTop = el.scrollHeight;
+        const peekEl = doc.getElementById('v6ChatPeek');
+        if (peekEl) {
+          const atBottom = isAtBottom(peekEl);
+          peekEl.innerHTML = chatPeekMarkup(peek);
+          if (atBottom) pinToBottom(peekEl);
+        }
+        const stream = doc.getElementById('v6ChatStream');
+        const streamAtBottom = isAtBottom(stream);
+        const liveEl = doc.getElementById('v6ChatLive');
+        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name);
+        if (streamAtBottom) pinToBottom(stream);
+        const q = doc.getElementById('v6ChatQuestion');
+        if (q) {
+          q.innerHTML = chatQuestionInner(live && live.question);
+          q.className = `v6-chat-question${live && live.question ? ' is-asking' : ''}`;
+        }
+        const a = doc.getElementById('v6ChatActivity');
+        if (a) {
+          a.innerHTML = live && live.activity ? escapeHtml(live.activity) : '';
+          a.className = `v6-chat-activity${live && live.activity ? ' is-busy' : ''}`;
+        }
       },
       /**
        * Forget a chat's composer text once it has been sent.
@@ -1872,6 +2728,10 @@
   global.tcV6ResolveRouteProject = resolveRouteProject;
   global.tcV6ResolveDelegateProject = resolveDelegateProject;
   global.tcV6ChatKeyAction = chatKeyAction;
+  global.tcV6ExtractLiveTurns = extractLiveTurns;
+  global.tcV6SanitizeUploadName = sanitizeUploadName;
+  global.tcV6FilesFromEvent = filesFromEvent;
+  global.tcV6MemberIndicators = memberIndicators;
   global.tcV6CreateLiveController = createLiveController;
   global.tcCreateV6Shell = tcCreateV6Shell;
 })(typeof window !== 'undefined' ? window : globalThis);

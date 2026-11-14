@@ -8219,6 +8219,13 @@ if (typeof window.tcCreateV6Shell === 'function') {
     onChangeDelegate(nodeId, projectId) { v6Live.changeDelegate(nodeId, projectId); },
     onRefreshChat() { v6Live.refresh(); },
     onOpenProjectSettings(projectName) { openSettings(projectName); },
+    // #3053: files attached in the chat composer.
+    onAttachFiles(files) { v6Live.attachFiles(files); },
+    onRemoveAttachment(index) { v6Live.removeAttachment(index); },
+    // #3053: start from the chat, and refresh on any sidebar click.
+    onStartSession() { v6Live.startSession(); },
+    onStartFleet() { v6Live.startFleet(); },
+    onTreeLinkClick(hash) { v6Live.treeLinkClicked(hash); },
     onRender(route) {
       const active = Boolean(route && route.view);
       if (v6ShellRoot) v6ShellRoot.classList.toggle('hidden', !active);

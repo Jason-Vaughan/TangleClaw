@@ -696,9 +696,12 @@ describe('tcCreateV6Shell — Classic View link and detail slot (#3022 deliverab
     return { shell, root, win };
   }
 
-  it('renders a "← Classic View" link back to #/', () => {
+  // #3053 removed the inner "← Classic View" link: the page header's
+  // Fleet/Classic switcher (#3046) is the one way back, so the shell no
+  // longer draws a second one. This assertion moved with that requirement.
+  it('draws no inner Classic View link: the page header switcher is the way back (#3053)', () => {
     const { root } = mount();
-    assert.match(root.innerHTML, /id="v6ShellClassicLink"[^>]*href="#\/"[^>]*>← Classic View</);
+    assert.doesNotMatch(root.innerHTML, /v6ShellClassicLink|← Classic View/);
   });
 
   it('setDetail renders into #v6ShellDetail and clears with null', () => {
@@ -984,6 +987,19 @@ describe('page wiring (#3022 deliverable a) — index.html and ui.js', () => {
     assert.match(block, /onRefreshChat\(\) \{ v6Live\.refresh\(\); \}/);
     assert.match(block, /onOpenProjectSettings\(projectName\) \{ openSettings\(projectName\); \}/);
     assert.match(UI, /^function openSettings\(name, options\) \{/m, 'the settings opener the chat calls exists at top level');
+  });
+
+  it('ui.js wires the chat\'s attachment controls to the live controller (#3053)', () => {
+    const block = UI.slice(UI.indexOf("if (typeof window.tcCreateV6Shell === 'function')"));
+    assert.match(block, /onAttachFiles\(files\) \{ v6Live\.attachFiles\(files\); \}/);
+    assert.match(block, /onRemoveAttachment\(index\) \{ v6Live\.removeAttachment\(index\); \}/);
+  });
+
+  it('ui.js wires Start, Start fleet and the sidebar refresh to the live controller (#3053)', () => {
+    const block = UI.slice(UI.indexOf("if (typeof window.tcCreateV6Shell === 'function')"));
+    assert.match(block, /onStartSession\(\) \{ v6Live\.startSession\(\); \}/);
+    assert.match(block, /onStartFleet\(\) \{ v6Live\.startFleet\(\); \}/);
+    assert.match(block, /onTreeLinkClick\(hash\) \{ v6Live\.treeLinkClicked\(hash\); \}/);
   });
 
   it('ui.js hides the Classic toolbar while the Fleet View shows, and hands the shell its project rows', () => {
@@ -1738,7 +1754,12 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     await m.live.sendChat('hello');
     assert.equal(m.mutateCalls.length, 0);
     assert.match(m.root.innerHTML, /Medusa-INT has no live session/);
-    assert.equal(m.timers.length, 0, 'nothing to poll');
+    // #3053: an offline chat polls its status (to turn Active by itself),
+    // never its pane, which has nothing to show.
+    assert.equal(m.timers.length, 1);
+    const before = m.calls.length;
+    await m.timers[0].fn();
+    assert.deepEqual(m.calls.slice(before), ['/api/sessions/Medusa-INT/status']);
   });
 
   it('polls the live output every 4 s without re-rendering the composer, and stops when the route changes', async () => {
@@ -1947,5 +1968,1027 @@ describe('Hide Fleet / Show Fleet keep keyboard focus (#3046)', () => {
     assert.equal(doc.activeElement, doc.getElementById('v6SidebarExpand'));
     doc.getElementById('v6SidebarExpand').dispatch('click');
     assert.equal(doc.activeElement, doc.getElementById('v6SidebarCollapse'));
+  });
+});
+
+// ── #3052 (Car V623-W1-A): Above-the-Hood turns from a session's live output ──
+// Synthetic pane text per engine, built from the markers #3052 names: no real
+// session content is captured into this repo.
+
+const PANES = {
+  claude: [
+    'When the user wants to wrap up, run the wrap protocol.',
+    '### Medusa consumer contract (read docs/CONSUMER-CONTRACT.md)',
+    '[TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.',
+    '> ship the release',
+    '⏺ I\'ll check the branch first.',
+    '⏺ Bash(git status)',
+    '  ⎿  On branch main',
+    '     nothing to commit',
+    '⏺ The branch is clean.',
+    '  Should I push it?',
+    '╭──────────────────────────────────╮',
+    '│ >                                │',
+    '╰──────────────────────────────────╯',
+    '  ? for shortcuts'
+  ],
+  codex: [
+    'TangleClaw\'d into existence. Reading launch context via tc start next.',
+    '› run the tests',
+    '• Ran npm test',
+    '  └ 12 passing',
+    '▸ Thought for 3s',
+    '• All 12 tests pass.',
+    '⣷ Running command (esc to interrupt)',
+    '───────────────────────────',
+    '› '
+  ],
+  antigravity: [
+    '❯ fix the button',
+    '○ Thought for 4s',
+    '● Ran npm test',
+    '● Explored 3 files',
+    '… 2 more actions …',
+    '● Edited public/ui.js',
+    'The button now confirms on a second click.',
+    'Does that match what you wanted?',
+    '❯ ',
+    'How\'s the CLI experience so far? (1-5)'
+  ],
+  aider: [
+    '> add a test for the empty case',
+    'Tokens: 1.2k sent, 300 received. Cost: $0.01 message.',
+    'Applied edit to test/a.test.js',
+    'I added a regression test for the empty case.',
+    'Commit 1a2b3c4 add empty-case test',
+    '> '
+  ]
+};
+
+describe('tcV6ExtractLiveTurns (#3052)', () => {
+  const G = loadV6Shell();
+  const run = (engine, known) => plain(G.tcV6ExtractLiveTurns(PANES[engine], engine, known || []));
+
+  it('claude: keeps the replies, drops boilerplate, wakes, tool calls and their output, and the prompt box', () => {
+    const out = run('claude');
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'ship the release' },
+      { role: 'assistant', text: 'I\'ll check the branch first.\nThe branch is clean.\nShould I push it?' }
+    ]);
+    assert.equal(out.question, 'Should I push it?');
+    assert.equal(out.activity, null);
+  });
+
+  it('codex: drops Ran/Thought lines and reports the running spinner as activity', () => {
+    const out = run('codex');
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'run the tests' },
+      { role: 'assistant', text: 'All 12 tests pass.' }
+    ]);
+    assert.equal(out.question, null);
+    assert.match(out.activity, /Running command/);
+  });
+
+  it('antigravity: drops ○/● tool lines, the action fold and the CLI survey', () => {
+    const out = run('antigravity');
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'fix the button' },
+      { role: 'assistant', text: 'The button now confirms on a second click.\nDoes that match what you wanted?' }
+    ]);
+    assert.equal(out.question, 'Does that match what you wanted?');
+  });
+
+  it('aider: drops token, applied-edit and commit lines', () => {
+    const out = run('aider');
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'add a test for the empty case' },
+      { role: 'assistant', text: 'I added a regression test for the empty case.' }
+    ]);
+  });
+
+  it('a prompt already recorded as a user event is not repeated', () => {
+    const out = run('claude', ['ship the release']);
+    assert.deepEqual(out.turns.map((t) => t.role), ['assistant']);
+  });
+
+  it('a question the operator has already answered is no longer pinned', () => {
+    const lines = PANES.antigravity.slice(0, 8).concat(['❯ yes, ship it', 'Shipping now.']);
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'antigravity', []));
+    assert.equal(out.question, null);
+    assert.equal(out.turns[out.turns.length - 1].text, 'Shipping now.');
+  });
+
+  it('strips terminal colour codes and keeps any line it does not recognise', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['> hi', '\u001b[32mHello there\u001b[0m', 'An unusual line: 42%'], 'claude', []));
+    assert.deepEqual(out.turns[1], { role: 'assistant', text: 'Hello there\nAn unusual line: 42%' });
+  });
+
+  it('an unknown engine uses every engine\'s markers; empty or malformed input yields nothing', () => {
+    assert.deepEqual(run('antigravity').turns, plain(G.tcV6ExtractLiveTurns(PANES.antigravity, 'mystery', [])).turns);
+    assert.deepEqual(plain(G.tcV6ExtractLiveTurns(null, 'claude', [])), { turns: [], question: null, activity: null });
+    assert.deepEqual(plain(G.tcV6ExtractLiveTurns([null, 7, '   '], 'claude', [])).turns, []);
+  });
+
+  it('activity is reported only while the busy marker is the latest thing on screen', () => {
+    const settled = PANES.codex.slice(0, 6).concat(['• Done. Anything else?', '› ']);
+    assert.equal(plain(G.tcV6ExtractLiveTurns(settled, 'codex', [])).activity, null);
+    const thinking = ['> go', '✶ Thinking… (esc to interrupt)'];
+    assert.match(plain(G.tcV6ExtractLiveTurns(thinking, 'claude', [])).activity, /Thinking/);
+  });
+});
+
+describe('Above-the-Hood chat view (#3052)', () => {
+  const G = loadV6Shell();
+  const view = (chat, extra) => Object.assign({
+    project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1592,
+    events: [{ seq: 1, role: 'user', content: 'ship the release' }],
+    chat: Object.assign({ mode: 'delegate', nodeId: 'tc-lane', nodeName: 'TC-Lane', status: 'active', members: [] }, chat || {})
+  }, extra || {});
+
+  it('shows live assistant turns as ASSISTANT (<project>) bubbles after the recorded events', () => {
+    const html = G.tcV6ConversationViewMarkup(view({ live: { turns: [{ role: 'assistant', text: 'The branch is clean.' }], question: null, activity: null } }));
+    assert.match(html, /<ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns"[^>]*><li class="v6-conversation-event is-assistant is-live">/);
+    assert.match(html, /<span class="v6-conversation-role">assistant <span class="v6-conversation-who">\(TC-Lane-PM\)<\/span><\/span>/);
+    assert.match(html, /The branch is clean\./);
+    assert.ok(html.indexOf('ship the release') < html.indexOf('The branch is clean.'), 'recorded events come first');
+  });
+
+  it('pins the question the assistant is waiting on, and shows what it is busy doing, above the composer', () => {
+    const html = G.tcV6ConversationViewMarkup(view({ live: { turns: [], question: 'Should I <push>?', activity: 'Running command' } }));
+    assert.match(html, /<div id="v6ChatQuestion" class="v6-chat-question is-asking"[^>]*>[\s\S]*Should I &lt;push&gt;\?/);
+    assert.match(html, /<p id="v6ChatActivity" class="v6-chat-activity is-busy"[^>]*>Running command<\/p>/);
+    assert.ok(html.indexOf('v6ChatQuestion') < html.indexOf('v6ChatForm'));
+  });
+
+  it('keeps empty question and activity slots, so a poll can fill them in place', () => {
+    const html = G.tcV6ConversationViewMarkup(view({ live: null }));
+    assert.match(html, /<div id="v6ChatQuestion" class="v6-chat-question"[^>]*><\/div>/);
+    assert.match(html, /<p id="v6ChatActivity" class="v6-chat-activity"[^>]*><\/p>/);
+    assert.match(html, /<ol id="v6ChatLive"[^>]*><\/ol>/);
+  });
+
+  it('puts the raw output in a collapsed Under the Hood drawer, open only when asked', () => {
+    const closed = G.tcV6ConversationViewMarkup(view({ peek: { lines: ['$ ok'] } }));
+    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\)<\/summary>\s*<pre id="v6ChatPeek"/);
+    assert.match(G.tcV6ConversationViewMarkup(view({ peek: { lines: [] }, hoodOpen: true })), /<details id="v6ChatUnderHood" class="v6-chat-under-hood" open>/);
+  });
+
+  it('wraps both streams in one scroll container', () => {
+    assert.match(G.tcV6ConversationViewMarkup(view()), /<div id="v6ChatStream" class="v6-chat-stream"[^>]*>\s*<ol class="v6-conversation-stream"/);
+  });
+
+  it('with no recorded events but live turns, shows the turns instead of "no events"', () => {
+    const html = G.tcV6ConversationViewMarkup(view({ live: { turns: [{ role: 'assistant', text: 'hi' }] } }, { events: [] }));
+    assert.doesNotMatch(html, /No conversation events recorded/);
+    assert.match(html, /is-live/);
+  });
+});
+
+describe('Above-the-Hood chat, live in the shell (#3052)', () => {
+  function mountLiveChat(peeks) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('#/projects/tc-lane');
+    let n = 0;
+    const rows = [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }, { id: 10, name: 'TC-Lane-A', engine: { id: 'claude' } }];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: rows };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
+      if (url === '/api/v6/projects/12/sessions/1592/conversation/events') return { events: [{ seq: 1, role: 'user', content: 'ship the release' }] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: peeks[Math.min(n++, peeks.length - 1)] };
+      return null;
+    };
+    const timers = [];
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => ({ ok: true }), storage: null,
+      setInterval: (fn, ms) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: win, storage: null, onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    return { shell, root, doc, timers, settle };
+  }
+
+  it('extracts the reply from the peek with the project\'s engine, without repeating the recorded prompt', async () => {
+    const m = mountLiveChat([PANES.claude]);
+    await m.settle();
+    assert.match(m.root.innerHTML, /is-live[\s\S]*The branch is clean\./);
+    // The raw drawer shows the pane as it is; the conversation must not repeat the prompt.
+    const html = m.root.innerHTML;
+    const conversation = html.slice(html.indexOf('id="v6ChatStream"'), html.indexOf('id="v6ChatUnderHood"'));
+    assert.equal((conversation.match(/ship the release/g) || []).length, 1, 'the recorded prompt is not shown twice');
+    assert.match(m.root.innerHTML, /v6-chat-question is-asking[\s\S]*Should I push it\?/);
+  });
+
+  it('a poll updates the live turns, question and activity in place, leaving the composer alone', async () => {
+    const m = mountLiveChat([PANES.claude, ['> ship the release', '⏺ Pushing now.', '✶ Thinking… (esc to interrupt)']]);
+    await m.settle();
+    const input = m.doc.getElementById('v6ChatInput');
+    await m.timers[0]();
+    assert.match(m.doc.getElementById('v6ChatLive').innerHTML, /Pushing now\./);
+    assert.equal(m.doc.getElementById('v6ChatQuestion').innerHTML, '');
+    assert.match(m.doc.getElementById('v6ChatActivity').innerHTML, /Thinking/);
+    assert.equal(m.doc.getElementById('v6ChatInput'), input);
+  });
+
+  it('the Under the Hood drawer stays open across re-renders once the operator opens it', async () => {
+    const m = mountLiveChat([PANES.claude]);
+    await m.settle();
+    const hood = m.doc.getElementById('v6ChatUnderHood');
+    hood.open = true;
+    hood.dispatch('toggle');
+    m.shell.setTelemetry(null);
+    assert.match(m.root.innerHTML, /<details id="v6ChatUnderHood" class="v6-chat-under-hood" open>/);
+  });
+
+  it('scrolls the conversation and the raw output to the bottom on first render', async () => {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const realGet = doc.getElementById;
+    doc.getElementById = (id) => {
+      const el = realGet(id);
+      if (el && (id === 'v6ChatStream' || id === 'v6ChatPeek') && el.scrollHeight === undefined) {
+        el.scrollHeight = 900; el.clientHeight = 300; el.scrollTop = 0;
+      }
+      return el;
+    };
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/tc-lane'), storage: null });
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [],
+      chat: { status: 'active', peek: { lines: ['x'] } } } });
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 900);
+    assert.equal(doc.getElementById('v6ChatPeek').scrollTop, 900);
+  });
+});
+
+// ── #3053 (Car V623-W1-A): attachments in the chat composer ──
+
+describe('tcV6SanitizeUploadName (#3053)', () => {
+  const G = loadV6Shell();
+  const clean = (name, taken) => G.tcV6SanitizeUploadName(name, new Set(taken || []));
+
+  it('turns a browser file name into one the secure-clipboard route accepts', () => {
+    assert.equal(clean('Screenshot 2026-11-13 at 10.00 AM.png'), 'Screenshot-2026-11-13-at-10.00-AM.png');
+    assert.equal(clean('../etc/passwd'), 'etc-passwd');
+    assert.equal(clean('café notes (v2).txt'), 'caf-notes-v2.txt');
+  });
+
+  it('never yields an empty, dot-only or over-long name', () => {
+    assert.equal(clean(''), 'attachment');
+    assert.equal(clean('..'), 'attachment');
+    assert.equal(clean('???'), 'attachment');
+    const long = clean(`${'a'.repeat(200)}.png`);
+    assert.equal(long.length, 128);
+    assert.match(long, /\.png$/);
+    for (const name of ['Screenshot 1.png', '../x', '..', '']) assert.match(clean(name), /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,128}$/);
+  });
+
+  it('suffixes a name already taken in the same chat', () => {
+    assert.equal(clean('a.png', ['a.png']), 'a-2.png');
+    assert.equal(clean('a.png', ['a.png', 'a-2.png']), 'a-3.png');
+    assert.equal(clean('README', ['README']), 'README-2');
+  });
+});
+
+describe('tcV6FilesFromEvent (#3053)', () => {
+  const G = loadV6Shell();
+  it('reads files from a drop, a paste (files or file items) and a file input; nothing else', () => {
+    const f = { name: 'a.png', size: 3 };
+    assert.equal(G.tcV6FilesFromEvent({ dataTransfer: { files: [f] } }).length, 1);
+    assert.equal(G.tcV6FilesFromEvent({ clipboardData: { files: [f] } }).length, 1);
+    assert.equal(G.tcV6FilesFromEvent({ clipboardData: { files: [], items: [{ kind: 'file', getAsFile: () => f }, { kind: 'string' }] } }).length, 1);
+    assert.equal(G.tcV6FilesFromEvent({ target: { files: [f, f] } }).length, 2);
+    assert.equal(G.tcV6FilesFromEvent({ clipboardData: { files: [], items: [{ kind: 'string' }] } }).length, 0);
+    assert.equal(G.tcV6FilesFromEvent(null).length, 0);
+  });
+});
+
+describe('chat composer attachment markup (#3053)', () => {
+  const G = loadV6Shell();
+  const v = (chat) => ({ project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [],
+    chat: Object.assign({ status: 'active' }, chat || {}) });
+
+  it('offers an Attach button and a hidden multi-file input inside the composer', () => {
+    const html = G.tcV6ConversationViewMarkup(v());
+    assert.match(html, /<button type="button" id="v6ChatAttachBtn" class="btn btn-secondary btn-small v6-chat-attach-btn"[^>]*>📎 Attach<\/button>/);
+    assert.match(html, /<input type="file" id="v6ChatFileInput" class="v6-chat-file-input" multiple hidden>/);
+  });
+
+  it('shows one removable chip per attachment, with its state, escaped', () => {
+    const html = G.tcV6ConversationViewMarkup(v({ attachments: [
+      { name: 'a.png', status: 'ready', relPath: '.tangleclaw/secrets/a.png' },
+      { name: '<b>.txt', status: 'uploading' },
+      { name: 'big.mov', status: 'error', error: 'over 5 MB' }
+    ] }));
+    assert.match(html, /<div id="v6ChatAttachments" class="v6-chat-attachments"/);
+    assert.match(html, /class="v6-chat-chip is-ready"[^>]*>a\.png/);
+    assert.match(html, /class="v6-chat-chip is-uploading"[^>]*>&lt;b&gt;\.txt/);
+    assert.match(html, /class="v6-chat-chip is-error"[^>]*title="over 5 MB"/);
+    assert.match(html, /<button type="button" id="v6ChatAttachRemove-2" class="v6-chat-chip-remove" aria-label="Remove big\.mov">×<\/button>/);
+    assert.doesNotMatch(html, /<b>\.txt/);
+  });
+
+  // Attaching saves files into the project; only sending needs a live
+  // session, so files can be attached first and sent once the chat is started.
+  it('an offline target can still take attachments, while sending stays disabled', () => {
+    const html = G.tcV6ConversationViewMarkup(v({ status: 'offline' }));
+    assert.doesNotMatch(html, /id="v6ChatAttachBtn"[^>]*disabled/);
+    assert.match(html, /<button type="submit" id="v6ChatSend"[^>]*disabled/);
+  });
+});
+
+describe('chat attachments, end to end through the shell and controller (#3053)', () => {
+  function mountUploads(opts) {
+    const o = opts || {};
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow(o.initialHash || '#/projects/tc-lane');
+    const rows = [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }, { id: 10, name: 'TC-Lane-A', engine: { id: 'claude' } }];
+    const posts = [];
+    let release = null;
+    const api = async (url, init) => {
+      // The real listing route: an empty secrets store.
+      if (init && init.method === 'GET' && /\/secure-clipboard$/.test(url)) return { files: [] };
+      if (init && init.method === 'POST') {
+        posts.push({ url, headers: plain(init.headers), body: JSON.parse(init.body) });
+        if (o.hold) await new Promise((r) => { release = r; });
+        if (o.refuse) { api.lastError = 'Sign in to send a secret into a project session'; return null; }
+        const b = JSON.parse(init.body);
+        // The real route's shape: relPath is relative to the project's .tangleclaw/ directory.
+        return { ok: true, mode: 'file', relPath: `secrets/${b.filename}`, bytes: 3 };
+      }
+      if (url === '/api/projects') return { projects: rows };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
+      if (url === '/api/sessions/TC-Lane-A/status') return { active: true, sessionId: 1660 };
+      if (/\/conversation\/events/.test(url)) return { events: [] };
+      return null;
+    };
+    const mutateCalls = [];
+    const apiMutate = async (url, method, body) => { mutateCalls.push({ url, body: plain(body) }); return { ok: true }; };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({
+      getShell: () => shell, api, apiMutate, storage: null,
+      readFileAsBase64: async (file) => Buffer.from(file.content || 'abc').toString('base64'),
+      operatorHeaders: async () => ({ 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' })
+    });
+    shell = G.tcCreateV6Shell(doc, {
+      root, window: win, storage: null,
+      onRender: (r) => pending.push(live.handleRoute(r)),
+      onSendChat: (t) => pending.push(live.sendChat(t)),
+      onAttachFiles: (files) => pending.push(live.attachFiles(files)),
+      onRemoveAttachment: (i) => pending.push(live.removeAttachment(i))
+    });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    const pick = (files) => { const input = doc.getElementById('v6ChatFileInput'); input.files = files; input.dispatch('change'); };
+    return { shell, root, doc, win, live, posts, mutateCalls, settle, pick, release: () => release && release() };
+  }
+
+  it('a picked file is uploaded to the project with operator proof, then becomes a ready chip', async () => {
+    const m = mountUploads();
+    await m.settle();
+    m.pick([{ name: 'Screen Shot.png', size: 3, content: 'png' }]);
+    await m.settle();
+    assert.equal(m.posts.length, 1);
+    assert.equal(m.posts[0].url, '/api/sessions/TC-Lane-PM/secure-clipboard');
+    assert.deepEqual(m.posts[0].body, { text: Buffer.from('png').toString('base64'), mode: 'file', filename: 'Screen-Shot.png', encoding: 'base64' });
+    assert.equal(m.posts[0].headers['X-TC-Open-Token'], 'tok');
+    assert.match(m.root.innerHTML, /v6-chat-chip is-ready[^>]*>Screen-Shot\.png/);
+  });
+
+  it('sending appends one Attached line per ready file, and the chips clear once it is sent', async () => {
+    const m = mountUploads();
+    await m.settle();
+    m.pick([{ name: 'a.png', size: 3 }, { name: 'b.txt', size: 3 }]);
+    await m.settle();
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'look at these';
+    input.dispatch('input');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.settle();
+    assert.equal(m.mutateCalls[0].body.command, 'look at these\n\nAttached: .tangleclaw/secrets/a.png\nAttached: .tangleclaw/secrets/b.txt');
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-chip/);
+  });
+
+  it('attachments alone can be sent, with no text', async () => {
+    const m = mountUploads();
+    await m.settle();
+    m.pick([{ name: 'a.png', size: 3 }]);
+    await m.settle();
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.settle();
+    assert.equal(m.mutateCalls[0].body.command, 'Attached: .tangleclaw/secrets/a.png');
+  });
+
+  it('a file over 5 MB is refused on the chip and never uploaded', async () => {
+    const m = mountUploads();
+    await m.settle();
+    m.pick([{ name: 'big.mov', size: 5 * 1024 * 1024 + 1 }]);
+    await m.settle();
+    assert.equal(m.posts.length, 0);
+    assert.match(m.root.innerHTML, /v6-chat-chip is-error[^>]*title="Over the 5 MB limit for an attachment\."/);
+  });
+
+  it('an upload the server refuses shows its reason on the chip, and is not referenced in a send', async () => {
+    const m = mountUploads({ refuse: true });
+    await m.settle();
+    m.pick([{ name: 'a.png', size: 3 }]);
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-chip is-error[^>]*title="Sign in to send a secret into a project session"/);
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'hi';
+    input.dispatch('input');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.settle();
+    assert.equal(m.mutateCalls[0].body.command, 'hi');
+  });
+
+  it('sending while a file is still uploading waits, and says why', async () => {
+    const m = mountUploads({ hold: true });
+    await m.settle();
+    m.pick([{ name: 'a.png', size: 3 }]);
+    await new Promise((r) => setImmediate(r));
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'hi';
+    input.dispatch('input');
+    await m.live.sendChat('hi');
+    assert.equal(m.mutateCalls.length, 0);
+    assert.match(m.root.innerHTML, /is-error[^>]*>Not sent: wait for 1 upload to finish\./);
+    m.release();
+    await m.settle();
+  });
+
+  it('a removed chip is gone, and an upload that finishes after its removal is discarded', async () => {
+    const m = mountUploads({ hold: true });
+    await m.settle();
+    m.pick([{ name: 'a.png', size: 3 }]);
+    await new Promise((r) => setImmediate(r));
+    m.doc.getElementById('v6ChatAttachRemove-0').dispatch('click');
+    m.release();
+    await m.settle();
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-chip/);
+  });
+
+  it('attachments belong to their chat and do not follow the operator to another one', async () => {
+    const m = mountUploads();
+    await m.settle();
+    m.pick([{ name: 'a.png', size: 3 }]);
+    await m.settle();
+    m.win.location.hash = '#/resources/10/conversation';
+    await m.settle();
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-chip/);
+    m.win.location.hash = '#/projects/tc-lane';
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-chip is-ready[^>]*>a\.png/);
+  });
+
+  it('two files with the same name in one chat get distinct names', async () => {
+    const m = mountUploads();
+    await m.settle();
+    m.pick([{ name: 'a.png', size: 3 }, { name: 'a.png', size: 3 }]);
+    await m.settle();
+    assert.deepEqual(m.posts.map((p) => p.body.filename), ['a.png', 'a-2.png']);
+  });
+});
+
+// ── #3053 (Car V623-W1-A): start from the chat, refresh, delegate recognition, chrome ──
+
+describe('chat start controls and delegate recognition markup (#3053)', () => {
+  const G = loadV6Shell();
+  const base = (chat, extra) => Object.assign({
+    project: { id: 12, name: 'TC-Lane-PM' }, sessionId: null,
+    chat: Object.assign({ mode: 'delegate', nodeId: 'tc-lane', nodeName: 'TC-Lane', status: 'offline',
+      members: [{ id: '10', name: 'TC-Lane-A', live: true }, { id: '12', name: 'TC-Lane-PM', live: false }, { id: '14', name: 'TC-Lane-B', live: false }] }, chat || {})
+  }, extra || {});
+
+  it('an offline target offers Start in the header and the offline banner, plus the Classic launcher', () => {
+    const html = G.tcV6ConversationViewMarkup(base());
+    assert.match(html, /<button type="button" id="v6ChatStart" class="btn btn-primary btn-small v6-chat-start" data-action="start-chat-session">▶ Start TC-Lane-PM<\/button>/);
+    assert.match(html, /<p class="v6-chat-offline">TC-Lane-PM has no live session\.[\s\S]*id="v6ChatStartBanner"[^>]*data-action="start-chat-session"/);
+    // Classic's launch link needs an intent token (#2124), so the chat links
+    // to Classic View itself and says so, rather than to a launcher it cannot open.
+    assert.match(html, /<a class="v6-chat-classic-launch" href="#\/">Open Classic View to launch TC-Lane-PM<\/a>/);
+    assert.doesNotMatch(html, /\?launch=/);
+  });
+
+  it('a live target offers no Start for itself (a group may still offer Start for its offline members)', () => {
+    assert.doesNotMatch(G.tcV6ConversationViewMarkup(base({ status: 'active' }, { sessionId: 1 })), /id="v6ChatStart"|v6ChatStartBanner/);
+  });
+
+  it('a group with offline members offers Start for them, counted, and asks again before starting', () => {
+    assert.match(G.tcV6ConversationViewMarkup(base()),
+      /<button type="button" id="v6ChatStartFleet" class="btn btn-secondary btn-small v6-chat-start-fleet" data-action="start-chat-fleet">▶ Start TC-Lane \(2 offline\)<\/button>/);
+    assert.match(G.tcV6ConversationViewMarkup(base({ fleetArmed: true })), /id="v6ChatStartFleet"[^>]*>Click again to start 2 sessions<\/button>/);
+    const allLive = base({ members: [{ id: '10', name: 'A', live: true }] });
+    assert.doesNotMatch(G.tcV6ConversationViewMarkup(allLive), /v6ChatStartFleet/);
+  });
+
+  it('a direct route whose member is the delegate is shown as the Designated Project Delegate, with the picker', () => {
+    const html = G.tcV6ConversationViewMarkup(base({ mode: 'direct', delegate: { id: '12', name: 'TC-Lane-PM' }, status: 'active' }, { sessionId: 1 }));
+    assert.match(html, /Designated Project Delegate/);
+    assert.match(html, /id="v6ChatDelegate"/);
+    assert.doesNotMatch(html, /Direct Session/);
+  });
+
+  it('a direct route to a member that is not the delegate stays a Direct Session', () => {
+    const html = G.tcV6ConversationViewMarkup(base({ mode: 'direct', delegate: { id: '12', name: 'TC-Lane-PM' }, status: 'active' },
+      { project: { id: 10, name: 'TC-Lane-A' }, sessionId: 1 }));
+    assert.match(html, /Direct Session/);
+    assert.match(html, /Switch to Delegate: TC-Lane-PM/);
+  });
+});
+
+describe('tcCreateV6Shell — chrome in the conversation view (#3053)', () => {
+  it('keeps the template wizard and attestation slots in the page but hidden while a conversation shows', () => {
+    const { shell, root } = mountShell({ tree: TWO_GROUP_TREE, templates: [{ id: 't1', name: 'T', seats: [1] }] });
+    assert.match(root.innerHTML, /<div id="v6ShellWizard">/);
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'x' }, sessionId: null, chat: {} } });
+    assert.match(root.innerHTML, /<div id="v6ShellWizard" hidden>[\s\S]*v6ShellWizardLaunch-t1/);
+    assert.match(root.innerHTML, /<div id="v6ShellAttestation" hidden>/);
+  });
+
+  it('gives every sidebar link a positional id, and reports a click on it with its hash', () => {
+    const clicked = [];
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, onTreeLinkClick: (hash) => clicked.push(hash) });
+    assert.match(root.innerHTML, /class="v6-shell-project[^"]*"[^>]*id="v6TreeLink-p0"/);
+    assert.match(root.innerHTML, /class="v6-shell-fleet[^"]*"[^>]*id="v6TreeLink-f0-0"/);
+    assert.match(root.innerHTML, /class="v6-shell-member-link[^"]*"[^>]*id="v6TreeLink-m1-0-0"/);
+    doc.getElementById('v6TreeLink-p0').dispatch('click');
+    doc.getElementById('v6TreeLink-m1-0-0').dispatch('click');
+    assert.deepEqual(clicked, ['#/projects/tc-lane', '#/resources/21/conversation']);
+  });
+});
+
+describe('start, refresh and offline polling through the live controller (#3053)', () => {
+  function mountStart(opts) {
+    const o = opts || {};
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow(o.initialHash || '#/projects/tc-lane');
+    const live = { 10: true, 12: false, 14: false };
+    const rows = () => [
+      { id: 10, name: 'TC-Lane-A', engine: { id: 'claude' }, session: live[10] ? { active: true } : null },
+      { id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' }, session: live[12] ? { active: true } : null },
+      { id: 14, name: 'TC-Lane-B', engine: { id: 'claude' }, session: live[14] ? { active: true } : null }
+    ];
+    const byName = { 'TC-Lane-A': 10, 'TC-Lane-PM': 12, 'TC-Lane-B': 14 };
+    const calls = [];
+    const api = async (url) => {
+      calls.push(url);
+      if (url === '/api/projects') return { projects: rows() };
+      const st = /^\/api\/sessions\/([^/]+)\/status$/.exec(url);
+      if (st) { const id = byName[decodeURIComponent(st[1])]; return live[id] ? { active: true, sessionId: id * 100 } : { active: false }; }
+      if (/conversation\/events/.test(url)) return { events: [] };
+      return null;
+    };
+    const mutateCalls = [];
+    const apiMutate = async (url, method, body) => {
+      mutateCalls.push({ url, method, body: plain(body) });
+      const m = /^\/api\/sessions\/([^/]+)$/.exec(url);
+      if (m) {
+        const name = decodeURIComponent(m[1]);
+        if (o.refuse && o.refuse[name]) { api.lastError = o.refuse[name]; return null; }
+        live[byName[name]] = true;
+        return { ok: true };
+      }
+      return { ok: true };
+    };
+    api.lastError = null;
+    const timers = [];
+    let shell = null;
+    const pending = [];
+    const ctl = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null,
+      setInterval: (fn, ms) => { timers.push({ fn, ms, cleared: false }); return timers.length - 1; },
+      clearInterval: (id) => { if (timers[id]) timers[id].cleared = true; } });
+    shell = G.tcCreateV6Shell(doc, {
+      root, window: win, storage: null,
+      onRender: (r) => pending.push(ctl.handleRoute(r)),
+      onStartSession: () => pending.push(ctl.startSession()),
+      onStartFleet: () => pending.push(ctl.startFleet()),
+      onTreeLinkClick: (hash) => pending.push(ctl.treeLinkClicked(hash))
+    });
+    pending.push(ctl.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    return { shell, root, doc, win, ctl, calls, mutateCalls, timers, live, settle };
+  }
+
+  it('Start launches the offline target and reloads the chat in place as Active', async () => {
+    const m = mountStart();
+    await m.settle();
+    assert.match(m.root.innerHTML, /is-offline/);
+    m.doc.getElementById('v6ChatStart').dispatch('click');
+    await m.settle();
+    assert.deepEqual(m.mutateCalls[0], { url: '/api/sessions/TC-Lane-PM', method: 'POST', body: {} });
+    assert.match(m.root.innerHTML, /class="v6-chat-pill is-active">Active</);
+  });
+
+  it('a refused start shows the server\'s reason and leaves the chat offline', async () => {
+    const m = mountStart({ refuse: { 'TC-Lane-PM': 'Stranded wraps need acknowledging (STRANDED_WRAPS)' } });
+    await m.settle();
+    m.doc.getElementById('v6ChatStartBanner').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /is-error[^>]*>Not started: Stranded wraps need acknowledging \(STRANDED_WRAPS\)</);
+    assert.match(m.root.innerHTML, /is-offline/);
+  });
+
+  it('Start fleet asks again first, then starts each offline member and reports the result', async () => {
+    const m = mountStart({ refuse: { 'TC-Lane-B': 'no engine' } });
+    await m.settle();
+    m.doc.getElementById('v6ChatStartFleet').dispatch('click');
+    await m.settle();
+    assert.equal(m.mutateCalls.length, 0, 'the first click only arms it');
+    assert.match(m.root.innerHTML, /Click again to start 2 sessions/);
+    m.doc.getElementById('v6ChatStartFleet').dispatch('click');
+    await m.settle();
+    // In the sidebar's member order (by name).
+    assert.deepEqual(m.mutateCalls.map((c) => c.url), ['/api/sessions/TC-Lane-B', '/api/sessions/TC-Lane-PM']);
+    assert.match(m.root.innerHTML, /Started 1 of 2\. TC-Lane-B: no engine/);
+    assert.match(m.root.innerHTML, /class="v6-chat-pill is-active">Active</, 'the PM started, and the chat reloaded');
+  });
+
+  it('an offline chat polls its status and turns Active by itself once the session starts elsewhere', async () => {
+    const m = mountStart();
+    await m.settle();
+    assert.equal(m.timers.length, 1, 'an offline chat polls too');
+    m.live[12] = true;
+    await m.timers[0].fn();
+    await m.settle();
+    assert.match(m.root.innerHTML, /class="v6-chat-pill is-active">Active</);
+  });
+
+  it('re-clicking the route already on screen refreshes it', async () => {
+    const m = mountStart();
+    await m.settle();
+    const reads = () => m.calls.filter((u) => u === '/api/projects').length;
+    const before = reads();
+    m.ctl.treeLinkClicked('#/projects/tc-lane');
+    await m.settle();
+    assert.equal(reads(), before + 1);
+  });
+
+  it('clicking another route reloads the projects for it, so its session state is current', async () => {
+    const m = mountStart();
+    await m.settle();
+    const reads = () => m.calls.filter((u) => u === '/api/projects').length;
+    const before = reads();
+    m.live[14] = true;
+    m.ctl.treeLinkClicked('#/resources/14/conversation');
+    m.win.location.hash = '#/resources/14/conversation';
+    await m.settle();
+    assert.equal(reads(), before + 1);
+    assert.match(m.root.innerHTML, /class="v6-chat-pill is-active">Active</);
+  });
+
+  it('coming back to the Fleet View from Classic reloads the projects (no separate refresh needed)', async () => {
+    const m = mountStart();
+    await m.settle();
+    const reads = () => m.calls.filter((u) => u === '/api/projects').length;
+    const before = reads();
+    m.win.location.hash = '#/';
+    await m.settle();
+    m.win.location.hash = '#/projects/tc-lane';
+    await m.settle();
+    assert.equal(reads(), before + 1);
+  });
+});
+
+// ── #3053 item 4 and the cumulative review's fixes (Car V623-W1-A) ──
+
+describe('tcV6MemberIndicators (#3053 item 4, Option A)', () => {
+  const G = loadV6Shell();
+  const ind = (row, health) => plain(G.tcV6MemberIndicators(row, health || {}));
+  // A live session as lib/projects.js#_liveSession sends it, after
+  // enrichProject fills startupReadiness: the store's status column only
+  // ever says 'active' here; starting and wrapping have their own fields.
+  const live = (over) => ({ session: Object.assign({
+    active: true, status: 'active', startedAt: '2026-11-13T22:00:00Z', tmuxSession: 'tc-x', sessionMode: 'tmux',
+    incomplete: [], cause: null, lastEngineError: null, launchBlocker: null, heldWakeReason: null,
+    startupReadiness: { state: 'ready', step: 4, sequenceId: 1, revision: 1, readyAt: 1 }, wrapping: false
+  }, over || {}) });
+
+  it('reads a member\'s session state from the fields the server actually sends', () => {
+    assert.equal(ind(live()).state, 'live');
+    assert.equal(ind(live({ startupReadiness: { state: 'starting', step: 2 } })).state, 'starting');
+    assert.equal(ind(live({ wrapping: { step: 'commit', since: 1, stale: false } })).state, 'wrapping');
+    assert.match(ind(live({ wrapping: { step: 'commit', since: 1, stale: false } })).title, /commit/);
+    assert.equal(ind({ session: null }).state, 'offline');
+    assert.equal(ind(null).state, 'offline');
+  });
+
+  it('needs attention: a launch blocker, a held wake, an engine error, a startup that needs attention, a stale wrap, or a last session that crashed or left work', () => {
+    const blocked = ind(live({ launchBlocker: { label: 'trust dialog', message: 'folder trust dialog' } }));
+    assert.equal(blocked.state, 'attention');
+    assert.match(blocked.title, /folder trust dialog/);
+    assert.equal(ind(live({ heldWakeReason: 'pane-composer-has-input' })).state, 'attention');
+    assert.equal(ind(live({ lastEngineError: { message: 'rate limit' } })).state, 'attention');
+    const startup = ind(live({ startupReadiness: { state: 'needs-attention', blocker: 'missing-launch-sequence' } }));
+    assert.equal(startup.state, 'attention');
+    assert.match(startup.title, /missing-launch-sequence/);
+    assert.equal(ind(live({ wrapping: { step: 'push', since: 1, stale: true } })).state, 'attention');
+    assert.equal(ind({ session: null, sessionHealth: { status: 'crashed', state: 'clean' } }).state, 'attention');
+    assert.equal(ind({ session: null, sessionHealth: { status: 'wrapped', state: 'left-work' } }).state, 'attention');
+  });
+
+  it('gives each state its glyph', () => {
+    assert.deepEqual([live(), live({ heldWakeReason: 'pane-not-at-rest' }), live({ startupReadiness: { state: 'starting' } }), {}]
+      .map((r) => ind(r).glyph), ['●', '⚠', '◐', '○']);
+  });
+
+  it('reads the Medusa link as on, link-only (wake off) or off', () => {
+    assert.equal(ind({ medusaEnabled: true, medusaWake: true }).medusa, 'on');
+    assert.equal(ind({ medusaEnabled: true, medusaWake: false }).medusa, 'wake-off');
+    assert.equal(ind({ medusaEnabled: false, medusaWake: true }).medusa, 'off');
+    assert.equal(ind({}).medusa, 'off');
+  });
+
+  it('names the engine by a short code and colours it by its health', () => {
+    const health = { claude: { status: 'operational' }, codex: { status: 'degraded' }, antigravity: { status: 'outage' } };
+    assert.deepEqual(ind({ engine: { id: 'claude', name: 'Claude Code' } }, health).engine, { code: 'CC', name: 'Claude Code', health: 'operational' });
+    assert.equal(ind({ engine: { id: 'codex' } }, health).engine.code, 'CX');
+    assert.equal(ind({ engine: { id: 'antigravity' } }, health).engine.health, 'outage');
+    assert.equal(ind({ engine: { id: 'aider' } }, health).engine.code, 'AI');
+    assert.deepEqual(ind({ engine: { id: 'openclaw' } }, health).engine, { code: 'OP', name: 'openclaw', health: 'unknown' });
+    assert.equal(ind({}).engine, null);
+  });
+});
+
+describe('sidebar member status indicators (#3053 item 4)', () => {
+  const ROWS = [
+    { id: 11, name: 'TC-Lane-A', engine: { id: 'claude', name: 'Claude Code' }, session: { active: true, status: 'active', wrapping: false, startupReadiness: { state: 'ready' } }, medusaEnabled: true, medusaWake: true },
+    { id: 12, name: 'TC-Lane-PM', engine: { id: 'codex', name: 'Codex' }, session: { active: true, status: 'active', wrapping: false, launchBlocker: { message: '<held> by INT' } }, medusaEnabled: true, medusaWake: false },
+    { id: 21, name: 'Medusa-PM', engine: { id: 'aider' }, session: null }
+  ];
+
+  it('styles each member by its session state and adds the link and engine symbols beside it', () => {
+    const { shell, root } = mountShell({ tree: TWO_GROUP_TREE });
+    shell.setProjects(ROWS);
+    shell.setEngineHealth({ claude: { status: 'operational' }, codex: { status: 'degraded' } });
+    const html = root.innerHTML;
+    assert.match(html, /class="v6-shell-member-link is-live[^"]*"[\s\S]{0,200}<span class="v6-member-glyph" aria-hidden="true">●<\/span>TC-Lane-A \(11\)/);
+    assert.match(html, /class="v6-shell-member-link is-attention[^"]*"[^>]*title="Needs attention: &lt;held&gt; by INT"/);
+    assert.match(html, /class="v6-shell-member-link is-offline/);
+    assert.match(html, /<span class="v6-member-indicators"><span class="v6-member-link-status is-on" title="Medusa link and wake on">🔗<\/span><span class="v6-member-ai-status is-operational" title="Claude Code: operational">CC<\/span><\/span>/);
+    assert.match(html, /v6-member-link-status is-wake-off" title="Medusa link on, wake off"/);
+    assert.match(html, /v6-member-ai-status is-degraded" title="Codex: degraded">CX</);
+    assert.match(html, /v6-member-link-status is-off" title="Medusa link off"/);
+    assert.match(html, /v6-member-ai-status is-unknown" title="aider: status unknown">AI</);
+  });
+
+  it('a member with no project row is drawn as before, with no indicators', () => {
+    const { root } = mountShell({ tree: TWO_GROUP_TREE });
+    assert.doesNotMatch(root.innerHTML, /v6-member-indicators/);
+  });
+
+  it('the live controller hands the shell the engine health from /api/models/status', async () => {
+    const G = loadV6Shell();
+    const seen = [];
+    const api = async (url) => (url === '/api/projects' ? { projects: [] }
+      : (url === '/api/models/status' ? { status: { claude: { status: 'operational' } } } : null));
+    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setDetail() {}, setProjects() {},
+      setEngineHealth(h) { seen.push(plain(h)); } };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null });
+    await live.handleRoute({ view: 'settings', settingsPath: '' });
+    assert.deepEqual(seen, [{ claude: { status: 'operational' } }]);
+  });
+});
+
+describe('tcV6ExtractLiveTurns keeps ordinary prose (cumulative review)', () => {
+  const G = loadV6Shell();
+  it('a reply mentioning thinking, a running command, tokens used or the context window is kept, not dropped or read as activity', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['> go', 'I was thinking about the plan.', 'Running command line tools is fine.',
+      'We have used 10k tokens so far.', 'The context window is large.'], 'claude', []));
+    assert.equal(out.turns[1].text, 'I was thinking about the plan.\nRunning command line tools is fine.\nWe have used 10k tokens so far.\nThe context window is large.');
+    assert.equal(out.activity, null);
+  });
+
+  it('an indented line under a status or boilerplate line is kept; only a tool line hides what is indented under it', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['> go', '[TangleClaw Switchboard] wake', '  This reply line is indented.'], 'claude', []));
+    assert.deepEqual(out.turns[1], { role: 'assistant', text: 'This reply line is indented.' });
+  });
+});
+
+describe('tcV6ExtractLiveTurns does not repeat a multi-line or wrapped message (cumulative review)', () => {
+  const G = loadV6Shell();
+  it('a message sent with attachments is recognised by its lines, including its Attached lines', () => {
+    const sent = 'look at these\n\nAttached: .tangleclaw/secrets/a.png';
+    const out = plain(G.tcV6ExtractLiveTurns(['> look at these', 'Attached: .tangleclaw/secrets/a.png', '⏺ Got it.'], 'claude', [sent]));
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Got it.' }]);
+  });
+
+  it('a long prompt the terminal wrapped is recognised by its first line', () => {
+    const sent = 'please review the release notes for v6.2.3 and tell me whether the delegate order reads correctly';
+    const out = plain(G.tcV6ExtractLiveTurns(['> please review the release notes for v6.2.3 and tell', '⏺ It reads correctly.'], 'claude', [sent]));
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'It reads correctly.' }]);
+  });
+});
+
+describe('an upload never overwrites an earlier one (cumulative review)', () => {
+  function mountNames(existing) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('#/projects/tc-lane');
+    const posts = [];
+    const api = async (url, init) => {
+      if (init && init.method === 'POST') { const b = JSON.parse(init.body); posts.push(b.filename); return { ok: true, relPath: `secrets/${b.filename}` }; }
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }, { id: 10, name: 'TC-Lane-A' }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1 };
+      if (url === '/api/sessions/TC-Lane-PM/secure-clipboard') return { files: (existing || []).map((filename) => ({ filename })) };
+      if (/conversation\/events/.test(url)) return { events: [] };
+      return null;
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => ({ ok: true }), storage: null,
+      readFileAsBase64: async () => 'eA==', operatorHeaders: async () => ({}) });
+    shell = G.tcCreateV6Shell(doc, { root, window: win, storage: null, onRender: (r) => pending.push(live.handleRoute(r)),
+      onSendChat: (t) => pending.push(live.sendChat(t)), onAttachFiles: (f) => pending.push(live.attachFiles(f)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    return { live, settle, posts };
+  }
+
+  it('a second pasted image.png after a send gets a new name rather than replacing the first', async () => {
+    const m = mountNames();
+    await m.settle();
+    await m.live.attachFiles([{ name: 'image.png', size: 1 }]);
+    await m.live.sendChat('first');
+    await m.live.attachFiles([{ name: 'image.png', size: 1 }]);
+    await m.settle();
+    assert.deepEqual(m.posts, ['image.png', 'image-2.png']);
+  });
+
+  it('a name already in the project\'s secrets store is not reused', async () => {
+    const m = mountNames(['image.png', 'image-2.png']);
+    await m.settle();
+    await m.live.attachFiles([{ name: 'image.png', size: 1 }]);
+    assert.deepEqual(m.posts, ['image-3.png']);
+  });
+});
+
+describe('tcV6ExtractLiveTurns: the interrupt hint is chrome only in its UI form (cumulative review, R-2)', () => {
+  const G = loadV6Shell();
+  it('a reply that mentions pressing esc to interrupt or cancel is kept and is not read as activity', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['> how do I stop it?', 'Press esc to interrupt the run, or esc to cancel a menu.'], 'claude', []));
+    assert.equal(out.turns[1].text, 'Press esc to interrupt the run, or esc to cancel a menu.');
+    assert.equal(out.activity, null);
+  });
+
+  it('the hint in its UI form is still chrome or activity', () => {
+    assert.match(plain(G.tcV6ExtractLiveTurns(['> go', 'Working (esc to interrupt)'], 'claude', [])).activity, /Working/);
+    assert.deepEqual(plain(G.tcV6ExtractLiveTurns(['> go', 'esc to cancel'], 'claude', [])).turns.length, 1);
+  });
+});
+
+describe('offline status polling does not overlap itself (cumulative review note)', () => {
+  it('a tick that arrives while a slow status read is still running does nothing', async () => {
+    const G = loadV6Shell();
+    let release = null;
+    let statusReads = 0;
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM' }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') {
+        statusReads++;
+        if (statusReads === 1) return { active: false };
+        await new Promise((r) => { release = r; });
+        return { active: false };
+      }
+      return null;
+    };
+    const timers = [];
+    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setDetail() {}, setProjects() {},
+      getRoute: () => ({ view: 'conversation', resourceId: '12' }) };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null,
+      setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
+    await live.handleRoute({ view: 'conversation', resourceId: '12' });
+    const first = timers[0]();
+    await new Promise((r) => setImmediate(r));
+    await timers[0]();
+    assert.equal(statusReads, 2, 'the overlapping tick did not read again');
+    release();
+    await first;
+  });
+});
+
+describe('the secrets-store listing is read with full operator proof (INT R-Gate)', () => {
+  it('the default headers carry the CSRF token as well as the open-install proof, since api() adds CSRF to writes only', async () => {
+    const G = loadV6Shell();
+    G.tcOperatorProofHeaders = async () => ({ 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' });
+    G.tcCsrfToken = () => 'csrf-1';
+    const seen = [];
+    const api = async (url, init) => {
+      if (init && init.method) { seen.push({ url, method: init.method, headers: plain(init.headers) }); return init.method === 'GET' ? { files: [] } : { relPath: 'secrets/a.png' }; }
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM' }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1 };
+      return null;
+    };
+    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setDetail() {}, setProjects() {} };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null, readFileAsBase64: async () => 'eA==' });
+    await live.handleRoute({ view: 'conversation', resourceId: '12' });
+    await live.attachFiles([{ name: 'a.png', size: 1 }]);
+    const get = seen.find((c) => c.method === 'GET');
+    assert.equal(get.url, '/api/sessions/TC-Lane-PM/secure-clipboard');
+    assert.equal(get.headers['X-CSRF-Token'], 'csrf-1');
+    assert.equal(get.headers['X-TC-Open-Token'], 'tok');
+  });
+
+  it('when the listing cannot be read, nothing is uploaded: the chip says why, since a stored file could be overwritten', async () => {
+    const G = loadV6Shell();
+    const posts = [];
+    const api = async (url, init) => {
+      if (init && init.method === 'GET') { api.lastError = 'This request is missing a valid CSRF token.'; return null; }
+      if (init && init.method === 'POST') { posts.push(JSON.parse(init.body).filename); return { relPath: 'secrets/x' }; }
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM' }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1 };
+      return null;
+    };
+    const views = [];
+    const shell = { setTree() {}, setTelemetry() {}, setTemplates() {}, setAttestation() {}, setProjects() {},
+      setDetail(d) { if (d && d.kind === 'conversation') views.push(plain(d.view)); } };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null,
+      readFileAsBase64: async () => 'eA==', operatorHeaders: async () => ({}) });
+    await live.handleRoute({ view: 'conversation', resourceId: '12' });
+    await live.attachFiles([{ name: 'image.png', size: 1 }]);
+    assert.deepEqual(posts, [], 'no upload without a checked listing');
+    const chip = views[views.length - 1].chat.attachments[0];
+    assert.equal(chip.status, 'error');
+    assert.match(chip.error, /could not be checked[\s\S]*missing a valid CSRF token/);
+  });
+});
+
+describe('live turns from the pane are HTML-escaped, on first render and on every poll (Lane C B1)', () => {
+  const HOSTILE_A = '<img src=x onerror=alert(1)> done';
+  const HOSTILE_U = '<script>alert(2)</script>';
+
+  it('the chat markup escapes assistant and user live turns', () => {
+    const G = loadV6Shell();
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [],
+      chat: { status: 'active', live: { turns: [{ role: 'user', text: HOSTILE_U }, { role: 'assistant', text: HOSTILE_A }] } } });
+    assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt; done/);
+    assert.match(html, /&lt;script&gt;alert\(2\)&lt;\/script&gt;/);
+    assert.doesNotMatch(html, /<img src=x|<script>alert/);
+  });
+
+  it('a hostile pane line is escaped when first rendered and when a poll swaps the live turns in', async () => {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    let n = 0;
+    const peeks = [[`> ${HOSTILE_U}`, HOSTILE_A], [`> ${HOSTILE_U}`, `<b>bold</b> ${HOSTILE_A}`]];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1 };
+      if (/conversation\/events$/.test(url)) return { events: [] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: peeks[Math.min(n++, 1)] };
+      return null;
+    };
+    const timers = [];
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null,
+      setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
+      onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    while (pending.length) await pending.shift();
+    const first = root.innerHTML.slice(root.innerHTML.indexOf('id="v6ChatLive"'), root.innerHTML.indexOf('id="v6ChatUnderHood"'));
+    assert.match(first, /&lt;img src=x onerror=alert\(1\)&gt; done/);
+    assert.match(first, /&lt;script&gt;alert\(2\)&lt;\/script&gt;/, 'the unrecorded user prompt too');
+    assert.doesNotMatch(first, /<img src=x|<script>alert/);
+    await timers[0]();
+    const polled = doc.getElementById('v6ChatLive').innerHTML;
+    assert.match(polled, /&lt;b&gt;bold&lt;\/b&gt; &lt;img src=x onerror=alert\(1\)&gt; done/);
+    assert.match(polled, /&lt;script&gt;alert\(2\)&lt;\/script&gt;/);
+    assert.doesNotMatch(polled, /<img src=x|<script>alert|<b>bold/);
+  });
+});
+
+describe('Claude tool-status lines are not reply text (PRR-B R2)', () => {
+  const G = loadV6Shell();
+  it('⏺ Ran / Explored / Edited / Read / Searched / Wrote lines and their indented output are dropped', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['> check it', '⏺ Ran npm test', '  ⎿ 265 tests passed', '⏺ Explored 3 files',
+      '⏺ Edited public/ui.js', '⏺ Read lib/x.js', '⏺ Searched for renderCard', '⏺ Wrote notes.md', '⏺ Everything passes.'], 'claude', []));
+    assert.deepEqual(out.turns, [{ role: 'user', text: 'check it' }, { role: 'assistant', text: 'Everything passes.' }]);
+  });
+
+  it('a reply sentence that happens to start with one of those verbs is kept', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['> how?', '⏺ Read the docs first, then try again.', '⏺ Ranking the options, I prefer B.'], 'claude', []));
+    assert.equal(out.turns[1].text, 'Read the docs first, then try again.\nRanking the options, I prefer B.');
   });
 });
