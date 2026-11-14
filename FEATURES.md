@@ -17,6 +17,13 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.2.3 — Chat replies as bubbles, chat attachments, inline session start and the Medusa-PM contract fallback
+
+- **Chat replies as bubbles** (#3052) — `public/v6-shell.js#extractLiveTurns`: the Project Delegate Chat reads the agent's replies from the session's live output (Claude Code, Codex, Antigravity, Aider), drops boilerplate, wake prompts, `tc` tool blocks, thinking and tool lines and prompt chrome, and shows them as `ASSISTANT` bubbles. A trailing question is pinned above the composer; a one-line indicator shows when the engine is busy; the raw output sits in a collapsible "Under the Hood" drawer.
+- **Chat attachments** (#3053) — `public/v6-shell.js#attachFiles`: drop, paste or 📎 Attach files into the composer; each is uploaded through `POST /api/sessions/:project/secure-clipboard` (5 MB each) and referenced by its `.tangleclaw/secrets/` path. A name already in the store is never overwritten, and nothing is uploaded if the store's listing cannot be read.
+- **Inline start and live status** (#3053) — `▶ Start` for an offline chat, `▶ Start <fleet> (N offline)` on a second click, an offline chat that turns Active when its session starts, and a refresh on every sidebar click. Sidebar members show a state glyph, a Medusa link symbol and an engine-health code (`public/v6-shell.js#memberIndicators`, health from `GET /api/models/status`).
+- **Medusa-PM contract fallback** (#3053) — `lib/sessions.js#_medusaProjectPath`: the Medusa checkout is looked up as `Medusa`, then `Medusa-PM`, and used only if it holds a non-blank consumer contract.
+
 ## v6.2.2 — Fleet View sidebar, Project Delegate Chat and the Medusa update chip fix
 
 - **Fleet View sidebar** (#3046) — `public/v6-shell.js`, `public/style.css`: the main pane sits beside the sidebar; the sidebar scrolls on its own, hides, folds per project and fleet, and filters by text, engine and one or many project pills, all remembered. The Classic/Fleet switcher is in the page header.
