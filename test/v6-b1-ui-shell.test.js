@@ -3426,3 +3426,16 @@ describe('the chat header is one compact row of identity and icons (#3059)', () 
     assert.match(css, /\.v6-chat-icon-btn \{\s*min-width: 44px;/, 'icon buttons keep a 44px target');
   });
 });
+
+describe('the delegate chip escapes the delegate name in its title and accessible name (#3059, Charter A708 guardrail 4)', () => {
+  const G = loadV6Shell();
+  it('a hostile delegate name renders escaped in the title, the aria-label and the text', () => {
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 10, name: 'TC-Lane-A' }, sessionId: 1, events: [],
+      chat: { mode: 'direct', nodeId: 'tc-lane', status: 'active', members: [], delegate: { id: '12', name: '<b>x</b>"' } } });
+    const chip = html.slice(html.indexOf('<a id="v6ChatToDelegate"'), html.indexOf('</a>', html.indexOf('<a id="v6ChatToDelegate"')) + 4);
+    assert.match(chip, /title="Switch to Delegate: &lt;b&gt;x&lt;\/b&gt;&quot;"/);
+    assert.match(chip, /aria-label="Switch to Delegate: &lt;b&gt;x&lt;\/b&gt;&quot;"/);
+    assert.match(chip, /<span aria-hidden="true">⇄<\/span> &lt;b&gt;x&lt;\/b&gt;&quot;<\/a>$/);
+    assert.doesNotMatch(chip, /<b>x/);
+  });
+});
