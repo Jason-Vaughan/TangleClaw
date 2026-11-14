@@ -3877,7 +3877,10 @@ describe('the controller asks before a rename that would orphan engine state (#3
     let rows = [{ id: 12, name: 'TC-Lane-A', engine: { id: 'claude' } }];
     const bodies = [];
     const api = async (url) => (url === '/api/projects' ? { projects: rows } : (/\/status$/.test(url) ? { active: false } : null));
-    const warning = 'WARNING: renaming "/p/TC-Lane-A" to "/p/B" will orphan claude engine state keyed by the old path.\nmv x y\n';
+    // Built by the server's own function, so a change to its wording fails here (cumulative review W4).
+    const warning = require('../lib/workspace-rename-check').renameWarningFor(
+      { hasOrphanRisk: true, affectedEngines: ['claude'], migrationSteps: ['mv ~/.claude/projects/-p-TC-Lane-A ~/.claude/projects/-p-B'] },
+      '/p/TC-Lane-A', '/p/B');
     const apiMutate = async (url, method, body) => {
       bodies.push(JSON.parse(JSON.stringify(body)));
       if (!body.confirmOrphanRisk) { api.lastError = warning; return null; }
@@ -4110,5 +4113,96 @@ describe('the history panel and rename warning are styled for the narrow sidebar
     assert.match(css, /\.v6-history-item \{[^}]*min-height: 44px;[^}]*overflow-wrap: anywhere;/);
     assert.match(css, /\.v6-history-section > div \{\s*white-space: pre-wrap;/);
     assert.match(css, /\.v6-chat-rename-warning \{[^}]*white-space: pre-wrap;/);
+  });
+});
+
+describe('history panel fixes from the cumulative review (#3066)', () => {
+  const chatView = { project: { id: 12, name: 'TC-Lane-A' }, sessionId: 1, events: [], chat: { mode: 'direct', status: 'active', members: [] } };
+
+  it('W1: a transcript flagged for secrets is marked in the list and the snapshot, and its lines are never quoted into chat', () => {
+    const loads = [];
+    const { root, doc, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: chatView }, onHistoryLoad: (f) => loads.push(f) });
+    doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    shell.setHistory({ status: 'ready', mode: 'search', q: 'k', member: 'A', fleet: { name: '', count: 1 },
+      items: [{ member: 'A', sid: '7', date: '', matchCount: 1, secretsFlagged: true, hits: [] }],
+      snapshot: { member: 'A', sid: '7', secretsFlagged: true, secretTypes: ['<aws>'], sections: [{ name: 'Decisions', body: 'Rotate the key.' }],
+        excerpts: [{ loc: 'user', snippet: 'AKIA-SECRET-VALUE' }] } });
+    assert.match(root.innerHTML, /<span class="v6-history-secret" title="Transcript flagged for possible secrets">⚠ secrets<\/span>/);
+    assert.match(root.innerHTML, /<p class="v6-history-secret" role="note">⚠ This transcript was flagged for possible secrets \(&lt;aws&gt;\)\./);
+    doc.getElementById('v6HistoryReference').dispatch('click');
+    assert.match(root.innerHTML, /<textarea id="v6ChatInput"[^>]*>\[A session #7\] Rotate the key\.<\/textarea>/);
+    assert.doesNotMatch(root.innerHTML.slice(root.innerHTML.indexOf('<textarea id="v6ChatInput"')), /AKIA-SECRET-VALUE<\/textarea>/);
+  });
+
+  it('W3: a refresh of the same chat keeps the panel and its snapshot; a rename of the member reloads it', () => {
+    const loads = [];
+    const { doc, shell, root } = mountShell({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: chatView }, onHistoryLoad: (f) => loads.push(f) });
+    doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    assert.equal(loads.length, 1);
+    shell.setHistory({ status: 'ready', mode: 'recents', member: 'TC-Lane-A', fleet: { name: '', count: 1 }, items: [],
+      snapshot: { member: 'TC-Lane-A', sid: '3', sections: [], excerpts: [] } });
+    shell.setDetail({ kind: 'loading' });
+    shell.setDetail({ kind: 'conversation', view: chatView });
+    assert.equal(loads.length, 1, 'no reload for the same chat');
+    assert.match(root.innerHTML, /id="v6HistorySnapshot"/, 'the snapshot survived the refresh');
+    shell.setDetail({ kind: 'conversation', view: Object.assign({}, chatView, { project: { id: 12, name: 'TC-Lane-Alpha' } }) });
+    assert.equal(loads.length, 2, 'a rename reloads');
+  });
+});
+
+describe('the controller drops history answers that a newer request overtook (#3066, cumulative review W2)', () => {
+  it('a slow earlier search never overwrites a newer one, and a late list never closes a snapshot opened after it', async () => {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const rows = [{ id: 11, name: 'TC-Lane-A', engine: { id: 'claude' } }];
+    const gates = {};
+    const hold = (url) => new Promise((resolve) => { gates[url] = resolve; });
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: rows };
+      if (/\/status$/.test(url)) return { active: false };
+      if (url.startsWith('/api/continuity/')) return hold(url);
+      return null;
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/11/conversation'), storage: null, setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    while (pending.length) await pending.shift();
+    doc.getElementById('v6SidebarFutureSlot').dispatch('click');
+    const tick = () => new Promise((r) => setImmediate(r));
+    const slow = live.loadHistory({ scope: 'member', kind: 'summaries', q: 'old' });
+    await tick();
+    const fast = live.loadHistory({ scope: 'member', kind: 'summaries', q: 'new' });
+    await tick();
+    gates['/api/continuity/TC-Lane-A/search?q=new']({ sessions: [{ sid: '2', date: '', matchCount: 1, hits: [] }] });
+    await fast;
+    gates['/api/continuity/TC-Lane-A/search?q=old']({ sessions: [{ sid: '1', date: '', matchCount: 1, hits: [] }] });
+    await slow;
+    assert.match(root.innerHTML, /session #2/);
+    assert.doesNotMatch(root.innerHTML, /session #1/, 'the overtaken answer was dropped');
+    const list = live.loadHistory({ scope: 'member', kind: 'summaries', q: '' });
+    await tick();
+    const open = live.openHistorySession({ member: 'TC-Lane-A', sid: '2', q: '' });
+    await tick();
+    gates['/api/continuity/TC-Lane-A/sessions/2']({ sid: '2', session: {}, summary: { sections: { Decisions: 'kept' } } });
+    await open;
+    gates['/api/continuity/TC-Lane-A/sessions']({ sessions: [] });
+    await list;
+    assert.match(root.innerHTML, /id="v6HistorySnapshot"/, 'the late list did not close the snapshot');
+    const slowOpen = live.openHistorySession({ member: 'TC-Lane-A', sid: '8', q: '' });
+    await tick();
+    const fastOpen = live.openHistorySession({ member: 'TC-Lane-A', sid: '9', q: '' });
+    await tick();
+    gates['/api/continuity/TC-Lane-A/sessions/9']({ sid: '9', session: {}, summary: { sections: { Decisions: 'nine' } } });
+    await fastOpen;
+    gates['/api/continuity/TC-Lane-A/sessions/8']({ sid: '8', session: {}, summary: { sections: { Decisions: 'eight' } } });
+    await slowOpen;
+    assert.match(root.innerHTML, /TC-Lane-A · session #9/, 'the newer session stays open');
+    assert.doesNotMatch(root.innerHTML, /TC-Lane-A · session #8/);
   });
 });

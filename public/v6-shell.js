@@ -480,9 +480,10 @@
         `<span class="v6-history-hit"><span class="v6-history-hit-loc">${escapeHtml(h.loc)}</span> ${escapeHtml(h.line)}</span>`
       )).join('');
       const count = it.matchCount ? ` · ${escapeHtml(it.matchCount)} hit${it.matchCount === 1 ? '' : 's'}` : '';
+      const secret = it.secretsFlagged ? ' <span class="v6-history-secret" title="Transcript flagged for possible secrets">⚠ secrets</span>' : '';
       return `<li class="v6-history-row"><button type="button" id="v6HistoryItem-${i}" class="v6-history-item">
           <span class="v6-history-who">${escapeHtml(it.member)}</span> session #${escapeHtml(it.sid)}
-          <span class="v6-history-date">${escapeHtml(it.date || 'undated')}${count}</span></button>${hits}</li>`;
+          <span class="v6-history-date">${escapeHtml(it.date || 'undated')}${count}${secret}</span></button>${hits}</li>`;
     }).join('');
     const notes = (Array.isArray(data.notes) ? data.notes : []).map((n) => `<p class="v6-history-note">${escapeHtml(n)}</p>`).join('');
     return `<section id="v6HistoryPanel" class="v6-history" aria-label="Chat history and recents">
@@ -532,6 +533,7 @@
       <div class="v6-history-snapshot-head"><strong>${escapeHtml(snap.member)} · session #${escapeHtml(snap.sid)}</strong>
         <span class="v6-history-date">${escapeHtml(snap.date || '')}</span></div>
       ${snap.error ? `<p class="v6-history-note">${escapeHtml(snap.error)}</p>` : sections}
+      ${snap.secretsFlagged ? `<p class="v6-history-secret" role="note">⚠ This transcript was flagged for possible secrets (${escapeHtml((snap.secretTypes || []).join(', ') || 'pattern types only')}). Its lines are shown here but are never copied into a chat.</p>` : ''}
       ${excerpts ? `<div class="v6-history-excerpts">${excerpts}</div>` : ''}${snap.note ? `<p class="v6-history-note">${escapeHtml(snap.note)}</p>` : ''}
       <div class="v6-history-actions">
         <button type="button" id="v6HistoryReference" class="btn btn-primary btn-small"
@@ -543,12 +545,15 @@
 
   /**
    * The text Reference in chat adds to a message (#3066): which member and
-   * session, and a short piece of what it said.
+   * session, and a short piece of what it said (from the wrap summary when
+   * the transcript was flagged for possible secrets).
    * @param {object} snap - A snapshot as {@link historySnapshotMarkup} takes.
    * @returns {string}
    */
   function historyReferenceText(snap) {
-    const first = (Array.isArray(snap.excerpts) && snap.excerpts[0] && snap.excerpts[0].snippet)
+    // A transcript flagged for possible secrets is never quoted into a chat:
+    // its reference falls back to the wrap summary.
+    const first = (!snap.secretsFlagged && Array.isArray(snap.excerpts) && snap.excerpts[0] && snap.excerpts[0].snippet)
       || ((Array.isArray(snap.sections) ? snap.sections : []).map((sec) => String(sec.body || '').split('\n').find((l) => l.trim())).find(Boolean))
       || '';
     const snippet = String(first).replace(/\s+/g, ' ').trim();
@@ -1782,6 +1787,10 @@
     let awaitingReply = null;
     // #3066: what the history panel last showed, so a snapshot keeps the list beside it.
     let historyState = null;
+    // Each history request's generation: an answer that arrives after a
+    // newer request was made is dropped, so a slow search never overwrites a
+    // newer one and a late list never closes a snapshot just opened (#3066).
+    let historyGen = 0;
     // Set when a sidebar click leads to a different route (#3053), so that
     // route reloads the project rows before it shows anything.
     let freshNext = false;
@@ -2417,6 +2426,7 @@
       const chat = current;
       const shell = getShell();
       if (!chat || !shell || typeof shell.setHistory !== 'function') return;
+      const gen = ++historyGen;
       const f = form || {};
       const q = String(f.q || '').trim();
       const targets = historyTargets(f.scope);
@@ -2431,11 +2441,11 @@
           return [];
         }
         return res.sessions.map((s) => ({
-          member, sid: String(s.sid), date: s.date || '', matchCount: Number(s.matchCount) || 0,
+          member, sid: String(s.sid), date: s.date || '', matchCount: Number(s.matchCount) || 0, secretsFlagged: Boolean(s.secretsFlagged),
           hits: (Array.isArray(s.hits) ? s.hits : []).map((h) => ({ loc: String(h.section || h.source || ''), line: String(h.line || '') }))
         }));
       }));
-      if (chat !== current) return;
+      if (chat !== current || gen !== historyGen) return;
       const byDate = (a, b) => String(b.date).localeCompare(String(a.date));
       let items = [].concat(...lists);
       items = q ? items.sort((a, b) => (b.matchCount - a.matchCount) || byDate(a, b)) : items.sort(byDate);
@@ -2459,13 +2469,14 @@
       const chat = current;
       const shell = getShell();
       if (!chat || !shell || typeof shell.setHistory !== 'function' || !pick) return;
+      const gen = ++historyGen;
       const base = `/api/continuity/${encodeURIComponent(pick.member)}/sessions/${encodeURIComponent(pick.sid)}`;
       const q = String(pick.q || '').trim();
       const [detailRes, transcriptRes] = await Promise.all([
         api(base),
         q ? api(`${base}/transcript/search?q=${encodeURIComponent(q)}`) : Promise.resolve(null)
       ]);
-      if (chat !== current) return;
+      if (chat !== current || gen !== historyGen) return;
       const summary = detailRes && detailRes.summary && detailRes.summary.sections ? detailRes.summary.sections : {};
       const snapshot = {
         member: pick.member, sid: String(pick.sid),
@@ -2475,6 +2486,10 @@
           ? transcriptRes.excerpts.slice(0, 5).map((e) => ({ loc: [e.role, e.timestamp].filter(Boolean).join(' · '), snippet: String(e.snippet || '') }))
           : [],
         note: transcriptRes && !transcriptRes.available ? (transcriptRes.reason || 'No transcript captured for this session.') : '',
+        secretsFlagged: Boolean((detailRes && detailRes.transcript && detailRes.transcript.secretsFlagged)
+          || (transcriptRes && transcriptRes.secretsFlagged)),
+        secretTypes: [].concat((detailRes && detailRes.transcript && detailRes.transcript.secretTypes) || [],
+          (transcriptRes && transcriptRes.secretTypes) || []).filter((t, i, all) => all.indexOf(t) === i),
         error: detailRes ? '' : `Could not open this session: ${api.lastError || 'no answer'}`
       };
       historyState = Object.assign({}, historyState, { snapshot });
@@ -2680,6 +2695,10 @@
     let historyOpen = false;
     let historyForm = { scope: 'member', kind: 'summaries', q: '' };
     let historyData = null;
+    // Whose history the panel last asked for (project id and name): a
+    // refresh of the same chat keeps the panel; another member, or this one
+    // renamed, reloads it.
+    let historyFor = null;
     let scrolledChatKey = null;
     // #3057: when the chat on screen became busy, and the 1 s ticker that
     // advances its elapsed time while it stays busy.
@@ -2807,9 +2826,16 @@
       });
     }
 
+    /** @returns {string|null} The chat target's id and name, as the history panel tracks it (#3066). */
+    function historyWho() {
+      const project = detail && detail.kind === 'conversation' && detail.view ? detail.view.project : null;
+      return project && project.id != null ? `${project.id}|${project.name || ''}` : null;
+    }
+
     /** Ask the page for history with the panel's current form (#3066). */
     function requestHistory() {
       if (chatTargetKey() == null || typeof options.onHistoryLoad !== 'function') return;
+      historyFor = historyWho();
       historyData = Object.assign({}, historyData, { status: 'loading', snapshot: null, items: [] });
       render();
       options.onHistoryLoad(Object.assign({}, historyForm));
@@ -2899,8 +2925,9 @@
       }
       // The form stays open, with what was typed, until the page reports
       // the rename done: a refusal must not throw the operator's text away.
-      // Rename anyway confirms the name the warning was about (kept as the
-      // draft, which typing updates), not whatever the field reads now.
+      // Rename anyway sends the kept draft (typing updates it). The orphan
+      // risk belongs to the OLD folder, so the warning holds for any new
+      // name the operator settles on.
       const send = (confirmOrphanRisk) => {
         const project = detail && detail.view ? detail.view.project : null;
         if (!project || typeof options.onRenameProject !== 'function') return;
@@ -3299,10 +3326,11 @@
       setTemplates(nextTemplates) { templates = Array.isArray(nextTemplates) ? nextTemplates : []; render(); },
       setAttestation(nextAttestation) { attestation = nextAttestation || null; render(); },
       setDetail(nextDetail) {
-        const before = chatTargetKey();
         detail = nextDetail || null;
-        // #3066: an open history panel follows the chat to its new target.
-        if (historyOpen && chatTargetKey() !== before && chatTargetKey() != null) {
+        // #3066: an open history panel follows the chat to another member (or
+        // this one renamed); a reload of the same chat, which passes through a
+        // loading view, keeps the list and any snapshot open.
+        if (historyOpen && chatTargetKey() != null && historyWho() !== historyFor) {
           historyData = null;
           requestHistory();
           return;

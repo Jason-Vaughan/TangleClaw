@@ -4299,6 +4299,13 @@ html[data-theme="light"] .tc-bg-watermark img {
   flex-wrap: wrap;
   gap: 6px;
 }
+.v6-history-secret {
+  color: #d4a72c;
+  font-size: 0.85em;
+}
+p.v6-history-secret {
+  margin: 0;
+}
 .v6-chat-rename-warning {
   flex-basis: 100%;
   margin: 0;
