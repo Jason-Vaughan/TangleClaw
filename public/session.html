@@ -70,6 +70,12 @@
       </span>
     </div>
     <div class="banner-actions">
+      <!-- The way into the v6 Fleet Shell from this Classic page (#3065). It
+           starts at the shell's default route and session.js points it at this
+           session's own conversation once the project row loads. It leads the
+           actions so the Wrap/Kill pair stays last (#1478). -->
+      <a class="banner-btn v6-view-toggle" id="sessionV6Link" href="/#/projects/default"
+         title="Switch to Fleet Shell (v6)" aria-label="Switch to Fleet Shell (v6)">Fleet Shell (v6)</a>
       <!-- Project action buttons (#139 Chunk 11b) render here. Populated by
            `renderProjectActions` in session.js after loadProject. -->
       <span id="projectActions" class="project-actions"></span>

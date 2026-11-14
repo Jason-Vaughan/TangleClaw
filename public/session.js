@@ -535,6 +535,13 @@ async function loadProject() {
 
   document.title = `TangleClaw \u2014 ${data.name}`;
 
+  // #3065: open this session's own conversation in the v6 shell, not its
+  // default route, now that the project's id is known.
+  const v6Link = document.getElementById('sessionV6Link');
+  if (v6Link && data.id != null) {
+    v6Link.href = `/#/resources/${encodeURIComponent(data.id)}/conversation`;
+  }
+
   // Render group pills in banner
   renderBannerGroups(data.groups || []);
 

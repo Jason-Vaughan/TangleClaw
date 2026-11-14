@@ -166,6 +166,31 @@ html[data-tc-keyboard] body {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
+/* The way into the v6 Fleet Shell from a Classic page (#3065), in the same
+   green as the dashboard's own switcher. Self-contained on purpose:
+   openclaw-view.html loads this file but not shared-controls.css, so the
+   base .banner-btn rule does not reach it there. */
+.v6-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 2px 8px;
+  border: 1px solid #56d364;
+  border-radius: var(--radius-btn);
+  color: #56d364;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.v6-view-toggle:active { background: rgba(86, 211, 100, 0.12); }
+.v6-view-toggle:focus-visible {
+  outline: 2px solid #56d364;
+  outline-offset: 2px;
+}
 .banner-logo {
   /* 29px matches the Medusa crest heads; uses the tight-cropped /logo-banner.png
      (transparent margin removed) so the serpent fills the frame. Still clears the

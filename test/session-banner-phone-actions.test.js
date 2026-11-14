@@ -131,3 +131,114 @@ describe('#1571 the banner name takes the row\'s free space before it truncates'
     assert.equal(opens, closes, 'braces balance');
   });
 });
+
+/*
+ * #3065 — every Classic page offers a way into the v6 Fleet Shell. The
+ * dashboard has its own switcher (#v6ViewToggleBtn); the Classic session page
+ * and the OpenClaw view now carry a matching link. The session page's link
+ * starts at the shell's default route and is pointed at that session's own
+ * conversation once the project row loads.
+ */
+describe('#3065 a Fleet Shell (v6) link on every Classic page', () => {
+  const vm = require('node:vm');
+  const { liftDeclaration } = require('./helpers/lift');
+  const OPENCLAW_HTML = fs.readFileSync(path.join(PUBLIC, 'openclaw-view.html'), 'utf8');
+  const SESSION_JS = fs.readFileSync(path.join(PUBLIC, 'session.js'), 'utf8');
+
+  /**
+   * The opening tag of the element with `id` in `html`.
+   * @param {string} html
+   * @param {string} id
+   * @returns {string|null}
+   */
+  function openingTag(html, id) {
+    const m = html.match(new RegExp(`<[a-z]+[^>]*\\bid="${id}"[^>]*>`, 's'));
+    return m ? m[0] : null;
+  }
+
+  for (const [page, html, id] of [['session.html', SESSION_HTML, 'sessionV6Link'], ['openclaw-view.html', OPENCLAW_HTML, 'openclawV6Link']]) {
+    it(`markup: ${page} has the link, labelled and pointing at the shell's default route`, () => {
+      const tag = openingTag(html, id);
+      assert.ok(tag, `#${id} is missing from ${page}`);
+      assert.match(tag, /^<a\b/, 'a real link, so it works without script and opens in a new tab on demand');
+      assert.match(tag, /class="banner-btn v6-view-toggle"/);
+      assert.match(tag, /href="\/#\/projects\/default"/);
+      assert.match(tag, /title="Switch to Fleet Shell \(v6\)"/);
+      assert.match(tag, /aria-label="Switch to Fleet Shell \(v6\)"/);
+      assert.ok(html.includes(`${tag}Fleet Shell (v6)</a>`), 'the visible text matches the dashboard switcher');
+    });
+  }
+
+  it('markup: on the session page it leads the banner actions, so Wrap and Kill stay last (#1478)', () => {
+    const actions = SESSION_HTML.indexOf('<div class="banner-actions">');
+    const link = SESSION_HTML.indexOf('id="sessionV6Link"');
+    const endActions = SESSION_HTML.indexOf('<span class="banner-end-actions">');
+    assert.ok(actions > -1 && link > actions, 'inside .banner-actions');
+    assert.ok(link < endActions, 'before the Wrap/Kill pair');
+    assert.ok(link < SESSION_HTML.indexOf('id="projectActions"'), 'ahead of the project actions');
+  });
+
+  it('markup: on the OpenClaw view it sits in the banner row', () => {
+    const row = OPENCLAW_HTML.indexOf('<div class="banner-row">');
+    const link = OPENCLAW_HTML.indexOf('id="openclawV6Link"');
+    const rowEnd = OPENCLAW_HTML.indexOf('</div>', row);
+    assert.ok(row > -1 && link > row && link < rowEnd);
+  });
+
+  it('css: session.css styles the link on its own, because the OpenClaw view does not load shared-controls.css', () => {
+    assert.equal(OPENCLAW_HTML.includes('shared-controls.css'), false, 'premise: if this changes, the rule may lean on .banner-btn');
+    assert.ok(OPENCLAW_HTML.includes('href="/session.css"'), 'premise: the OpenClaw view does load session.css');
+    const body = ruleBody(SESSION_CSS, '.v6-view-toggle');
+    assert.ok(body, 'a .v6-view-toggle rule in session.css');
+    for (const decl of [/border:\s*1px solid #56d364/, /color:\s*#56d364/, /min-height:\s*30px/, /text-decoration:\s*none/, /white-space:\s*nowrap/]) {
+      assert.match(body, decl);
+    }
+    assert.match(ruleBody(SESSION_CSS, '.v6-view-toggle:focus-visible') || '', /outline:\s*2px solid/, 'a visible keyboard focus ring');
+  });
+
+  /**
+   * Run the real `loadProject` from session.js against a project row, with
+   * every other banner renderer stubbed, and return the link it leaves.
+   * @param {object|null} row - What the project API answers
+   * @param {boolean} [withLink] - Whether the page has the link at all
+   * @returns {Promise<{href: string}|null>}
+   */
+  async function loadWith(row, withLink = true) {
+    const link = withLink ? { href: '/#/projects/default' } : null;
+    const el = () => ({ textContent: '', title: '', setAttribute() {} });
+    const elements = { sessionV6Link: link, bannerName: el(), bannerEngine: el() };
+    const ctx = {
+      projectName: 'demo',
+      sessionState: {},
+      api: async () => row,
+      renderCheckoutChip() {}, loadModelStatus: async () => {}, renderModelEffortDivergence() {},
+      renderBannerGroups() {}, renderProjectActions() {},
+      document: { getElementById: (id) => (id in elements ? elements[id] : el()), title: '' },
+      encodeURIComponent
+    };
+    vm.createContext(ctx);
+    vm.runInContext(liftDeclaration(SESSION_JS, 'async function loadProject()'), ctx);
+    vm.runInContext('var _lastCheckoutAt = 0;', ctx);
+    await ctx.loadProject();
+    return link;
+  }
+
+  it('script: once the project loads, the link opens that session\'s own conversation', async () => {
+    const link = await loadWith({ id: 42, name: 'demo', groups: [], actions: [] });
+    assert.equal(link.href, '/#/resources/42/conversation');
+  });
+
+  it('script: the project id is URL-encoded into the route', async () => {
+    const link = await loadWith({ id: 'a/b c?#', name: 'demo', groups: [], actions: [] });
+    assert.equal(link.href, '/#/resources/a%2Fb%20c%3F%23/conversation');
+  });
+
+  it('script: with no id, or no project at all, the link keeps the default route', async () => {
+    assert.equal((await loadWith({ name: 'demo', groups: [], actions: [] })).href, '/#/projects/default');
+    assert.equal((await loadWith(null)).href, '/#/projects/default');
+  });
+
+  it('script: a page without the link loads its project without throwing', async () => {
+    await assert.doesNotReject(loadWith({ id: 7, name: 'demo', groups: [], actions: [] }, false));
+  });
+});
