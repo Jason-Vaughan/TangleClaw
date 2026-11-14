@@ -4,6 +4,13 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.2.3] - 2026-11-13
+
+### Fixed
+- The v6 Project Delegate Chat now shows the agent's replies as conversation bubbles instead of leaving them inside a raw terminal dump (#3052). Replies are read from the session's live output for Claude Code, Codex, Antigravity and Aider, leaving out launch boilerplate, switchboard wake prompts, `tc` tool blocks, thinking and tool-run lines, and the engine's prompt and status chrome; they appear as `ASSISTANT (<project>)` bubbles after the recorded messages. A question the agent is waiting on stays pinned above the composer, and a one-line indicator shows when the engine is thinking or running a tool. The raw output now sits in a collapsed "Under the Hood" drawer that remembers whether it is open, and both the conversation and the raw output open scrolled to their newest line and keep following it while you are at the bottom. The replies are display only; the recorded conversation is unchanged.
+- A session launched on a host where the Medusa checkout is registered as `Medusa-PM` now gets Medusa's consumer contract (`docs/CONSUMER-CONTRACT.md`) in its prime, instead of "Medusa consumer contract — UNAVAILABLE" (#3053). The checkout is looked up as `Medusa` first and then as `Medusa-PM` (case-insensitive, exact name), and either one is used only if it actually holds a non-blank contract, so an unrelated project with either name is still never named or trusted. `MEDUSA_CONTRACT_PATH` still takes priority.
+- Files can now be attached to a v6 chat message by dropping them on the composer, pasting them (screenshots included) into the message, or the 📎 Attach button (#3053). Each file is uploaded into the project's secrets store through the existing secure-clipboard route, shown as a removable chip, and referenced in the sent message by the path the agent can open; a file over 5 MB, or one the server refuses, says why on its chip, and a message waits while a file is still uploading. An offline chat now offers ▶ Start (a refused start shows the server's reason, with a link to Classic View for a start that needs its dialogs), a project or fleet with offline members offers to start them all after a second click, and an offline chat turns Active by itself once its session starts. Clicking any sidebar link, including the one already open, refreshes session state. A lane reached by clicking it directly is shown as the Designated Project Delegate when it is one, and the chat no longer repeats the Classic View link or shows the template and attestation pills.
+
 ## [6.2.2] - 2026-11-13
 
 ### Fixed

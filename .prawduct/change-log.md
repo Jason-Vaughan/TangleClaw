@@ -41,6 +41,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-13 — v6.2.3 release cut (Milestone #70)
+
+<!-- prawduct: type=internal | scope=v623-release -->
+
+- Compiled 3 accepted `changelog.d/` fragments (#3052, and two for #3053: one per Wave 1 car) from PRs #3054 and #3055 into `CHANGELOG.md` section `[6.2.3]` (Fixed, patch tier) using the wrap's own compile/splice/promote functions. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap state. Folded in both Wave 1 change-log entries below, verbatim. Builder Rule #271 cl.3 had kept them out of their feature PRs.
+- PR #3055's entry was written at its first head. Review then changed it in three ways, which its entry does not say. (1) The secrets-store listing GET carries the CSRF token, because `api()` adds it to writes only (INT). (2) If that listing cannot be read, nothing is uploaded and each chip shows the reason, rather than guessing a free name (INT, Arc A698). (3) Claude tool-status lines (`⏺ Ran …`) and their output are dropped (PRR-B). Tests now pin the HTML-escaping of extracted live turns on first render and on a poll (TC-Lane-C). The merged code is the R3 head, bafbd148.
+
+## 2026-11-13 — v6 Above-the-Hood chat, attachments, inline start and member status (#3052, #3053)
+
+<!-- prawduct: type=feature | scope=v623-w1a -->
+
+Car V623-W1-A, Chunks 1-3.
+
+- #3052: the chat reads the session's live output with the project's engine (claude, codex, antigravity, aider) into ASSISTANT bubbles after the recorded events, dropping boilerplate, wakes, tc blocks, thinking/tool lines and chrome (an unrecognised line is kept; busy needs a spinner glyph or the UI-form interrupt hint); echoed prompts match recorded messages by line, prefix and wrapped fragment. A trailing question is pinned, a busy marker becomes an activity pill, and the raw output folds into a persistent Under the Hood drawer; streams open at their newest line. Extracted replies are display only.
+- #3053: drop/paste/Attach uploads to the project's secrets store (sanitized, never-reused names; 5 MB refusal; project-relative Attached lines, since the route's relPath is relative to .tangleclaw/); inline Start and two-click Start fleet; sidebar clicks refresh and offline chats poll their status; sidebar member status indicators (session state from startupReadiness/wrapping/blockers, Medusa link, engine badge by /api/models/status), added to the issue after dispatch; a directly clicked delegate is recognised; inner Classic link removed, wizard/attestation hidden in chat.
+- Tests restated with requirement changes: the inner Classic-link test (now absent) and the offline no-polling assertion (now polls status only).
+
+## 2026-11-13 — Medusa-PM contract fallback (#3053)
+
+<!-- prawduct: type=fix | scope=v623-w1b -->
+
+Car V623-W1-B.
+
+- `_medusaProjectPath` (`lib/sessions.js`) tries `medusa`, then `medusa-pm`, returning the first candidate `medusa.hasContract` corroborates. `Medusa-PM` gets the same #873 vetting as `Medusa`; an uncorroborated `Medusa` is still logged and skipped. `MEDUSA_CONTRACT_PATH` still wins.
+- 7 tests in `test/sessions.test.js`; each rule mutation-checked.
+
 ## 2026-11-13 — v6.2.2 release cut (Milestone #69)
 
 <!-- prawduct: type=internal | scope=v622-release -->

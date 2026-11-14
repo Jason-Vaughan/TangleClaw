@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.2.2 — Fleet View sidebar, Project Delegate Chat and the Medusa update chip fix](v6.2.2.md)
+- [v6.2.3 — Chat replies as bubbles, chat attachments, inline session start and the Medusa-PM contract fallback](v6.2.3.md)
 
 ## Recent releases
+
+- [v6.2.2 — Fleet View sidebar, Project Delegate Chat and the Medusa update chip fix](v6.2.2.md)
 
 - [v6.2.1 — Full-stack soak, adversarial chaos and browser E2E qualification, and the dashboard startup fix](v6.2.1.md)
 
