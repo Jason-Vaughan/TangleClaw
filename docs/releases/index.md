@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.2.4 — Chat replies after tool lines, Show Fleet in the chat, a busy timer and project version and branch badges](v6.2.4.md)
+- [v6.2.5 — The active lane marked in the Fleet sidebar and a one-row icon chat toolbar](v6.2.5.md)
 
 ## Recent releases
+
+- [v6.2.4 — Chat replies after tool lines, Show Fleet in the chat, a busy timer and project version and branch badges](v6.2.4.md)
 
 - [v6.2.3 — Chat replies as bubbles, chat attachments, inline session start and the Medusa-PM contract fallback](v6.2.3.md)
 
