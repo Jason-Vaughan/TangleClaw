@@ -41,6 +41,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-13 — v6.2.4 release cut (Milestone #71)
+
+<!-- prawduct: type=internal | scope=v624-release -->
+
+- Compiled the one accepted `changelog.d/` fragment (#3057) from PR #3058 into `CHANGELOG.md` section `[6.2.4]` (Fixed, patch tier) using the wrap's own compile/splice/promote functions. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap state. Folded in PR #3058's change-log entry below, verbatim. Builder Rule #271 cl.3 kept it out of the feature PR.
+- PR #3058's entry was written at its first head. Review added two things after it. (1) Tests that pin the HTML-escaping of the busy-line label (agent pane text) and of the version badge (repo content); TC-Lane-C's R-Gate B1/B2 asked for them, because removing either escape had failed no test. (2) The badge end-to-end test now creates its repo through `test/_temp-repo.js#initRepo`, after CI's #831 family guard caught a direct `git init`. The merged code is the R3 head, 57437388.
+- Tier: three of #3057's four items are new UI, which the global rule would file as Added (minor). Charter A702 chartered them as `.fixed`, so this release is the patch it chartered. TC-Lane-A flagged the choice for the release owner, and it is recorded here.
+
+## 2026-11-14 — v6 chat: replies after tool lines, Show Fleet in the chat, busy timer, version/branch badges (#3057)
+
+<!-- prawduct: type=fix | scope=v624-w1a -->
+
+Car V624-W1-A, Chunks 01-02.
+
+- extractLiveTurns: under a tool line only a ⎿/└ line or a 4+-space indent is tool output; a 2-space line ends the block and is reply (Antigravity indents its prose by two). A blank line decides nothing — the dispatch's blank-line reset was dropped after the cumulative Critic showed it leaked Claude/Codex output containing a blank line.
+- With the sidebar hidden, the chat leads its actions with » Show Fleet, and the header holding the other one is sticky.
+- The busy line: Working from the send until the engine reports activity, a new reply appears, or three reads pass; static dots replaced by CSS dots; an elapsed time from one 1 s ticker per busy period, kept across polls and re-renders, stopped on idle, route change and destroy.
+- The chat header badges the target's version (or latest tag) and git branch, starred when dirty === true.
+- Open Hood in the chat sized like Refresh/Project Settings (PM). The busy pill is a flex row so its time stays visible at 320 px (browser check).
+- Test restated with the requirement: the #3052 busy-line markup assertion.
+
 ## 2026-11-13 — v6.2.3 release cut (Milestone #70)
 
 <!-- prawduct: type=internal | scope=v623-release -->
