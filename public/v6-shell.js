@@ -872,6 +872,7 @@
     const live = chat.live || null;
     const liveTurns = live && Array.isArray(live.turns) ? live.turns : [];
     let stream;
+    let tail = '';
     if (v.error) {
       stream = `<p class="v6-conversation-empty">${escapeHtml(v.error)}</p>`;
     } else if (v.sessionId == null) {
@@ -879,20 +880,22 @@
     } else {
       // #3076: a recorded switchboard wake is not the operator speaking; it
       // is shown Under the Hood with the rest of the switchboard's traffic.
-      const events = (Array.isArray(v.events) ? v.events : []).filter((e) => !isRecordedWake(e));
-      stream = events.length
-        ? `<ol class="v6-conversation-stream">${events.map((e) => (
-          `<li class="v6-conversation-event is-${escapeHtml(e && e.role)}">
-            ${chatRoleMarkup(e && e.role, name)}
-            <span class="v6-conversation-content">${escapeHtml(e && e.content)}</span>
-          </li>`
-        )).join('')}</ol>`
-        : (liveTurns.length ? '' : '<p class="v6-conversation-empty">No conversation events recorded for this session yet.</p>');
+      // #3079 item 6: what the pane shows is drawn once, in its place
+      // among the replies; what was recorded before it comes above, and
+      // what was recorded after it (sent, not yet on screen) below.
+      const parts = arrangeRecorded(v.events, liveTurns, chat.lastSent);
+      stream = parts.head.length
+        ? `<ol class="v6-conversation-stream" id="v6ChatRecorded">${recordedEventsMarkup(parts.head, name)}</ol>`
+        : (liveTurns.length || parts.tail.length ? '<ol class="v6-conversation-stream" id="v6ChatRecorded"></ol>'
+          : '<p class="v6-conversation-empty">No conversation events recorded for this session yet.</p>');
+      tail = recordedEventsMarkup(parts.tail, name);
     }
     // #3052: the replies the session's live output shows, after what is
     // recorded; its own list so a poll can replace it without a re-render.
     stream = `<div id="v6ChatStream" class="v6-chat-stream" tabindex="0">${stream}
       <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name)}</ol>
+      <ol id="v6ChatRecordedTail" class="v6-conversation-stream v6-chat-recorded-tail">${tail}</ol>
+      <ol id="v6ChatPending" class="v6-conversation-stream v6-chat-pending">${pendingMarkup(chat.pending, chat.lastSent)}</ol>
     </div>`;
     // A member reached directly is still the project's delegate when it is
     // the one the delegate resolution picks (#3053).
@@ -1078,7 +1081,10 @@
     // A recorded message can span lines (text, then its Attached lines) and
     // a long prompt wraps in the pane, so an echo is matched by line, by
     // prefix, or as a fragment of the message it continues.
-    const sent = (Array.isArray(knownUserTexts) ? knownUserTexts : []).map(squash).filter(Boolean);
+    const known = (Array.isArray(knownUserTexts) ? knownUserTexts : []).filter((t) => typeof t === 'string' && squash(t));
+    const sent = known.map(squash);
+    // The recorded text as it was written, newlines kept, for the turn (#3079 item 6).
+    const original = (m) => known[sent.indexOf(m)] || m;
     const knownLines = new Set((Array.isArray(knownUserTexts) ? knownUserTexts : [])
       .flatMap((t) => String(t).split('\n')).map((t) => t.trim()).filter(Boolean));
     const recordedAs = (said) => {
@@ -1140,12 +1146,14 @@
           activity = null;
           answered = true;
           echo = recordedAs(said);
-          if (!echo) turns.push({ role: 'user', text: said });
+          // #3079 item 6: a recorded prompt keeps its place among the
+          // replies, marked so the recorded copy is not drawn again.
+          turns.push(echo ? { role: 'user', text: original(echo), recorded: true } : { role: 'user', text: said });
         }
         return;
       }
       // The rest of a recorded message the pane is still echoing.
-      if (echo && (knownLines.has(text) || echo.includes(squash(text)))) return;
+      if (echo && (knownLines.has(text) || echo.includes(squash(text)) || LONG_PROMPT_NOTE.test(text))) return;
       echo = null;
       if (LIVE_BUSY.test(text) && !/Thought for/i.test(text)) {
         activity = text.replace(/^[✶✻✽✢⠀-⣿\s]+/, '').replace(/\s*\(?esc to interrupt\)?/i, '').trim() || 'Working…';
@@ -1192,6 +1200,86 @@
   function chatRoleMarkup(role, name) {
     const who = role === 'assistant' ? ` <span class="v6-conversation-who">(${escapeHtml(name)})</span>` : '';
     return `<span class="v6-conversation-role">${escapeHtml(role)}${who}</span>`;
+  }
+
+  /**
+   * Whether a recorded user message is the one a turn shows (#3079): the
+   * same words, or — for a long message recorded only in part — the turn
+   * starts with what was recorded before the saved-path line.
+   * @param {string} content - The recorded event's text.
+   * @param {string} text - The turn's text.
+   * @returns {boolean}
+   */
+  function sameMessage(content, text) {
+    const squash = (t) => String(t).replace(/\s+/g, ' ').trim();
+    const recorded = squash(content);
+    const shown = squash(text);
+    if (recorded === shown) return true;
+    const cut = recorded.indexOf('[Full prompt (');
+    const head = cut > 0 ? recorded.slice(0, cut).trim() : '';
+    return head.length >= 20 && (shown.startsWith(head) || head.startsWith(shown));
+  }
+
+  /**
+   * Place the recorded events around the live turns (#3079 item 6). Each
+   * recorded user message the pane also shows is drawn once, as its live
+   * turn. Recorded events up to the last such one come before the live
+   * turns; those after it were sent but are not on screen yet, so they
+   * come after. When the pane shows none of them, only the message just
+   * sent from this chat counts as after.
+   * @param {Array<object>|null} events - The recorded conversation events.
+   * @param {Array<{role: string, text: string, recorded?: boolean}>} liveTurns
+   * @param {{text: string}|null} [lastSent] - What this chat last recorded, until the pane shows it.
+   * @returns {{head: Array<object>, tail: Array<object>}}
+   */
+  function arrangeRecorded(events, liveTurns, lastSent) {
+    const list = (Array.isArray(events) ? events : []).filter((e) => !isRecordedWake(e));
+    const matched = new Set();
+    // Newest first, each pairing with the latest event before the one the
+    // turn after it took, so the pairs keep the order the pane shows.
+    let below = list.length;
+    (Array.isArray(liveTurns) ? liveTurns : []).filter((t) => t && t.role === 'user' && t.recorded).reverse().forEach((t) => {
+      for (let i = below - 1; i >= 0; i--) {
+        const e = list[i];
+        if (e && e.role === 'user' && sameMessage(e.content, t.text)) { matched.add(i); below = i; return; }
+      }
+    });
+    const last = matched.size ? Math.max(...matched) : -1;
+    if (last < 0) {
+      const end = list.length - 1;
+      const sentLast = end >= 0 && lastSent && list[end] && list[end].role === 'user' && sameMessage(list[end].content, lastSent.text);
+      return sentLast ? { head: list.slice(0, end), tail: [list[end]] } : { head: list, tail: [] };
+    }
+    return {
+      head: list.filter((e, i) => i <= last && !matched.has(i)),
+      tail: list.filter((e, i) => i > last && !matched.has(i))
+    };
+  }
+
+  /**
+   * @param {Array<object>} events
+   * @param {string} name - The project's name.
+   * @returns {string} The recorded events as conversation bubbles.
+   */
+  function recordedEventsMarkup(events, name) {
+    return events.map((e) => (
+      `<li class="v6-conversation-event is-${escapeHtml(e && e.role)}">
+            ${chatRoleMarkup(e && e.role, name)}
+            <span class="v6-conversation-content">${escapeHtml(e && e.content)}</span>
+          </li>`
+    )).join('');
+  }
+
+  /**
+   * The message being sent, at the bottom of the chat until it settles
+   * (#3079 item 6), unless the chat already shows it as recorded.
+   * @param {{id: *, text: string}|null|undefined} pending
+   * @param {{id: *}|null|undefined} lastSent
+   * @returns {string} HTML list item, or ''.
+   */
+  function pendingMarkup(pending, lastSent) {
+    if (!pending || typeof pending.text !== 'string' || (lastSent && lastSent.id === pending.id)) return '';
+    return `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${escapeHtml(pending.text)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`;
   }
 
   /**
@@ -1451,10 +1539,85 @@
    * @returns {string}
    */
   function longPromptCommand(message, relPath) {
-    const note = `\n\n[Full prompt (${message.length} chars) saved to: ${relPath} — read that file in full]`;
+    const note = longPromptNote(message, relPath);
     let head = message.slice(0, Math.max(0, MAX_COMMAND_CHARS - note.length));
     if (/[\uD800-\uDBFF]$/.test(head)) head = head.slice(0, -1);
     return `${head}${note}`;
+  }
+
+  /**
+   * The line that says where a long message was saved (#3079). The command
+   * and the recorded event end with the same words, so the chat can tell
+   * the line apart from a reply when the pane echoes it.
+   * @param {string} message
+   * @param {string} relPath
+   * @returns {string}
+   */
+  function longPromptNote(message, relPath) {
+    return `\n\n[Full prompt (${message.length} chars) saved to: ${relPath} — read that file in full]`;
+  }
+
+  /** The {@link longPromptNote} line, as the pane shows it. */
+  const LONG_PROMPT_NOTE = /^\[Full prompt \(\d+ chars\) saved to: .+ — read that file in full\]$/;
+
+  /**
+   * The most a recorded user event's JSON body may weigh, in UTF-8 bytes
+   * (#3079, Rulings A739/A740): the events route takes the default 10 KB
+   * (`lib/routes/_kernel.js` MAX_BODY_SIZE), and this leaves room to spare.
+   */
+  const MAX_EVENT_BODY_BYTES = 8000;
+
+  /**
+   * @param {string} text
+   * @returns {number} Its length in UTF-8 bytes (what `TextEncoder` would give).
+   */
+  function utf8Length(text) {
+    let n = 0;
+    for (const ch of String(text)) {
+      const cp = ch.codePointAt(0);
+      n += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    }
+    return n;
+  }
+
+  /**
+   * What a recorded user event's request body weighs (#3079): the body
+   * `recordUserEvent` sends, JSON-encoded, in UTF-8 bytes — quotes,
+   * backslashes and control characters grow when encoded, so the raw
+   * message's length is not the measure. The sequence number is taken at
+   * its largest.
+   * @param {string} content
+   * @param {string} launchId
+   * @returns {number}
+   */
+  function eventBodyBytes(content, launchId) {
+    return utf8Length(JSON.stringify({
+      launchId, seq: Number.MAX_SAFE_INTEGER, tier: 'A', adapter: 'v6-chat-ui', role: 'user', content
+    }));
+  }
+
+  /**
+   * The text to record for a sent message (#3079): the whole message when
+   * its event body fits {@link MAX_EVENT_BODY_BYTES}; otherwise as much of
+   * its start as fits, cut between characters, followed by where the whole
+   * of it was saved.
+   * @param {string} message
+   * @param {string|null} relPath - Where it was saved, when it was.
+   * @param {string} launchId
+   * @returns {string}
+   */
+  function recordedText(message, relPath, launchId) {
+    if (eventBodyBytes(message, launchId) <= MAX_EVENT_BODY_BYTES || !relPath) return message;
+    const chars = Array.from(message);
+    const note = longPromptNote(message, relPath);
+    const fits = (k) => eventBodyBytes(chars.slice(0, k).join('') + note, launchId) <= MAX_EVENT_BODY_BYTES;
+    let lo = 0;
+    let hi = chars.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (fits(mid)) lo = mid; else hi = mid - 1;
+    }
+    return chars.slice(0, lo).join('') + note;
   }
 
   /**
@@ -1871,11 +2034,12 @@
       const sidebarCollapsed = Boolean(extras && extras.sidebarCollapsed);
       const activityElapsed = (extras && extras.activityElapsed) || '';
       const dismissedQuestions = (extras && extras.dismissedQuestions) || [];
+      const pending = (extras && extras.pending) || null;
       const v = detail.view || {};
       // #3063: in a chat the telemetry bar shares the chat's header row.
       const telemetry = extras && 'telemetry' in extras ? extras.telemetry : undefined;
       return conversationViewMarkup(Object.assign({}, v, {
-        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename, dismissedQuestions })
+        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename, dismissedQuestions, pending })
       }));
     }
     if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
@@ -2129,6 +2293,11 @@
     let attachSeq = 0;
     const readFileAsBase64 = deps.readFileAsBase64 || defaultReadFileAsBase64;
     const textToBase64 = deps.textToBase64 || defaultTextToBase64;
+    // #3079 item 6: per project, the message this chat last sent and
+    // recorded (its send id, recorded text and whole text), until the pane
+    // shows it, so it is drawn after the replies it followed.
+    const lastSentByProject = new Map();
+    let sendSeq = 0;
     const clock = typeof deps.now === 'function' ? deps.now : () => Date.now();
     // The secure-clipboard routes gate even their GET listing with operator
     // proof, and api()'s own CSRF header only rides on writes, so the token
@@ -2171,12 +2340,29 @@
      */
     function liveView(res, project, events) {
       let live = null;
+      const key = project ? String(project.id) : null;
+      const sent = key != null ? lastSentByProject.get(key) : null;
       if (res && Array.isArray(res.lines)) {
         const engine = project && project.engine && project.engine.id ? String(project.engine.id) : '';
         const said = (Array.isArray(events) ? events : []).filter((e) => e && e.role === 'user').map((e) => e.content);
+        // The whole of a long message, so its pane echo is known in full.
+        if (sent && sent.full) said.push(sent.full);
         live = extractLiveTurns(res.lines, engine, said);
+        // Once the pane shows it, it is placed by the pane.
+        if (sent && live.turns.some((t) => t.role === 'user' && t.recorded && (sameMessage(sent.text, t.text) || sameMessage(sent.full, t.text)))) {
+          lastSentByProject.delete(key);
+        }
       }
       return awaitReply(live, project);
+    }
+
+    /**
+     * @param {object|null} project
+     * @returns {{id: *, text: string}|null} What the chat last sent and recorded, until the pane shows it (#3079).
+     */
+    function lastSentFor(project) {
+      const sent = project ? lastSentByProject.get(String(project.id)) : null;
+      return sent ? { id: sent.id, text: sent.text } : null;
     }
 
     /**
@@ -2340,6 +2526,7 @@
       if (mine !== seq) return;
       chat.peek = peekView(peek);
       chat.live = liveView(peek, project, events && events.events);
+      chat.lastSent = lastSentFor(project);
       chat.medusa = medusaView(medusaStatus, chat.live, null);
       current.view = events
         ? { project, sessionId, events: events.events, chat }
@@ -2354,9 +2541,10 @@
           const next = peekView(res);
           const nextLive = liveView(res, current.project, current.view.events);
           const nextMedusa = medusaView(nextStatus, nextLive, current.view.chat && current.view.chat.medusa);
-          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next, live: nextLive, medusa: nextMedusa }) });
+          const lastSent = lastSentFor(current.project);
+          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next, live: nextLive, medusa: nextMedusa, lastSent }) });
           const sh = getShell();
-          if (sh && typeof sh.setLive === 'function') sh.setLive({ peek: next, live: nextLive, medusa: nextMedusa });
+          if (sh && typeof sh.setLive === 'function') sh.setLive({ peek: next, live: nextLive, medusa: nextMedusa, lastSent });
           else if (sh && typeof sh.setPeek === 'function') sh.setPeek(next);
         }, CHAT_POLL_MS);
       }
@@ -2439,7 +2627,7 @@
       const message = typed && refs ? `${typed}\n\n${refs}` : (typed || refs);
       chat.sending = true;
       try {
-        await deliverChat(chat, message, name);
+        await deliverChat(chat, message, name, String(text || ''));
       } finally {
         chat.sending = false;
       }
@@ -2450,21 +2638,38 @@
      * @param {object} chat - `current` at send time.
      * @param {string} message
      * @param {string} name - The target project's name.
+     * @param {string} draft - The composer's text, put back if the send fails.
      * @returns {Promise<void>}
      */
-    async function deliverChat(chat, message, name) {
+    async function deliverChat(chat, message, name, draft) {
+      // #3079 item 6: the composer empties as Enter is pressed, and the
+      // message waits at the bottom of the chat until the send settles.
+      const sendId = ++sendSeq;
+      const pid = chat.project.id;
+      const begun = getShell();
+      if (begun && typeof begun.beginSend === 'function') begun.beginSend(pid, message, sendId);
+      const settle = (restore) => {
+        const sh = getShell();
+        if (sh && typeof sh.endSend === 'function') sh.endSend(pid, restore);
+      };
       showSend({ kind: 'pending', message: `Sending to ${name}…` });
       const before = chat.view && chat.view.chat ? lastReply(chat.view.chat.live) : null;
       // #3079: the command route takes at most MAX_COMMAND_CHARS; a longer
       // message is saved to a file first and the session is pointed at it.
+      // So is a message whose recorded event would be too heavy for the
+      // events route (A739): the record then keeps its start and the path.
       let command = message;
-      if (message.length > MAX_COMMAND_CHARS) {
+      let toRecord = message;
+      const launchId = chat.launchId || 'v6-chat-ui';
+      if (message.length > MAX_COMMAND_CHARS || eventBodyBytes(message, launchId) > MAX_EVENT_BODY_BYTES) {
         const saved = await saveLongPrompt(chat, message);
         if (!saved.ok) {
+          settle(draft);
           if (chat === current) showSend({ kind: 'error', message: `Not sent: ${saved.error}` });
           return;
         }
-        command = longPromptCommand(message, saved.relPath);
+        if (message.length > MAX_COMMAND_CHARS) command = longPromptCommand(message, saved.relPath);
+        toRecord = recordedText(message, saved.relPath, launchId);
       }
       const sent = await apiMutate(`/api/sessions/${encodeURIComponent(name)}/command`, 'POST', { command, enter: true });
       if (sent) awaitingReply = { projectId: String(chat.project.id), reply: before, reads: 0 };
@@ -2475,6 +2680,7 @@
       if (sent && shellNow && typeof shellNow.clearChatDraft === 'function') shellNow.clearChatDraft(chat.project.id);
       if (sent) attachments.delete(String(chat.project.id));
       if (!sent) {
+        settle(draft);
         if (chat === current) showSend({ kind: 'error', message: `Not sent: ${api.lastError || 'the server refused it'}` });
         return;
       }
@@ -2482,11 +2688,13 @@
       // even if the operator has moved on: the conversation must not lose
       // what the session received. Only the on-screen update waits on the
       // operator still being here.
-      const recorded = await recordUserEvent(chat, message);
-      if (chat !== current) return;
+      const recorded = await recordUserEvent(chat, toRecord);
+      if (recorded === true) lastSentByProject.set(String(pid), { id: sendId, text: toRecord, full: message });
+      if (chat !== current) { settle(); return; }
       await loadConversation(chat.project, chat.mine, chat.ctx, recorded === true
         ? { kind: 'ok', message: `Sent to ${name}.` }
         : { kind: 'warning', message: `Sent to ${name}, but it could not be recorded in the conversation: ${recorded}` });
+      settle();
     }
 
     /**
@@ -2498,7 +2706,6 @@
      * @returns {Promise<{ok: true, relPath: string}|{ok: false, error: string}>}
      */
     async function saveLongPrompt(chat, message) {
-      const filename = `prompt-${clock()}.md`;
       let text;
       try {
         text = textToBase64(message);
@@ -2509,10 +2716,26 @@
       if (Math.floor(text.length / 4) * 3 > MAX_ATTACH_BYTES) {
         return { ok: false, error: `the message is over the 5 MB limit for a saved prompt.` };
       }
+      // The route overwrites a file of the same name, so the name is chosen
+      // against what the project already holds, and an unreadable listing
+      // saves nothing (#3055), as for attachments.
+      const base = `/api/sessions/${encodeURIComponent(chat.project.name)}/secure-clipboard`;
+      const key = String(chat.project.id);
       let res;
+      let filename;
       try {
         const headers = await operatorHeaders();
-        res = await api(`/api/sessions/${encodeURIComponent(chat.project.name)}/secure-clipboard`, {
+        const listing = await api(base, { method: 'GET', headers });
+        const stored = listing && Array.isArray(listing.files) ? listing.files.map((f) => f && f.filename).filter(Boolean) : null;
+        if (stored === null) {
+          return { ok: false, error: `the long message was not saved: the project's saved files could not be checked (${api.lastError || 'the server did not answer'}), so a file of the same name could be overwritten.` };
+        }
+        const used = uploadedNames.get(key) || new Set();
+        uploadedNames.set(key, used);
+        const taken = new Set([...used, ...stored, ...(attachments.get(key) || []).map((a) => a.name)]);
+        filename = sanitizeUploadName(`prompt-${clock()}.md`, taken);
+        used.add(filename);
+        res = await api(base, {
           method: 'POST', headers, body: JSON.stringify({ text, mode: 'file', filename, encoding: 'base64' })
         });
       } catch (err) { // prawduct:allow prawduct/broad-except -- a refused operator proof or a failed request refuses the send with its reason, never an unhandled rejection
@@ -3099,6 +3322,9 @@
     // a poll redraws them only when that changes (Critic W1).
     let paintedQuestions = null;
     let paintedMedusa = null;
+    // #3079 item 6: the message being sent — its chat, text and send id —
+    // drawn at the bottom of that chat until the send settles.
+    let pendingSend = null;
     // The chat whose Start fleet button has been clicked once (#3053).
     let fleetArmedKey = null;
     // The chat whose rename form is open (#3071), the name typed into it
@@ -3457,7 +3683,10 @@
     function questionsNow() {
       const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
       const key = chatTargetKey();
-      if (key != null && !askedQuestions(chat && chat.live).length) dismissedQuestions.delete(key);
+      const live = chat && chat.live;
+      // Only a read of the pane that asks nothing spends them; a failed
+      // read says nothing about the question (second review, W1).
+      if (key != null && live && Array.isArray(live.questions) && !live.questions.length) dismissedQuestions.delete(key);
       return openQuestions(chat && chat.live, dismissedFor(key));
     }
 
@@ -3509,6 +3738,24 @@
           if (next && typeof next.focus === 'function') next.focus();
         });
       });
+    }
+
+    /**
+     * Redraw the recorded events around the live turns, and the pending
+     * bubble (#3079 item 6), as a poll moves what the pane shows.
+     */
+    function paintRecorded() {
+      const view = detail && detail.kind === 'conversation' ? detail.view : null;
+      if (!view) return;
+      const chat = view.chat || {};
+      const name = String((view.project && view.project.name) || '');
+      const parts = arrangeRecorded(view.events, chat.live && Array.isArray(chat.live.turns) ? chat.live.turns : [], chat.lastSent);
+      const head = doc.getElementById('v6ChatRecorded');
+      if (head) head.innerHTML = recordedEventsMarkup(parts.head, name);
+      const tailEl = doc.getElementById('v6ChatRecordedTail');
+      if (tailEl) tailEl.innerHTML = recordedEventsMarkup(parts.tail, name);
+      const pendingEl = doc.getElementById('v6ChatPending');
+      if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSend && pendingSend.key === chatTargetKey() ? pendingSend : null, chat.lastSent);
     }
 
     /**
@@ -3747,7 +3994,8 @@
             fleetArmed: fleetArmedKey != null && fleetArmedKey === chatTargetKey(),
             rename: renameOpenKey != null && renameOpenKey === chatTargetKey()
               ? { open: true, draft: renameDraft, warning: renameWarning } : null,
-            sidebarCollapsed, activityElapsed, telemetry, dismissedQuestions: dismissedFor(chatTargetKey())
+            sidebarCollapsed, activityElapsed, telemetry, dismissedQuestions: dismissedFor(chatTargetKey()),
+            pending: pendingSend && pendingSend.key === chatTargetKey() ? pendingSend : null
           })}</div>
           <div id="v6ShellWizard"${inChat ? ' hidden' : ''}>${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation"${inChat ? ' hidden' : ''}>${modelAttestationMarkup(attestation)}</div>
@@ -3937,6 +4185,7 @@
         const streamAtBottom = isAtBottom(stream);
         const liveEl = doc.getElementById('v6ChatLive');
         if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name);
+        paintRecorded();
         if (streamAtBottom) pinToBottom(stream);
         paintQuestions();
         const a = doc.getElementById('v6ChatActivity');
@@ -3974,6 +4223,39 @@
        * @param {*} [projectId] - The project it was sent to; the chat on screen when omitted.
        */
       clearChatDraft(projectId) { chatDrafts.delete(projectId != null ? String(projectId) : chatTargetKey()); },
+      /**
+       * A send has begun (#3079 item 6): the composer empties at once and
+       * the message shows at the bottom of its chat until the send settles.
+       * @param {*} projectId - The chat it was sent from.
+       * @param {string} text - What was sent.
+       * @param {*} id - The send's id, which the recorded copy carries.
+       */
+      beginSend(projectId, text, id) {
+        const key = String(projectId);
+        chatDrafts.delete(key);
+        pendingSend = { key, text: String(text || ''), id };
+        if (key !== chatTargetKey()) return;
+        const input = doc.getElementById('v6ChatInput');
+        if (input) input.value = '';
+        paintRecorded();
+      },
+      /**
+       * A send has settled (#3079 item 6): the pending message goes. Given
+       * the text back, the send failed, and the text returns to the
+       * composer unless something new has been typed there since.
+       * @param {*} projectId
+       * @param {string} [restore]
+       */
+      endSend(projectId, restore) {
+        const key = String(projectId);
+        if (pendingSend && pendingSend.key === key) pendingSend = null;
+        if (typeof restore === 'string' && restore && !chatDrafts.get(key)) {
+          chatDrafts.set(key, restore);
+          const input = key === chatTargetKey() ? doc.getElementById('v6ChatInput') : null;
+          if (input && !input.value) input.value = restore;
+        }
+        if (key === chatTargetKey()) paintRecorded();
+      },
       destroy() {
         if (tickerId != null) { stopTicker(tickerId); tickerId = null; }
         busy = null;
@@ -4010,6 +4292,8 @@
   global.tcV6FormatElapsed = formatElapsed;
   global.tcV6ExtractLiveTurns = extractLiveTurns;
   global.tcV6LongPromptCommand = longPromptCommand;
+  global.tcV6RecordedText = recordedText;
+  global.tcV6EventBodyBytes = eventBodyBytes;
   global.tcV6MedusaIndicatorMarkup = medusaIndicatorMarkup;
   global.tcV6SanitizeUploadName = sanitizeUploadName;
   global.tcV6FilesFromEvent = filesFromEvent;

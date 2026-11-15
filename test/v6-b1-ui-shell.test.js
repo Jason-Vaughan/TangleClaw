@@ -2080,7 +2080,9 @@ describe('tcV6ExtractLiveTurns (#3052)', () => {
 
   it('a prompt already recorded as a user event is not repeated', () => {
     const out = run('claude', ['ship the release']);
-    assert.deepEqual(out.turns.map((t) => t.role), ['assistant']);
+    // Restated by #3079 item 6: it keeps its place among the replies, once, marked recorded.
+    assert.deepEqual(out.turns, [{ role: 'user', text: 'ship the release', recorded: true },
+      { role: 'assistant', text: 'I\'ll check the branch first.\nThe branch is clean.\nShould I push it?' }]);
   });
 
   it('a question the operator has already answered is no longer pinned', () => {
@@ -2799,13 +2801,15 @@ describe('tcV6ExtractLiveTurns does not repeat a multi-line or wrapped message (
   it('a message sent with attachments is recognised by its lines, including its Attached lines', () => {
     const sent = 'look at these\n\nAttached: .tangleclaw/secrets/a.png';
     const out = plain(G.tcV6ExtractLiveTurns(['> look at these', 'Attached: .tangleclaw/secrets/a.png', '⏺ Got it.'], 'claude', [sent]));
-    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Got it.' }]);
+    // Restated by #3079 item 6: one user turn carrying the recorded message, then the reply.
+    assert.deepEqual(out.turns, [{ role: 'user', text: sent, recorded: true }, { role: 'assistant', text: 'Got it.' }]);
   });
 
   it('a long prompt the terminal wrapped is recognised by its first line', () => {
     const sent = 'please review the release notes for v6.2.3 and tell me whether the delegate order reads correctly';
     const out = plain(G.tcV6ExtractLiveTurns(['> please review the release notes for v6.2.3 and tell', '⏺ It reads correctly.'], 'claude', [sent]));
-    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'It reads correctly.' }]);
+    // Restated by #3079 item 6: one user turn carrying the whole recorded message, then the reply.
+    assert.deepEqual(out.turns, [{ role: 'user', text: sent, recorded: true }, { role: 'assistant', text: 'It reads correctly.' }]);
   });
 });
 
@@ -4430,6 +4434,15 @@ describe('the Waiting on you queue (#3079)', () => {
     assert.match(html, /Two\?/);
   });
 
+  it('a failed read of the pane does not spend a dismissal (second review, W1)', () => {
+    const m = mountQuestions();
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    m.shell.setLive({ peek: { error: 'x' }, live: null });
+    m.shell.setLive({ peek: { error: 'x' }, live: { turns: [], question: null, activity: 'Working' } });
+    m.shell.setLive({ peek: null, live: m.live });
+    assert.doesNotMatch(m.doc.getElementById('v6ChatQuestion').innerHTML, /One\?/);
+  });
+
   it('a poll that changes nothing leaves the question slot, and the ✕ that has focus, alone (Critic W1)', () => {
     const m = mountQuestions();
     const q = m.doc.getElementById('v6ChatQuestion');
@@ -4732,12 +4745,18 @@ describe('a message longer than the command route takes (#3079 item 5)', () => {
     withIdParsingInnerHTML(root, doc);
     doc.body.appendChild(root);
     const uploads = [];
+    const listings = [];
     const sends = [];
     const events = [];
     const api = async (url, init) => {
       if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
-      if (/conversation\/events/.test(url)) return { events: [] };
+      if (/conversation\/events/.test(url)) return { events: events.map((e, i) => ({ seq: i + 1, role: e.role, content: e.content })) };
+      if (url === '/api/sessions/TC-Lane-PM/secure-clipboard' && init && init.method === 'GET') {
+        listings.push(init.headers);
+        api.lastError = o.listing === null ? 'listing refused' : null;
+        return o.listing === undefined ? { files: [] } : o.listing;
+      }
       if (url === '/api/sessions/TC-Lane-PM/secure-clipboard' && init && init.method === 'POST') {
         uploads.push({ headers: init.headers, body: JSON.parse(init.body) });
         api.lastError = o.upload === null ? 'Secure clipboard is locked' : null;
@@ -4771,7 +4790,7 @@ describe('a message longer than the command route takes (#3079 item 5)', () => {
       doc.getElementById('v6ChatForm').dispatch('submit');
       await settle();
     };
-    return { G, doc, root, uploads, sends, events, send, shell };
+    return { G, doc, root, uploads, listings, sends, events, send, shell };
   }
 
   it('a message within the limit is sent as it is, with nothing saved', async () => {
@@ -4782,7 +4801,7 @@ describe('a message longer than the command route takes (#3079 item 5)', () => {
     assert.deepEqual(m.sends, [{ command: text, enter: true }]);
   });
 
-  it('a longer one is saved whole as a file, the session is sent its start and where the rest is, and the chat records it all', async () => {
+  it('a longer one is saved whole as a file, the session is sent its start and where the rest is, and the chat records what fits', async () => {
     const m = mountLong();
     const text = `Plan ✓ ${'é'.repeat(3000)} 🙂 ${'line\n'.repeat(400)}end`;
     assert.ok(text.length > 4096);
@@ -4799,7 +4818,60 @@ describe('a message longer than the command route takes (#3079 item 5)', () => {
     assert.ok(cmd.startsWith(text.slice(0, 3000)));
     assert.ok(cmd.endsWith(`\n\n[Full prompt (${text.length} chars) saved to: .tangleclaw/secrets/prompt-1700000000000.md — read that file in full]`), cmd.slice(-160));
     assert.equal(m.events.length, 1);
+    // Ruling A739/A740: over 8,000 bytes of JSON-encoded event body, the record keeps its start and the path.
+    const recorded = m.events[0].content;
+    assert.ok(Buffer.byteLength(JSON.stringify(m.events[0])) <= 8000, `${Buffer.byteLength(JSON.stringify(m.events[0]))} bytes`);
+    assert.ok(text.startsWith(recorded.split('\n\n[Full prompt')[0]));
+    assert.ok(recorded.endsWith(`\n\n[Full prompt (${text.length} chars) saved to: .tangleclaw/secrets/prompt-1700000000000.md — read that file in full]`));
+  });
+
+  it('one that is long but light records whole', async () => {
+    const m = mountLong();
+    const text = 'w'.repeat(5000);
+    await m.send(text);
+    assert.equal(m.uploads.length, 1);
     assert.equal(m.events[0].content, text, 'the conversation shows the whole message');
+  });
+
+  it('a quote-heavy message over 10 KB records within the route cap, and so does a short one full of control characters', async () => {
+    for (const text of ['"'.repeat(11000), '\u0001'.repeat(2000)]) {
+      const m = mountLong();
+      await m.send(text);
+      assert.equal(m.uploads.length, 1, 'saved, so the record can point at it');
+      const body = JSON.stringify(m.events[0]);
+      assert.ok(Buffer.byteLength(body) <= 8000, `${Buffer.byteLength(body)} bytes`);
+      assert.ok(Buffer.byteLength(body) < 10 * 1024);
+      assert.match(m.events[0].content, /\[Full prompt \(\d+ chars\) saved to: \.tangleclaw\/secrets\/prompt-1700000000000\.md — read that file in full\]$/);
+      assert.equal(m.sends[0].command.length <= 4096, true);
+    }
+  });
+
+  it('checks the project\'s saved files first: an unreadable listing saves and sends nothing, and a taken name gets a new one', async () => {
+    const refused = mountLong({ listing: null });
+    await refused.send('q'.repeat(5000));
+    assert.equal(refused.uploads.length, 0);
+    assert.equal(refused.sends.length, 0);
+    assert.match(refused.root.innerHTML, /Not sent: the long message was not saved: the project&#39;s saved files could not be checked \(listing refused\)/);
+    const taken = mountLong({ listing: { files: [{ filename: 'prompt-1700000000000.md' }] } });
+    await taken.send('q'.repeat(5000));
+    assert.equal(taken.listings[0]['X-TC-Open-Token'], 'tok');
+    assert.equal(taken.uploads[0].body.filename, 'prompt-1700000000000-2.md');
+    assert.match(taken.sends[0].command, /saved to: \.tangleclaw\/secrets\/prompt-1700000000000-2\.md/);
+  });
+
+  it('the recorded text is cut between characters and weighs what the route will see', () => {
+    const G = loadV6Shell();
+    const path = '.tangleclaw/secrets/p.md';
+    const out = G.tcV6RecordedText('🙂'.repeat(5000), path, 'v6-chat-ui');
+    assert.doesNotMatch(out.split('\n\n[Full prompt')[0], /[\uD800-\uDBFF]$/);
+    assert.ok(G.tcV6EventBodyBytes(out, 'v6-chat-ui') <= 8000);
+    // As much as fits: one more character would not.
+    const head = Array.from(out.split('\n\n[Full prompt')[0]);
+    const note = out.slice(out.indexOf('\n\n[Full prompt'));
+    assert.ok(G.tcV6EventBodyBytes(head.concat('🙂').join('') + note, 'v6-chat-ui') > 8000);
+    const body = JSON.stringify({ launchId: 'v6-chat-ui', seq: Number.MAX_SAFE_INTEGER, tier: 'A', adapter: 'v6-chat-ui', role: 'user', content: '"é🙂\u0001' });
+    assert.equal(G.tcV6EventBodyBytes('"é🙂\u0001', 'v6-chat-ui'), new TextEncoder().encode(body).length);
+    assert.equal(G.tcV6RecordedText('short', path, 'v6-chat-ui'), 'short');
   });
 
   it('when the file cannot be saved, nothing is sent and the text is kept', async () => {
@@ -4831,5 +4903,141 @@ describe('a message longer than the command route takes (#3079 item 5)', () => {
     const out = G.tcV6LongPromptCommand(pairs, path);
     assert.ok(out.length <= 4096);
     assert.doesNotMatch(out.split('\n\n[Full prompt')[0], /[\uD800-\uDBFF]$/);
+  });
+});
+
+describe('turns in the order they happened, and a composer that empties on Enter (#3079 item 6)', () => {
+  const G = loadV6Shell();
+  const view = (events, turns, chat) => ({ project: { id: 12, name: 'P' }, sessionId: 2, events,
+    chat: Object.assign({ status: 'active', members: [], live: { turns, questions: [] } }, chat || {}) });
+  const order = (html) => [...html.matchAll(/<span class="v6-conversation-content">([^<]*)<\/span>/g)].map((m) => m[1]);
+  const ev = (seq, content) => ({ seq, role: 'user', content });
+
+  it('interleaves each user message with the replies around it, each drawn once, a sent one not yet on screen last', () => {
+    const html = G.tcV6ConversationViewMarkup(view([ev(1, 'User1'), ev(2, 'User2'), ev(3, 'User3')], [
+      { role: 'user', text: 'User1', recorded: true }, { role: 'assistant', text: 'Asst1' },
+      { role: 'user', text: 'User2', recorded: true }, { role: 'assistant', text: 'Asst2' }]));
+    assert.deepEqual(order(html), ['User1', 'Asst1', 'User2', 'Asst2', 'User3']);
+  });
+
+  it('messages from before the pane come first, and a message sent twice pairs with its newest copy', () => {
+    const html = G.tcV6ConversationViewMarkup(view([ev(1, 'Old'), ev(2, 'again'), ev(3, 'again')], [
+      { role: 'user', text: 'again', recorded: true }, { role: 'assistant', text: 'Reply' }]));
+    assert.deepEqual(order(html), ['Old', 'again', 'again', 'Reply']);
+  });
+
+  it('pairs keep the pane\'s order when a message repeats', () => {
+    const html = G.tcV6ConversationViewMarkup(view([ev(1, 'a'), ev(2, 'b'), ev(3, 'a')], [
+      { role: 'user', text: 'a', recorded: true }, { role: 'assistant', text: 'A1' },
+      { role: 'user', text: 'b', recorded: true }, { role: 'assistant', text: 'A2' }]));
+    assert.deepEqual(order(html), ['a', 'A1', 'b', 'A2', 'a']);
+  });
+
+  it('with nothing of it on screen, only the message this chat just sent goes last', () => {
+    const turns = [{ role: 'assistant', text: 'Asst' }];
+    assert.deepEqual(order(G.tcV6ConversationViewMarkup(view([ev(1, 'Earlier'), ev(2, 'Mine')], turns))), ['Earlier', 'Mine', 'Asst']);
+    assert.deepEqual(order(G.tcV6ConversationViewMarkup(view([ev(1, 'Earlier'), ev(2, 'Mine')], turns, { lastSent: { id: 1, text: 'Mine' } }))),
+      ['Earlier', 'Asst', 'Mine']);
+  });
+
+  it('a long message recorded in part is still drawn once, where the pane shows it', () => {
+    const full = `${'Long message line. '.repeat(400)}end`;
+    const recorded = `${full.slice(0, 3000)}\n\n[Full prompt (${full.length} chars) saved to: .tangleclaw/secrets/p.md — read that file in full]`;
+    const html = G.tcV6ConversationViewMarkup(view([ev(1, recorded)], [
+      { role: 'user', text: full, recorded: true }, { role: 'assistant', text: 'Read it.' }]));
+    assert.equal(order(html).length, 2);
+    assert.equal(order(html)[1], 'Read it.');
+  });
+
+  it('the pane\'s saved-path line under a long prompt is not taken for a reply', () => {
+    const full = `please read the whole plan before you start ${'x'.repeat(5000)}`;
+    const out = plain(G.tcV6ExtractLiveTurns([`> ${full.slice(0, 60)}`,
+      `[Full prompt (${full.length} chars) saved to: .tangleclaw/secrets/prompt-1.md — read that file in full]`, '⏺ Reading it now.'], 'claude', [full]));
+    assert.deepEqual(out.turns.map((t) => t.role), ['user', 'assistant']);
+    assert.equal(out.turns[1].text, 'Reading it now.');
+  });
+
+  it('a pending message is escaped, and is not drawn once its recorded copy is', () => {
+    const pending = { id: 7, text: '<b>hi</b>' };
+    const html = G.tcV6ConversationViewMarkup(view([], [], { pending }));
+    assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*&lt;b&gt;hi&lt;\/b&gt;[\s\S]*Sending…/);
+    assert.doesNotMatch(html, /<b>hi/);
+    assert.doesNotMatch(G.tcV6ConversationViewMarkup(view([ev(1, '<b>hi</b>')], [], { pending, lastSent: { id: 7, text: '<b>hi</b>' } })), /is-pending/);
+  });
+});
+
+describe('sending, through the controller (#3079 item 6)', () => {
+  /** A live chat whose command route answers `sendOk`, recording what it is sent. */
+  function mountSend(sendOk) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const events = [];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
+      if (/conversation\/events/.test(url)) return { events: events.map((e, i) => ({ seq: i + 1, role: e.role, content: e.content })) };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: ['⏺ Earlier reply.'] };
+      return null;
+    };
+    api.lastError = null;
+    const apiMutate = async (url, method, body) => {
+      if (/\/command$/.test(url)) { api.lastError = sendOk ? null : 'the lane is held'; return sendOk ? { ok: true } : null; }
+      if (/conversation\/events$/.test(url)) { events.push(plain(body)); return { ok: true }; }
+      return { ok: true };
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
+      setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)), onSendChat: (t) => pending.push(live.sendChat(t)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    const type = (text) => {
+      const input = doc.getElementById('v6ChatInput');
+      input.value = text;
+      input.dispatch('input');
+      doc.getElementById('v6ChatForm').dispatch('submit');
+    };
+    return { doc, root, settle, type, events };
+  }
+  const textarea = (html) => /<textarea id="v6ChatInput"[^>]*>([^<]*)<\/textarea>/.exec(html)[1];
+
+  it('Enter empties the composer at once and shows the message, escaped, at the bottom', async () => {
+    const m = mountSend(true);
+    await m.settle();
+    m.type('<i>next</i> step');
+    // Before anything is awaited: the page as drawn the moment Enter is handled.
+    assert.equal(textarea(m.root.innerHTML), '');
+    const html = m.root.innerHTML;
+    assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*&lt;i&gt;next&lt;\/i&gt; step/);
+    assert.ok(html.indexOf('Earlier reply.') < html.indexOf('is-pending'), 'below the replies before it');
+    await m.settle();
+  });
+
+  it('once sent, the pending message gives way to its recorded copy, drawn once, after the replies', async () => {
+    const m = mountSend(true);
+    await m.settle();
+    m.type('next step');
+    await m.settle();
+    const html = m.root.innerHTML;
+    assert.doesNotMatch(html, /is-pending/);
+    assert.equal((html.match(/>next step</g) || []).length, 1);
+    assert.ok(html.indexOf('Earlier reply.') < html.indexOf('>next step<'));
+    assert.match(html, /<ol id="v6ChatRecordedTail"[^>]*><li class="v6-conversation-event is-user">/);
+  });
+
+  it('a refused send puts the text back and removes the pending message', async () => {
+    const m = mountSend(false);
+    await m.settle();
+    m.type('keep me');
+    await m.settle();
+    assert.equal(textarea(m.root.innerHTML), 'keep me');
+    assert.doesNotMatch(m.root.innerHTML, /is-pending/);
+    assert.match(m.root.innerHTML, /Not sent: the lane is held/);
+    assert.equal(m.events.length, 0);
   });
 });
