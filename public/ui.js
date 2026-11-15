@@ -8236,6 +8236,8 @@ if (typeof window.tcCreateV6Shell === 'function') {
       if (v6ShellRoot) v6ShellRoot.classList.toggle('hidden', !active);
       if (v6DashboardRoot) v6DashboardRoot.classList.toggle('hidden', active);
       if (v6ClassicToolbar) v6ClassicToolbar.classList.toggle('hidden', active);
+      // #3079: a slim top bar in the v6 shell; the admin controls sit in a More menu.
+      if (typeof window.tcV6TuckAdminControls === 'function') window.tcV6TuckAdminControls(document, active);
       if (v6ToggleBtn) {
         v6ToggleBtn.textContent = window.tcV6ViewToggleLabel(route);
         v6ToggleBtn.setAttribute('aria-pressed', active ? 'true' : 'false');

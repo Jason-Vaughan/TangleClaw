@@ -4684,3 +4684,208 @@ p.v6-history-secret {
     justify-content: space-between;
   }
 }
+
+/* #3079: each turn is tinted in its own accent colour, light enough that the
+   page behind still shows through, and its content sits under a 1.5px
+   dashed divider in that same colour. */
+.v6-conversation-event.is-user {
+  background: rgba(56, 139, 253, 0.07);
+}
+.v6-conversation-event.is-assistant {
+  background: rgba(46, 160, 67, 0.06);
+}
+[data-theme="light"] .v6-conversation-event.is-user {
+  background: rgba(9, 105, 218, 0.07);
+}
+[data-theme="light"] .v6-conversation-event.is-assistant {
+  background: rgba(26, 127, 55, 0.07);
+}
+.v6-conversation-event > .v6-conversation-content {
+  display: block;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1.5px dashed var(--v6-outline, #3d444d);
+}
+.v6-conversation-event.is-user > .v6-conversation-content {
+  border-top-color: #58a6ff;
+}
+.v6-conversation-event.is-assistant > .v6-conversation-content {
+  border-top-color: #56d364;
+}
+/* #3079: the delegate picker stays in the page but out of sight; the
+   label's own display rule would otherwise beat the hidden attribute. */
+.v6-chat-delegate-label[hidden] {
+  display: none;
+}
+/* #3079: the questions a reply asks, numbered when there are several, each
+   with its own dismiss button. */
+.v6-chat-question-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.v6-chat-question-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.v6-chat-question-text {
+  flex: 1 1 auto;
+}
+.v6-chat-question-badge {
+  font-weight: 600;
+}
+.v6-chat-question-dismiss {
+  flex: 0 0 auto;
+  min-width: 44px;
+  min-height: 44px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+}
+.v6-chat-question-dismiss:hover,
+.v6-chat-question-dismiss:focus-visible {
+  border-color: #d4a72c;
+}
+/* #3076: Medusa traffic in the chat header — the inbound (left) and
+   outbound (right) heads blink when traffic moves; the badge is @ or the
+   unread count. */
+.v6-chat-medusa-slot:empty {
+  display: none;
+}
+.v6-chat-medusa {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 0 6px;
+  background: none;
+  border: 1px solid var(--v6-outline, #3d444d);
+  border-radius: 999px;
+  color: inherit;
+  cursor: pointer;
+}
+.v6-chat-medusa.is-error {
+  border-color: #f85149;
+}
+.v6-medusa-head {
+  width: 16px;
+  height: 19px;
+  opacity: 0.45;
+}
+.v6-chat-medusa.is-listening .v6-medusa-head {
+  opacity: 0.85;
+}
+.v6-chat-medusa.is-flow-in .v6-medusa-head--in,
+.v6-chat-medusa.is-flow-out .v6-medusa-head--out {
+  opacity: 1;
+  animation: v6-medusa-blink 0.6s ease-in-out 3;
+}
+@keyframes v6-medusa-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .v6-chat-medusa .v6-medusa-head {
+    animation: none;
+  }
+}
+.v6-chat-medusa-badge {
+  min-width: 1.4em;
+  text-align: center;
+  font-weight: 600;
+  font-size: 0.85em;
+}
+.v6-chat-medusa-badge.has-unread {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #d4a72c;
+  color: #000;
+}
+/* #3076: the switchboard's wakes and sends, Under the Hood. */
+.v6-chat-switchboard {
+  margin-bottom: 6px;
+}
+.v6-chat-switchboard-title {
+  margin: 0 0 4px;
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+.v6-chat-switchboard-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 12em;
+  overflow: auto;
+  font-family: monospace;
+  font-size: 0.85em;
+}
+.v6-chat-switchboard-item {
+  overflow-wrap: anywhere;
+}
+.v6-chat-switchboard-dir {
+  opacity: 0.7;
+}
+/* #3079: the footer is the shell's status bar — server-wide readings on the
+   left, the faded watermark on the right. */
+.v6-shell-watermark.has-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  opacity: 1;
+  text-align: left;
+}
+.v6-shell-status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.v6-shell-status-bar .v6-telemetry-chip {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.v6-shell-watermark-mark {
+  opacity: 0.5;
+}
+/* #3079: in the v6 shell the Classic admin controls sit in one More menu. */
+.v6-admin-menu {
+  position: relative;
+  display: inline-block;
+}
+.v6-admin-menu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.v6-admin-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.v6-admin-menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 180px;
+  padding: 6px;
+  background: var(--card-bg, #0d0d0d);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.v6-admin-menu-panel > * {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+}
