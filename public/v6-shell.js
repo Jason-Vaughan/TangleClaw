@@ -1410,6 +1410,41 @@
   /** The secure-clipboard route's limit on one decoded file (`lib/secure-clipboard.js` MAX_FILE_BYTES). */
   const MAX_ATTACH_BYTES = 5 * 1024 * 1024;
 
+  /** The session command route's limit on one command, in characters (`lib/routes/sessions.js`). */
+  const MAX_COMMAND_CHARS = 4096;
+
+  /**
+   * Text as base64 of its UTF-8 bytes, what the secure-clipboard route's
+   * `encoding: 'base64'` decodes (#3079).
+   * @param {string} text
+   * @returns {string}
+   */
+  function defaultTextToBase64(text) {
+    const bytes = new global.TextEncoder().encode(String(text));
+    let binary = '';
+    // In slices, so a long message never overflows the argument list.
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return global.btoa(binary);
+  }
+
+  /**
+   * The command that stands in for a message too long for the command route
+   * (#3079): as much of its start as fits, then where the whole of it was
+   * saved. Never longer than {@link MAX_COMMAND_CHARS}, and never cut
+   * between the two halves of a surrogate pair.
+   * @param {string} message - The whole message.
+   * @param {string} relPath - Where it was saved, relative to the project.
+   * @returns {string}
+   */
+  function longPromptCommand(message, relPath) {
+    const note = `\n\n[Full prompt (${message.length} chars) saved to: ${relPath} — read that file in full]`;
+    let head = message.slice(0, Math.max(0, MAX_COMMAND_CHARS - note.length));
+    if (/[\uD800-\uDBFF]$/.test(head)) head = head.slice(0, -1);
+    return `${head}${note}`;
+  }
+
   /**
    * A file name the secure-clipboard route accepts (#3053):
    * `[A-Za-z0-9._-]{1,128}`, never `.` or `..`. Spaces and path separators
@@ -2081,6 +2116,8 @@
     const uploadedNames = new Map();
     let attachSeq = 0;
     const readFileAsBase64 = deps.readFileAsBase64 || defaultReadFileAsBase64;
+    const textToBase64 = deps.textToBase64 || defaultTextToBase64;
+    const clock = typeof deps.now === 'function' ? deps.now : () => Date.now();
     // The secure-clipboard routes gate even their GET listing with operator
     // proof, and api()'s own CSRF header only rides on writes, so the token
     // is added here too, as public/secure-clipboard-ui.js does.
@@ -2405,7 +2442,18 @@
     async function deliverChat(chat, message, name) {
       showSend({ kind: 'pending', message: `Sending to ${name}…` });
       const before = chat.view && chat.view.chat ? lastReply(chat.view.chat.live) : null;
-      const sent = await apiMutate(`/api/sessions/${encodeURIComponent(name)}/command`, 'POST', { command: message, enter: true });
+      // #3079: the command route takes at most MAX_COMMAND_CHARS; a longer
+      // message is saved to a file first and the session is pointed at it.
+      let command = message;
+      if (message.length > MAX_COMMAND_CHARS) {
+        const saved = await saveLongPrompt(chat, message);
+        if (!saved.ok) {
+          if (chat === current) showSend({ kind: 'error', message: `Not sent: ${saved.error}` });
+          return;
+        }
+        command = longPromptCommand(message, saved.relPath);
+      }
+      const sent = await apiMutate(`/api/sessions/${encodeURIComponent(name)}/command`, 'POST', { command, enter: true });
       if (sent) awaitingReply = { projectId: String(chat.project.id), reply: before, reads: 0 };
       // Once it is in the session the draft is spent, even if the operator
       // has moved to another chat meanwhile: left saved, it would come back
@@ -2426,6 +2474,39 @@
       await loadConversation(chat.project, chat.mine, chat.ctx, recorded === true
         ? { kind: 'ok', message: `Sent to ${name}.` }
         : { kind: 'warning', message: `Sent to ${name}, but it could not be recorded in the conversation: ${recorded}` });
+    }
+
+    /**
+     * Save a message too long for the command route as a file in the target
+     * project's secrets store (#3079), through the same secure-clipboard
+     * route and operator proof attachments use.
+     * @param {object} chat - `current` at send time.
+     * @param {string} message
+     * @returns {Promise<{ok: true, relPath: string}|{ok: false, error: string}>}
+     */
+    async function saveLongPrompt(chat, message) {
+      const filename = `prompt-${clock()}.md`;
+      let text;
+      try {
+        text = textToBase64(message);
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a browser that cannot encode the text refuses the send with its reason, never an unhandled rejection
+        return { ok: false, error: `the long message could not be prepared (${(err && err.message) || 'unknown error'}).` };
+      }
+      // Four base64 characters carry three bytes.
+      if (Math.floor(text.length / 4) * 3 > MAX_ATTACH_BYTES) {
+        return { ok: false, error: `the message is over the 5 MB limit for a saved prompt.` };
+      }
+      let res;
+      try {
+        const headers = await operatorHeaders();
+        res = await api(`/api/sessions/${encodeURIComponent(chat.project.name)}/secure-clipboard`, {
+          method: 'POST', headers, body: JSON.stringify({ text, mode: 'file', filename, encoding: 'base64' })
+        });
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a refused operator proof or a failed request refuses the send with its reason, never an unhandled rejection
+        return { ok: false, error: `the long message could not be saved for the session: ${(err && err.message) || 'unknown error'}` };
+      }
+      if (!res) return { ok: false, error: `the long message could not be saved for the session: ${api.lastError || 'the server refused it'}` };
+      return { ok: true, relPath: projectRelative(res.relPath, filename) };
     }
 
     /**
@@ -3859,6 +3940,7 @@
   global.tcV6ChatKeyAction = chatKeyAction;
   global.tcV6FormatElapsed = formatElapsed;
   global.tcV6ExtractLiveTurns = extractLiveTurns;
+  global.tcV6LongPromptCommand = longPromptCommand;
   global.tcV6MedusaIndicatorMarkup = medusaIndicatorMarkup;
   global.tcV6SanitizeUploadName = sanitizeUploadName;
   global.tcV6FilesFromEvent = filesFromEvent;

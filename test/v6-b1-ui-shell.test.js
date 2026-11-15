@@ -4663,3 +4663,120 @@ describe('V629 styles (#3076, #3079)', () => {
     assert.match(CSS, /\.v6-admin-menu-panel \{[^}]*position: absolute;[^}]*z-index: 30;/);
   });
 });
+
+describe('a message longer than the command route takes (#3079 item 5)', () => {
+  /**
+   * A live chat that records what it uploads and sends. `upload` answers the
+   * secure-clipboard POST (null = refused).
+   */
+  function mountLong(opts) {
+    const o = opts || {};
+    const G = loadV6Shell();
+    G.TextEncoder = TextEncoder;
+    G.btoa = btoa;
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const uploads = [];
+    const sends = [];
+    const events = [];
+    const api = async (url, init) => {
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
+      if (/conversation\/events/.test(url)) return { events: [] };
+      if (url === '/api/sessions/TC-Lane-PM/secure-clipboard' && init && init.method === 'POST') {
+        uploads.push({ headers: init.headers, body: JSON.parse(init.body) });
+        api.lastError = o.upload === null ? 'Secure clipboard is locked' : null;
+        return o.upload === null ? null : { relPath: `secrets/${JSON.parse(init.body).filename}` };
+      }
+      return null;
+    };
+    api.lastError = null;
+    api.lastErrorCode = null;
+    const apiMutate = async (url, method, body) => {
+      if (/\/command$/.test(url)) sends.push(plain(body));
+      if (/conversation\/events$/.test(url)) events.push(plain(body));
+      return { ok: true };
+    };
+    let shell = null;
+    const pending = [];
+    const deps = { getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {},
+      now: () => 1700000000000, operatorHeaders: async () => ({ 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' }) };
+    if (o.textToBase64) deps.textToBase64 = o.textToBase64;
+    const live = G.tcV6CreateLiveController(deps);
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
+      setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)), onSendChat: (t) => pending.push(live.sendChat(t)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    const send = async (text) => {
+      await settle();
+      const input = doc.getElementById('v6ChatInput');
+      input.value = text;
+      input.dispatch('input');
+      doc.getElementById('v6ChatForm').dispatch('submit');
+      await settle();
+    };
+    return { G, doc, root, uploads, sends, events, send, shell };
+  }
+
+  it('a message within the limit is sent as it is, with nothing saved', async () => {
+    const m = mountLong();
+    const text = 'x'.repeat(4096);
+    await m.send(text);
+    assert.equal(m.uploads.length, 0);
+    assert.deepEqual(m.sends, [{ command: text, enter: true }]);
+  });
+
+  it('a longer one is saved whole as a file, the session is sent its start and where the rest is, and the chat records it all', async () => {
+    const m = mountLong();
+    const text = `Plan ✓ ${'é'.repeat(3000)} 🙂 ${'line\n'.repeat(400)}end`;
+    assert.ok(text.length > 4096);
+    await m.send(text);
+    assert.equal(m.uploads.length, 1);
+    const up = m.uploads[0];
+    assert.deepEqual({ mode: up.body.mode, filename: up.body.filename, encoding: up.body.encoding },
+      { mode: 'file', filename: 'prompt-1700000000000.md', encoding: 'base64' });
+    assert.equal(Buffer.from(up.body.text, 'base64').toString('utf8'), text, 'the file holds the whole message, as UTF-8');
+    assert.equal(up.headers['X-TC-Open-Token'], 'tok', 'with the page\'s operator proof');
+    assert.equal(m.sends.length, 1);
+    const cmd = m.sends[0].command;
+    assert.ok(cmd.length <= 4096, `command is ${cmd.length} chars`);
+    assert.ok(cmd.startsWith(text.slice(0, 3000)));
+    assert.ok(cmd.endsWith(`\n\n[Full prompt (${text.length} chars) saved to: .tangleclaw/secrets/prompt-1700000000000.md — read that file in full]`), cmd.slice(-160));
+    assert.equal(m.events.length, 1);
+    assert.equal(m.events[0].content, text, 'the conversation shows the whole message');
+  });
+
+  it('when the file cannot be saved, nothing is sent and the text is kept', async () => {
+    const m = mountLong({ upload: null });
+    const text = 'y'.repeat(5000);
+    await m.send(text);
+    assert.equal(m.sends.length, 0);
+    assert.equal(m.events.length, 0);
+    assert.match(m.root.innerHTML, /Not sent: the long message could not be saved for the session: Secure clipboard is locked/);
+    assert.match(m.root.innerHTML, new RegExp(`<textarea id="v6ChatInput"[^>]*>${'y'.repeat(5000)}</textarea>`));
+  });
+
+  it('over the 5 MB limit for a saved file it is refused before anything is uploaded', async () => {
+    const m = mountLong({ textToBase64: () => 'A'.repeat(Math.ceil((5 * 1024 * 1024 + 3) / 3) * 4) });
+    await m.send('z'.repeat(5000));
+    assert.equal(m.uploads.length, 0);
+    assert.equal(m.sends.length, 0);
+    assert.match(m.root.innerHTML, /Not sent: the message is over the 5 MB limit for a saved prompt\./);
+  });
+
+  it('the stand-in command fills the limit exactly and never splits a surrogate pair', () => {
+    const G = loadV6Shell();
+    const path = '.tangleclaw/secrets/prompt-1.md';
+    const flat = G.tcV6LongPromptCommand('a'.repeat(9000), path);
+    assert.equal(flat.length, 4096);
+    const note = `\n\n[Full prompt (9000 chars) saved to: ${path} — read that file in full]`;
+    const cut = 4096 - note.length;
+    const pairs = 'a'.repeat(cut - 1) + '🙂'.repeat(2000);
+    const out = G.tcV6LongPromptCommand(pairs, path);
+    assert.ok(out.length <= 4096);
+    assert.doesNotMatch(out.split('\n\n[Full prompt')[0], /[\uD800-\uDBFF]$/);
+  });
+});
