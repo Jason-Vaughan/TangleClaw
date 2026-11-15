@@ -4471,7 +4471,6 @@
       syncDockedHeader();
       const target = opts && opts.focus ? doc.getElementById(opts.focus) : null;
       if (target && typeof target.focus === 'function') target.focus();
-      if (typeof options.onWorkspaceMode === 'function') options.onWorkspaceMode(mode);
     }
 
     /**
@@ -5361,7 +5360,7 @@
               data-action="toggle-sidebar-drawer" aria-controls="v6ShellSidebar" aria-expanded="false">» Show Fleet</button>` : ''}
             <h1 class="v6-shell-title">${escapeHtml(title)}</h1>
           </div>
-          <div id="v6ShellDetail"${shown.detail ? '' : ' hidden'}>${detailMarkup(detail, {
+          <div id="v6ShellDetail" role="tabpanel" aria-labelledby="v6WorkspaceMode-chat"${shown.detail ? '' : ' hidden'}>${detailMarkup(detail, {
             draft: chatDrafts.get(chatTargetKey()) || '', hoodOpen: chatHoodOpen,
             fleetArmed: fleetArmedKey != null && fleetArmedKey === chatTargetKey(),
             rename: renameOpenKey != null && renameOpenKey === chatTargetKey()
@@ -5370,7 +5369,7 @@
             pending: pendingSends.filter((p) => p.key === chatTargetKey()),
             verbosity
           })}</div>
-          <div id="v6ShellWizard"${shown.wizard ? '' : ' hidden'}>${fleetWizardMarkup(templates)}</div>
+          <div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard"${shown.wizard ? '' : ' hidden'}>${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation"${shown.attestation ? '' : ' hidden'}>${modelAttestationMarkup(attestation)}</div>
           <section id="v6WorkspacePanel" class="v6-workspace-panel" role="tabpanel"
             aria-labelledby="v6WorkspaceMode-${shown.panel ? workspaceMode : 'sprint'}"${shown.panel ? '' : ' hidden'}>${shown.panel ? workspacePanelMarkup(workspaceMode, workspacePanels.get(workspaceMode)) : ''}</section>

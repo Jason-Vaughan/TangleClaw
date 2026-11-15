@@ -2532,9 +2532,10 @@ describe('chat start controls and delegate recognition markup (#3053)', () => {
 describe('tcCreateV6Shell — chrome in the conversation view (#3053)', () => {
   it('keeps the template wizard and attestation slots in the page but hidden while a conversation shows', () => {
     const { shell, root } = mountShell({ tree: TWO_GROUP_TREE, templates: [{ id: 't1', name: 'T', seats: [1] }] });
-    assert.match(root.innerHTML, /<div id="v6ShellWizard">/);
+    // Restated by #3086: the wizard slot is now the Wizard tab's panel, so it carries role="tabpanel" and names its tab.
+    assert.match(root.innerHTML, /<div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard">/);
     shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'x' }, sessionId: null, chat: {} } });
-    assert.match(root.innerHTML, /<div id="v6ShellWizard" hidden>[\s\S]*v6ShellWizardLaunch-t1/);
+    assert.match(root.innerHTML, /<div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard" hidden>[\s\S]*v6ShellWizardLaunch-t1/);
     assert.match(root.innerHTML, /<div id="v6ShellAttestation" hidden>/);
   });
 
@@ -5934,23 +5935,21 @@ describe('the workspace mode bar and wizard launcher (#3086)', () => {
     withIdParsingInnerHTML(root, doc);
     doc.body.appendChild(root);
     const storage = makeStorage(seed);
-    const modes = [];
     const win = makeFakeWindow('#/projects/tc-lane');
-    const shell = G.tcCreateV6Shell(doc, Object.assign({ root, window: win, storage,
-      onWorkspaceMode: (m) => modes.push(m) }, extra || {}));
+    const shell = G.tcCreateV6Shell(doc, Object.assign({ root, window: win, storage }, extra || {}));
     const chatOf = (id) => ({ kind: 'conversation', view: { project: { id, name: `P${id}` }, sessionId: 2, events: [], chat: { status: 'active', members: [] } } });
     if (!(extra && extra.noChat)) shell.setDetail(chatOf(1));
     const key = (id, k) => keydowns.get(id)({ key: k, preventDefault() {} });
     const selected = () => MODES.filter((m) => doc.getElementById(`v6WorkspaceMode-${m}`).getAttribute('aria-selected') === 'true');
-    return { doc, root, shell, storage, modes, key, selected, chatOf, win };
+    return { doc, root, shell, storage, key, selected, chatOf, win };
   }
 
   it('opens the wizard from the sidebar launcher inside a chat, keeping the chat in the page', () => {
     const m = mount();
     assert.match(m.root.innerHTML, /<button type="button" id="v6ShellWizardOpenBtn" class="btn btn-secondary v6-wizard-open" data-workspace-mode="wizard"><span aria-hidden="true">＋<\/span> New Project \/ Fleet Wizard<\/button>/);
     // The test DOM keeps ids, not attributes, so the first drawing is read from its markup.
-    assert.match(m.root.innerHTML, /<div id="v6ShellWizard" hidden>/, 'the wizard is out of sight in a chat');
-    assert.match(m.root.innerHTML, /<div id="v6ShellDetail">/);
+    assert.match(m.root.innerHTML, /<div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard" hidden>/, 'the wizard is out of sight in a chat');
+    assert.match(m.root.innerHTML, /<div id="v6ShellDetail" role="tabpanel" aria-labelledby="v6WorkspaceMode-chat">/);
     assert.match(m.root.innerHTML, /<section id="v6WorkspacePanel" class="v6-workspace-panel" role="tabpanel"\s+aria-labelledby="v6WorkspaceMode-sprint" hidden><\/section>/);
     const input = m.doc.getElementById('v6ChatInput');
     input.value = 'half a thought';
@@ -5966,13 +5965,23 @@ describe('the workspace mode bar and wizard launcher (#3086)', () => {
     assert.equal(m.doc.getElementById('v6WorkspaceMode-chat').getAttribute('tabindex'), '-1');
     assert.equal(m.doc.activeElement, m.doc.getElementById('v6WorkspaceMode-wizard'));
     assert.equal(m.storage.data.tc_v6_workspace_mode, undefined, 'the mode is not stored');
-    assert.deepEqual(m.modes, ['wizard']);
     assert.equal(m.shell.getWorkspaceMode(), 'wizard');
     // Back to Chat: the same chat, and the wizard is out of sight again.
     m.doc.getElementById('v6WorkspaceMode-chat').dispatch('click');
     assert.equal(m.doc.getElementById('v6ShellDetail').hidden, false);
     assert.equal(m.doc.getElementById('v6ShellWizard').hidden, true);
     assert.strictEqual(m.doc.getElementById('v6ChatInput'), input);
+  });
+
+  it('every tab controls a region drawn as a tab panel that names a tab (cumulative review W-2)', () => {
+    const html = mount(undefined, { noChat: true }).root.innerHTML;
+    const controls = [...html.matchAll(/role="tab" id="v6WorkspaceMode-\w+"[^>]*aria-controls="(\w+)"/g)].map((x) => x[1]);
+    assert.equal(controls.length, 5);
+    for (const id of new Set(controls)) {
+      assert.match(html, new RegExp(`id="${id}"[^>]*role="tabpanel"[^>]*aria-labelledby="v6WorkspaceMode-\\w+"`), id);
+    }
+    assert.match(html, /<div id="v6ShellDetail" role="tabpanel" aria-labelledby="v6WorkspaceMode-chat">/);
+    assert.match(html, /<div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard">/);
   });
 
   it('the top launcher opens the wizard too', () => {
@@ -5982,7 +5991,7 @@ describe('the workspace mode bar and wizard launcher (#3086)', () => {
     assert.equal(m.doc.getElementById('v6ShellWizard').hidden, false);
     m.shell.setWorkspaceMode('admin');
     assert.equal(m.shell.getWorkspaceMode(), 'wizard', 'a name that is not a mode is ignored');
-    assert.deepEqual(m.modes, ['wizard']);
+    assert.deepEqual(m.selected(), ['wizard']);
   });
 
   it('moves between tabs with the arrow keys, Home and End, choosing as it goes and wrapping at the ends', () => {
@@ -6006,9 +6015,8 @@ describe('the workspace mode bar and wizard launcher (#3086)', () => {
     m.key('v6WorkspaceMode-wizard', 'ArrowLeft');
     assert.deepEqual(m.selected(), ['kaizen']);
     assert.match(m.doc.getElementById('v6WorkspacePanel').innerHTML, /Kaizen &amp; Reports/);
-    const before = m.modes.length;
     m.key('v6WorkspaceMode-kaizen', 'a');
-    assert.equal(m.modes.length, before, 'another key does nothing');
+    assert.deepEqual(m.selected(), ['kaizen'], 'another key does nothing');
   });
 
   it('every route opens in Chat, a reload included; a redraw on the same route keeps the chosen mode (chunk review W-1)', () => {
@@ -6020,11 +6028,11 @@ describe('the workspace mode bar and wizard launcher (#3086)', () => {
     m.shell.setDetail(m.chatOf(1));
     m.shell.setDetail(m.chatOf(3));
     assert.equal(m.shell.getWorkspaceMode(), 'wizard');
-    assert.match(m.root.innerHTML, /<div id="v6ShellDetail" hidden>/);
+    assert.match(m.root.innerHTML, /<div id="v6ShellDetail" role="tabpanel" aria-labelledby="v6WorkspaceMode-chat" hidden>/);
     // Going to another member shows its chat.
     m.win.location.hash = '#/resources/3/conversation';
     assert.equal(m.shell.getWorkspaceMode(), 'chat');
-    assert.match(m.root.innerHTML, /<div id="v6ShellDetail">/);
+    assert.match(m.root.innerHTML, /<div id="v6ShellDetail" role="tabpanel" aria-labelledby="v6WorkspaceMode-chat">/);
     assert.match(m.root.innerHTML, /id="v6WorkspaceMode-chat" class="v6-workspace-mode is-active"/);
   });
 
