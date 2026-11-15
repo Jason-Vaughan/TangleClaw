@@ -48,7 +48,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 - Compiled 4 accepted `changelog.d/` fragments (#3088 from PR #3102; #3089, #3093 and #3099 from PR #3101) into `CHANGELOG.md` section `[6.4.0]` using the wrap's own compile/splice/promote functions. Three `.added` fragments make this a minor release (Ruling A756), so 6.3.0 -> 6.4.0 via `_decideBumpLevel(_parseUnreleased(...))`. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap state. Folded in both PRs' change-log entries below, verbatim.
 - PR #3102's entry carries no `<!-- prawduct: ... -->` tag line; it is folded in verbatim as written.
 - Status corrections the release notes carry: #3092 was deferred to v6.4.1 by Ruling A786 and has no milestone (the v6.3.0 notes said it was chartered for v6.4.0); #3103 (the send path's wording for #3099) is a follow-up for whichever car next owns `lib/medusa-send.js`.
-- This car's own Gate 0 was requested from TC-Lane-B at dispatch; the queue records none for V640-W-REL.
+- Gate 0 for this car: OGATE-G0-V640-WREL-A786-PASS (TC-Lane-B), issued at dispatch with conditions C1 to C6; C1 to C5 are met by this cut, and C6 (close milestone #79 after publication) follows release.yml.
 
 ## 2026-11-15 — Car V640-W1-B: fleet isolation fails closed (#3099), sprint setup gate + hub links (#3093), consolidated train reports + fast-follow remarks (#3089)
 
