@@ -521,8 +521,9 @@
 
   /**
    * A data mode's panel content (#3086, Rulings A760, A761, A774). A failed
-   * read says so: a missing route or version is "not available on this
-   * server yet", anything else names the reason. Otherwise the sprint UI's
+   * read says so: a missing route is "not available on this server yet" (a
+   * missing report, "no report for this version on this server yet"),
+   * anything else names the reason. Otherwise the sprint UI's
    * own builder draws it when loaded — `renderSprintWaveBoard(container,
    * data)` container-first as on main, the two new builders data-first — and
    * an escaped built-in drawing stands in when it is not, or when it throws.
@@ -534,6 +535,8 @@
   function workspacePanelContent(mode, result, ui) {
     const r = result || { ok: false };
     if (!r.ok) {
+      // A sprint report's 404 is also its answer for a version with no data, so it says only what is true of both.
+      if (r.notFound && mode === 'kaizen') return '<p class="v6-workspace-empty">No report for this version on this server yet.</p>';
       return r.notFound
         ? '<p class="v6-workspace-empty">Not available on this server yet.</p>'
         : `<p class="v6-workspace-empty is-error">Could not load this: ${escapeHtml(r.error || 'the server did not answer')}.</p>`;
@@ -3820,19 +3823,24 @@
     const pageDocument = deps.document || (pageWindow && pageWindow.document) || null;
     const later = deps.setTimeout || ((fn, ms) => setTimeout(fn, ms));
     let sprintUiLoad = null;
+    // Set once the script has failed or timed out; the built-in drawing serves until a reload.
+    let sprintUiGaveUp = false;
 
     /**
      * `window.TangleClawSprintWaveUi`, loading `/sprint-wave-ui.js` at most
      * once (#3086, A760/A761): a script already in the page, by its id, its
      * `data-tc-sprint-wave-ui="1"` mark or its src, is waited on rather than
      * added again; the one added carries all three. Resolves null when the script
-     * fails or has not defined it within 10 seconds; a later call tries again.
+     * fails or has not defined it within 10 seconds, and from then on resolves
+     * null at once until the page reloads: a script element fires load or error
+     * only once, so waiting on it again would only wait out the timer.
      * @returns {Promise<object|null>}
      */
     function sprintWaveUi() {
       const present = pageWindow && pageWindow.TangleClawSprintWaveUi;
       if (present) return Promise.resolve(present);
       if (sprintUiLoad) return sprintUiLoad;
+      if (sprintUiGaveUp) return Promise.resolve(null);
       if (!pageDocument || typeof pageDocument.createElement !== 'function') return Promise.resolve(null);
       sprintUiLoad = new Promise((resolve) => {
         let settled = false;
@@ -3855,7 +3863,11 @@
         script.addEventListener('error', done);
         later(done, 10000);
       });
-      sprintUiLoad.then((ui) => { if (!ui) sprintUiLoad = null; });
+      sprintUiLoad.then((ui) => {
+        if (ui) return;
+        sprintUiLoad = null;
+        sprintUiGaveUp = true;
+      });
       return sprintUiLoad;
     }
 

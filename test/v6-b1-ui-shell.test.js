@@ -6078,6 +6078,9 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
 
   it('says a missing route is not available yet, and names any other failure, escaped', () => {
     assert.equal(content('sprint', { ok: false, notFound: true }), '<p class="v6-workspace-empty">Not available on this server yet.</p>');
+    assert.equal(content('charter', { ok: false, notFound: true }), '<p class="v6-workspace-empty">Not available on this server yet.</p>');
+    // A report's 404 also answers a version with no data (cumulative review note).
+    assert.equal(content('kaizen', { ok: false, notFound: true }), '<p class="v6-workspace-empty">No report for this version on this server yet.</p>');
     assert.equal(content('kaizen', { ok: false, error: 'boom <script>' }), '<p class="v6-workspace-empty is-error">Could not load this: boom &lt;script&gt;.</p>');
     assert.match(content('charter', { ok: false }), /Could not load this: the server did not answer\./);
   });
@@ -6188,7 +6191,7 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     assert.deepEqual(c.panels[2], ['sprint', '<div>board C1</div>']);
   });
 
-  it('waits on a script already in the page rather than adding another, and tries again after a failed load', async () => {
+  it('waits on a script already in the page rather than adding another, and after a failed load draws its own list at once (cumulative review W-1)', async () => {
     const existing = { id: '', src: '/sprint-wave-ui.js', listeners: {}, addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); } };
     const c = controller({ existing });
     await c.live.handleRoute(null);
@@ -6201,13 +6204,35 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     assert.match(c.panels[0][1], /<span class="v6-workspace-item-id">C1<\/span> <span class="v6-workspace-item-stage">Claimed<\/span>/, 'built-in drawing after a failed load');
     c.load('sprint', '6.3.0');
     await new Promise((r) => setImmediate(r));
-    assert.equal(existing.listeners.load.length, 2, 'a later panel waits on the page\'s script again');
-    assert.equal(c.scripts.length, 0, 'still never adds its own');
-    // A script that never answers gives up at the timer.
+    await new Promise((r) => setImmediate(r));
+    assert.equal(existing.listeners.load.length, 1, 'a script that already failed is not waited on again');
+    assert.equal(c.scripts.length, 0, 'nor is another added');
+    assert.equal(c.panels.length, 2, 'the built-in list is drawn at once, not after the timer');
+    assert.match(c.panels[1][1], /<span class="v6-workspace-item-id">C1<\/span>/);
+  });
+
+  it('gives up on a script that never answers at the timer, and draws its own list from then on', async () => {
+    const c = controller();
+    await c.live.handleRoute(null);
+    c.load('sprint', '6.3.0');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(c.panels.length, 0, 'still waiting');
     c.timers.forEach((fn) => fn());
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    assert.equal(c.panels.length, 2);
+    assert.equal(c.panels.length, 1);
+    assert.match(c.panels[0][1], /<span class="v6-workspace-item-id">C1<\/span>/);
+    c.load('charter', '6.3.0');
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.equal(c.panels.length, 2, 'drawn without waiting');
+    assert.equal(c.scripts.length, 1, 'the script was added once');
+    // A late definition is still used: the UI on the window is checked first.
+    c.win.TangleClawSprintWaveUi = { renderSprintWaveBoard: () => '<div>late</div>' };
+    c.load('sprint', '6.3.0');
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(c.panels[2], ['sprint', '<div>late</div>']);
   });
 
   it('finds a script the page already has by its data-tc-sprint-wave-ui mark (A760)', async () => {
