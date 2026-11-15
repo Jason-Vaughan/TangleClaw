@@ -5167,3 +5167,109 @@ p.v6-history-secret {
 .v6-usage-status.is-error {
   color: #f85149;
 }
+
+/* #3086: the workspace mode bar at the top of the main view, and the wizard
+   launchers. The bar scrolls sideways on a narrow screen rather than wrap. */
+.v6-workspace-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.v6-workspace-mode-bar {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  border-bottom: 1.5px solid var(--v6-outline, #3d444d);
+}
+.v6-workspace-mode {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.v6-workspace-mode:hover {
+  background: var(--accent-bg, rgba(86, 211, 100, 0.12));
+}
+.v6-workspace-mode.is-active {
+  border-bottom-color: #2ea043;
+  font-weight: 600;
+}
+.v6-workspace-mode:focus-visible {
+  outline: 2px solid #58a6ff;
+  outline-offset: -2px;
+}
+.v6-wizard-open {
+  min-height: 44px;
+}
+.v6-shell-sidebar > .v6-wizard-open {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+  text-align: left;
+}
+.v6-wizard-open--top {
+  flex: 0 0 auto;
+}
+.v6-workspace-panel {
+  padding: 12px;
+  border: 1.5px solid var(--v6-outline, #3d444d);
+  border-radius: 8px;
+  background: var(--v6-surface, #0d0d0d);
+}
+.v6-workspace-panel-title {
+  margin: 0 0 8px;
+  font-size: 1.1em;
+}
+.v6-workspace-empty {
+  margin: 0;
+  opacity: 0.75;
+}
+.v6-workspace-empty.is-error {
+  color: #f85149;
+  opacity: 1;
+}
+.v6-workspace-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.v6-workspace-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--v6-outline, #3d444d);
+}
+.v6-workspace-item-id {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.v6-workspace-item-stage,
+.v6-workspace-item-lane,
+.v6-workspace-item-pr {
+  opacity: 0.8;
+}
+.v6-workspace-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 8px 0;
+}
+.v6-workspace-kpis dt {
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+.v6-workspace-kpis dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}

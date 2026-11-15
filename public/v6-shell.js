@@ -428,6 +428,169 @@
       .filter((project) => project.fleets.length);
   }
 
+  /** The workspace modes (#3086): the main view's tabs, in order. */
+  const WORKSPACE_MODES = Object.freeze([
+    Object.freeze({ key: 'chat', glyph: '💬', label: 'Chat' }),
+    Object.freeze({ key: 'sprint', glyph: '📋', label: 'Sprint & Cars' }),
+    Object.freeze({ key: 'charter', glyph: '🧭', label: 'Charter & Roadmap' }),
+    Object.freeze({ key: 'kaizen', glyph: '📈', label: 'Kaizen & Reports' }),
+    Object.freeze({ key: 'wizard', glyph: '🧙', label: 'Wizard' })
+  ]);
+
+  /** @param {*} v @returns {boolean} Whether `v` names a workspace mode. */
+  function isWorkspaceMode(v) {
+    return typeof v === 'string' && WORKSPACE_MODES.some((m) => m.key === v);
+  }
+
+  /**
+   * Which parts of the main view a workspace mode shows (#3086). Chat shows
+   * the detail, with the template wizard and attestation below it outside a
+   * conversation (#3053); Wizard shows those two even in a conversation; the
+   * other modes show their panel. Nothing is removed, only hidden, so a chat's
+   * draft and scroll survive a trip to another mode.
+   * @param {string} mode
+   * @param {boolean} inChat - Whether the detail is a conversation.
+   * @returns {{detail: boolean, wizard: boolean, attestation: boolean, panel: boolean}}
+   */
+  function workspaceVisibility(mode, inChat) {
+    if (mode === 'wizard') return { detail: false, wizard: true, attestation: true, panel: false };
+    if (mode === 'chat' || !isWorkspaceMode(mode)) return { detail: true, wizard: !inChat, attestation: !inChat, panel: false };
+    return { detail: false, wizard: false, attestation: false, panel: true };
+  }
+
+  /** @param {string} mode @returns {string} The id of the region a mode's tab controls. */
+  function workspaceRegionId(mode) {
+    if (mode === 'wizard') return 'v6ShellWizard';
+    if (mode === 'chat' || !isWorkspaceMode(mode)) return 'v6ShellDetail';
+    return 'v6WorkspacePanel';
+  }
+
+  /**
+   * The workspace mode bar at the top of the main view (#3086): one tab per
+   * mode, the chosen one selected and the only one in the tab order (arrow
+   * keys move between them), and the always-visible wizard launcher.
+   * @param {string} mode
+   * @returns {string} HTML.
+   */
+  function workspaceModeBarMarkup(mode) {
+    const chosen = isWorkspaceMode(mode) ? mode : 'chat';
+    const tabs = WORKSPACE_MODES.map((m) => {
+      const on = m.key === chosen;
+      return `<button type="button" role="tab" id="v6WorkspaceMode-${m.key}" class="v6-workspace-mode${on ? ' is-active' : ''}"
+        data-workspace-mode="${m.key}" aria-selected="${on ? 'true' : 'false'}" aria-controls="${workspaceRegionId(m.key)}"
+        tabindex="${on ? '0' : '-1'}"><span aria-hidden="true">${m.glyph}</span> ${escapeHtml(m.label)}</button>`;
+    }).join('');
+    return `<div class="v6-workspace-bar">
+      <div id="v6WorkspaceModeBar" class="v6-workspace-mode-bar" role="tablist" aria-label="Workspace">${tabs}</div>
+      <button type="button" id="v6ShellWizardOpenTop" class="btn btn-secondary btn-small v6-wizard-open v6-wizard-open--top"
+        data-workspace-mode="wizard" title="New project or fleet: open the wizard"
+        aria-label="New project or fleet: open the wizard"><span aria-hidden="true">＋</span> New</button>
+    </div>`;
+  }
+
+  /**
+   * A data mode's panel (#3086): its title, then the content the panel
+   * loader produced (already escaped there), or a loading line until it has.
+   * @param {string} mode
+   * @param {string|null|undefined} [content] - HTML from {@link workspacePanelContent}.
+   * @returns {string} HTML.
+   */
+  function workspacePanelMarkup(mode, content) {
+    const m = WORKSPACE_MODES.find((x) => x.key === mode);
+    if (!m || mode === 'chat' || mode === 'wizard') return '';
+    return `<h2 class="v6-workspace-panel-title">${escapeHtml(m.label)}</h2>
+      ${typeof content === 'string' && content ? content : '<p class="v6-workspace-empty" role="status">Loading…</p>'}`;
+  }
+
+  /**
+   * What each dispatch stage is called when the sprint UI has not loaded
+   * (the stages `lib/native-sprint-tracker.js#syncWaveDispatchState` assigns,
+   * named as `public/sprint-wave-ui.js` names them).
+   */
+  const WORKSPACE_STAGE_LABELS = Object.freeze({
+    unassigned: 'Unassigned', claimed: 'Claimed', 'in-progress': 'In Progress', 'in-review': 'In Review',
+    blocked: 'Blocked', closed: 'Closed'
+  });
+
+  /** The sprint report's hero figures, in the order the built-in Kaizen & Reports panel lists them. */
+  const WORKSPACE_KPI_LABELS = Object.freeze([
+    ['issuesClosed', 'Issues closed'], ['builderPRs', 'Builder PRs'], ['waves', 'Waves'],
+    ['fileCollisions', 'File collisions'], ['reviewRounds', 'Review rounds'], ['cycleTimeHours', 'Cycle time (h)'],
+    ['netLOC', 'Net LOC'], ['releaseCommit', 'Release commit']
+  ]);
+
+  /**
+   * A data mode's panel content (#3086, Rulings A760, A761, A774). A failed
+   * read says so: a missing route is "not available on this server yet" (a
+   * missing report, "no report for the current sprint on this server yet"),
+   * anything else names the reason. Otherwise the sprint UI's
+   * own builder draws it when loaded — `renderSprintWaveBoard(container,
+   * data)` container-first as on main, the two new builders data-first — and
+   * an escaped built-in drawing stands in when it is not, or when it throws.
+   * @param {string} mode - `sprint`, `charter` or `kaizen`.
+   * @param {{ok: boolean, data?: object, notFound?: boolean, error?: string}} result - The read.
+   * @param {object|null} ui - `window.TangleClawSprintWaveUi`, if loaded.
+   * @returns {string} HTML.
+   */
+  function workspacePanelContent(mode, result, ui) {
+    const r = result || { ok: false };
+    if (!r.ok) {
+      // A sprint report's 404 is also its answer for a sprint with no data, so it says only what is true of both.
+      if (r.notFound && mode === 'kaizen') return '<p class="v6-workspace-empty">No report for the current sprint on this server yet.</p>';
+      return r.notFound
+        ? '<p class="v6-workspace-empty">Not available on this server yet.</p>'
+        : `<p class="v6-workspace-empty is-error">Could not load this: ${escapeHtml(r.error || 'the server did not answer')}.</p>`;
+    }
+    const data = r.data && typeof r.data === 'object' ? r.data : {};
+    const builder = mode === 'sprint' ? 'renderSprintWaveBoard'
+      : mode === 'charter' ? 'renderCharterReadinessPanel' : mode === 'kaizen' ? 'renderKaizenLedgerPanel' : null;
+    if (builder && ui && typeof ui[builder] === 'function') {
+      try {
+        const html = mode === 'sprint' ? ui[builder](null, data) : ui[builder](mode === 'kaizen' ? (data.report || data) : data);
+        if (typeof html === 'string') return html;
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a builder from another car that throws must not blank the panel; the built-in drawing stands in
+        // Fall through to the built-in drawing.
+      }
+    }
+    if (mode === 'sprint') {
+      const dispatch = data.dispatch && typeof data.dispatch === 'object' ? data.dispatch : {};
+      const ids = Object.keys(dispatch);
+      if (!ids.length) return '<p class="v6-workspace-empty">No cars are on the board yet.</p>';
+      return `<ul class="v6-workspace-list">${ids.map((id) => {
+        const row = dispatch[id] || {};
+        const stage = String(row.stage || '');
+        const label = Object.prototype.hasOwnProperty.call(WORKSPACE_STAGE_LABELS, stage) ? WORKSPACE_STAGE_LABELS[stage] : stage;
+        return `<li class="v6-workspace-item"><span class="v6-workspace-item-id">${escapeHtml(id)}</span>`
+          + (label ? ` <span class="v6-workspace-item-stage">${escapeHtml(label)}</span>` : '')
+          + (row.laneName ? ` <span class="v6-workspace-item-lane">${escapeHtml(row.laneName)}</span>` : '')
+          + (row.openPrNumber != null ? ` <span class="v6-workspace-item-pr">#${escapeHtml(row.openPrNumber)}</span>` : '')
+          + '</li>';
+      }).join('')}</ul>`;
+    }
+    if (mode === 'charter') {
+      const waves = Array.isArray(data.waves) ? data.waves.filter((w) => w && typeof w === 'object') : [];
+      if (!waves.length) return '<p class="v6-workspace-empty">No waves are planned yet.</p>';
+      return `<ul class="v6-workspace-list">${waves.map((w) => {
+        const cars = Array.isArray(w.cars) ? w.cars.length : 0;
+        return `<li class="v6-workspace-item"><span class="v6-workspace-item-id">Wave ${escapeHtml(w.id == null ? '?' : w.id)}</span>`
+          + ` <span class="v6-workspace-item-stage">${cars} car${cars === 1 ? '' : 's'}</span></li>`;
+      }).join('')}</ul>`;
+    }
+    if (mode === 'kaizen') {
+      const report = data.report && typeof data.report === 'object' ? data.report : null;
+      if (!report) return '<p class="v6-workspace-empty">No report for the current sprint yet.</p>';
+      const kpis = report.heroKpis && typeof report.heroKpis === 'object' ? report.heroKpis : {};
+      const triggered = (Array.isArray(report.guardrailLedger) ? report.guardrailLedger : []).filter((g) => g && g.triggered);
+      return `<p class="v6-workspace-item-stage">Version ${escapeHtml(report.version || 'unknown')}</p>
+        <dl class="v6-workspace-kpis">${WORKSPACE_KPI_LABELS.map(([key, label]) => {
+          const v = kpis[key];
+          return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(v === null || v === undefined ? '—' : v)}</dd></div>`;
+        }).join('')}</dl>
+        ${triggered.length ? `<ul class="v6-workspace-list">${triggered.map((g) => `<li class="v6-workspace-item">Guardrail ${escapeHtml(g.guardrail)}: ${escapeHtml(g.count)}</li>`).join('')}</ul>` : ''}`;
+    }
+    return '';
+  }
+
   /**
    * The sidebar's four-icon toolbar (#3068): hide the sidebar, the fleet view
    * (the only mode today, so always pressed), the search toggle, and chat
@@ -2259,7 +2422,7 @@
    * @param {object|null} row
    * @param {Object<string, {status?: string}>} health - Engine id -> status.
    * @returns {{state: string, glyph: string, title: string, medusa: string,
-   *   engine: {code: string, name: string, health: string}|null}}
+   *   engine: {code: string, name: string, health: string, model?: string}|null}}
    */
   function memberIndicators(row, health) {
     const r = row || {};
@@ -2284,11 +2447,22 @@
     else if (readiness && readiness.state === 'starting') state = 'starting';
     else if (live) state = 'live';
     const medusa = r.medusaEnabled === true ? (r.medusaWake === true ? 'on' : 'wake-off') : 'off';
+    // The engine the member is really on (#3094, Rulings A767/A768): its live
+    // session's, else its last session's, else the one configured for it.
+    const idOf = (v) => (typeof v === 'string' && v ? v : null);
+    const configured = idOf(r.engine && r.engine.id) || idOf(r.engine);
+    const engineId = (s && (idOf(s.engineId) || idOf(s.engine && s.engine.id) || idOf(s.engine)))
+      || idOf(r.lastSessionEngineId) || idOf(sh && sh.engineId) || configured;
     let engine = null;
-    if (r.engine && r.engine.id) {
-      const id = String(r.engine.id);
-      const status = health && health[id] && ENGINE_HEALTH.includes(health[id].status) ? health[id].status : 'unknown';
-      engine = { code: ENGINE_CODES[id] || id.slice(0, 2).toUpperCase(), name: String(r.engine.name || id), health: status };
+    if (engineId) {
+      const id = engineId;
+      const known = health && Object.prototype.hasOwnProperty.call(health, id) ? health[id] : null;
+      const status = known && ENGINE_HEALTH.includes(known.status) ? known.status : 'unknown';
+      const name = id === configured && r.engine && typeof r.engine === 'object' && r.engine.name ? String(r.engine.name) : id;
+      const code = Object.prototype.hasOwnProperty.call(ENGINE_CODES, id) ? ENGINE_CODES[id] : id.slice(0, 2).toUpperCase();
+      engine = { code, name, health: status };
+      const model = (s && (idOf(s.launchedModel) || idOf(s.model))) || idOf(r.model);
+      if (model) engine.model = model;
     }
     let title = MEMBER_STATES[state].title;
     if (state === 'attention') title = `Needs attention: ${reason}`;
@@ -2307,7 +2481,7 @@
   function memberIndicatorsMarkup(info) {
     const link = `<span class="v6-member-link-status is-${info.medusa}" title="${escapeHtml(MEDUSA_TITLES[info.medusa])}">🔗</span>`;
     const ai = info.engine
-      ? `<span class="v6-member-ai-status is-${info.engine.health}" title="${escapeHtml(info.engine.name)}: ${info.engine.health === 'unknown' ? 'status unknown' : info.engine.health}">${escapeHtml(info.engine.code)}</span>`
+      ? `<span class="v6-member-ai-status is-${info.engine.health}" title="${escapeHtml(info.engine.name)}${info.engine.model ? ` (${escapeHtml(info.engine.model)})` : ''}: ${info.engine.health === 'unknown' ? 'status unknown' : info.engine.health}">${escapeHtml(info.engine.code)}</span>`
       : '';
     return `<span class="v6-member-indicators">${link}${ai}</span>`;
   }
@@ -3641,12 +3815,89 @@
       shell.setDetail({ kind: 'settings', view: { profiles, catalog, walkthroughs, projects: projects || [] } });
     }
 
+    // The sprint UI script (Rulings A760, A761): public/index.html does not
+    // load it, so it is added once, on first use, and never twice.
+    const SPRINT_UI_SRC = '/sprint-wave-ui.js';
+    const SPRINT_UI_ID = 'tcSprintWaveUiScript';
+    const pageWindow = deps.window || global;
+    const pageDocument = deps.document || (pageWindow && pageWindow.document) || null;
+    const later = deps.setTimeout || ((fn, ms) => setTimeout(fn, ms));
+    let sprintUiLoad = null;
+    // Set once the script has failed or timed out; the built-in drawing serves until a reload.
+    let sprintUiGaveUp = false;
+
+    /**
+     * `window.TangleClawSprintWaveUi`, loading `/sprint-wave-ui.js` at most
+     * once (#3086, A760/A761): a script already in the page, by its id, its
+     * `data-tc-sprint-wave-ui="1"` mark or its src, is waited on rather than
+     * added again; the one added carries all three. Resolves null when the script
+     * fails or has not defined it within 10 seconds, and from then on resolves
+     * null at once until the page reloads: a script element fires load or error
+     * only once, so waiting on it again would only wait out the timer.
+     * @returns {Promise<object|null>}
+     */
+    function sprintWaveUi() {
+      const present = pageWindow && pageWindow.TangleClawSprintWaveUi;
+      if (present) return Promise.resolve(present);
+      if (sprintUiLoad) return sprintUiLoad;
+      if (sprintUiGaveUp) return Promise.resolve(null);
+      if (!pageDocument || typeof pageDocument.createElement !== 'function') return Promise.resolve(null);
+      sprintUiLoad = new Promise((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          resolve((pageWindow && pageWindow.TangleClawSprintWaveUi) || null);
+        };
+        const query = (sel) => (typeof pageDocument.querySelector === 'function' ? pageDocument.querySelector(sel) : null);
+        let script = (typeof pageDocument.getElementById === 'function' && pageDocument.getElementById(SPRINT_UI_ID))
+          || query('script[data-tc-sprint-wave-ui="1"]') || query(`script[src="${SPRINT_UI_SRC}"]`);
+        if (!script) {
+          script = pageDocument.createElement('script');
+          script.id = SPRINT_UI_ID;
+          script.src = SPRINT_UI_SRC;
+          if (typeof script.setAttribute === 'function') script.setAttribute('data-tc-sprint-wave-ui', '1');
+          (pageDocument.head || pageDocument.body).appendChild(script);
+        }
+        script.addEventListener('load', done);
+        script.addEventListener('error', done);
+        later(done, 10000);
+      });
+      sprintUiLoad.then((ui) => {
+        if (ui) return;
+        sprintUiLoad = null;
+        sprintUiGaveUp = true;
+      });
+      return sprintUiLoad;
+    }
+
+    /**
+     * Load a data mode's panel (#3086): read its route, draw it through the
+     * sprint UI when that loads (else the shell's escaped built-in drawing),
+     * and hand it to the shell. Kaizen & Reports reads the sprint in
+     * progress, `GET /api/sprint-reports/current` (V630-W1-B's route).
+     * @param {string} mode - `sprint`, `charter` or `kaizen`.
+     * @returns {Promise<void>}
+     */
+    async function loadWorkspacePanel(mode) {
+      const data = await api(mode === 'kaizen' ? '/api/sprint-reports/current' : '/api/sprint-waves');
+      const result = data ? { ok: true, data } : { ok: false, notFound: api.lastErrorCode === 'NOT_FOUND', error: api.lastError };
+      const ui = result.ok ? await sprintWaveUi() : null;
+      const sh = getShell();
+      if (sh && typeof sh.setWorkspacePanel === 'function') sh.setWorkspacePanel(mode, workspacePanelContent(mode, result, ui));
+    }
+    let workspaceLoaderGiven = false;
+
     async function handleRoute(route) {
       // The shell's first render runs inside tcCreateV6Shell itself, before
       // the caller holds the returned handle; leave the route unrecorded so
       // the next call (the caller's own kick-off) still loads it.
       const shell = getShell();
       if (!shell) return;
+      if (!workspaceLoaderGiven && typeof shell.setWorkspaceLoader === 'function') {
+        workspaceLoaderGiven = true;
+        shell.setWorkspaceLoader((mode) => { loadWorkspacePanel(mode); });
+      }
       const key = route && route.view ? JSON.stringify(route) : null;
       if (key === lastRouteKey) return;
       if (key !== null) loadUsage();
@@ -4166,6 +4417,93 @@
     let chatHoodOpen = prefs.get('tc_v6_chat_under_hood_open', false, isBoolean);
     // #3082: which switchboard-triggered replies the chat shows, kept across visits.
     let verbosity = Object.assign({}, prefs.get('tc_v6_chat_verbosity', VERBOSITY_DEFAULT, isVerbosity));
+    // The workspace mode (#3086): Chat on each route, until the operator picks another.
+    let workspaceMode = 'chat';
+    // The route the mode was last reset on; a different one resets it to Chat.
+    let lastModeRouteKey;
+    // Each data mode's panel content, and the controller's loader for it (#3086).
+    const workspacePanels = new Map();
+    let workspaceLoader = null;
+
+    /** Ask the controller's loader for a data mode's panel (#3086); callers pass only data modes. */
+    function loadWorkspacePanel(mode) {
+      if (typeof workspaceLoader === 'function') workspaceLoader(mode);
+    }
+
+    /**
+     * Hide the chat's header docked in the top bar (A764) while the mode
+     * hides the chat, so its Start, delegate and rename buttons never act on
+     * a chat the operator cannot see (#3086); show it again on Chat.
+     */
+    function syncDockedHeader() {
+      if (typeof doc.querySelector !== 'function') return;
+      const bar = doc.querySelector('.dash-bar');
+      const header = bar && typeof bar.querySelector === 'function' ? bar.querySelector('.v6-chat-header') : null;
+      if (header) header.hidden = !workspaceVisibility(workspaceMode, Boolean(detail && detail.kind === 'conversation')).detail;
+    }
+
+    /**
+     * Switch the workspace mode in place (#3086): show and hide the regions,
+     * move the tab selection, and fill a data mode's panel. Nothing is
+     * redrawn, so an open chat keeps its draft, scroll and focus state.
+     * @param {string} mode
+     * @param {{focus?: string}} [opts] - The id of an element to focus after.
+     */
+    function setWorkspaceMode(mode, opts) {
+      if (!isWorkspaceMode(mode)) return;
+      workspaceMode = mode;
+      const shown = workspaceVisibility(mode, Boolean(detail && detail.kind === 'conversation'));
+      [['v6ShellDetail', shown.detail], ['v6ShellWizard', shown.wizard], ['v6ShellAttestation', shown.attestation],
+        ['v6WorkspacePanel', shown.panel]].forEach(([id, show]) => {
+        const el = doc.getElementById(id);
+        if (el) el.hidden = !show;
+      });
+      WORKSPACE_MODES.forEach((m) => {
+        const tab = doc.getElementById(`v6WorkspaceMode-${m.key}`);
+        if (!tab) return;
+        const on = m.key === mode;
+        tab.setAttribute('aria-selected', on ? 'true' : 'false');
+        tab.setAttribute('tabindex', on ? '0' : '-1');
+        if (tab.classList) tab.classList.toggle('is-active', on);
+      });
+      const panel = doc.getElementById('v6WorkspacePanel');
+      if (panel && shown.panel) {
+        panel.innerHTML = workspacePanelMarkup(mode, workspacePanels.get(mode));
+        panel.setAttribute('aria-labelledby', `v6WorkspaceMode-${mode}`);
+        loadWorkspacePanel(mode);
+      }
+      syncDockedHeader();
+      const target = opts && opts.focus ? doc.getElementById(opts.focus) : null;
+      if (target && typeof target.focus === 'function') target.focus();
+    }
+
+    /**
+     * Wire the mode bar's tabs (click, and arrow/Home/End keys that move and
+     * choose) and both wizard launchers (#3086).
+     */
+    function wireWorkspaceModes() {
+      const keys = WORKSPACE_MODES.map((m) => m.key);
+      keys.forEach((key, index) => {
+        const tab = doc.getElementById(`v6WorkspaceMode-${key}`);
+        if (!tab) return;
+        tab.addEventListener('click', () => setWorkspaceMode(key));
+        tab.addEventListener('keydown', (evt) => {
+          const k = evt && evt.key;
+          let next = null;
+          if (k === 'ArrowRight') next = keys[(index + 1) % keys.length];
+          else if (k === 'ArrowLeft') next = keys[(index - 1 + keys.length) % keys.length];
+          else if (k === 'Home') next = keys[0];
+          else if (k === 'End') next = keys[keys.length - 1];
+          if (next == null) return;
+          if (typeof evt.preventDefault === 'function') evt.preventDefault();
+          setWorkspaceMode(next, { focus: `v6WorkspaceMode-${next}` });
+        });
+      });
+      ['v6ShellWizardOpenBtn', 'v6ShellWizardOpenTop'].forEach((id) => {
+        const btn = doc.getElementById(id);
+        if (btn) btn.addEventListener('click', () => setWorkspaceMode('wizard', { focus: 'v6WorkspaceMode-wizard' }));
+      });
+    }
     // #3079: the questions dismissed in each chat, by {@link questionKey},
     // until the pane shows no question at all — the operator has answered —
     // so a poll that reads the same reply again, or the same reply grown by a
@@ -4223,6 +4561,7 @@
     }
 
     function wireControls() {
+      wireWorkspaceModes();
       const skipLink = doc.getElementById('v6ShellSkipLink');
       if (skipLink) {
         // PRR-B R1 HOLD (Ruling A579-PR3015-R1-HOLD-RECONCILED): a plain
@@ -4976,6 +5315,16 @@
       // #3053: the template wizard and attestation pills are not chat
       // content; they stay in the page (and wired) but out of sight.
       const inChat = Boolean(detail && detail.kind === 'conversation');
+      // Going somewhere shows it (#3086): a member click, or the first drawing
+      // after a reload, opens in Chat, so a chat is never hidden behind a mode
+      // chosen elsewhere. A redraw on the same route (a poll, or the chat
+      // arriving after the operator picked a tab) keeps the chosen mode.
+      const modeRouteKey = JSON.stringify(currentRoute);
+      if (modeRouteKey !== lastModeRouteKey) {
+        lastModeRouteKey = modeRouteKey;
+        workspaceMode = 'chat';
+      }
+      const shown = workspaceVisibility(workspaceMode, inChat);
       const activityElapsed = syncBusy();
       if (root.classList) {
         root.classList.toggle('v6-shell-root--sidebar-collapsed', sidebarCollapsed);
@@ -4989,6 +5338,7 @@
           aria-expanded="${drawerOpen ? 'true' : 'false'}" aria-controls="v6ShellSidebar">☰ Menu</button>
         <nav id="v6ShellSidebar" class="v6-shell-sidebar${drawerOpen ? ' is-open' : ''}" aria-label="Fleet navigation">
           ${sidebarIconBarMarkup(searchOpen(), historyOpen)}
+          <button type="button" id="v6ShellWizardOpenBtn" class="btn btn-secondary v6-wizard-open" data-workspace-mode="wizard"><span aria-hidden="true">＋</span> New Project / Fleet Wizard</button>
           ${historyOpen ? historyPanelMarkup({ form: historyForm, chatOpen: chatTargetKey() != null, data: historyData }) : ''}
           ${filterControlsMarkup({
             tree, engines: engineIds(), text: filterText, engine: filterEngine, groups: selectedGroups, searchOpen: searchOpen()
@@ -5008,12 +5358,13 @@
         </nav>
         ${inChat ? '' : telemetryHeaderMarkup(telemetry)}
         <main id="v6ShellMain" class="v6-shell-view" tabindex="-1" aria-label="${escapeHtml(title)}">
+          ${workspaceModeBarMarkup(workspaceMode)}
           <div class="v6-shell-header">
             ${sidebarCollapsed ? `<button type="button" id="v6SidebarExpand" class="btn btn-secondary v6-sidebar-expand"
               data-action="toggle-sidebar-drawer" aria-controls="v6ShellSidebar" aria-expanded="false">» Show Fleet</button>` : ''}
             <h1 class="v6-shell-title">${escapeHtml(title)}</h1>
           </div>
-          <div id="v6ShellDetail">${detailMarkup(detail, {
+          <div id="v6ShellDetail" role="tabpanel" aria-labelledby="v6WorkspaceMode-chat"${shown.detail ? '' : ' hidden'}>${detailMarkup(detail, {
             draft: chatDrafts.get(chatTargetKey()) || '', hoodOpen: chatHoodOpen,
             fleetArmed: fleetArmedKey != null && fleetArmedKey === chatTargetKey(),
             rename: renameOpenKey != null && renameOpenKey === chatTargetKey()
@@ -5022,8 +5373,10 @@
             pending: pendingSends.filter((p) => p.key === chatTargetKey()),
             verbosity
           })}</div>
-          <div id="v6ShellWizard"${inChat ? ' hidden' : ''}>${fleetWizardMarkup(templates)}</div>
-          <div id="v6ShellAttestation"${inChat ? ' hidden' : ''}>${modelAttestationMarkup(attestation)}</div>
+          <div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard"${shown.wizard ? '' : ' hidden'}>${fleetWizardMarkup(templates)}</div>
+          <div id="v6ShellAttestation"${shown.attestation ? '' : ' hidden'}>${modelAttestationMarkup(attestation)}</div>
+          <section id="v6WorkspacePanel" class="v6-workspace-panel" role="tabpanel"
+            aria-labelledby="v6WorkspaceMode-${shown.panel ? workspaceMode : 'sprint'}"${shown.panel ? '' : ' hidden'}>${shown.panel ? workspacePanelMarkup(workspaceMode, workspacePanels.get(workspaceMode)) : ''}</section>
         </main>
         ${watermarkFooterMarkup(showWatermark, telemetry, usageMarkupNow())}
       `;
@@ -5033,6 +5386,7 @@
       wireControls();
       restoreViewState(saved);
       if (typeof options.onRender === 'function') options.onRender(currentRoute);
+      syncDockedHeader();
     }
 
     function toggleDrawer(force) {
@@ -5329,6 +5683,33 @@
        * @param {{calibrate: Function}} actions
        */
       setUsageActions(actions) { usageActions = actions || null; },
+      /** @returns {string} The workspace mode shown (#3086). */
+      getWorkspaceMode() { return workspaceMode; },
+      /** @param {string} mode - Switch the workspace mode in place (#3086). */
+      setWorkspaceMode(mode) { setWorkspaceMode(mode); },
+      /**
+       * Register the controller's panel loader (#3086), called with a data
+       * mode whenever that mode is shown; asked at once when the shell
+       * already shows one.
+       * @param {function(string): void} loader
+       */
+      setWorkspaceLoader(loader) {
+        workspaceLoader = typeof loader === 'function' ? loader : null;
+        if (workspaceVisibility(workspaceMode, Boolean(detail && detail.kind === 'conversation')).panel) loadWorkspacePanel(workspaceMode);
+      },
+      /**
+       * Keep a data mode's panel content (#3086), and paint it when that mode
+       * is the one shown; a mode the operator has left keeps it for next time.
+       * @param {string} mode
+       * @param {string} html - From {@link workspacePanelContent}.
+       */
+      setWorkspacePanel(mode, html) {
+        if (!isWorkspaceMode(mode) || typeof html !== 'string') return;
+        workspacePanels.set(mode, html);
+        const panel = doc.getElementById('v6WorkspacePanel');
+        const shownNow = workspaceVisibility(workspaceMode, Boolean(detail && detail.kind === 'conversation')).panel;
+        if (panel && shownNow && workspaceMode === mode) panel.innerHTML = workspacePanelMarkup(mode, html);
+      },
       destroy() {
         destroyHooks.splice(0).forEach((fn) => fn());
         if (tickerId != null) { stopTicker(tickerId); tickerId = null; }
@@ -5375,6 +5756,10 @@
   global.tcV6SanitizeUploadName = sanitizeUploadName;
   global.tcV6FilesFromEvent = filesFromEvent;
   global.tcV6MemberIndicators = memberIndicators;
+  global.tcV6MemberIndicatorsMarkup = memberIndicatorsMarkup;
+  global.tcV6WorkspaceVisibility = workspaceVisibility;
+  global.tcV6WorkspaceModeBarMarkup = workspaceModeBarMarkup;
+  global.tcV6WorkspacePanelContent = workspacePanelContent;
   global.tcV6CreateLiveController = createLiveController;
   global.tcCreateV6Shell = tcCreateV6Shell;
 })(typeof window !== 'undefined' ? window : globalThis);
