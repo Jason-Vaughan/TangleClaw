@@ -1052,6 +1052,32 @@
    */
   const SWITCHBOARD_TEXT = /^\[TangleClaw( Switchboard)?\]/;
 
+  /**
+   * The notices TangleClaw types into a pane (#3076), word by word, `*`
+   * standing for one word it fills in (a count, an address, an id): the
+   * switchboard wake in its project and Master forms (`lib/medusa-wake.js`)
+   * and the workload reminder (`lib/workload-nudge.js`), each optionally
+   * ending in the wake ref the transport adds (`lib/wake-transports.js`).
+   */
+  const NOTICE_TEMPLATES = Object.freeze([
+    '[TangleClaw Switchboard] You have * unread Medusa message(s): tc message read. Reply where an answer is needed, BEFORE marking it handled: tc message send --in-reply-to <message-id> <sender-workspace-id> "<reply>"; then tc message ack <message-id>. The initiator closes the exchange, so no answer leaves them blocked; tc message owed lists what you owe. Never use /clear as an acknowledgement. Without tc: API at * GET /messages; POST /send (inReplyTo) and /read need launch headers.',
+    '[TangleClaw Switchboard] You have * unread Medusa message(s). Fetch them from the TangleClaw API at * GET * — act on them as appropriate. Reply to each one that needs an answer BEFORE marking it handled: POST * {"to":"<sender-workspace-id>","message":"<reply>","inReplyTo":"<message-id>"}; then mark it handled: POST * {"ids":[...]}. Both POSTs need the headers x-tangleclaw-role: master and x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID. The initiator closes the exchange, so a message you do not answer leaves them blocked. Never use /clear as an acknowledgement.',
+    '[TangleClaw Switchboard] You have * unread Medusa message(s). Fetch them from the TangleClaw API at * GET * — act on them as appropriate. Sending is disabled at your current access level: for one that needs an answer, describe the exact reply for the operator to send, rather than attempting to send it yourself. Mark it handled once dealt with: POST * {"ids":[...]}, which needs the headers x-tangleclaw-role: master and x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID. Never use /clear as an acknowledgement.',
+    '[TangleClaw] Your workload report has expired, so coordinators now read this lane as UNKNOWN. Report what you are doing with `tc workload set <working|waiting-external|blocked|complete> --clearance <safe-to-clear|do-not-clear|unknown> --summary "<one line>"`. This is a reminder, sent once for this report; it changes nothing about your task.'
+  ].map((t) => `${t} (wake ref *`.split(' ')));
+
+  /**
+   * Whether some text is the start of one of {@link NOTICE_TEMPLATES}, word
+   * for word, `*` matching any one word.
+   * @param {string} text
+   * @returns {boolean}
+   */
+  function fitsNotice(text) {
+    const words = String(text).replace(/\s+/g, ' ').trim().split(' ');
+    return NOTICE_TEMPLATES.some((t) => words.length <= t.length
+      && words.every((w, i) => t[i] === '*' || t[i] === w || (i === words.length - 1 && t[i].startsWith(w))));
+  }
+
   /** A pane line that sends a Medusa message: outbound traffic (#3076). */
   const MEDUSA_SEND = /\btc\s+message\s+send\b/;
 
@@ -1125,13 +1151,24 @@
       const text = line.trim();
       // A blank line decides nothing: tool output can hold blank lines, and
       // the next line's indent says whether it is still output (#3057).
-      if (!text) return;
+      if (!text) {
+        // A blank line ends a wrapped notice (Lane-B O-Gate HOLD).
+        if (block === 'wake') block = null;
+        return;
+      }
       const indented = /^\s/.test(line);
       // The rest of a wrapped wake: indented under it (#3076).
+      // An indented line carries on a typed notice only while the words so
+      // far still read as one of TangleClaw's own notices; anything else —
+      // Antigravity's indented reply prose, say — is the session's.
       if (indented && block === 'wake') {
         const last = switchboard[switchboard.length - 1];
-        last.text = `${last.text} ${text}`;
-        return;
+        const joined = `${last.text} ${text}`;
+        if (fitsNotice(joined)) {
+          last.text = joined;
+          return;
+        }
+        block = null;
       }
       const prompt = LIVE_PROMPT.exec(text);
       const promptText = prompt && !indented ? prompt[1].trim() : '';
@@ -1307,21 +1344,30 @@
   }
 
   /**
-   * How a dismissed question is remembered (#3079): its words with the user
-   * turn the asking reply answers. That turn stays put while the reply grows
-   * (more text, a wake), so a dismissal holds; a new exchange has a new one,
-   * so the same words asked in a later reply show again (PRR-B R1).
+   * The turns before the reply that asks the questions (#3079), each as
+   * `role:text`: what identifies that reply among the session's.
    * @param {{turns?: Array<{role: string, text: string}>}|null} live
-   * @param {string} question
-   * @returns {string}
+   * @returns {string[]}
    */
-  function questionKey(live, question) {
+  function askingPrefix(live) {
     const turns = live && Array.isArray(live.turns) ? live.turns : [];
     let i = turns.length - 1;
     while (i >= 0 && !(turns[i] && turns[i].role === 'assistant')) i--;
-    while (i >= 0 && !(turns[i] && turns[i].role === 'user')) i--;
-    const anchor = i >= 0 ? String(turns[i].text).replace(/\s+/g, ' ').trim() : '';
-    return `${anchor}\u0001${question}`;
+    return turns.slice(0, Math.max(0, i)).map((t) => `${t && t.role}:${String(t && t.text).replace(/\s+/g, ' ').trim()}`);
+  }
+
+  /**
+   * How a dismissed question is remembered (#3079): its words and the turns
+   * before the reply that asked it. A dismissal holds for that same reply as
+   * it grows (more text, a wake) or as older turns scroll off the top of the
+   * pane; a later exchange has more turns before its reply, so the same
+   * words asked again show — even after the very same answer (PRR-B R2).
+   * @param {{turns?: Array}|null} live
+   * @param {string} question
+   * @returns {{q: string, prefix: string[]}}
+   */
+  function questionKey(live, question) {
+    return { q: question, prefix: askingPrefix(live) };
   }
 
   /**
@@ -1329,12 +1375,16 @@
    * queue (or its one question, from a caller that predates the queue),
    * less any the operator dismissed.
    * @param {{question?: string|null, questions?: string[], turns?: Array}|null} live
-   * @param {string[]} [dismissed] - {@link questionKey}s dismissed in this chat.
+   * @param {Array<{q: string, prefix: string[]}>} [dismissed] - {@link questionKey}s dismissed in this chat.
    * @returns {string[]}
    */
   function openQuestions(live, dismissed) {
-    const gone = new Set(Array.isArray(dismissed) ? dismissed : []);
-    return askedQuestions(live).filter((q) => !gone.has(questionKey(live, q)));
+    const gone = Array.isArray(dismissed) ? dismissed : [];
+    const now = askingPrefix(live);
+    // The same reply: the turns before it unchanged, or with older ones gone off the top.
+    const sameReply = (saved) => now.length <= saved.length
+      && now.every((t, i) => t === saved[saved.length - now.length + i]);
+    return askedQuestions(live).filter((q) => !gone.some((d) => d && d.q === q && Array.isArray(d.prefix) && sameReply(d.prefix)));
   }
 
   /**
@@ -3711,7 +3761,7 @@
      * @returns {string[]} The questions dismissed in that chat (#3079).
      */
     function dismissedFor(key) {
-      return key != null && dismissedQuestions.has(key) ? [...dismissedQuestions.get(key)] : [];
+      return key != null && dismissedQuestions.has(key) ? dismissedQuestions.get(key).slice() : [];
     }
 
     /**
@@ -3737,8 +3787,8 @@
       const key = chatTargetKey();
       if (key == null || !texts.length) return;
       const chat = detail && detail.view ? detail.view.chat : null;
-      const set = dismissedQuestions.get(key) || new Set();
-      texts.forEach((t) => set.add(questionKey(chat && chat.live, t)));
+      const set = dismissedQuestions.get(key) || [];
+      texts.forEach((t) => set.push(questionKey(chat && chat.live, t)));
       dismissedQuestions.set(key, set);
       paintQuestions();
     }

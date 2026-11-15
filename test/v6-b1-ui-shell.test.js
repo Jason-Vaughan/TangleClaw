@@ -4279,10 +4279,11 @@ describe('switchboard traffic leaves the conversation (#3076)', () => {
   const run = (lines, known) => plain(G.tcV6ExtractLiveTurns(lines, 'claude', known || []));
 
   it('a wake typed into the pane is switchboard traffic, not the operator, with its wrapped lines joined', () => {
+    // The real wake's words (lib/medusa-wake.js), wrapped as the pane shows them.
     const out = run(['> fix it', '⏺ Fixed. Shall I push?', '> [TangleClaw Switchboard] You have 2 unread Medusa message(s): tc message read.',
-      '  Reply where an answer is needed.']);
+      '  Reply where an answer is needed, BEFORE marking it handled: tc message send']);
     assert.deepEqual(out.turns.map((t) => t.role), ['user', 'assistant']);
-    assert.deepEqual(out.switchboard, [{ dir: 'in', text: '[TangleClaw Switchboard] You have 2 unread Medusa message(s): tc message read. Reply where an answer is needed.' }]);
+    assert.deepEqual(out.switchboard, [{ dir: 'in', text: '[TangleClaw Switchboard] You have 2 unread Medusa message(s): tc message read. Reply where an answer is needed, BEFORE marking it handled: tc message send' }]);
     assert.deepEqual(out.questions, ['Fixed. Shall I push?'], 'a wake does not answer the question');
   });
 
@@ -5140,5 +5141,81 @@ describe('a short prompt is never taken for a longer one that contains its words
     assert.deepEqual(out.turns.filter((t) => t.role === 'user').map((t) => t.text), ['look at the logs', 'ok']);
     const multi = plain(G.tcV6ExtractLiveTurns(['> check this', 'Attached: a.png', '⏺ Seen.'], 'claude', ['check this\n\nAttached: a.png', 'look']));
     assert.equal(multi.turns[0].text, 'check this\n\nAttached: a.png');
+  });
+});
+
+describe('a wrapped wake never swallows the session\'s reply (Lane-B O-Gate and PRR-B R2)', () => {
+  const G = loadV6Shell();
+  const run = (lines, engine) => plain(G.tcV6ExtractLiveTurns(lines, engine || 'claude', []));
+  const wake = '[TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read. Reply where an answer is needed, BEFORE marking it handled: tc message send --in-reply-to <message-id> <sender-workspace-id> "<reply>"; then tc message ack <message-id>. The initiator closes the exchange, so no answer leaves them blocked; tc message owed lists what you owe. Never use /clear as an acknowledgement. Without tc: API at http://localhost:3102/api/sessions/P/medusa: GET /messages; POST /send (inReplyTo) and /read need launch headers. (wake ref 2c463327fbfc)';
+
+  it('Antigravity\'s indented reply after a typed wake is a reply, questions and all', () => {
+    const out = run(['❯ [TangleClaw Switchboard] You have 1 unread', '  I read the message from PM.', '  Shall I proceed?'], 'antigravity');
+    assert.equal(out.switchboard.length, 1);
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'I read the message from PM.\nShall I proceed?' }]);
+    assert.deepEqual(out.questions, ['Shall I proceed?']);
+  });
+
+  it('a whole wake wrapped across lines is joined, and the reply after its wake ref is not', () => {
+    const words = wake.split(' ');
+    const lines = [`> ${words.slice(0, 12).join(' ')}`];
+    for (let i = 12; i < words.length; i += 10) lines.push(`  ${words.slice(i, i + 10).join(' ')}`);
+    lines.push('  Reading them now.');
+    const out = run(lines, 'antigravity');
+    assert.deepEqual(out.switchboard, [{ dir: 'in', text: wake }]);
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Reading them now.' }]);
+  });
+
+  it('a blank line ends a wake, even mid-sentence', () => {
+    const out = run(['> [TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.', '', '  Reply where an answer is needed, BEFORE'], 'antigravity');
+    assert.equal(out.switchboard[0].text, '[TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.');
+    assert.deepEqual(out.turns.map((t) => t.role), ['assistant']);
+  });
+
+  it('the workload reminder wraps and joins too', () => {
+    const out = run(['> [TangleClaw] Your workload report has expired, so coordinators', '  now read this lane as UNKNOWN. Report what you are doing with', '⏺ Reporting.']);
+    assert.equal(out.switchboard[0].text, '[TangleClaw] Your workload report has expired, so coordinators now read this lane as UNKNOWN. Report what you are doing with');
+    assert.equal(out.turns[0].text, 'Reporting.');
+  });
+});
+
+describe('a dismissal belongs to the reply that asked it (PRR-B R2)', () => {
+  const G = loadV6Shell();
+  function mount() {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'P' }, sessionId: 1, events: [],
+      chat: { status: 'active', members: [], live: { turns: [{ role: 'user', text: 'ok' }, { role: 'assistant', text: 'One?' }], questions: ['One?'] } } } });
+    return { shell, doc };
+  }
+  const shows = (m) => /One\?/.test(m.doc.getElementById('v6ChatQuestion').innerHTML);
+
+  it('the same answer, then the same question again, with no empty poll between: it shows', () => {
+    const m = mount();
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    assert.equal(shows(m), false);
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'ok' }, { role: 'assistant', text: 'One?' },
+      { role: 'user', text: 'ok' }, { role: 'assistant', text: 'One?' }], questions: ['One?'] } });
+    assert.equal(shows(m), true);
+  });
+
+  it('a different exchange of the same length asking the same words shows', () => {
+    const m = mount();
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'yes' }, { role: 'assistant', text: 'One?' }], questions: ['One?'] } });
+    assert.equal(shows(m), true);
+  });
+
+  it('the same reply growing, or its earlier turns scrolling off the top, keeps it dismissed', () => {
+    const m = mount();
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'assistant', text: 'Earlier.' }, { role: 'user', text: 'ok' }, { role: 'assistant', text: 'One?' }], questions: ['One?'] } });
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'assistant', text: 'Earlier.' }, { role: 'user', text: 'ok' }, { role: 'assistant', text: 'One?\nAnd more.' }], questions: ['One?'] } });
+    assert.equal(shows(m), false, 'grown');
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'ok' }, { role: 'assistant', text: 'One?\nAnd more.' }], questions: ['One?'] } });
+    assert.equal(shows(m), false, 'scrolled');
   });
 });
