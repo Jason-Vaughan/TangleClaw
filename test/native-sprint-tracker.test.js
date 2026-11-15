@@ -823,3 +823,124 @@ describe('the live server mounts the sprint wave routes (#3087, Ruling A774)', (
     assert.equal(r.data.result.ok, false, 'two cars sharing x.js are not disjoint');
   });
 });
+
+describe('#3093 verifySprintSetupAndRoadmapSync (Ruling A766-1, A786)', () => {
+  const HUB = '<!-- LIVE_SPRINT_CARD_START --><a href="./v6.4.0/">live</a><!-- LIVE_SPRINT_CARD_END --><a href="./v6.3.0/">x</a>';
+
+  /**
+   * A setup that passes every check; each test breaks one piece.
+   * @param {object} [over] - Fields replacing the clean input's.
+   * @returns {object}
+   */
+  function clean(over = {}) {
+    return {
+      milestones: [
+        { title: 'v6.4.0: v6 Autonomous Overnight Train', state: 'OPEN' },
+        { title: 'v6.3.0: shipped', state: 'CLOSED' },
+        { title: 'Someday', state: 'open' }
+      ],
+      roadmapData: {
+        releases: [
+          { version: '6.3.0', trains: [{ cars: [3086, 3087] }] },
+          { version: '6.4.0', trains: [{ cars: [3088, 3089] }, { cars: [3093] }] },
+          { version: '6.5.0', trains: [{ cars: [3200] }] }
+        ],
+        unversioned_trains: [{ id: 35, cars: [2642] }],
+        backlog: [{ name: 'V6 research', cars: [1886], issues: [{ number: 1900 }] }]
+      },
+      syncStatus: { state: 'ok', component: 'all' },
+      reportDirs: ['v6.3.0', 'v6.4.0', 'assets'],
+      hubHtml: HUB,
+      ...over
+    };
+  }
+
+  it('passes a clean setup, reporting as its own runtime guardrail, never as a P-row', () => {
+    const r = tracker.verifySprintSetupAndRoadmapSync(clean());
+    assert.deepEqual(r.violations, []);
+    assert.equal(r.ok, true);
+    assert.equal(r.guardrail, 'setup_and_roadmap_sync');
+    assert.equal(tracker.SETUP_GUARDRAIL_ID, r.guardrail);
+    assert.deepEqual(tracker.RUNTIME_GUARDRAIL_IDS, ['setup_and_roadmap_sync']);
+    assert.ok(!tracker.GUARDRAIL_IDS.includes(r.guardrail), 'the post-mortem ledger stays P0..P11');
+    assert.deepEqual(r.checked, { milestones: 1, placedIssues: 9, reportDirs: 2 }, 'only the open versioned milestone, and only report directories');
+  });
+
+  it('flags an open milestone with no roadmap release, but not a forecast release with no milestone', () => {
+    const r = tracker.verifySprintSetupAndRoadmapSync(clean({
+      milestones: [{ title: 'v6.4.1 follow-ups', state: 'open' }, { title: 'v6.4.0: train', state: 'open' }]
+    }));
+    assert.deepEqual(r.violations.map((v) => [v.code, v.version]), [['MISSING_MILESTONE_RELEASE', 'v6.4.1']]);
+    assert.equal(r.ok, false);
+  });
+
+  it('matches a roadmap release written with a leading v', () => {
+    const roadmapData = clean().roadmapData;
+    roadmapData.releases[1].version = 'v6.4.0';
+    assert.deepEqual(tracker.verifySprintSetupAndRoadmapSync(clean({ roadmapData })).violations, []);
+  });
+
+  it('flags an issue placed twice, across buckets and within one, naming every placement', () => {
+    const roadmapData = clean().roadmapData;
+    roadmapData.backlog[0].cars.push(3089);
+    roadmapData.releases[0].trains[0].cars.push(3086);
+    const r = tracker.verifySprintSetupAndRoadmapSync(clean({ roadmapData }));
+    const dupes = r.violations.filter((v) => v.code === 'DUPLICATE_ROADMAP_PLACEMENT');
+    assert.deepEqual(dupes.map((v) => [v.issue, v.placements]), [
+      [3086, ['releases[6.3.0]', 'releases[6.3.0]']],
+      [3089, ['releases[6.4.0]', 'backlog[V6 research]']]
+    ]);
+  });
+
+  it('counts a backlog issue given as an object, and an unversioned train', () => {
+    const roadmapData = clean().roadmapData;
+    roadmapData.unversioned_trains[0].cars.push(1900);
+    const r = tracker.verifySprintSetupAndRoadmapSync(clean({ roadmapData }));
+    assert.deepEqual(r.violations.map((v) => [v.code, v.issue]), [['DUPLICATE_ROADMAP_PLACEMENT', 1900]]);
+  });
+
+  for (const [label, syncStatus, reason] of [
+    ['missing', null, 'missing'],
+    ['not an object', 'ok', 'missing'],
+    ['an array', [], 'missing'],
+    ['state error', { state: 'error' }, 'state is "error"'],
+    ['state failed', { state: 'failed' }, 'state is "failed"'],
+    ['status error', { status: 'error' }, 'status is "error"'],
+    ['ok false', { state: 'ok', ok: false }, 'ok is false'],
+    ['an unknown state', { state: 'stale' }, 'state is "stale"'],
+    ['status not ok beside an ok state', { state: 'ok', status: 'degraded' }, 'status is "degraded"']
+  ]) {
+    it(`fails closed on a sync status that is ${label}`, () => {
+      const r = tracker.verifySprintSetupAndRoadmapSync(clean({ syncStatus }));
+      assert.deepEqual(r.violations.map((v) => [v.code, v.reason]), [['ROADMAP_SYNC_ERROR', reason]]);
+      assert.equal(r.ok, false);
+    });
+  }
+
+  it('accepts a status that says ok in either field', () => {
+    assert.equal(tracker.verifySprintSetupAndRoadmapSync(clean({ syncStatus: { status: 'ok' } })).ok, true);
+    assert.equal(tracker.verifySprintSetupAndRoadmapSync(clean({ syncStatus: { state: 'ok', status: 'ok', ok: true } })).ok, true);
+  });
+
+  it('flags a report directory the hub does not link', () => {
+    const r = tracker.verifySprintSetupAndRoadmapSync(clean({ reportDirs: ['v6.2.10', 'v6.3.0', 'v6.4.0'] }));
+    assert.deepEqual(r.violations.map((v) => [v.code, v.dir]), [['UNLINKED_REPORT_DIR', 'v6.2.10']]);
+  });
+
+  it('every code it emits is one it declares', () => {
+    const roadmapData = clean().roadmapData;
+    roadmapData.backlog[0].cars.push(3089);
+    const r = tracker.verifySprintSetupAndRoadmapSync(clean({
+      roadmapData, syncStatus: null, reportDirs: ['v6.2.10', 'v6.4.0'],
+      milestones: [{ title: 'v9.9.9', state: 'open' }]
+    }));
+    assert.deepEqual([...new Set(r.violations.map((v) => v.code))].sort(), [...tracker.SETUP_VIOLATION_CODES].sort());
+  });
+
+  it('refuses inputs it cannot check rather than passing them', () => {
+    assert.throws(() => tracker.verifySprintSetupAndRoadmapSync(clean({ milestones: null })), TypeError);
+    assert.throws(() => tracker.verifySprintSetupAndRoadmapSync(clean({ roadmapData: null })), TypeError);
+    assert.throws(() => tracker.verifySprintSetupAndRoadmapSync(clean({ hubHtml: undefined })), TypeError);
+    assert.throws(() => tracker.verifySprintSetupAndRoadmapSync(clean({ reportDirs: undefined })), TypeError);
+  });
+});

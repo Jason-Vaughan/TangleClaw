@@ -510,3 +510,83 @@ describe('#2979 remediateHistoricalErrata', () => {
     assert.equal(result.findings.filter((f) => f.rule === 2).length, 0);
   });
 });
+
+describe('#3093 hub report links (Ruling A766-2)', () => {
+  /**
+   * A hub page shaped like the real `sprint-reports/index.html`: a live card
+   * between its markers, then one released card per linked version.
+   * @param {string} liveVersion - The version the live card links.
+   * @param {string[]} released - Versions with a released card.
+   * @returns {string}
+   */
+  function hub(liveVersion, released) {
+    return [
+      '<html><body><div class="report-list">',
+      '      <!-- LIVE_SPRINT_CARD_START -->',
+      `      <article class="report-card"><a href="./${liveVersion}/">Live</a></article>`,
+      '      <!-- LIVE_SPRINT_CARD_END -->',
+      ...released.map((v) => `      <article class="report-card"><a class="cta-btn" href="./${v}/">Open</a></article>`),
+      '</div></body></html>'
+    ].join('\n');
+  }
+
+  it('reads every href form the hub uses, and ignores directories that are not reports', () => {
+    const html = '<a href="./v6.2.1/">a</a> <a href="v6.2.2">b</a> <a href="./v6.2.3/index.html">c</a>'
+      + ' <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.2.4/">d</a> <a href="./v6.2.5/#top">e</a>'
+      + ' <a href="./v6.2.6/assets/chart.png">an asset is not a link to the report</a>';
+    const r = v3.validateHubReportLinks(html, ['v6.2.1', 'v6.2.2', 'v6.2.3', 'v6.2.4', 'v6.2.5', 'v6.2.6', 'assets', 'scripts', 'sgm-strike-sprint']);
+    assert.deepEqual(r.linked, ['v6.2.1', 'v6.2.2', 'v6.2.3', 'v6.2.4', 'v6.2.5']);
+    assert.deepEqual(r.unlinked, ['v6.2.6']);
+    assert.equal(r.ok, false);
+  });
+
+  it('counts a retrospective range as a report directory', () => {
+    const r = v3.validateHubReportLinks(hub('v6.3.0', []), ['v6.3.0', 'v6.0.0-v6.2.1-retrospective']);
+    assert.deepEqual(r.unlinked, ['v6.0.0-v6.2.1-retrospective']);
+  });
+
+  it('refuses inputs of the wrong type rather than reading them as empty', () => {
+    assert.throws(() => v3.validateHubReportLinks(null, []), TypeError);
+    assert.throws(() => v3.validateHubReportLinks('', 'v6.3.0'), TypeError);
+  });
+
+  it('links the version the live card moved past, right after the live card, and changes nothing a second time', () => {
+    // The live card moved from v6.3.0 to v6.4.0; v6.3.0 lost its only link.
+    const before = hub('v6.4.0', ['v6.2.10']);
+    assert.deepEqual(v3.validateHubReportLinks(before, ['v6.2.10', 'v6.3.0', 'v6.4.0']).unlinked, ['v6.3.0']);
+    const r = v3.ensureHubReportLinks(before, ['v6.2.10', 'v6.3.0', 'v6.4.0']);
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.inserted, ['v6.3.0']);
+    assert.deepEqual(r.unlinked, []);
+    const end = r.html.indexOf('<!-- LIVE_SPRINT_CARD_END -->');
+    assert.ok(r.html.indexOf('href="./v6.3.0/"') > end, 'the new card comes after the live card');
+    assert.ok(r.html.indexOf('href="./v6.3.0/"') < r.html.indexOf('href="./v6.2.10/"'), 'and before the older released cards');
+    assert.equal(r.html.replace(/\n {6}<!-- AUTO_LINKED_REPORT[\s\S]*?<\/article>/, ''), before, 'nothing else on the page changed');
+
+    const again = v3.ensureHubReportLinks(r.html, ['v6.2.10', 'v6.3.0', 'v6.4.0']);
+    assert.deepEqual(again.inserted, []);
+    assert.equal(again.html, r.html, 'idempotent');
+  });
+
+  it('inserts several missing versions newest first, comparing numbers, not text', () => {
+    const r = v3.ensureHubReportLinks(hub('v6.4.0', []), ['v6.2.9', 'v6.2.10', 'v6.4.0', 'v6.3.0']);
+    assert.deepEqual(r.inserted, ['v6.3.0', 'v6.2.10', 'v6.2.9']);
+    const order = ['v6.3.0', 'v6.2.10', 'v6.2.9'].map((v) => r.html.indexOf(`href="./${v}/"`));
+    assert.deepEqual(order, [...order].sort((a, b) => a - b));
+  });
+
+  it('leaves a hub with no live-card end marker unchanged and says so, still naming what is unlinked', () => {
+    const html = '<html><body><a href="./v6.2.10/">x</a></body></html>';
+    const r = v3.ensureHubReportLinks(html, ['v6.2.10', 'v6.3.0']);
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, 'NO_LIVE_CARD_END_MARKER');
+    assert.equal(r.html, html);
+    assert.deepEqual(r.unlinked, ['v6.3.0']);
+  });
+
+  it('a hub that already links everything is returned as it was', () => {
+    const html = hub('v6.4.0', ['v6.3.0']);
+    const r = v3.ensureHubReportLinks(html, ['v6.3.0', 'v6.4.0']);
+    assert.deepEqual(r, { ok: true, html, inserted: [], unlinked: [] });
+  });
+});
