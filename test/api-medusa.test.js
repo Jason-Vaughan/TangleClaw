@@ -2595,6 +2595,31 @@ describe('lib/medusa — fleet isolation (#3077, Ruling A738)', () => {
       }
     });
 
+    it('remembers where a system listener started, after it stops, until it is forgotten (Arc on PRR-B R1, source 2)', async () => {
+      // A Master started from a non-default home; the canonical directories
+      // are stubbed empty, so only the path startSession remembered can find it.
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fleet-master-moved-'));
+      medusa._fleetDeps.systemTargets = () => [];
+      const status = medusa.startSession({ projectPath: home, sessionId: 'master', name: 'Project Master', wsFactory: (u) => new FakeWS(u) });
+      try {
+        medusa.stopSession('master');
+        assert.equal(medusa.getStatus('master').workspaceId || null, null, 'precondition: stopped');
+        await send(7, { to: status.workspaceId });
+        assert.equal(hubCalls, 1, 'a stopped Master is still reachable');
+        medusa.forgetSession({ projectPath: home, sessionId: 'master' });
+        const r = await send(7, { to: status.workspaceId });
+        assert.equal(r.body.code, 'CROSS_FLEET_FORBIDDEN', 'a forgotten one is not');
+        // The remembered path went with it: a later registration there, with
+        // no listener started, is not a system participant.
+        const later = require('../lib/medusa-registry').ensureWorkspaceId(home, 'master', 'Project Master');
+        const r2 = await send(7, { to: later });
+        assert.equal(r2.body.code, 'CROSS_FLEET_FORBIDDEN', 'forgetSession drops the remembered path');
+      } finally {
+        medusa.stopSession('master');
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
+
     for (const kind of ['operator', 'operator-ui', 'master']) {
       it(`exempts a "${kind}" caller`, async () => {
         await send(7, { to: 'ws-remote' }, { kind });
