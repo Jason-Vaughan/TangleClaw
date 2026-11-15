@@ -932,7 +932,7 @@
     // type the same message in twice; the box itself stays open, since the
     // composer empties on Enter and Force Send (#3082, Ruling A757) exists to
     // push an urgent message in meanwhile.
-    const disabled = liveSession && !(send && send.kind === 'pending') ? '' : ' disabled';
+    const disabled = liveSession && !(send && send.kind === 'pending') && !chat.inFlight ? '' : ' disabled';
     const boxDisabled = liveSession ? '' : ' disabled';
     // #3053: start an offline target, or every offline member of a group,
     // from the chat itself. Starting several agents asks a second time.
@@ -1532,8 +1532,10 @@
    * @returns {string} HTML list item, or ''.
    */
   function pendingMarkup(pending, lastSent, thumbs) {
-    if (!pending || typeof pending.text !== 'string' || (lastSent && lastSent.id === pending.id)) return '';
-    return `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${messageMarkup(pending.text, thumbs)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`;
+    // One bubble per send on its way (#3082: a forced send can overlap another).
+    const list = (Array.isArray(pending) ? pending : [pending])
+      .filter((p) => p && typeof p.text === 'string' && !(lastSent && lastSent.id === p.id));
+    return list.map((p) => `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${messageMarkup(p.text, thumbs)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`).join('');
   }
 
   /**
@@ -2695,6 +2697,16 @@
     // Sends on their way, per project (#3082): a plain send waits while any is.
     const sendsInFlight = new Map();
 
+    /**
+     * Whether a send's chat is the one on screen (#3082): the same project,
+     * whichever reload made the `current` showing it.
+     * @param {{project: {id: *}}} chat
+     * @returns {boolean}
+     */
+    function onScreen(chat) {
+      return Boolean(current && chat && String(current.project.id) === String(chat.project.id));
+    }
+
     /** @param {{project: {id: *}}} chat @returns {boolean} Whether a send to its project is on its way. */
     function inFlight(chat) {
       return (sendsInFlight.get(String(chat.project.id)) || 0) > 0;
@@ -3004,7 +3016,8 @@
       const sessionId = status && status.active && status.sessionId != null ? status.sessionId : null;
       const chat = Object.assign({}, ctx, {
         status: sessionId == null ? 'offline' : (status.idle ? 'idle' : 'active'),
-        send: sendOutcome || null
+        send: sendOutcome || null,
+        inFlight: (sendsInFlight.get(String(project.id)) || 0) > 0
       });
       current = { project, sessionId, launchId: (status && status.launchId) || null, ctx, mine, view: null };
       if (sessionId == null) {
@@ -3138,7 +3151,11 @@
       const shell = getShell();
       const given = flags || (shell && typeof shell.takeSendFlags === 'function' ? shell.takeSendFlags() : null);
       const forced = Boolean(given && given.priority === true);
-      if (!chat || (inFlight(chat) && !forced) || !shell) return;
+      if (!chat || !shell) return;
+      if (inFlight(chat) && !forced) {
+        showSend({ kind: 'warning', message: `Not sent yet: the last message to ${chat.project.name} is still on its way. Use ⚡ Force to send this one now.` });
+        return;
+      }
       const files = attachments.get(String(chat.project.id)) || [];
       const ready = files.filter((a) => a.status === 'ready');
       const uploading = files.filter((a) => a.status === 'uploading').length;
@@ -3167,6 +3184,11 @@
       } finally {
         const left = (sendsInFlight.get(key) || 1) - 1;
         if (left > 0) sendsInFlight.set(key, left); else sendsInFlight.delete(key);
+        // The last one landed: Send is free again on the chat showing it.
+        if (!left && onScreen(chat) && current.view) {
+          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { inFlight: false }) });
+          showChat(getShell());
+        }
       }
     }
 
@@ -3190,7 +3212,7 @@
       if (begun && typeof begun.beginSend === 'function') begun.beginSend(pid, message, sendId);
       const settle = (restore) => {
         const sh = getShell();
-        if (sh && typeof sh.endSend === 'function') sh.endSend(pid, restore);
+        if (sh && typeof sh.endSend === 'function') sh.endSend(pid, restore, sendId);
       };
       showSend({ kind: 'pending', message: `Sending to ${name}…` });
       const before = chat.view && chat.view.chat ? lastReply(chat.view.chat.live) : null;
@@ -3205,7 +3227,7 @@
         const saved = await saveLongPrompt(chat, message);
         if (!saved.ok) {
           settle(draft);
-          if (chat === current) showSend({ kind: 'error', message: `Not sent: ${saved.error}` });
+          if (onScreen(chat)) showSend({ kind: 'error', message: `Not sent: ${saved.error}` });
           return;
         }
         if (message.length > MAX_COMMAND_CHARS) command = longPromptCommand(message, saved.relPath);
@@ -3222,7 +3244,7 @@
       if (sent) attachments.delete(String(chat.project.id));
       if (!sent) {
         settle(draft);
-        if (chat === current) showSend({ kind: 'error', message: `Not sent: ${api.lastError || 'the server refused it'}` });
+        if (onScreen(chat)) showSend({ kind: 'error', message: `Not sent: ${api.lastError || 'the server refused it'}` });
         return;
       }
       // A delivered message is recorded against the chat it was sent from,
@@ -3235,7 +3257,7 @@
         const whole = (sentWhole.get(String(pid)) || []).concat(message).slice(-SENT_WHOLE_KEPT);
         sentWhole.set(String(pid), whole);
       }
-      if (chat !== current) { settle(); return; }
+      if (!onScreen(chat)) { settle(); return; }
       await loadConversation(chat.project, chat.mine, chat.ctx, recorded === true
         ? { kind: 'ok', message: `Sent to ${name}.` }
         : { kind: 'warning', message: `Sent to ${name}, but it could not be recorded in the conversation: ${recorded}` });
@@ -3873,7 +3895,8 @@
     let paintedMedusa = null;
     // #3079 item 6: the message being sent — its chat, text and send id —
     // drawn at the bottom of that chat until the send settles.
-    let pendingSend = null;
+    // Several when a forced send overlaps another (#3082).
+    let pendingSends = [];
     // What to run when the shell is torn down (#3082).
     const destroyHooks = [];
     // The flags of the send being handed to the page right now (#3082).
@@ -4355,7 +4378,7 @@
       const tailEl = doc.getElementById('v6ChatRecordedTail');
       if (tailEl) tailEl.innerHTML = recordedEventsMarkup(parts.tail, name, chat.thumbs);
       const pendingEl = doc.getElementById('v6ChatPending');
-      if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSend && pendingSend.key === chatTargetKey() ? pendingSend : null, chat.lastSent, chat.thumbs);
+      if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSends.filter((p) => p.key === chatTargetKey()), chat.lastSent, chat.thumbs);
     }
 
     /**
@@ -4506,8 +4529,6 @@
       const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
       const hasFiles = Boolean(chat && Array.isArray(chat.attachments) && chat.attachments.some((a) => a && a.status !== 'error'));
       if ((!text && !hasFiles) || typeof options.onSendChat !== 'function') return;
-      // #3079: sending is the operator answering; the queue clears.
-      dismissQuestions(questionsNow());
       const flags = force ? { priority: true, startupIntervention: true } : null;
       sendFlags = flags;
       try {
@@ -4610,7 +4631,7 @@
             rename: renameOpenKey != null && renameOpenKey === chatTargetKey()
               ? { open: true, draft: renameDraft, warning: renameWarning } : null,
             sidebarCollapsed, activityElapsed, telemetry, dismissedQuestions: dismissedFor(chatTargetKey()),
-            pending: pendingSend && pendingSend.key === chatTargetKey() ? pendingSend : null,
+            pending: pendingSends.filter((p) => p.key === chatTargetKey()),
             verbosity
           })}</div>
           <div id="v6ShellWizard"${inChat ? ' hidden' : ''}>${fleetWizardMarkup(templates)}</div>
@@ -4851,8 +4872,11 @@
       beginSend(projectId, text, id) {
         const key = String(projectId);
         chatDrafts.delete(key);
-        pendingSend = { key, text: String(text || ''), id };
+        pendingSends = pendingSends.filter((p) => p.id !== id).concat({ key, text: String(text || ''), id });
         if (key !== chatTargetKey()) return;
+        // #3079: a send going out is the operator answering, so the queue
+        // clears — here, once it really goes, not when Send was pressed.
+        dismissQuestions(questionsNow());
         const input = doc.getElementById('v6ChatInput');
         if (input) input.value = '';
         paintRecorded();
@@ -4863,10 +4887,12 @@
        * composer unless something new has been typed there since.
        * @param {*} projectId
        * @param {string} [restore]
+       * @param {*} [id] - The send that settled; its bubble alone goes.
        */
-      endSend(projectId, restore) {
+      endSend(projectId, restore, id) {
         const key = String(projectId);
-        if (pendingSend && pendingSend.key === key) pendingSend = null;
+        // That send's bubble only; without an id, every one of the project's.
+        pendingSends = pendingSends.filter((p) => !(p.key === key && (id === undefined || p.id === id)));
         if (typeof restore === 'string' && restore && !chatDrafts.get(key)) {
           chatDrafts.set(key, restore);
           const input = key === chatTargetKey() ? doc.getElementById('v6ChatInput') : null;

@@ -4479,7 +4479,7 @@ describe('the Waiting on you queue (#3079)', () => {
     assert.equal(m.doc.activeElement, m.doc.getElementById('v6ChatInput'));
   });
 
-  it('sending a reply clears the queue', () => {
+  it('sending a reply clears the queue, once the send really goes', () => {
     const sent = [];
     const m = mountQuestions((t) => sent.push(t));
     const input = m.doc.getElementById('v6ChatInput');
@@ -4487,6 +4487,9 @@ describe('the Waiting on you queue (#3079)', () => {
     input.dispatch('input');
     m.doc.getElementById('v6ChatForm').dispatch('submit');
     assert.deepEqual(sent, ['both yes']);
+    // Restated by #3082: a press that sends nothing (a send still on its way) must not clear it,
+    // so the queue clears when the controller begins the send.
+    m.shell.beginSend(12, 'both yes', 1);
     const q = m.doc.getElementById('v6ChatQuestion');
     assert.equal(q.innerHTML, '');
     assert.equal(q.className, 'v6-chat-question');
@@ -5624,6 +5627,7 @@ describe('Force Send (#3082 item 3, Ruling A757)', () => {
       if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
       if (/conversation\/events/.test(url)) return { events: [] };
+      if (o.ask && /peek/.test(url)) return { lines: o.pane || ['⏺ Ready to go?'] };
       return null;
     };
     api.lastError = null;
@@ -5631,19 +5635,25 @@ describe('Force Send (#3082 item 3, Ruling A757)', () => {
       if (!/\/command$/.test(url)) return { ok: true };
       commands.push(plain(body));
       if (o.refuse && body.priority) { api.lastError = o.refuse; return null; }
-      if (o.hold && commands.length === 1) await new Promise((r) => releases.push(r));
+      const first = commands.length === 1;
+      if (o.hold && first) await new Promise((r) => releases.push(r));
+      if (o.refuseFirst && first) { api.lastError = o.refuseFirst; return null; }
       return { ok: true };
     };
     let shell = null;
     const pending = [];
-    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    const timers = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null,
+      setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
     shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
       onRender: (r) => pending.push(live.handleRoute(r)),
       onSendChat: o.twoArgs ? (t, f) => { o.seen = f; pending.push(live.sendChat(t, f)); } : (t) => pending.push(live.sendChat(t)) });
     pending.push(live.handleRoute(shell.getRoute()));
     const settle = async () => { while (pending.length) await pending.shift(); };
     const type = (text) => { const input = doc.getElementById('v6ChatInput'); input.value = text; input.dispatch('input'); };
-    return { doc, root, shell, commands, settle, type, release: () => releases.forEach((r) => r()) };
+    // What the queue has dismissed so far, read through the shell's own question slot markup.
+    const dismissed = () => (/id="v6ChatQuestion"[^>]*>([\s\S]*?)<\/div>/.exec(root.innerHTML) || [])[1];
+    return { doc, root, shell, commands, settle, type, dismissed, timers, release: () => releases.forEach((r) => r()) };
   }
   const flags = { command: 'now!', enter: true, priority: true, startupIntervention: true };
 
@@ -5711,6 +5721,68 @@ describe('Force Send (#3082 item 3, Ruling A757)', () => {
     m.doc.getElementById('v6ChatForm').dispatch('submit');
     await m.settle();
     assert.deepEqual(m.commands, [flags, { command: 'later', enter: true }]);
+  });
+
+  it('while a send is on its way: Send is drawn disabled, a plain press says to use Force, and each send keeps its own bubble (Force Send review)', async () => {
+    const m = mountForce({ hold: true });
+    await m.settle();
+    m.type('first');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    m.type('now!');
+    m.doc.getElementById('v6ChatForceSend').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+    for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r));
+    // The forced send finished and reloaded the chat; the first is still on its way.
+    const html = m.root.innerHTML;
+    assert.match(html, /<button type="submit" id="v6ChatSend"[^>]*disabled/, 'Send stays disabled while the first is out');
+    assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*first[\s\S]*Sending…/, 'the first message keeps its bubble');
+    // The forced send's own settling repainted the pending list: the first's bubble is still in it.
+    assert.match(m.doc.getElementById('v6ChatPending').innerHTML, /first[\s\S]*Sending…/);
+    assert.doesNotMatch(m.doc.getElementById('v6ChatPending').innerHTML, /now!/);
+    m.type('third');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(m.commands.length, 2);
+    assert.match(m.root.innerHTML, /Not sent yet: the last message to TC-Lane-PM is still on its way\. Use ⚡ Force to send this one now\./);
+    m.release();
+    await m.settle();
+    assert.doesNotMatch(m.root.innerHTML, /<button type="submit" id="v6ChatSend"[^>]*disabled/, 'Send is free once both landed');
+    assert.doesNotMatch(m.root.innerHTML, /is-pending/);
+  });
+
+  it('a first send refused after a forced send reloaded the chat still shows its refusal (Force Send review)', async () => {
+    const m = mountForce({ hold: true, refuseFirst: 'The lane is held' });
+    await m.settle();
+    m.type('first');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    m.type('now!');
+    m.doc.getElementById('v6ChatForceSend').dispatch('click');
+    for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+    m.release();
+    await m.settle();
+    assert.match(m.root.innerHTML, /Not sent: The lane is held/);
+  });
+
+  it('a press that sends nothing leaves the question queue alone', async () => {
+    const o = { hold: true, ask: true };
+    const m = mountForce(o);
+    await m.settle();
+    m.type('first');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    // While the first is on its way, the session asks something new.
+    o.pane = ['> first', '⏺ Which branch?'];
+    await m.timers[m.timers.length - 1]();
+    m.type('second');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    // The ignored press re-drew the chat (its note); the question is still there.
+    assert.match(m.root.innerHTML, /Not sent yet:/);
+    assert.match(m.dismissed() || '', /Which branch\?/, 'the ignored press dismissed nothing');
+    m.release();
+    await m.settle();
   });
 
   it('a refusal the server still makes (an engine startup dialog) shows its reason and puts the text back', async () => {
