@@ -587,3 +587,66 @@ describe('public/sprint-wave-ui', () => {
     assert.deepEqual(rows, copy);
   });
 });
+
+describe('public/sprint-wave-ui: Charter & Kaizen panels (#3087, Rulings A760/A761)', () => {
+  const HOSTILE = '<img src=x onerror=alert(1)>';
+  /** No raw tag from the hostile string survives; its escaped form does. */
+  const inert = (html, where) => {
+    assert.ok(!html.includes('<img'), `${where}: a raw <img> tag reached the HTML`);
+    assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'), `${where}: the hostile text is not shown escaped`);
+  };
+
+  it('escapes hostile markup in EVERY charter text field', () => {
+    const fields = {
+      'charter.title': { charter: { title: HOSTILE } },
+      'charter.status': { charter: { status: HOSTILE } },
+      'startupSummary.title': { startupSummary: { title: HOSTILE } },
+      'startupSummary.mission': { startupSummary: { mission: HOSTILE } },
+      'startupSummary.activeConstraints': { startupSummary: { activeConstraints: HOSTILE } },
+      'startupSummary.versionNumber': { startupSummary: { versionNumber: HOSTILE } },
+      'activeVersion.version_number': { activeVersion: { version_number: HOSTILE } },
+      'approvals[].approver_role': { approvals: [{ approver_role: HOSTILE, approver_actor: 'op' }] },
+      'approvals[].approver_actor': { approvals: [{ approver_role: 'pm', approver_actor: HOSTILE }] }
+    };
+    for (const [where, data] of Object.entries(fields)) inert(sprintWaveUi.renderCharterReadinessPanel(data), where);
+  });
+
+  it('escapes hostile markup in EVERY Kaizen text field, and renders a report link for http(s) only', () => {
+    const fields = {
+      'items[].defect_category': { items: [{ defect_category: HOSTILE }] },
+      'items[].root_cause': { items: [{ root_cause: HOSTILE }] },
+      'items[].corrective_action_spec': { items: [{ corrective_action_spec: HOSTILE }] },
+      'items[].lifecycle_state': { items: [{ lifecycle_state: HOSTILE }] },
+      'gate0Feed[].title': { gate0Feed: [{ title: HOSTILE }] },
+      'gate0Feed[].gate0_disposition': { gate0Feed: [{ title: 't', gate0_disposition: HOSTILE }] },
+      'reportSummary.title': { reportSummary: { title: HOSTILE } }
+    };
+    for (const [where, data] of Object.entries(fields)) inert(sprintWaveUi.renderKaizenLedgerPanel(data), where);
+    for (const bad of ['javascript:alert(1)', 'JAVASCRIPT:alert(1)', 'data:text/html,x', '//evil.example/x', '/relative', 'https://x.example/"onmouseover=1']) {
+      const html = sprintWaveUi.renderKaizenLedgerPanel({ reportSummary: { title: 'r', reportUrl: bad } });
+      assert.ok(!html.includes('<a '), `no link for ${bad}`);
+    }
+    const ok = sprintWaveUi.renderKaizenLedgerPanel({ reportSummary: { title: 'v6.3.0', reportUrl: 'https://x.example/r?a=1&b=2' } });
+    assert.match(ok, /<a href="https:\/\/x\.example\/r\?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">v6\.3\.0<\/a>/);
+  });
+
+  it('reads camelCase view-models as well as raw snake_case rows, and writes into a container when given one', () => {
+    const container = { innerHTML: '' };
+    const html = sprintWaveUi.renderKaizenLedgerPanel({ items: [{ rootCause: 'missing guard', lifecycleState: 'Verified' }] }, container);
+    assert.equal(container.innerHTML, html);
+    assert.match(html, /missing guard/);
+    assert.match(html, /data-state="Verified"/);
+    const charter = sprintWaveUi.renderCharterReadinessPanel({ approvals: [{ approverRole: 'sponsor', approverActor: 'op', revokedAt: 'x' }] });
+    assert.match(charter, /sponsor: op \(revoked\)/);
+  });
+
+  it('every field is optional: an empty call renders a calm empty panel', () => {
+    assert.match(sprintWaveUi.renderCharterReadinessPanel(), /No active charter/);
+    assert.match(sprintWaveUi.renderKaizenLedgerPanel(), /No Kaizen items/);
+  });
+
+  it('refuses a container passed first, so a swapped call fails loudly instead of rendering an empty panel', () => {
+    assert.throws(() => sprintWaveUi.renderCharterReadinessPanel({ innerHTML: '' }), /data comes first/);
+    assert.throws(() => sprintWaveUi.renderKaizenLedgerPanel({ innerHTML: '' }, {}), /data comes first/);
+  });
+});

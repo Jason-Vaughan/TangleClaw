@@ -125,8 +125,162 @@
     });
   }
 
+  /**
+   * A link target, or null: only an absolute `http:`/`https:` URL is ever
+   * rendered as an href (#3087, Ruling A761). The data these panels show is
+   * written by agents, so anything else (`javascript:`, `data:`, a relative
+   * or protocol-relative path) stays plain text.
+   * @param {*} value
+   * @returns {string|null}
+   */
+  function _safeHref(value) {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return /^https?:\/\/[^\s<>"']+$/i.test(trimmed) ? trimmed : null;
+  }
+
+  /**
+   * The first present field of `obj` among `names`, so a panel reads both a
+   * raw store row (snake_case) and a camelCase view-model.
+   * @param {object|null|undefined} obj
+   * @param {...string} names
+   * @returns {*}
+   */
+  function _field(obj, ...names) {
+    if (!obj || typeof obj !== 'object') return undefined;
+    for (const name of names) {
+      if (obj[name] !== undefined && obj[name] !== null) return obj[name];
+    }
+    return undefined;
+  }
+
+  /**
+   * Refuse a builder called with its arguments swapped (#3087): these two take
+   * the data first and the container second, unlike the board and KPI
+   * builders above, so a container passed first is a mistake that would
+   * otherwise render an empty panel without a word.
+   * @param {*} data
+   * @param {string} name
+   * @returns {void}
+   * @throws {TypeError}
+   */
+  function _refuseContainerFirst(data, name) {
+    if (data && typeof data === 'object' && 'innerHTML' in data) {
+      throw new TypeError(`${name}(data, container): the data comes first; a container was passed as the data`);
+    }
+  }
+
+  /**
+   * One escaped `label: value` row, or '' when the value is absent.
+   * @param {string} label
+   * @param {*} value
+   * @returns {string}
+   */
+  function _row(label, value) {
+    if (value === undefined || value === null || value === '') return '';
+    const shown = typeof value === 'object' ? JSON.stringify(value) : value;
+    return `<div class="sprint-panel-row"><span class="sprint-panel-label">${_escapeHtml(label)}</span>`
+      + `<span class="sprint-panel-value">${_escapeHtml(shown)}</span></div>`;
+  }
+
+  /**
+   * Render the Charter & Gate 0 Readiness panel (#3087, Rulings A760/A761).
+   * Every field is optional and every interpolated value is escaped here.
+   * @param {{charter?: object, activeVersion?: object, approvals?: object[],
+   *   startupSummary?: object, disjointness?: object}} charterData -
+   *   `GET /api/v6/projects/:id/charter*` and the disjointness check's shapes.
+   * @param {{innerHTML?: string}|null} [container] - A DOM element to write
+   *   into, or omit to only get the HTML string back.
+   * @returns {string} The rendered HTML.
+   */
+  function renderCharterReadinessPanel(charterData, container) {
+    _refuseContainerFirst(charterData, 'renderCharterReadinessPanel');
+    const d = charterData && typeof charterData === 'object' ? charterData : {};
+    const charter = d.charter || {};
+    const summary = d.startupSummary || {};
+    const version = d.activeVersion || {};
+    const approvals = Array.isArray(d.approvals) ? d.approvals : [];
+    const disjoint = d.disjointness || null;
+    const title = _field(summary, 'title') || _field(charter, 'title');
+    const approvalItems = approvals.map((a) => {
+      const revoked = _field(a, 'revoked_at', 'revokedAt');
+      return `<li class="sprint-panel-approval${revoked ? ' is-revoked' : ''}">`
+        + `${_escapeHtml(_field(a, 'approver_role', 'approverRole') || 'approver')}: `
+        + `${_escapeHtml(_field(a, 'approver_actor', 'approverActor') || '')}`
+        + `${revoked ? ' (revoked)' : ''}</li>`;
+    }).join('');
+    let disjointHtml = '';
+    if (disjoint) {
+      const ok = disjoint.ok === true || (disjoint.result && disjoint.result.ok === true);
+      const conflicts = (disjoint.conflicts || (disjoint.result && disjoint.result.conflicts) || []);
+      disjointHtml = `<div class="sprint-panel-disjoint ${ok ? 'is-ok' : 'is-conflict'}">`
+        + `${ok ? 'File-disjoint' : `Not disjoint: ${_escapeHtml(Array.isArray(conflicts) ? conflicts.length : 0)} conflict(s)`}</div>`;
+    }
+    const html = '<section class="sprint-panel sprint-charter-panel">'
+      + `<div class="sprint-panel-title">${_escapeHtml(title || 'No active charter')}</div>`
+      + _row('Status', _field(charter, 'status'))
+      + _row('Version', _field(summary, 'versionNumber') || _field(version, 'version_number', 'versionNumber'))
+      + _row('Mission', _field(summary, 'mission'))
+      + _row('Constraints', _field(summary, 'activeConstraints'))
+      + (approvalItems ? `<ul class="sprint-panel-approvals">${approvalItems}</ul>` : '<div class="sprint-panel-empty">No approvals recorded</div>')
+      + disjointHtml
+      + '</section>';
+    if (container && typeof container === 'object') container.innerHTML = html;
+    return html;
+  }
+
+  /**
+   * Render the Kaizen & Reports panel (#3087, Rulings A760/A761). Every field
+   * is optional and every interpolated value is escaped here; a report link
+   * is rendered only for an http(s) URL.
+   * @param {{items?: object[], gate0Feed?: object[], reportSummary?: object}} kaizenData -
+   *   Kaizen ledger rows (`kaizen_items`), the Gate 0 feed, and a sprint
+   *   report summary (`buildNativeSprintReportSummary`).
+   * @param {{innerHTML?: string}|null} [container] - A DOM element to write
+   *   into, or omit to only get the HTML string back.
+   * @returns {string} The rendered HTML.
+   */
+  function renderKaizenLedgerPanel(kaizenData, container) {
+    _refuseContainerFirst(kaizenData, 'renderKaizenLedgerPanel');
+    const d = kaizenData && typeof kaizenData === 'object' ? kaizenData : {};
+    const items = Array.isArray(d.items) ? d.items : [];
+    const feed = Array.isArray(d.gate0Feed) ? d.gate0Feed : [];
+    const report = d.reportSummary || null;
+    const itemHtml = items.map((it) => (
+      `<li class="sprint-kaizen-item" data-state="${_escapeHtml(_field(it, 'lifecycle_state', 'lifecycleState') || '')}">`
+      + `<span class="sprint-kaizen-category">${_escapeHtml(_field(it, 'defect_category', 'defectCategory') || '')}</span>`
+      + `<span class="sprint-kaizen-cause">${_escapeHtml(_field(it, 'root_cause', 'rootCause') || '')}</span>`
+      + `<span class="sprint-kaizen-action">${_escapeHtml(_field(it, 'corrective_action_spec', 'correctiveActionSpec') || '')}</span>`
+      + `<span class="sprint-kaizen-state">${_escapeHtml(_field(it, 'lifecycle_state', 'lifecycleState') || '')}</span>`
+      + '</li>'
+    )).join('');
+    const feedHtml = feed.map((f) => (
+      `<li class="sprint-kaizen-gate0">${_escapeHtml(_field(f, 'title', 'summary', 'finding_id', 'findingId') || '')}`
+      + `${_field(f, 'gate0_disposition', 'gate0Disposition') ? ` (${_escapeHtml(_field(f, 'gate0_disposition', 'gate0Disposition'))})` : ''}</li>`
+    )).join('');
+    let reportHtml = '';
+    if (report) {
+      const href = _safeHref(_field(report, 'reportUrl', 'url', 'href'));
+      const label = _field(report, 'title', 'version') || 'Sprint report';
+      reportHtml = '<div class="sprint-kaizen-report">'
+        + (href
+          ? `<a href="${_escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${_escapeHtml(label)}</a>`
+          : `<span>${_escapeHtml(label)}</span>`)
+        + '</div>';
+    }
+    const html = '<section class="sprint-panel sprint-kaizen-panel">'
+      + `<div class="sprint-panel-title">Kaizen ledger (${_escapeHtml(items.length)})</div>`
+      + (itemHtml ? `<ul class="sprint-kaizen-items">${itemHtml}</ul>` : '<div class="sprint-panel-empty">No Kaizen items</div>')
+      + (feedHtml ? `<ul class="sprint-kaizen-gate0-feed">${feedHtml}</ul>` : '')
+      + reportHtml
+      + '</section>';
+    if (container && typeof container === 'object') container.innerHTML = html;
+    return html;
+  }
+
   const sprintWaveUi = {
-    STAGE_ORDER, STAGE_LABELS, renderSprintKpiCards, renderSprintWaveBoard, filterSprintWaveRows
+    STAGE_ORDER, STAGE_LABELS, renderSprintKpiCards, renderSprintWaveBoard, filterSprintWaveRows,
+    renderCharterReadinessPanel, renderKaizenLedgerPanel
   };
 
   if (typeof module !== 'undefined' && module.exports) {
