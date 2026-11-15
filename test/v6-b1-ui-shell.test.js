@@ -6079,8 +6079,8 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
   it('says a missing route is not available yet, and names any other failure, escaped', () => {
     assert.equal(content('sprint', { ok: false, notFound: true }), '<p class="v6-workspace-empty">Not available on this server yet.</p>');
     assert.equal(content('charter', { ok: false, notFound: true }), '<p class="v6-workspace-empty">Not available on this server yet.</p>');
-    // A report's 404 also answers a version with no data (cumulative review note).
-    assert.equal(content('kaizen', { ok: false, notFound: true }), '<p class="v6-workspace-empty">No report for this version on this server yet.</p>');
+    // A report's 404 also answers a sprint with no data (cumulative review note).
+    assert.equal(content('kaizen', { ok: false, notFound: true }), '<p class="v6-workspace-empty">No report for the current sprint on this server yet.</p>');
     assert.equal(content('kaizen', { ok: false, error: 'boom <script>' }), '<p class="v6-workspace-empty is-error">Could not load this: boom &lt;script&gt;.</p>');
     assert.match(content('charter', { ok: false }), /Could not load this: the server did not answer\./);
   });
@@ -6123,7 +6123,7 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     assert.match(html, /<dt>Release commit<\/dt><dd>&lt;abc&gt;<\/dd>/);
     assert.match(html, /<li class="v6-workspace-item">Guardrail G1: 2<\/li>/);
     assert.doesNotMatch(html, /Guardrail G2/);
-    assert.equal(content('kaizen', { ok: true, data: {} }, null), '<p class="v6-workspace-empty">No report for this version yet.</p>');
+    assert.equal(content('kaizen', { ok: true, data: {} }, null), '<p class="v6-workspace-empty">No report for the current sprint yet.</p>');
   });
 
   /**
@@ -6160,19 +6160,19 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null,
       window: win, document: page, setTimeout: (fn) => { timers.push(fn); },
       setInterval: () => 0, clearInterval: () => {} });
-    return { live, scripts, timers, win, urls, panels, page, load: (mode, version) => loader(mode, { version }) };
+    return { live, scripts, timers, win, urls, panels, page, load: (mode) => loader(mode) };
   }
 
   it('adds the sprint UI script once, draws with it when it loads, and never adds it twice', async () => {
     const c = controller();
     await c.live.handleRoute(null);
-    c.load('sprint', '6.3.0');
+    c.load('sprint');
     await new Promise((r) => setImmediate(r));
     assert.equal(c.scripts.length, 1);
     assert.equal(c.scripts[0].id, 'tcSprintWaveUiScript');
     assert.equal(c.scripts[0].src, '/sprint-wave-ui.js');
     assert.deepEqual(c.scripts[0].attrs, { 'data-tc-sprint-wave-ui': '1' }, 'marked as A760 names it');
-    c.load('charter', '6.3.0');
+    c.load('charter');
     await new Promise((r) => setImmediate(r));
     assert.equal(c.scripts.length, 1, 'a second panel waits on the same script');
     assert.equal(c.scripts[0].listeners.load.length, 1, 'through the one wait already running');
@@ -6184,7 +6184,7 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     assert.match(c.panels[1][1], /No waves are planned yet\./, 'a builder the loaded UI lacks falls back');
     assert.deepEqual(c.urls, ['/api/sprint-waves', '/api/sprint-waves']);
     // Loaded: later panels use it straight away.
-    c.load('sprint', '6.3.0');
+    c.load('sprint');
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     assert.equal(c.scripts.length, 1);
@@ -6195,14 +6195,14 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     const existing = { id: '', src: '/sprint-wave-ui.js', listeners: {}, addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); } };
     const c = controller({ existing });
     await c.live.handleRoute(null);
-    c.load('sprint', '6.3.0');
+    c.load('sprint');
     await new Promise((r) => setImmediate(r));
     assert.equal(c.scripts.length, 0);
     existing.listeners.error.forEach((fn) => fn());
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     assert.match(c.panels[0][1], /<span class="v6-workspace-item-id">C1<\/span> <span class="v6-workspace-item-stage">Claimed<\/span>/, 'built-in drawing after a failed load');
-    c.load('sprint', '6.3.0');
+    c.load('sprint');
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     assert.equal(existing.listeners.load.length, 1, 'a script that already failed is not waited on again');
@@ -6214,7 +6214,7 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
   it('gives up on a script that never answers at the timer, and draws its own list from then on', async () => {
     const c = controller();
     await c.live.handleRoute(null);
-    c.load('sprint', '6.3.0');
+    c.load('sprint');
     await new Promise((r) => setImmediate(r));
     assert.equal(c.panels.length, 0, 'still waiting');
     c.timers.forEach((fn) => fn());
@@ -6222,14 +6222,14 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     await new Promise((r) => setImmediate(r));
     assert.equal(c.panels.length, 1);
     assert.match(c.panels[0][1], /<span class="v6-workspace-item-id">C1<\/span>/);
-    c.load('charter', '6.3.0');
+    c.load('charter');
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     assert.equal(c.panels.length, 2, 'drawn without waiting');
     assert.equal(c.scripts.length, 1, 'the script was added once');
     // A late definition is still used: the UI on the window is checked first.
     c.win.TangleClawSprintWaveUi = { renderSprintWaveBoard: () => '<div>late</div>' };
-    c.load('sprint', '6.3.0');
+    c.load('sprint');
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     assert.deepEqual(c.panels[2], ['sprint', '<div>late</div>']);
@@ -6239,7 +6239,7 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     const marked = { id: '', src: '/sprint-wave-ui.js?v=2', listeners: {}, addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); } };
     const c = controller({ marked });
     await c.live.handleRoute(null);
-    c.load('sprint', '6.3.0');
+    c.load('sprint');
     await new Promise((r) => setImmediate(r));
     assert.equal(c.scripts.length, 0);
     assert.equal(marked.listeners.load.length, 1);
@@ -6249,47 +6249,47 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     const byId = { id: 'tcSprintWaveUiScript', src: '/other.js', listeners: {}, addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); } };
     const c = controller({ byId });
     await c.live.handleRoute(null);
-    c.load('sprint', '6.3.0');
+    c.load('sprint');
     await new Promise((r) => setImmediate(r));
     assert.equal(c.scripts.length, 0);
     assert.equal(byId.listeners.load.length, 1);
   });
 
-  it('reads the running version\'s report, says when no version is known, and says when the route is missing', async () => {
+  it('reads the current sprint\'s report, and says when the route is missing', async () => {
     const c = controller();
     await c.live.handleRoute(null);
     c.win.TangleClawSprintWaveUi = {};
-    c.load('kaizen', '6.3.0 rc/1');
+    c.load('kaizen');
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    assert.deepEqual(c.urls, ['/api/sprint-reports/6.3.0%20rc%2F1']);
+    assert.deepEqual(c.urls, ['/api/sprint-reports/current']);
     assert.match(c.panels[0][1], /Version 6\.3\.0/);
-    c.load('kaizen', null);
-    await new Promise((r) => setImmediate(r));
-    assert.equal(c.urls.length, 1, 'no version, no request');
-    assert.match(c.panels[1][1], /Could not load this: the running version is not known yet\./);
     const missing = controller({ notFound: true });
     await missing.live.handleRoute(null);
-    missing.load('sprint', '6.3.0');
+    missing.load('sprint');
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     assert.deepEqual(missing.panels[0], ['sprint', '<p class="v6-workspace-empty">Not available on this server yet.</p>']);
+    missing.load('kaizen');
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(missing.panels[1], ['kaizen', '<p class="v6-workspace-empty">No report for the current sprint on this server yet.</p>']);
     assert.equal(missing.scripts.length, 0, 'a failed read loads no script');
   });
 
-  it('the shell asks for a panel with the running version when its mode is shown, and paints only the mode on screen', () => {
+
+  it('the shell asks for a panel when its mode is shown, and paints only the mode on screen', () => {
     const { doc } = makeDocument([]);
     const root = doc.createElement('div');
     root.id = 'v6ShellRoot';
     withIdParsingInnerHTML(root, doc);
     doc.body.appendChild(root);
     const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/tc-lane'), storage: makeStorage() });
-    shell.setTelemetry({ versionDrift: { value: '6.3.0' } });
     const asked = [];
-    shell.setWorkspaceLoader((mode, context) => asked.push([mode, plain(context)]));
+    shell.setWorkspaceLoader((mode) => asked.push(mode));
     assert.deepEqual(asked, [], 'Chat needs no panel');
     doc.getElementById('v6WorkspaceMode-sprint').dispatch('click');
-    assert.deepEqual(asked, [['sprint', { version: '6.3.0' }]]);
+    assert.deepEqual(asked, ['sprint']);
     assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<p class="v6-workspace-empty" role="status">Loading…<\/p>/);
     shell.setWorkspacePanel('sprint', '<div>board</div>');
     assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<h2 class="v6-workspace-panel-title">Sprint &amp; Cars<\/h2>\s*<div>board<\/div>/);
@@ -6297,15 +6297,14 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     assert.doesNotMatch(doc.getElementById('v6WorkspacePanel').innerHTML, /report/, 'a mode not on screen is kept, not painted');
     doc.getElementById('v6WorkspaceMode-kaizen').dispatch('click');
     assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<div>report<\/div>/, 'kept content shows at once');
-    assert.deepEqual(asked[1], ['kaizen', { version: '6.3.0' }], 'and is refreshed');
+    assert.deepEqual(asked, ['sprint', 'kaizen'], 'and is refreshed');
     shell.setWorkspacePanel('bogus', '<div>x</div>');
     shell.setWorkspacePanel('kaizen', 42);
     assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<div>report<\/div>/);
-    // A loader registered while a data mode is shown is asked at once; without telemetry the version is null.
+    // A loader registered while a data mode is shown is asked at once.
     const again = [];
-    shell.setTelemetry(null);
-    shell.setWorkspaceLoader((mode, context) => again.push([mode, plain(context)]));
-    assert.deepEqual(again, [['kaizen', { version: null }]]);
+    shell.setWorkspaceLoader((mode) => again.push(mode));
+    assert.deepEqual(again, ['kaizen']);
   });
 });
 

@@ -522,7 +522,7 @@
   /**
    * A data mode's panel content (#3086, Rulings A760, A761, A774). A failed
    * read says so: a missing route is "not available on this server yet" (a
-   * missing report, "no report for this version on this server yet"),
+   * missing report, "no report for the current sprint on this server yet"),
    * anything else names the reason. Otherwise the sprint UI's
    * own builder draws it when loaded — `renderSprintWaveBoard(container,
    * data)` container-first as on main, the two new builders data-first — and
@@ -535,8 +535,8 @@
   function workspacePanelContent(mode, result, ui) {
     const r = result || { ok: false };
     if (!r.ok) {
-      // A sprint report's 404 is also its answer for a version with no data, so it says only what is true of both.
-      if (r.notFound && mode === 'kaizen') return '<p class="v6-workspace-empty">No report for this version on this server yet.</p>';
+      // A sprint report's 404 is also its answer for a sprint with no data, so it says only what is true of both.
+      if (r.notFound && mode === 'kaizen') return '<p class="v6-workspace-empty">No report for the current sprint on this server yet.</p>';
       return r.notFound
         ? '<p class="v6-workspace-empty">Not available on this server yet.</p>'
         : `<p class="v6-workspace-empty is-error">Could not load this: ${escapeHtml(r.error || 'the server did not answer')}.</p>`;
@@ -578,7 +578,7 @@
     }
     if (mode === 'kaizen') {
       const report = data.report && typeof data.report === 'object' ? data.report : null;
-      if (!report) return '<p class="v6-workspace-empty">No report for this version yet.</p>';
+      if (!report) return '<p class="v6-workspace-empty">No report for the current sprint yet.</p>';
       const kpis = report.heroKpis && typeof report.heroKpis === 'object' ? report.heroKpis : {};
       const triggered = (Array.isArray(report.guardrailLedger) ? report.guardrailLedger : []).filter((g) => g && g.triggered);
       return `<p class="v6-workspace-item-stage">Version ${escapeHtml(report.version || 'unknown')}</p>
@@ -3874,22 +3874,14 @@
     /**
      * Load a data mode's panel (#3086): read its route, draw it through the
      * sprint UI when that loads (else the shell's escaped built-in drawing),
-     * and hand it to the shell. Kaizen & Reports reads the running version's
-     * report; with no version known it says so without asking.
+     * and hand it to the shell. Kaizen & Reports reads the sprint in
+     * progress, `GET /api/sprint-reports/current` (V630-W1-B's route).
      * @param {string} mode - `sprint`, `charter` or `kaizen`.
-     * @param {{version: string|null}} context
      * @returns {Promise<void>}
      */
-    async function loadWorkspacePanel(mode, context) {
-      const version = context && typeof context.version === 'string' && context.version ? context.version : null;
-      let result;
-      if (mode === 'kaizen' && !version) {
-        result = { ok: false, error: 'the running version is not known yet' };
-      } else {
-        const url = mode === 'kaizen' ? `/api/sprint-reports/${encodeURIComponent(version)}` : '/api/sprint-waves';
-        const data = await api(url);
-        result = data ? { ok: true, data } : { ok: false, notFound: api.lastErrorCode === 'NOT_FOUND', error: api.lastError };
-      }
+    async function loadWorkspacePanel(mode) {
+      const data = await api(mode === 'kaizen' ? '/api/sprint-reports/current' : '/api/sprint-waves');
+      const result = data ? { ok: true, data } : { ok: false, notFound: api.lastErrorCode === 'NOT_FOUND', error: api.lastError };
       const ui = result.ok ? await sprintWaveUi() : null;
       const sh = getShell();
       if (sh && typeof sh.setWorkspacePanel === 'function') sh.setWorkspacePanel(mode, workspacePanelContent(mode, result, ui));
@@ -3904,7 +3896,7 @@
       if (!shell) return;
       if (!workspaceLoaderGiven && typeof shell.setWorkspaceLoader === 'function') {
         workspaceLoaderGiven = true;
-        shell.setWorkspaceLoader((mode, context) => { loadWorkspacePanel(mode, context); });
+        shell.setWorkspaceLoader((mode) => { loadWorkspacePanel(mode); });
       }
       const key = route && route.view ? JSON.stringify(route) : null;
       if (key === lastRouteKey) return;
@@ -4433,12 +4425,9 @@
     const workspacePanels = new Map();
     let workspaceLoader = null;
 
-    /** Ask the controller's loader for a data mode's panel, with what it needs (#3086); callers pass only data modes. */
+    /** Ask the controller's loader for a data mode's panel (#3086); callers pass only data modes. */
     function loadWorkspacePanel(mode) {
-      if (typeof workspaceLoader !== 'function') return;
-      const version = telemetry && telemetry.versionDrift && typeof telemetry.versionDrift.value === 'string'
-        ? telemetry.versionDrift.value : null;
-      workspaceLoader(mode, { version });
+      if (typeof workspaceLoader === 'function') workspaceLoader(mode);
     }
 
     /**
@@ -5700,9 +5689,9 @@
       setWorkspaceMode(mode) { setWorkspaceMode(mode); },
       /**
        * Register the controller's panel loader (#3086), called with a data
-       * mode and `{version}` whenever that mode is shown; asked at once when
-       * the shell already shows one.
-       * @param {function(string, {version: string|null}): void} loader
+       * mode whenever that mode is shown; asked at once when the shell
+       * already shows one.
+       * @param {function(string): void} loader
        */
       setWorkspaceLoader(loader) {
         workspaceLoader = typeof loader === 'function' ? loader : null;
