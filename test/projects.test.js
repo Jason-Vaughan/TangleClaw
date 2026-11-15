@@ -1019,6 +1019,65 @@ describe('projects', () => {
         'nothing may be spawned to answer a question nobody asked');
     });
 
+    describe('the engine a member runs, for its badge (#3094, Ruling A767)', () => {
+      /**
+       * A project whose session runs `engineId`, deliberately not the default.
+       * @param {string} name
+       * @param {string} engineId
+       * @returns {{project: object, session: object}}
+       */
+      function projectRunning(name, engineId) {
+        projects.createProject({ name });
+        const project = store.projects.getByName(name);
+        const session = store.sessions.start({ projectId: project.id, engineId, tmuxSession: `tc-${name}`, primePrompt: '' });
+        return { project, session };
+      }
+
+      it('a live session carries the engine it runs, and so does lastSessionEngineId', async () => {
+        const { project, session } = projectRunning('badge-live', 'codex');
+        try {
+          const enriched = await withCountedTmux(`${session.tmuxSession}\n`,
+            () => projects.enrichProject(store.projects.get(project.id)));
+          assert.equal(enriched.session.active, true);
+          assert.equal(enriched.session.engineId, 'codex');
+          assert.equal(enriched.lastSessionEngineId, 'codex');
+        } finally {
+          store.sessions.kill(session.id, 'test cleanup');
+        }
+      });
+
+      it('a session whose pane could not be read still names its engine', async () => {
+        const { project, session } = projectRunning('badge-unknown', 'antigravity');
+        const tmuxModuleRef = require('../lib/tmux');
+        const realFactory = tmuxModuleRef.createSessionNameSnapshot;
+        const dirScannerRef = require('../lib/dir-scanner');
+        const realReq = dirScannerRef.request;
+        dirScannerRef.request = () => Promise.resolve({ exists: true, governanceState: 'ungoverned' });
+        tmuxModuleRef.createSessionNameSnapshot = () => ({ get: async () => ({ answered: false, cause: 'read-timed-out', names: new Set() }) });
+        try {
+          const enriched = await projects.enrichProject(store.projects.get(project.id));
+          assert.equal(enriched.session.active, null, 'precondition: liveness unknown');
+          assert.equal(enriched.session.engineId, 'antigravity');
+        } finally {
+          tmuxModuleRef.createSessionNameSnapshot = realFactory;
+          dirScannerRef.request = realReq;
+          store.sessions.kill(session.id, 'test cleanup');
+        }
+      });
+
+      it('with no session running, lastSessionEngineId is the latest session\'s engine; with none ever, null', async () => {
+        const { project, session } = projectRunning('badge-last', 'codex');
+        store.sessions.kill(session.id, 'test: ended');
+        const enriched = await withCountedTmux('', () => projects.enrichProject(store.projects.get(project.id)));
+        assert.equal(enriched.session, null);
+        assert.equal(enriched.lastSessionEngineId, 'codex');
+
+        projects.createProject({ name: 'badge-never' });
+        const never = await withCountedTmux('', () => projects.enrichProject(store.projects.getByName('badge-never')));
+        assert.equal(never.lastSessionEngineId, null);
+      });
+    });
+
     it('enrichProject with no caller-supplied snapshot answers from its own', async () => {
       // The `facts` precedent: an omitted argument makes this function do the
       // work itself, so a call site that forgets is slower and never wrong. Eight
