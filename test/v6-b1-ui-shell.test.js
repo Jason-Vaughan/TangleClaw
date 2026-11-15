@@ -6135,10 +6135,13 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
       head: { appendChild: (el) => { scripts.push(el); } },
       createElement: (tag) => {
         const listeners = {};
-        return { tag, id: '', src: '', listeners, addEventListener: (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); }, fire: (t) => (listeners[t] || []).forEach((fn) => fn()) };
+        const attrs = {};
+        return { tag, id: '', src: '', listeners, attrs, setAttribute: (k, v) => { attrs[k] = String(v); },
+          addEventListener: (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); }, fire: (t) => (listeners[t] || []).forEach((fn) => fn()) };
       },
       getElementById: (id) => scripts.find((x) => x.id === id) || (opts.byId && id === 'tcSprintWaveUiScript' ? opts.byId : null),
-      querySelector: (sel) => (opts.existing && sel === 'script[src="/sprint-wave-ui.js"]' ? opts.existing : null)
+      querySelector: (sel) => (opts.existing && sel === 'script[src="/sprint-wave-ui.js"]' ? opts.existing
+        : opts.marked && sel === 'script[data-tc-sprint-wave-ui="1"]' ? opts.marked : null)
     };
     const win = {};
     const urls = [];
@@ -6165,6 +6168,7 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     assert.equal(c.scripts.length, 1);
     assert.equal(c.scripts[0].id, 'tcSprintWaveUiScript');
     assert.equal(c.scripts[0].src, '/sprint-wave-ui.js');
+    assert.deepEqual(c.scripts[0].attrs, { 'data-tc-sprint-wave-ui': '1' }, 'marked as A760 names it');
     c.load('charter', '6.3.0');
     await new Promise((r) => setImmediate(r));
     assert.equal(c.scripts.length, 1, 'a second panel waits on the same script');
@@ -6204,6 +6208,16 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     assert.equal(c.panels.length, 2);
+  });
+
+  it('finds a script the page already has by its data-tc-sprint-wave-ui mark (A760)', async () => {
+    const marked = { id: '', src: '/sprint-wave-ui.js?v=2', listeners: {}, addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); } };
+    const c = controller({ marked });
+    await c.live.handleRoute(null);
+    c.load('sprint', '6.3.0');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(c.scripts.length, 0);
+    assert.equal(marked.listeners.load.length, 1);
   });
 
   it('finds a script the page already has by its id too', async () => {

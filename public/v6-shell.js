@@ -3823,8 +3823,9 @@
 
     /**
      * `window.TangleClawSprintWaveUi`, loading `/sprint-wave-ui.js` at most
-     * once (#3086, A760/A761): a script already in the page, by its id or its
-     * src, is waited on rather than added again. Resolves null when the script
+     * once (#3086, A760/A761): a script already in the page, by its id, its
+     * `data-tc-sprint-wave-ui="1"` mark or its src, is waited on rather than
+     * added again; the one added carries all three. Resolves null when the script
      * fails or has not defined it within 10 seconds; a later call tries again.
      * @returns {Promise<object|null>}
      */
@@ -3840,12 +3841,14 @@
           settled = true;
           resolve((pageWindow && pageWindow.TangleClawSprintWaveUi) || null);
         };
+        const query = (sel) => (typeof pageDocument.querySelector === 'function' ? pageDocument.querySelector(sel) : null);
         let script = (typeof pageDocument.getElementById === 'function' && pageDocument.getElementById(SPRINT_UI_ID))
-          || (typeof pageDocument.querySelector === 'function' ? pageDocument.querySelector(`script[src="${SPRINT_UI_SRC}"]`) : null);
+          || query('script[data-tc-sprint-wave-ui="1"]') || query(`script[src="${SPRINT_UI_SRC}"]`);
         if (!script) {
           script = pageDocument.createElement('script');
           script.id = SPRINT_UI_ID;
           script.src = SPRINT_UI_SRC;
+          if (typeof script.setAttribute === 'function') script.setAttribute('data-tc-sprint-wave-ui', '1');
           (pageDocument.head || pageDocument.body).appendChild(script);
         }
         script.addEventListener('load', done);
