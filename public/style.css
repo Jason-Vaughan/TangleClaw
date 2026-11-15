@@ -4889,3 +4889,281 @@ p.v6-history-secret {
   justify-content: flex-start;
   text-align: left;
 }
+
+/* #3082: links in messages open in a new tab; an external image is a card,
+   never loaded here; an attached image shows as a thumbnail. */
+.v6-chat-link {
+  color: #58a6ff;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+[data-theme="light"] .v6-chat-link {
+  color: #0969da;
+}
+.v6-chat-link-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin: 2px 0;
+  padding: 4px 8px;
+  border: 1px solid var(--v6-outline, #3d444d);
+  border-radius: 6px;
+  color: inherit;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.v6-chat-link-preview:hover,
+.v6-chat-link-preview:focus-visible {
+  border-color: #58a6ff;
+}
+.v6-chat-link-preview-host {
+  font-weight: 600;
+}
+.v6-chat-link-preview-path {
+  opacity: 0.8;
+}
+.v6-chat-thumb-link {
+  flex-direction: column;
+  align-items: flex-start;
+}
+.v6-chat-thumb {
+  display: block;
+  max-width: 220px;
+  max-height: 160px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+.v6-chat-thumb-name {
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+.v6-chat-attachment {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid var(--v6-outline, #3d444d);
+  border-radius: 999px;
+  font-size: 0.85em;
+}
+/* #3082: which switchboard replies the chat shows; the rest are tucked. */
+.v6-chat-verbosity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--v6-outline, #3d444d);
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+.v6-chat-verbosity legend {
+  padding: 0 4px;
+}
+.v6-chat-verbosity-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  cursor: pointer;
+}
+.v6-chat-verbosity-fixed {
+  opacity: 0.75;
+}
+.v6-chat-tucked {
+  margin-bottom: 6px;
+}
+.v6-chat-tucked-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 14em;
+  overflow: auto;
+  font-size: 0.85em;
+}
+.v6-chat-tucked-item {
+  padding: 2px 0;
+  border-bottom: 1px dashed var(--v6-outline, #3d444d);
+}
+.v6-chat-tucked-kind {
+  font-weight: 600;
+  opacity: 0.8;
+}
+.v6-chat-tucked-count:not(:empty) {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #d4a72c;
+  color: #000;
+  font-size: 0.8em;
+}
+
+/* #3082: Force Send sits beside Send, set apart in amber. */
+.v6-chat-force-send {
+  border-color: #d4a72c;
+}
+.v6-chat-force-send:hover,
+.v6-chat-force-send:focus-visible {
+  background: rgba(212, 167, 44, 0.15);
+}
+
+/* Ruling A764: in the v6 shell the chat's header sits inside the dashboard
+   bar, between the brand and the actions, so there is one top bar. */
+.dash-bar .v6-chat-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+/* The docked header sits outside #v6ShellRoot, so the shell's tokens and
+   the chat's one-line telemetry pills (#3063) are restated for it. */
+.dash-bar .v6-chat-header {
+  --v6-outline: #3d444d;
+  --v6-surface: var(--card-bg, #0d0d0d);
+}
+[data-theme="light"] .dash-bar .v6-chat-header {
+  --v6-outline: #8c959f;
+}
+.dash-bar .v6-chat-header .v6-telemetry-header {
+  margin-bottom: 0;
+  gap: 6px;
+  align-items: center;
+}
+.dash-bar .v6-chat-header .v6-telemetry-chip {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+.dash-bar .v6-chat-header .v6-telemetry-label {
+  opacity: 0.75;
+}
+.dash-bar .v6-chat-header .v6-telemetry-chip.is-unavailable {
+  display: none;
+}
+/* Ruling A765: the dashboard's CPU/MEM/DISK/UP stats, moved into the v6
+   footer status bar, sit in line with the shell's own readings. */
+.v6-shell-status-bar .dash-stats {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 0.8em;
+}
+
+/* #3085: the 3-engine usage meter in the footer status bar, and its
+   breakdown. Green above 25% left, amber at 25% or less, red and pulsing
+   at 5% or less (Contract A753-1). */
+.v6-usage-slot {
+  position: relative;
+}
+.v6-usage-meter {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 2px 6px;
+  background: none;
+  border: 1px solid var(--v6-outline, #3d444d);
+  border-radius: 999px;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.8em;
+}
+.v6-usage-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.v6-usage-label {
+  font-weight: 600;
+}
+.v6-usage-bar {
+  display: inline-block;
+  width: 36px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(127, 127, 127, 0.25);
+  overflow: hidden;
+}
+.v6-usage-fill {
+  display: block;
+  height: 100%;
+}
+.v6-usage-pill.is-green .v6-usage-fill {
+  background: #2ea043;
+}
+.v6-usage-pill.is-amber .v6-usage-fill {
+  background: #d4a72c;
+}
+.v6-usage-pill.is-red .v6-usage-fill {
+  background: #f85149;
+}
+.v6-usage-pill.is-red .v6-usage-value {
+  color: #f85149;
+  font-weight: 600;
+}
+.v6-usage-pill.is-unknown .v6-usage-bar {
+  background: repeating-linear-gradient(45deg, rgba(127, 127, 127, 0.25) 0 3px, transparent 3px 6px);
+}
+.v6-usage-pill.is-critical {
+  animation: v6-usage-pulse 1.2s ease-in-out infinite;
+}
+@keyframes v6-usage-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .v6-usage-pill.is-critical {
+    animation: none;
+  }
+}
+.v6-usage-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  min-width: 320px;
+  max-width: calc(100vw - 32px);
+  padding: 8px;
+  background: var(--card-bg, #0d0d0d);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  font-size: 0.85em;
+  overflow-x: auto;
+}
+.v6-usage-popover[hidden] {
+  display: none;
+}
+.v6-usage-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.v6-usage-table th,
+.v6-usage-table td {
+  padding: 2px 6px;
+  text-align: left;
+  white-space: nowrap;
+}
+.v6-usage-calibrate {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.v6-usage-input {
+  width: 4.5em;
+}
+.v6-usage-status.is-error {
+  color: #f85149;
+}

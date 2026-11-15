@@ -1903,7 +1903,7 @@ describe('Project Delegate Chat review fixes (#3047)', () => {
     assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*>for the PM only<\/textarea>/, 'the draft is still there on return');
   });
 
-  it('a second Enter or Send while the first is still sending is ignored, and the composer is disabled meanwhile', async () => {
+  it('a second Enter or Send while the first is still sending is ignored, and Send is disabled meanwhile', async () => {
     const m = mountPair({ hold: true });
     await m.settle();
     const input = m.doc.getElementById('v6ChatInput');
@@ -1911,8 +1911,11 @@ describe('Project Delegate Chat review fixes (#3047)', () => {
     input.dispatch('input');
     m.doc.getElementById('v6ChatForm').dispatch('submit');
     await new Promise((r) => setImmediate(r));
-    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*disabled/);
+    // Restated by #3082 (Ruling A757): the box stays open so Force Send can push an urgent
+    // message in meanwhile; Send itself stays disabled, so a plain second send cannot happen.
+    assert.doesNotMatch(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*disabled/);
     assert.match(m.root.innerHTML, /<button type="submit"[^>]*disabled/);
+    assert.doesNotMatch(m.root.innerHTML, /<button type="button" id="v6ChatForceSend"[^>]*disabled/);
     m.doc.getElementById('v6ChatForm').dispatch('submit');
     await m.live.sendChat('once');
     m.release();
@@ -2146,7 +2149,9 @@ describe('Above-the-Hood chat view (#3052)', () => {
   it('puts the raw output in a collapsed Under the Hood drawer, open only when asked', () => {
     const closed = G.tcV6ConversationViewMarkup(view({ peek: { lines: ['$ ok'] } }));
     // Restated by #3076: the switchboard's traffic list sits above the raw output, inside the drawer.
-    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\)<\/summary>\s*<section class="v6-chat-switchboard"[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
+    // Restated by #3082: the summary carries the tucked count, and the verbosity filter and the
+    // tucked list come first.
+    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count"><\/span><\/summary>\s*<fieldset class="v6-chat-verbosity">[\s\S]*?<\/fieldset>\s*<section class="v6-chat-tucked"[\s\S]*?<\/section>\s*<section class="v6-chat-switchboard"[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
     assert.match(G.tcV6ConversationViewMarkup(view({ peek: { lines: [] }, hoodOpen: true })), /<details id="v6ChatUnderHood" class="v6-chat-under-hood" open>/);
   });
 
@@ -2792,7 +2797,8 @@ describe('tcV6ExtractLiveTurns keeps ordinary prose (cumulative review)', () => 
 
   it('an indented line under a status or boilerplate line is kept; only a tool line hides what is indented under it', () => {
     const out = plain(G.tcV6ExtractLiveTurns(['> go', '[TangleClaw Switchboard] wake', '  This reply line is indented.'], 'claude', []));
-    assert.deepEqual(out.turns[1], { role: 'assistant', text: 'This reply line is indented.' });
+    // Restated by #3082: a reply after a wake is marked as switchboard-triggered.
+    assert.deepEqual(out.turns[1], { role: 'assistant', text: 'This reply line is indented.', trigger: 'switchboard' });
   });
 });
 
@@ -4473,7 +4479,7 @@ describe('the Waiting on you queue (#3079)', () => {
     assert.equal(m.doc.activeElement, m.doc.getElementById('v6ChatInput'));
   });
 
-  it('sending a reply clears the queue', () => {
+  it('sending a reply clears the queue, once the send really goes', () => {
     const sent = [];
     const m = mountQuestions((t) => sent.push(t));
     const input = m.doc.getElementById('v6ChatInput');
@@ -4481,6 +4487,9 @@ describe('the Waiting on you queue (#3079)', () => {
     input.dispatch('input');
     m.doc.getElementById('v6ChatForm').dispatch('submit');
     assert.deepEqual(sent, ['both yes']);
+    // Restated by #3082: a press that sends nothing (a send still on its way) must not clear it,
+    // so the queue clears when the controller begins the send.
+    m.shell.beginSend(12, 'both yes', 1);
     const q = m.doc.getElementById('v6ChatQuestion');
     assert.equal(q.innerHTML, '');
     assert.equal(q.className, 'v6-chat-question');
@@ -5152,7 +5161,7 @@ describe('a wrapped wake never swallows the session\'s reply (Lane-B O-Gate and 
   it('Antigravity\'s indented reply after a typed wake is a reply, questions and all', () => {
     const out = run(['❯ [TangleClaw Switchboard] You have 1 unread', '  I read the message from PM.', '  Shall I proceed?'], 'antigravity');
     assert.equal(out.switchboard.length, 1);
-    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'I read the message from PM.\nShall I proceed?' }]);
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'I read the message from PM.\nShall I proceed?', trigger: 'switchboard' }]);
     assert.deepEqual(out.questions, ['Shall I proceed?']);
   });
 
@@ -5163,7 +5172,7 @@ describe('a wrapped wake never swallows the session\'s reply (Lane-B O-Gate and 
     lines.push('  Reading them now.');
     const out = run(lines, 'antigravity');
     assert.deepEqual(out.switchboard, [{ dir: 'in', text: wake }]);
-    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Reading them now.' }]);
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Reading them now.', trigger: 'switchboard' }]);
   });
 
   it('a wake with a project\'s own reply guidance, wrapped mid-word, is joined whole; the reply after it is not (third review, blocking)', () => {
@@ -5176,7 +5185,7 @@ describe('a wrapped wake never swallows the session\'s reply (Lane-B O-Gate and 
     const out = run(lines, 'antigravity');
     assert.equal(out.switchboard.length, 1);
     assert.equal(out.switchboard[0].text.replace(/\s+/g, ''), custom.replace(/\s+/g, ''));
-    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Fixed. Shall I push?' }]);
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Fixed. Shall I push?', trigger: 'switchboard' }]);
     assert.deepEqual(out.questions, ['Fixed. Shall I push?']);
   });
 
@@ -5188,7 +5197,7 @@ describe('a wrapped wake never swallows the session\'s reply (Lane-B O-Gate and 
     const out = run([`> ${chunks[0]}`].concat(chunks.slice(1).map((c) => `  ${c.trim()}`), ['  Shall I merge?']), 'antigravity');
     assert.equal(out.switchboard.length, 1);
     assert.equal(out.switchboard[0].text.replace(/\s+/g, ''), wakeText.replace(/\s+/g, ''));
-    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Shall I merge?' }]);
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Shall I merge?', trigger: 'switchboard' }]);
   });
 
   it('a blank line ends a wake, even mid-sentence', () => {
@@ -5242,5 +5251,958 @@ describe('a dismissal belongs to the reply that asked it (PRR-B R2)', () => {
     assert.equal(shows(m), false, 'grown');
     m.shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'ok' }, { role: 'assistant', text: 'One?\nAnd more.' }], questions: ['One?'] } });
     assert.equal(shows(m), false, 'scrolled');
+  });
+});
+
+// ── #3082 (Car V6210-W1-A): links, thumbnails, verbosity filter ──
+
+describe('links in messages open in a new tab, and only http(s) is ever a link (#3082)', () => {
+  const G = loadV6Shell();
+  const f = (t, thumbs) => G.tcV6MessageMarkup(t, thumbs);
+
+  it('a bare URL, MagicDNS port and all, is a new-tab link; trailing punctuation is not part of it', () => {
+    const html = f('Plan: https://cursatory.tail123678.ts.net:8443/plans/111/p.md, read it.');
+    assert.equal(html, 'Plan: <a class="v6-chat-link" href="https://cursatory.tail123678.ts.net:8443/plans/111/p.md" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">https://cursatory.tail123678.ts.net:8443/plans/111/p.md</a>, read it.');
+    assert.match(f('(see https://x.example/a)'), /href="https:\/\/x\.example\/a"[^>]*>https:\/\/x\.example\/a<\/a>\)$/);
+    assert.match(f('https://x.example/wiki/A_(b)'), /href="https:\/\/x\.example\/wiki\/A_\(b\)"/);
+  });
+
+  it('a Markdown link shows its label; a same-origin path may be a target', () => {
+    assert.match(f('[the plan](https://a.example/p)'), /<a class="v6-chat-link" href="https:\/\/a\.example\/p"[^>]*>the plan<\/a>/);
+    assert.match(f('[plans](/plans/111/x.md)'), /<a class="v6-chat-link" href="\/plans\/111\/x\.md"/);
+  });
+
+  it('javascript:, data:, vbscript:, file: and protocol-relative targets are never links', () => {
+    for (const t of ['[x](javascript:alert(1))', 'javascript:alert(1)', 'data:text/html,<b>1</b>', '[y](vbscript:msgbox(1))', 'file:///etc/passwd', '[z](//evil.example/x)',
+      '[w](/\\evil.example/x)', '[v](/a\\b)']) {
+      assert.doesNotMatch(f(t), /<a /, t);
+    }
+  });
+
+  it('escapes everything around and inside links', () => {
+    const html = f('<b>hi</b> [<i>lbl</i>](https://a.example/?q=1&r=2) "https://b.example/x"');
+    assert.doesNotMatch(html, /<b>|<i>/);
+    assert.match(html, /href="https:\/\/a\.example\/\?q=1&amp;r=2"[^>]*>&lt;i&gt;lbl&lt;\/i&gt;<\/a>/);
+    // A quote ends a bare URL, so it can never break out of the href.
+    assert.match(f('https://a.example/x"onmouseover="y'), /href="https:\/\/a\.example\/x"[^>]*>https:\/\/a\.example\/x<\/a>&quot;onmouseover=&quot;y/);
+    assert.match(html, /&quot;<a class="v6-chat-link" href="https:\/\/b\.example\/x"/);
+  });
+
+  it('an external image URL in an assistant turn is a link card and NO img, so nothing is fetched (A752-1)', () => {
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'See https://attacker.example/p.png?d=SECRET now' }] } } });
+    const live = html.slice(html.indexOf('id="v6ChatLive"'), html.indexOf('id="v6ChatRecordedTail"'));
+    assert.match(live, /<a class="v6-chat-link-preview" href="https:\/\/attacker\.example\/p\.png\?d=SECRET" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"/);
+    assert.match(live, /<span class="v6-chat-link-preview-host">attacker\.example<\/span><span class="v6-chat-link-preview-path">\/p\.png\?d=SECRET<\/span>/);
+    assert.doesNotMatch(html, /<img[^>]*attacker/);
+    assert.doesNotMatch(live, /<img/);
+  });
+
+  it('an attached image with a blob URL is a thumbnail opening in a new tab; otherwise, or any non-blob value, a chip', () => {
+    const thumb = f('look\nAttached: .tangleclaw/secrets/shot.png', { 'shot.png': 'blob:http://h/1' });
+    assert.match(thumb, /^look\n<a class="v6-chat-link-preview v6-chat-thumb-link" href="blob:http:\/\/h\/1" target="_blank" rel="noopener noreferrer"[^>]*><img class="v6-chat-thumb" src="blob:http:\/\/h\/1" alt="shot\.png">/);
+    assert.match(f('Attached: secrets/shot.png'), /^<span class="v6-chat-attachment"><span aria-hidden="true">📎<\/span> shot\.png<\/span>$/);
+    assert.doesNotMatch(f('Attached: .tangleclaw/secrets/shot.png', { 'shot.png': 'javascript:alert(1)' }), /<img|href/);
+    assert.doesNotMatch(f('Attached: .tangleclaw/secrets/notes.txt', { 'notes.txt': 'blob:http://h/2' }), /<img/);
+  });
+});
+
+describe('attachment thumbnails through the controller (#3082, A752-2)', () => {
+  /** A live chat whose messages attach shot.png, with fetch and object-URL seams. */
+  function mountThumbs(opts) {
+    const o = opts || {};
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const fetches = [];
+    const created = [];
+    const revoked = [];
+    let n = 0;
+    const rows = [{ id: 12, name: 'TC Lane PM', engine: { id: 'claude' } }, { id: 13, name: 'Other', engine: { id: 'claude' } }];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: rows };
+      if (/\/status$/.test(url)) return { active: true, sessionId: 1592 };
+      if (/conversation\/events/.test(url)) return { events: [{ seq: 1, role: 'user', content: 'see this\n\nAttached: .tangleclaw/secrets/shot.png' }] };
+      if (/peek/.test(url)) return { lines: ['⏺ Got it.'] };
+      return null;
+    };
+    const timers = [];
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => ({ ok: true }), storage: null,
+      operatorHeaders: async () => ({ 'X-TC-Open-Token': 'tok' }),
+      // A refused Response still has blob(); only ok tells the two apart.
+      fetch: async (url, init) => { fetches.push({ url, headers: init.headers }); return o.fail ? { ok: false, status: 403, blob: async () => ({ kind: 'json-error' }) } : { ok: true, blob: async () => ({ kind: 'blob' }) }; },
+      createObjectURL: () => { const u = `blob:test/${++n}`; created.push(u); return u; },
+      revokeObjectURL: (u) => revoked.push(u),
+      setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
+    const win = makeFakeWindow('#/resources/12/conversation');
+    shell = G.tcCreateV6Shell(doc, { root, window: win, storage: null, onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { for (let i = 0; i < 5; i++) { while (pending.length) await pending.shift(); await new Promise((r) => setImmediate(r)); } };
+    return { shell, root, doc, win, timers, settle, fetches, created, revoked };
+  }
+  const thumbIn = (m) => (/<img class="v6-chat-thumb" src="([^"]+)"/.exec(m.root.innerHTML + (m.doc.getElementById('v6ChatRecorded') || {}).innerHTML) || [])[1];
+
+  it('fetches the attached image once, with the operator proof, from the project\'s secure-clipboard file route', async () => {
+    const m = mountThumbs();
+    await m.settle();
+    assert.equal(m.fetches.length, 1);
+    assert.equal(m.fetches[0].url, '/api/sessions/TC%20Lane%20PM/secure-clipboard/shot.png');
+    assert.equal(m.fetches[0].headers['X-TC-Open-Token'], 'tok');
+    assert.equal(thumbIn(m), 'blob:test/1');
+  });
+
+  it('keeps the exact same blob URL across a live poll, fetching and creating nothing new (A752-2)', async () => {
+    const m = mountThumbs();
+    await m.settle();
+    const before = thumbIn(m);
+    await m.timers[m.timers.length - 1]();
+    await m.settle();
+    assert.equal(thumbIn(m), before);
+    assert.equal(m.fetches.length, 1);
+    assert.deepEqual(m.created, ['blob:test/1']);
+    assert.deepEqual(m.revoked, [], 'a poll revokes nothing');
+  });
+
+  it('releases the blob URL when the chat moves to another project, and on teardown', async () => {
+    const m = mountThumbs();
+    await m.settle();
+    m.win.location.hash = '#/resources/13/conversation';
+    await m.settle();
+    assert.deepEqual(m.revoked, ['blob:test/1']);
+    const t = mountThumbs();
+    await t.settle();
+    t.shell.destroy();
+    assert.deepEqual(t.revoked, ['blob:test/1']);
+  });
+
+  it('an image the operator attached in this browser seeds the cache from its own bytes, so nothing is fetched', async () => {
+    const G = loadV6Shell();
+    const created = [];
+    const fetches = [];
+    let events = [];
+    let shell = null;
+    const live = G.tcV6CreateLiveController({ getShell: () => shell,
+      api: async (url, init) => {
+        if (url === '/api/projects') return { projects: [{ id: 12, name: 'P', engine: { id: 'claude' } }] };
+        if (/\/status$/.test(url)) return { active: true, sessionId: 1 };
+        if (/secure-clipboard$/.test(url) && init && init.method === 'GET') return { files: [] };
+        if (/secure-clipboard$/.test(url)) return { relPath: 'secrets/shot.png' };
+        if (/conversation\/events/.test(url)) return { events };
+        if (/peek/.test(url)) return { lines: [] };
+        return null;
+      },
+      apiMutate: async () => ({ ok: true }), storage: null, operatorHeaders: async () => ({}), readFileAsBase64: async () => 'eA==',
+      fetch: async (url) => { fetches.push(url); return { ok: false }; },
+      createObjectURL: (b) => { created.push(b); return 'blob:local/1'; }, revokeObjectURL: () => {},
+      setInterval: () => 0, clearInterval: () => {} });
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const pending = [];
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null, onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    while (pending.length) await pending.shift();
+    const file = { name: 'shot.png', size: 3 };
+    await live.attachFiles([file]);
+    assert.deepEqual(created, [file], 'the local file itself became the blob URL');
+    // The message that attaches it is then sent and recorded.
+    events = [{ seq: 1, role: 'user', content: 'Attached: .tangleclaw/secrets/shot.png' }];
+    await live.refresh();
+    assert.deepEqual(fetches, [], 'no fetch for a file this browser already holds');
+    assert.match(root.innerHTML + doc.getElementById('v6ChatRecorded').innerHTML, /<img class="v6-chat-thumb" src="blob:local\/1"/);
+  });
+
+  it('a file attached in this browser replaces a fetch that was refused', async () => {
+    const G = loadV6Shell();
+    let shell = null;
+    const created = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell,
+      api: async (url, init) => {
+        if (url === '/api/projects') return { projects: [{ id: 12, name: 'P', engine: { id: 'claude' } }] };
+        if (/\/status$/.test(url)) return { active: true, sessionId: 1 };
+        if (/secure-clipboard$/.test(url) && init && init.method === 'GET') return { files: [] };
+        if (/secure-clipboard$/.test(url)) return { relPath: 'secrets/shot.png' };
+        if (/conversation\/events/.test(url)) return { events: [{ seq: 1, role: 'user', content: 'Attached: .tangleclaw/secrets/shot.png' }] };
+        if (/peek/.test(url)) return { lines: [] };
+        return null;
+      },
+      apiMutate: async () => ({ ok: true }), storage: null, operatorHeaders: async () => ({}), readFileAsBase64: async () => 'eA==',
+      fetch: async () => ({ ok: false, status: 404, blob: async () => ({}) }),
+      createObjectURL: (b) => { created.push(b); return 'blob:local/9'; }, revokeObjectURL: () => {},
+      setInterval: () => 0, clearInterval: () => {} });
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const pending = [];
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null, onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    for (let i = 0; i < 4; i++) { while (pending.length) await pending.shift(); await new Promise((r) => setImmediate(r)); }
+    assert.deepEqual(created, [], 'the refused fetch made no URL');
+    const file = { name: 'shot.png', size: 3 };
+    await live.attachFiles([file]);
+    await live.refresh();
+    assert.deepEqual(created, [file]);
+    assert.match(root.innerHTML + doc.getElementById('v6ChatRecorded').innerHTML, /<img class="v6-chat-thumb" src="blob:local\/9"/);
+  });
+
+  it('a refused fetch leaves a file-name chip and is not retried on the next poll', async () => {
+    const m = mountThumbs({ fail: true });
+    await m.settle();
+    assert.equal(thumbIn(m), undefined);
+    assert.match(m.root.innerHTML, /<span class="v6-chat-attachment"><span aria-hidden="true">📎<\/span> shot\.png<\/span>/);
+    await m.timers[m.timers.length - 1]();
+    await m.settle();
+    assert.equal(m.fetches.length, 1);
+  });
+});
+
+describe('the verbosity filter on Under the Hood (#3082)', () => {
+  const G = loadV6Shell();
+  const run = (lines) => plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+  const wake = '> [TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.';
+
+  it('a reply already answering the operator stays theirs when a wake lands mid-reply (chunk review, blocking)', () => {
+    const out = run(['> what next?', '⏺ The release is cut tomorrow.', wake, '⏺ Acked INT.']);
+    assert.deepEqual(out.turns, [{ role: 'user', text: 'what next?' }, { role: 'assistant', text: 'The release is cut tomorrow.' },
+      { role: 'assistant', text: 'Acked INT.', trigger: 'switchboard' }]);
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: out } });
+    const live = html.slice(html.indexOf('id="v6ChatLive"'), html.indexOf('id="v6ChatRecordedTail"'));
+    assert.match(live, /The release is cut tomorrow\./, 'the direct answer is not tucked away');
+    assert.doesNotMatch(live, /Acked INT\./);
+  });
+
+  it('a question asked before a wake still waits after the session answers the wake (verify, blocking)', () => {
+    const out = run(['> fix it', '⏺ Fixed. Shall I push?', wake, '⏺ Acked INT.']);
+    assert.deepEqual(out.questions, ['Fixed. Shall I push?']);
+    assert.deepEqual(run(['> fix it', '⏺ Fixed. Shall I push?', wake, '⏺ Acked INT.', '> yes']).questions, [], 'the operator answering clears it');
+  });
+
+  it('a dismissal holds when a wake reply splits the turn after it', () => {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+    const before = run(['> fix it', '⏺ Fixed. Shall I push?']);
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [], chat: { status: 'active', members: [], live: before } } });
+    doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    shell.setLive({ peek: null, live: run(['> fix it', '⏺ Fixed. Shall I push?', wake, '⏺ Acked INT.']) });
+    assert.doesNotMatch(doc.getElementById('v6ChatQuestion').innerHTML, /Shall I push/);
+  });
+
+  it('marks a reply a wake set going, until the operator speaks again', () => {
+    const out = run([wake, '⏺ Acked INT.', '> what next?', '⏺ The release.']);
+    assert.deepEqual(out.turns.map((t) => t.trigger || 'direct'), ['switchboard', 'direct', 'direct']);
+  });
+
+  it('shows a question whose ? is followed by more words, a parenthetical or markdown, and queues it (O-Gate B2)', () => {
+    const asked = ['Operator: should I merge #12? Reply yes/no.', 'Proceed? (y/n)', '**Need your call: ship it?**'];
+    for (const text of asked) {
+      const out = run([wake, `⏺ ${text}`]);
+      assert.deepEqual(out.questions, [text], `${text} reaches Waiting on you`);
+      const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+        chat: { status: 'active', members: [], live: { turns: out.turns } } });
+      const live = html.slice(html.indexOf('id="v6ChatLive"'), html.indexOf('id="v6ChatRecordedTail"'));
+      assert.match(live, new RegExp(text.slice(-8).replace(/[?*()]/g, '\\$&')), `${text} stays in the chat`);
+      assert.match(html, /id="v6ChatTuckedCount"[^>]*><\/span>|id="v6ChatTuckedCount"[^>]*hidden/, `${text} is not tucked`);
+    }
+  });
+
+  it('a ? inside a URL or inline code is not a question', () => {
+    for (const text of ['Acked; see https://example.com/pr?_id=12 for it.', 'Ran `ls build? out` and routed it.', 'Acked INT re: a?b.']) {
+      assert.deepEqual(run([wake, `⏺ ${text}`]).questions, [], text);
+    }
+  });
+
+  /** A chat whose live turns hold one reply of each kind after a wake. */
+  function view(verbosity) {
+    const turns = [
+      { role: 'assistant', text: 'PR 3081 merged as d78e877e.', trigger: 'switchboard' },
+      { role: 'assistant', text: 'CI failed on the large tier.', trigger: 'switchboard' },
+      { role: 'assistant', text: 'Acked and routed to INT.', trigger: 'switchboard' },
+      { role: 'assistant', text: 'Shall I rebase?', trigger: 'switchboard' },
+      { role: 'assistant', text: 'Direct answer.' }
+    ];
+    return G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns }, verbosity } });
+  }
+  const liveOf = (html) => html.slice(html.indexOf('id="v6ChatLive"'), html.indexOf('id="v6ChatRecordedTail"'));
+
+  it('by default shows blockers, milestones, questions and direct chat, and tucks fleet chatter with a count', () => {
+    const html = view();
+    const live = liveOf(html);
+    assert.match(live, /PR 3081 merged/);
+    assert.match(live, /CI failed/);
+    assert.match(live, /Shall I rebase\?/);
+    assert.match(live, /Direct answer\./);
+    assert.doesNotMatch(live, /Acked and routed/);
+    assert.match(html, /<span id="v6ChatTuckedCount" class="v6-chat-tucked-count">1 tucked<\/span>/);
+    assert.match(html, /<li class="v6-chat-tucked-item is-chatter"><span class="v6-chat-tucked-kind">Fleet chatter<\/span> <span class="v6-conversation-content">Acked and routed to INT\.<\/span>/);
+    assert.match(html, /<input type="checkbox" id="v6ChatShowBlockers" data-verbosity="blockers" checked>/);
+    assert.match(html, /<input type="checkbox" id="v6ChatShowMilestones" data-verbosity="milestones" checked>/);
+    assert.match(html, /<input type="checkbox" id="v6ChatShowChatter" data-verbosity="chatter">/);
+  });
+
+  it('a tucked reply is escaped like any other', () => {
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'Acked <img src=x onerror=alert(1)>', trigger: 'switchboard' }] } } });
+    const tucked = html.slice(html.indexOf('id="v6ChatTucked"'), html.indexOf('</ol>', html.indexOf('id="v6ChatTucked"')));
+    assert.match(tucked, /Acked &lt;img src=x onerror=alert\(1\)&gt;/);
+    assert.doesNotMatch(html, /<img src=x/);
+  });
+
+  it('each kind follows its own box; questions and direct chat always show', () => {
+    const live = liveOf(view({ blockers: false, milestones: false, chatter: true }));
+    assert.doesNotMatch(live, /PR 3081 merged/);
+    assert.doesNotMatch(live, /CI failed/);
+    assert.match(live, /Acked and routed/);
+    assert.match(live, /Shall I rebase\?/);
+    assert.match(live, /Direct answer\./);
+  });
+
+  it('a box changes the chat in place and is remembered', () => {
+    const storage = makeStorage();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage });
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'Acked.', trigger: 'switchboard' }] } } } });
+    // The badge as the page drew it ("1 tucked"); the mini-DOM's stub starts empty.
+    doc.getElementById('v6ChatTuckedCount').innerHTML = '1 tucked';
+    const box = doc.getElementById('v6ChatShowChatter');
+    box.checked = true;
+    box.setAttribute('data-verbosity', 'chatter');
+    box.dispatch('change');
+    assert.match(doc.getElementById('v6ChatLive').innerHTML, /Acked\./);
+    assert.equal(doc.getElementById('v6ChatTuckedCount').innerHTML, '');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_chat_verbosity), { blockers: true, milestones: true, chatter: true });
+    // A later visit starts from the remembered choice.
+    const next = makeDocument([]);
+    const root2 = next.doc.createElement('div');
+    withIdParsingInnerHTML(root2, next.doc);
+    next.doc.body.appendChild(root2);
+    const again = G.tcCreateV6Shell(next.doc, { root: root2, window: makeFakeWindow('#/projects/x'), storage });
+    again.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'Acked.', trigger: 'switchboard' }] } } } });
+    const html = root2.innerHTML;
+    assert.match(html.slice(html.indexOf('id="v6ChatLive"'), html.indexOf('id="v6ChatRecordedTail"')), /Acked\./);
+    assert.match(html, /<input type="checkbox" id="v6ChatShowChatter" data-verbosity="chatter" checked>/);
+  });
+});
+
+describe('V6210 chunk 01 styles (#3082)', () => {
+  const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  it('styles links, the external image card, thumbnails, the filter and the tucked count', () => {
+    assert.match(CSS, /\.v6-chat-link \{[^}]*text-decoration: underline;/);
+    assert.match(CSS, /\.v6-chat-link-preview \{[^}]*display: inline-flex;/);
+    assert.match(CSS, /\.v6-chat-thumb \{[^}]*max-width: 220px;[^}]*max-height: 160px;/);
+    assert.match(CSS, /\.v6-chat-verbosity \{[^}]*display: flex;/);
+    assert.match(CSS, /\.v6-chat-tucked-count:not\(:empty\) \{[^}]*background: #d4a72c;/);
+  });
+});
+
+describe('Force Send (#3082 item 3, Ruling A757)', () => {
+  const G = loadV6Shell();
+
+  it('Ctrl/Cmd+Shift+Enter is Force Send; Shift+Enter alone stays a newline; Enter sends', () => {
+    assert.equal(G.tcV6ChatKeyAction({ key: 'Enter', shiftKey: true, ctrlKey: true }), 'force');
+    assert.equal(G.tcV6ChatKeyAction({ key: 'Enter', shiftKey: true, metaKey: true }), 'force');
+    assert.equal(G.tcV6ChatKeyAction({ key: 'Enter', shiftKey: true }), null);
+    assert.equal(G.tcV6ChatKeyAction({ key: 'Enter' }), 'send');
+    assert.equal(G.tcV6ChatKeyAction({ key: 'Enter', shiftKey: true, ctrlKey: true, isComposing: true }), null);
+  });
+
+  it('draws a named Force button that stays enabled while a send is pending, and is off with no session', () => {
+    const view = (chat, extra) => G.tcV6ConversationViewMarkup(Object.assign({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: Object.assign({ status: 'active', members: [] }, chat || {}) }, extra || {}));
+    const pending = view({ send: { kind: 'pending', message: 'Sending…' } });
+    assert.match(pending, /<button type="button" id="v6ChatForceSend" class="btn btn-secondary v6-chat-force-send"\s+title="Send now, even while a reply or another send is in flight \(Ctrl\/Cmd\+Shift\+Enter\)"\s+aria-label="Force send: send now, even while a reply or another send is in flight"><span aria-hidden="true">⚡<\/span> Force<\/button>/);
+    assert.match(pending, /<button type="submit" id="v6ChatSend"[^>]*disabled/);
+    assert.match(view({ status: 'offline' }, { sessionId: null }), /id="v6ChatForceSend"[^>]*disabled/);
+  });
+
+  /**
+   * A live chat wired as public/ui.js wires it (onSendChat gets the text
+   * alone), whose command route can be held in flight or refuse.
+   */
+  function mountForce(opts) {
+    const o = opts || {};
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const commands = [];
+    const releases = [];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
+      if (/conversation\/events/.test(url)) return { events: [] };
+      if (o.ask && /peek/.test(url)) return { lines: o.pane || ['⏺ Ready to go?'] };
+      return null;
+    };
+    api.lastError = null;
+    const headersSeen = [];
+    // The command route: a forced send must arrive with the operator proof.
+    const command = async (body, headers) => {
+      commands.push(plain(body));
+      headersSeen.push(headers === undefined ? undefined : plain(headers));
+      if (o.refuse && body.priority) { api.lastError = o.refuse; return null; }
+      const first = commands.length === 1;
+      if (o.hold && first) await new Promise((r) => releases.push(r));
+      if (o.refuseFirst && first) { api.lastError = o.refuseFirst; return null; }
+      return { ok: true };
+    };
+    const apiRead = api;
+    const apiWithPost = async (url, opts) => {
+      if (opts && opts.method === 'POST' && /\/command$/.test(url)) return command(JSON.parse(opts.body), opts.headers);
+      return apiRead(url, opts);
+    };
+    Object.defineProperty(apiWithPost, 'lastError', { get: () => api.lastError, set: (v) => { api.lastError = v; } });
+    const apiMutate = async (url, method, body) => {
+      if (!/\/command$/.test(url)) return { ok: true };
+      // apiMutate carries no operator proof, so a priority command through it is refused by the route.
+      if (body && body.priority) throw new Error('a priority command went through apiMutate, without the operator proof');
+      return command(body, undefined);
+    };
+    const operatorHeaders = o.proofFails
+      ? async () => { throw new Error('no open token'); }
+      : async () => ({ 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' });
+    let shell = null;
+    const pending = [];
+    const timers = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api: apiWithPost, apiMutate, operatorHeaders, storage: null,
+      setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
+      onRender: (r) => pending.push(live.handleRoute(r)),
+      onSendChat: o.twoArgs ? (t, f) => { o.seen = f; pending.push(live.sendChat(t, f)); } : (t) => pending.push(live.sendChat(t)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    const type = (text) => { const input = doc.getElementById('v6ChatInput'); input.value = text; input.dispatch('input'); };
+    // What the queue has dismissed so far, read through the shell's own question slot markup.
+    const dismissed = () => (/id="v6ChatQuestion"[^>]*>([\s\S]*?)<\/div>/.exec(root.innerHTML) || [])[1];
+    return { doc, root, shell, commands, headersSeen, settle, type, dismissed, timers, release: () => releases.forEach((r) => r()) };
+  }
+  const flags = { command: 'now!', enter: true, priority: true, startupIntervention: true };
+
+  it('sends a forced message with the operator proof, and a plain one without it', async () => {
+    const m = mountForce();
+    await m.settle();
+    m.type('now!');
+    m.doc.getElementById('v6ChatForceSend').dispatch('click');
+    await m.settle();
+    m.type('later');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.settle();
+    assert.deepEqual(m.commands, [flags, { command: 'later', enter: true }]);
+    assert.deepEqual(m.headersSeen, [{ 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' }, undefined]);
+  });
+
+  it('a forced send whose operator proof cannot be made is not sent, says why and keeps the text', async () => {
+    const m = mountForce({ proofFails: true });
+    await m.settle();
+    m.type('now!');
+    m.doc.getElementById('v6ChatForceSend').dispatch('click');
+    await m.settle();
+    assert.deepEqual(m.commands, []);
+    assert.match(m.root.innerHTML, /Not sent: no open token/);
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*>now!<\/textarea>/);
+  });
+
+  it('pushes an urgent message in while another send is still in flight, even through a page that passes the text alone', async () => {
+    const m = mountForce({ hold: true });
+    await m.settle();
+    m.type('first');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    m.type('second');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(m.commands.length, 1, 'a plain send still waits');
+    m.type('now!');
+    m.doc.getElementById('v6ChatForceSend').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(m.commands, [{ command: 'first', enter: true }, flags]);
+    // The forced send is done, the first is not: a plain send still waits for it.
+    await new Promise((r) => setImmediate(r));
+    m.type('third');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(m.commands.length, 2);
+    m.release();
+    await m.settle();
+  });
+
+  it('the keyboard shortcut forces too, and a forced send leaves the next plain one plain', async () => {
+    const m = mountForce();
+    await m.settle();
+    // Catch the keydown handler the shell gives the box, to call it with a real key event's fields.
+    const keydowns = [];
+    const realRegister = m.doc._register;
+    m.doc._register = (el) => {
+      if (el && el.id === 'v6ChatInput') {
+        const add = el.addEventListener;
+        el.addEventListener = (type, fn) => { if (type === 'keydown') keydowns.push(fn); return add.call(el, type, fn); };
+      }
+      return realRegister(el);
+    };
+    m.shell.setTelemetry(null);
+    m.type('now!');
+    let prevented = false;
+    keydowns.forEach((fn) => fn({ key: 'Enter', shiftKey: true, ctrlKey: true, preventDefault: () => { prevented = true; } }));
+    await m.settle();
+    assert.ok(keydowns.length >= 1, 'the shell gave the box a keydown handler');
+    assert.equal(prevented, true);
+    m.type('later');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.settle();
+    assert.deepEqual(m.commands, [flags, { command: 'later', enter: true }]);
+  });
+
+  it('also hands the flags to a page that takes a second argument', async () => {
+    const o = { twoArgs: true };
+    const m = mountForce(o);
+    await m.settle();
+    m.type('now!');
+    m.doc.getElementById('v6ChatForceSend').dispatch('click');
+    await m.settle();
+    assert.deepEqual(plain(o.seen), { priority: true, startupIntervention: true });
+    assert.deepEqual(m.commands, [flags]);
+    // Such a page never takes them from the shell, and the next plain send must not inherit them.
+    m.type('later');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.settle();
+    assert.deepEqual(m.commands, [flags, { command: 'later', enter: true }]);
+  });
+
+  it('while a send is on its way: Send is drawn disabled, a plain press says to use Force, and each send keeps its own bubble (Force Send review)', async () => {
+    const m = mountForce({ hold: true });
+    await m.settle();
+    m.type('first');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    m.type('now!');
+    m.doc.getElementById('v6ChatForceSend').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+    for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r));
+    // The forced send finished and reloaded the chat; the first is still on its way.
+    const html = m.root.innerHTML;
+    assert.match(html, /<button type="submit" id="v6ChatSend"[^>]*disabled/, 'Send stays disabled while the first is out');
+    assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*first[\s\S]*Sending…/, 'the first message keeps its bubble');
+    // The forced send's own settling repainted the pending list: the first's bubble is still in it.
+    assert.match(m.doc.getElementById('v6ChatPending').innerHTML, /first[\s\S]*Sending…/);
+    assert.doesNotMatch(m.doc.getElementById('v6ChatPending').innerHTML, /now!/);
+    m.type('third');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(m.commands.length, 2);
+    assert.match(m.root.innerHTML, /Not sent yet: the last message to TC-Lane-PM is still on its way\. Use ⚡ Force to send this one now\./);
+    m.release();
+    await m.settle();
+    assert.doesNotMatch(m.root.innerHTML, /<button type="submit" id="v6ChatSend"[^>]*disabled/, 'Send is free once both landed');
+    assert.doesNotMatch(m.root.innerHTML, /is-pending/);
+  });
+
+  it('a first send refused after a forced send reloaded the chat still shows its refusal (Force Send review)', async () => {
+    const m = mountForce({ hold: true, refuseFirst: 'The lane is held' });
+    await m.settle();
+    m.type('first');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    m.type('now!');
+    m.doc.getElementById('v6ChatForceSend').dispatch('click');
+    for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+    m.release();
+    await m.settle();
+    assert.match(m.root.innerHTML, /Not sent: The lane is held/);
+  });
+
+  it('a press that sends nothing leaves the question queue alone', async () => {
+    const o = { hold: true, ask: true };
+    const m = mountForce(o);
+    await m.settle();
+    m.type('first');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    // While the first is on its way, the session asks something new.
+    o.pane = ['> first', '⏺ Which branch?'];
+    await m.timers[m.timers.length - 1]();
+    m.type('second');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    // The ignored press re-drew the chat (its note); the question is still there.
+    assert.match(m.root.innerHTML, /Not sent yet:/);
+    assert.match(m.dismissed() || '', /Which branch\?/, 'the ignored press dismissed nothing');
+    m.release();
+    await m.settle();
+  });
+
+  it('a refusal the server still makes (an engine startup dialog) shows its reason and puts the text back', async () => {
+    const m = mountForce({ refuse: 'An engine startup dialog is on the pane' });
+    await m.settle();
+    m.type('now!');
+    m.doc.getElementById('v6ChatForceSend').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /Not sent: An engine startup dialog is on the pane/);
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*>now!<\/textarea>/);
+  });
+});
+
+describe('one top bar in the v6 shell (Rulings A764, A765)', () => {
+  const G = loadV6Shell();
+
+  /** A small page with real sibling order: the dashboard bar, and the shell's main and footer. */
+  function makePage() {
+    const byId = {};
+    const node = (tag, id, className) => {
+      const classes = new Set(String(className || '').split(/\s+/).filter(Boolean));
+      const el = {
+        tagName: tag.toUpperCase(), id: id || '', childNodes: [], parentNode: null, open: false, textContent: '', title: '', attrs: {}, listeners: {},
+        get className() { return [...classes].join(' '); }, set className(v) { classes.clear(); String(v).split(/\s+/).filter(Boolean).forEach((c) => classes.add(c)); },
+        classList: { contains: (c) => classes.has(c), toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)) },
+        get nextSibling() { const p = el.parentNode; return p ? p.childNodes[p.childNodes.indexOf(el) + 1] || null : null; },
+        setAttribute(k, v) { el.attrs[k] = String(v); },
+        getAttribute(k) { return Object.prototype.hasOwnProperty.call(el.attrs, k) ? el.attrs[k] : null; },
+        removeAttribute(k) { delete el.attrs[k]; },
+        addEventListener(t, fn) { (el.listeners[t] = el.listeners[t] || []).push(fn); },
+        appendChild(c) { if (c.parentNode) c.remove(); c.parentNode = el; el.childNodes.push(c); return c; },
+        insertBefore(c, ref) { if (c.parentNode) c.remove(); c.parentNode = el; el.childNodes.splice(el.childNodes.indexOf(ref), 0, c); return c; },
+        // As a browser does, moving a node that holds focus blurs it.
+        remove() { const p = el.parentNode; if (p) p.childNodes.splice(p.childNodes.indexOf(el), 1); el.parentNode = null; if (doc.activeElement && el.contains(doc.activeElement)) doc.activeElement = body; },
+        contains(other) { for (let n = other; n; n = n.parentNode) if (n === el) return true; return false; },
+        focus() { doc.activeElement = el; },
+        querySelector(sel) {
+          const cls = sel.replace(/^\./, '');
+          for (const c of el.childNodes) { if (c.classList.contains(cls)) return c; const d = c.querySelector(sel); if (d) return d; }
+          return null;
+        }
+      };
+      if (id) byId[id] = el;
+      return el;
+    };
+    const body = node('body');
+    const attached = (el) => { for (let n = el; n; n = n.parentNode) if (n === body) return true; return false; };
+    const doc = {
+      body, activeElement: null,
+      createElement: (tag) => node(tag),
+      getElementById: (id) => (byId[id] && attached(byId[id]) ? byId[id] : null),
+      querySelector: (sel) => body.querySelector(sel),
+      _register: (el) => { if (el.id) byId[el.id] = el; }
+    };
+    const bar = body.appendChild(node('header', '', 'dash-bar'));
+    const brand = bar.appendChild(node('div', '', 'dash-brand'));
+    const stats = bar.appendChild(node('div', 'dashStats', 'dash-stats'));
+    const actions = bar.appendChild(node('div', '', 'dash-actions'));
+    actions.appendChild(node('button', 'v6ViewToggleBtn'));
+    const shellRoot = body.appendChild(node('div', 'v6ShellRoot'));
+    const drawChat = () => {
+      shellRoot.childNodes.slice().forEach((c) => c.remove());
+      const main = shellRoot.appendChild(node('main', 'v6ShellMain'));
+      const header = main.appendChild(node('header', '', 'v6-chat-header'));
+      header.appendChild(node('button', 'v6ChatRename'));
+      shellRoot.appendChild(node('footer', '', 'v6-shell-watermark')).appendChild(node('div', 'v6ShellStatusBar', 'v6-shell-status-bar'));
+      return header;
+    };
+    return { doc, bar, brand, stats, actions, drawChat };
+  }
+  const kids = (el) => el.childNodes.map((c) => c.id || c.className);
+
+  it('docks the chat header into the dashboard bar, before its actions, keeping focus inside it', () => {
+    const p = makePage();
+    const header = p.drawChat();
+    p.doc.getElementById('v6ChatRename').focus();
+    G.tcV6TuckAdminControls(p.doc, true);
+    assert.deepEqual(kids(p.bar), ['dash-brand', 'v6-chat-header', 'dash-actions']);
+    assert.equal(header.parentNode, p.bar);
+    assert.equal(p.doc.activeElement, p.doc.getElementById('v6ChatRename'), 'focus stayed in the moved header');
+  });
+
+  it('a later drawing replaces the docked header, never leaving two; leaving the shell takes it out', () => {
+    const p = makePage();
+    p.drawChat();
+    G.tcV6TuckAdminControls(p.doc, true);
+    const second = p.drawChat();
+    G.tcV6TuckAdminControls(p.doc, true);
+    assert.equal(kids(p.bar).filter((k) => k === 'v6-chat-header').length, 1);
+    assert.equal(p.bar.querySelector('.v6-chat-header'), second);
+    G.tcV6TuckAdminControls(p.doc, false);
+    assert.equal(p.bar.querySelector('.v6-chat-header'), null);
+  });
+
+  it('moves the CPU/MEM/DISK/UP stats into the footer status bar, and back to their exact place in Classic', () => {
+    const p = makePage();
+    p.drawChat();
+    G.tcV6TuckAdminControls(p.doc, true);
+    assert.equal(p.stats.parentNode, p.doc.getElementById('v6ShellStatusBar'));
+    assert.ok(!kids(p.bar).includes('dashStats'), 'not shown twice');
+    // The footer is a status region; the 30 s refresh must not be announced there.
+    assert.equal(p.stats.getAttribute('aria-live'), 'off');
+    G.tcV6TuckAdminControls(p.doc, false);
+    assert.deepEqual(kids(p.bar), ['dash-brand', 'dashStats', 'dash-actions']);
+    assert.equal(p.stats.getAttribute('aria-live'), null, 'back home, as it was');
+  });
+
+  it('a shell redraw sends the live stats home first, so the same node survives and moves into the new footer', () => {
+    const { doc } = makeDocument([]);
+    const bar = doc.createElement('header');
+    bar.className = 'dash-bar';
+    const stats = doc.createElement('div');
+    stats.id = 'dashStats';
+    doc._register(stats);
+    bar.appendChild(stats);
+    doc.body.appendChild(bar);
+    doc.querySelector = (sel) => doc.body.querySelector(sel);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    // Where the stats are as the shell hands over to onRender: home in the bar, never left in the
+    // footer the redraw just replaced (a browser would have dropped them with it).
+    const atHandover = [];
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null,
+      onRender: () => { atHandover.push(stats.parentNode); G.tcV6TuckAdminControls(doc, true); } });
+    const bar1 = { scope: 'global', metrics: { activeSessions: { value: 1, confidence: 'observed' } } };
+    shell.setTelemetry(bar1);
+    const footer1 = doc.getElementById('v6ShellStatusBar');
+    assert.equal(stats.parentNode, footer1);
+    shell.setTelemetry(Object.assign({}, bar1));
+    const footer2 = doc.getElementById('v6ShellStatusBar');
+    assert.notEqual(footer2, footer1, 'the footer was redrawn');
+    assert.equal(doc.getElementById('dashStats'), stats, 'the same live node');
+    assert.equal(stats.parentNode, footer2);
+    assert.equal(atHandover[atHandover.length - 1], bar, 'the redraw sent the stats home first');
+  });
+
+  it('styles the docked header as a segment of the one bar, and the moved stats in the footer', () => {
+    const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    // The docked header is outside #v6ShellRoot: the #3063 pills and the shell's tokens are restated for it.
+    assert.match(CSS, /\.dash-bar \.v6-chat-header \{\s*--v6-outline: #3d444d;\s*--v6-surface: var\(--card-bg, #0d0d0d\);\s*\}/);
+    assert.match(CSS, /\[data-theme="light"\] \.dash-bar \.v6-chat-header \{\s*--v6-outline: #8c959f;\s*\}/);
+    assert.match(CSS, /\.dash-bar \.v6-chat-header \.v6-telemetry-chip \{\s*flex-direction: row;/);
+    assert.match(CSS, /\.dash-bar \.v6-chat-header \.v6-telemetry-chip\.is-unavailable \{\s*display: none;\s*\}/);
+    assert.match(CSS, /\.dash-bar \.v6-chat-header \.v6-telemetry-header \{\s*margin-bottom: 0;/);
+    assert.match(CSS, /\.dash-bar \.v6-chat-header \{[^}]*flex: 1 1 auto;[^}]*min-width: 0;[^}]*margin: 0;[^}]*padding: 0;[^}]*border: 0;[^}]*background: transparent;/);
+    assert.match(CSS, /\.v6-shell-status-bar \.dash-stats \{[^}]*display: inline-flex;/);
+  });
+});
+
+// ── #3085 frontend (Car V6210-W1-A): the 3-engine usage meter ──
+
+describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
+  const G = loadV6Shell();
+  const windows = (over) => Object.assign({
+    resetSchedule: { nextWeeklyResetAt: '2026-11-19T14:00:00.000Z', hoursUntilWeeklyReset: 106.5 },
+    byProviderModel: {
+      claude: { opus: { fiveHour: { totalTokens: 1000 }, weekly: { totalTokens: 5000 }, sprint: { totalTokens: 700 } }, sonnet: { fiveHour: { totalTokens: 500 }, weekly: { totalTokens: 2500 } } },
+      codex: { sol: { fiveHour: { totalTokens: 3e8 }, weekly: { totalTokens: 9.42e8 } } }
+    },
+    calibration: { claude: { weeklyPct: 40, fiveHourPct: 60 }, codex: null }
+  }, over || {});
+  const model = (w, sess) => plain(G.tcV6UsageMeterModel(w, sess));
+
+  it('always shows all three engines, summing each one\'s models; a missing engine counts as none', () => {
+    const m = model(windows());
+    assert.deepEqual(m.engines.map((e) => [e.key, e.label]), [['claude', 'Claude'], ['codex', 'Codex'], ['antigravity', 'AGY']]);
+    assert.deepEqual(m.engines[0].tokens, { fiveHour: 1500, weekly: 7500, sprint: 700 });
+    assert.deepEqual(m.engines[2].tokens, { fiveHour: 0, weekly: 0, sprint: 0 });
+    assert.equal(m.resetHours, 106.5);
+    assert.deepEqual(model(null).engines.map((e) => e.state), ['unknown', 'unknown', 'unknown']);
+  });
+
+  it('a session reading that only reports the calibration back is not live; a combined one says so (O-Gate N2)', () => {
+    const echoed = model(windows(), { sessions: [{ engine: 'claude', source: 'provider-window', weeklyRemainingPct: 3 }] });
+    assert.deepEqual([echoed.engines[0].remainingPct, echoed.engines[0].source, echoed.engines[0].sessions], [40, 'calibrated', 1]);
+    const mixed = model(windows(), { sessions: [{ engine: 'claude', source: 'combined', weeklyRemainingPct: 30 },
+      { engine: 'codex', source: 'terminal-statusline', weeklyRemainingPct: 50 }] });
+    assert.deepEqual(mixed.engines.slice(0, 2).map((e) => [e.remainingPct, e.source]), [[30, 'live and calibrated'], [50, 'live']]);
+    assert.equal(model(windows(), { sessions: [{ engine: 'claude', source: 'none', weeklyRemainingPct: 1 }] }).engines[0].source, 'calibrated');
+  });
+
+  it('% left is the lowest a live session reports, else the calibration (both REMAINING), else unknown', () => {
+    const live = { sessions: [{ engine: 'codex', weeklyRemainingPct: 7 }, { engine: 'codex', fiveHourRemainingPct: 0 }, { engine: 'claude', weeklyRemainingPct: null }] };
+    const m = model(windows(), live);
+    assert.deepEqual(m.engines.map((e) => [e.remainingPct, e.source, e.sessions]), [[40, 'calibrated', 1], [0, 'live', 2], [null, 'none', 0]]);
+    // A live reading wins over a calibration on file, even a more hopeful one.
+    const both = model(windows(), { sessions: [{ engine: 'claude', weeklyRemainingPct: 3 }] });
+    assert.deepEqual([both.engines[0].remainingPct, both.engines[0].source, both.engines[0].state], [3, 'live', 'critical']);
+  });
+
+  it('colours by what is left: above 25 healthy, 25 down to 6 warning, 5 or less critical', () => {
+    const at = (pct) => model(windows({ calibration: { claude: { weeklyPct: pct } } })).engines[0].state;
+    assert.deepEqual([26, 25, 6, 5, 0].map(at), ['healthy', 'warning', 'warning', 'critical', 'critical']);
+  });
+
+  it('draws a pill per engine with its state classes, a fill as wide as what is left, and a summary to screen readers', () => {
+    const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows({ calibration: { claude: { weeklyPct: 40 }, codex: { weeklyPct: 20 }, antigravity: { weeklyPct: 3 } } })), { open: false });
+    assert.match(html, /<button type="button" id="v6EngineUsageMeter" class="v6-usage-meter" aria-expanded="false" aria-controls="v6EngineUsagePopover"/);
+    assert.match(html, /aria-label="Engine usage: Claude 40% left, Codex 20% left, Antigravity 3% left\. Open the breakdown\."/);
+    assert.match(html, /<span class="v6-usage-pill is-healthy is-green" data-engine="claude"[^>]*>[\s\S]*?style="width: 40%"[\s\S]*?40% left/);
+    assert.match(html, /<span class="v6-usage-pill is-warning is-amber" data-engine="codex"/);
+    assert.match(html, /<span class="v6-usage-pill is-critical is-red" data-engine="antigravity"/);
+    assert.match(html, /<div id="v6EngineUsagePopover" class="v6-usage-popover" role="dialog" aria-label="Engine usage" hidden>/);
+    const none = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), {});
+    assert.match(none, /data-engine="codex"[^>]*>[\s\S]*?style="width: 0%"[\s\S]*?942M this week/, 'no % reported: the week\'s tokens');
+  });
+
+  it('the breakdown lists 5h, week and sprint tokens, sessions, the reset, and a % left input pair with Set for each engine', () => {
+    const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows(), { sessions: [{ engine: 'claude' }] }), { open: true });
+    assert.doesNotMatch(html, /v6EngineUsagePopover"[^>]*hidden/);
+    assert.match(html, /<p class="v6-usage-reset">Resets in 4d 10h<\/p>/);
+    assert.match(html, /<tr data-engine="claude"><th scope="row">Claude<\/th><td>1\.5k<\/td><td>7\.5k<\/td><td>700<\/td><td>1<\/td><td>40%<\/td>/);
+    for (const key of ['claude', 'codex', 'antigravity']) {
+      assert.match(html, new RegExp(`id="v6UsageWeekly-${key}"`));
+      assert.match(html, new RegExp(`id="v6UsageFiveHour-${key}"`));
+      assert.match(html, new RegExp(`<button type="button" id="v6UsageSave-${key}"`));
+    }
+  });
+
+  it('escapes a calibration message', () => {
+    const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, status: { kind: 'error', message: 'Codex not set: <img src=x onerror=alert(1)>' } });
+    assert.match(html, /<p id="v6EngineUsageStatus" class="v6-usage-status is-error" role="status">Codex not set: &lt;img src=x onerror=alert\(1\)&gt;<\/p>/);
+    assert.doesNotMatch(html, /<img src=x/);
+  });
+
+  /** A shell with the meter, its calibrate action recorded. */
+  function mountMeter(calibrate) {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+    const calls = [];
+    shell.setUsageActions({ calibrate: async (...a) => { calls.push(a); return calibrate ? calibrate(...a) : { ok: true }; } });
+    shell.setUsage({ windows: windows(), sessions: { sessions: [] } });
+    return { shell, doc, root, calls };
+  }
+
+  it('renders in the footer even before telemetry, in chat and outside it, and opens in place', () => {
+    const m = mountMeter();
+    assert.match(m.root.innerHTML, /<footer class="v6-shell-watermark has-status"><div id="v6EngineUsageSlot" class="v6-usage-slot"><button type="button" id="v6EngineUsageMeter"/);
+    m.doc.getElementById('v6EngineUsageMeter').dispatch('click');
+    assert.match(m.doc.getElementById('v6EngineUsageSlot').innerHTML, /aria-expanded="true"/);
+    assert.doesNotMatch(m.doc.getElementById('v6EngineUsageSlot').innerHTML, /v6EngineUsagePopover"[^>]*hidden/);
+  });
+
+  it('Set records a valid % left through the page\'s action; a bad or empty value says why and calls nothing', async () => {
+    const m = mountMeter();
+    m.doc.getElementById('v6EngineUsageMeter').dispatch('click');
+    m.doc.getElementById('v6UsageWeekly-codex').value = '150';
+    m.doc.getElementById('v6UsageSave-codex').dispatch('click');
+    assert.deepEqual(m.calls, []);
+    assert.match(m.doc.getElementById('v6EngineUsageSlot').innerHTML, /Codex: enter a weekly or 5-hour % left between 0 and 100\./);
+    m.doc.getElementById('v6UsageWeekly-codex').value = '';
+    m.doc.getElementById('v6UsageFiveHour-codex').value = '';
+    m.doc.getElementById('v6UsageSave-codex').dispatch('click');
+    assert.deepEqual(m.calls, []);
+    m.doc.getElementById('v6UsageWeekly-antigravity').value = '12';
+    m.doc.getElementById('v6UsageFiveHour-antigravity').value = '';
+    m.doc.getElementById('v6UsageSave-antigravity').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+    // The empty 5-hour field is left out (undefined, which JSON shows as null).
+    assert.deepEqual(plain(m.calls), [['antigravity', 12, null]]);
+    assert.match(m.doc.getElementById('v6EngineUsageSlot').innerHTML, /Antigravity set\./);
+  });
+
+  it('a refresh keeps what the operator typed in the breakdown, and their focus; Escape closes it', () => {
+    const m = mountMeter();
+    // A redraw makes new elements, as a browser's would.
+    const slot = withIdParsingInnerHTML(m.doc.getElementById('v6EngineUsageSlot'), m.doc);
+    m.doc.getElementById('v6EngineUsageMeter').dispatch('click');
+    m.doc.getElementById('v6UsageWeekly-codex').value = '17';
+    m.doc.getElementById('v6UsageFiveHour-codex').focus();
+    m.shell.setUsage({ windows: windows(), sessions: { sessions: [] } });
+    assert.equal(m.doc.getElementById('v6UsageWeekly-codex').value, '17');
+    assert.equal(m.doc.activeElement, m.doc.getElementById('v6UsageFiveHour-codex'));
+    // Catch the keydown handler the next redraw gives the breakdown, to send it a real Escape.
+    const keydowns = [];
+    const realRegister = m.doc._register;
+    m.doc._register = (el) => {
+      if (el && el.id === 'v6EngineUsagePopover') {
+        const add = el.addEventListener;
+        el.addEventListener = (type, fn) => { if (type === 'keydown') keydowns.push(fn); return add.call(el, type, fn); };
+      }
+      return realRegister(el);
+    };
+    m.shell.setUsage({ windows: windows(), sessions: { sessions: [] } });
+    assert.ok(keydowns.length >= 1);
+    keydowns[keydowns.length - 1]({ key: 'Enter' });
+    assert.match(slot.innerHTML, /aria-expanded="true"/, 'another key closes nothing');
+    keydowns[keydowns.length - 1]({ key: 'Escape' });
+    assert.match(slot.innerHTML, /aria-expanded="false"/);
+    assert.equal(m.doc.activeElement, m.doc.getElementById('v6EngineUsageMeter'), 'focus goes back to the meter');
+  });
+
+  it('a refused calibration shows the server\'s reason', async () => {
+    const m = mountMeter(() => ({ ok: false, error: 'Only the Operator or the Project Master may calibrate usage windows.' }));
+    m.doc.getElementById('v6EngineUsageMeter').dispatch('click');
+    m.doc.getElementById('v6UsageWeekly-claude').value = '50';
+    m.doc.getElementById('v6UsageSave-claude').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+    assert.match(m.doc.getElementById('v6EngineUsageSlot').innerHTML, /Claude not set: Only the Operator or the Project Master may calibrate usage windows\./);
+  });
+
+  it('the controller loads the meter on a route, posts a calibration with the operator proof, and refreshes every 15 chat reads', async () => {
+    const calls = [];
+    const mutations = [];
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell,
+      operatorHeaders: async () => ({ 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' }),
+      api: async (url, init) => {
+        calls.push(url);
+        // Restated by the cumulative review: the calibration carries the operator proof itself
+        // (the page's apiMutate adds it to one config call only).
+        if (url === '/api/usage/calibrate') { mutations.push({ url, method: init.method, headers: init.headers, body: JSON.parse(init.body) }); return { calibration: {} }; }
+        if (url === '/api/projects') return { projects: [{ id: 12, name: 'P', engine: { id: 'claude' } }] };
+        if (/\/status$/.test(url)) return { active: true, sessionId: 1 };
+        if (url === '/api/usage/windows') return windows();
+        if (url === '/api/usage/sessions') return { sessions: [] };
+        if (/conversation\/events/.test(url)) return { events: [] };
+        return null;
+      },
+      apiMutate: async () => { throw new Error('the calibration must not go through apiMutate'); },
+      storage: null, setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
+    const timers = [];
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null, onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    for (let i = 0; i < 3; i++) { while (pending.length) await pending.shift(); await new Promise((r) => setImmediate(r)); }
+    assert.ok(calls.includes('/api/usage/windows') && calls.includes('/api/usage/sessions'));
+    assert.match(root.innerHTML, /id="v6EngineUsageMeter"/);
+    doc.getElementById('v6EngineUsageMeter').dispatch('click');
+    doc.getElementById('v6UsageWeekly-codex').value = '0';
+    doc.getElementById('v6UsageFiveHour-codex').value = '5';
+    doc.getElementById('v6UsageSave-codex').dispatch('click');
+    const loadsBefore = calls.filter((c) => c === '/api/usage/windows').length;
+    for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r));
+    assert.deepEqual(plain(mutations), [{ url: '/api/usage/calibrate', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' }, body: { provider: 'codex', weeklyPct: 0, fiveHourPct: 5 } }]);
+    assert.equal(calls.filter((c) => c === '/api/usage/windows').length, loadsBefore + 1, 'the meter reloads after a calibration');
+    const before = calls.filter((c) => c === '/api/usage/windows').length;
+    const poll = timers[timers.length - 1];
+    for (let i = 0; i < 14; i++) await poll();
+    assert.equal(calls.filter((c) => c === '/api/usage/windows').length, before, 'not before the 15th read');
+    await poll();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(calls.filter((c) => c === '/api/usage/windows').length, before + 1);
+  });
+
+  it('styles the thresholds: green, amber, red and pulsing (not under reduced motion)', () => {
+    const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(CSS, /\.v6-usage-pill\.is-green \.v6-usage-fill \{\s*background: #2ea043;/);
+    assert.match(CSS, /\.v6-usage-pill\.is-amber \.v6-usage-fill \{\s*background: #d4a72c;/);
+    assert.match(CSS, /\.v6-usage-pill\.is-red \.v6-usage-fill \{\s*background: #f85149;/);
+    assert.match(CSS, /\.v6-usage-pill\.is-critical \{\s*animation: v6-usage-pulse/);
+    assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{\s*\.v6-usage-pill\.is-critical \{\s*animation: none;/);
   });
 });

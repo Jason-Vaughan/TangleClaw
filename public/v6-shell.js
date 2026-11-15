@@ -637,9 +637,20 @@
   /** The characters a project name may use, as `lib/projects.js#PROJECT_NAME_REGEX` allows (#3071). */
   const PROJECT_NAME_CHARS = /^[a-zA-Z0-9 _-]+$/;
 
+  /** Chat reads between refreshes of the usage meter (#3085): about a minute at the chat's read rate. */
+  const USAGE_EVERY_POLLS = 15;
+
   /** Reads of a just-sent chat that may show no engine activity before it stops reading as Working (#3057). */
   const AWAIT_REPLY_POLLS = 3;
   const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+
+  /**
+   * Which switchboard-triggered replies the chat shows (#3082), by kind; the
+   * rest are tucked Under the Hood. Direct chat and questions always show.
+   */
+  const VERBOSITY_DEFAULT = Object.freeze({ blockers: true, milestones: true, chatter: false });
+  const isVerbosity = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
+    && ['blockers', 'milestones', 'chatter'].every((k) => typeof v[k] === 'boolean');
 
   /** Every metric a B4 telemetry bar carries, in its own listed display order, mirroring `lib/v6/b4-telemetry-header.js#METRIC_KEYS`. */
   const TELEMETRY_METRIC_LABELS = Object.freeze({
@@ -772,12 +783,132 @@
    * @param {{metrics?: object}|null} [bar] - The telemetry bar, if loaded.
    * @returns {string} HTML, or `''` with neither a watermark nor readings.
    */
-  function watermarkFooterMarkup(showWatermark, bar) {
+  function watermarkFooterMarkup(showWatermark, bar, usage) {
     const status = bar && bar.metrics
       ? `<div id="v6ShellStatusBar" class="v6-shell-status-bar" role="status" aria-label="Server status">${TELEMETRY_FOOTER_KEYS.map((key) => telemetryChipMarkup(bar, key)).join('')}</div>`
       : '';
-    if (!status) return showWatermark ? '<footer class="v6-shell-watermark" aria-hidden="true">TangleClaw</footer>' : '';
-    return `<footer class="v6-shell-watermark has-status">${status}${showWatermark ? '<span class="v6-shell-watermark-mark" aria-hidden="true">TangleClaw</span>' : ''}</footer>`;
+    // #3085: the 3-engine usage meter, in its own slot so a refresh can
+    // redraw it alone.
+    const meter = typeof usage === 'string' && usage ? `<div id="v6EngineUsageSlot" class="v6-usage-slot">${usage}</div>` : '';
+    if (!status && !meter) return showWatermark ? '<footer class="v6-shell-watermark" aria-hidden="true">TangleClaw</footer>' : '';
+    return `<footer class="v6-shell-watermark has-status">${status}${meter}${showWatermark ? '<span class="v6-shell-watermark-mark" aria-hidden="true">TangleClaw</span>' : ''}</footer>`;
+  }
+
+  /**
+   * The engines the usage meter always shows (#3085, Contract A753-1), in
+   * order: the key the usage routes use, the meter's short label, the name.
+   */
+  const USAGE_ENGINES = Object.freeze([
+    { key: 'claude', label: 'Claude', name: 'Claude' },
+    { key: 'codex', label: 'Codex', name: 'Codex' },
+    { key: 'antigravity', label: 'AGY', name: 'Antigravity' }
+  ]);
+
+  /** @param {*} v @returns {number|null} A remaining percentage, 0–100, or null. */
+  function pctOrNull(v) {
+    return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100 ? v : null;
+  }
+
+  /**
+   * What the meter shows for each engine (#3085, A753-1): token totals for
+   * the 5-hour, weekly and sprint windows summed across models (a missing
+   * engine counts as none), its live sessions, and how much it has left —
+   * the lowest a live session reports (a Codex footer's "weekly 0% left"),
+   * else the operator's calibration; both are percentages REMAINING. A
+   * session reading whose `source` is `provider-window` (or `none`) is the
+   * calibration reported back, so it is not a live reading; one that is
+   * `combined` mixes the pane with calibration and is labelled so. The
+   * state follows: critical at 5% or less, warning at 25% or less, else
+   * healthy (unknown when nothing reports a percentage).
+   * @param {object|null} windows - `GET /api/usage/windows`.
+   * @param {object|null} sessions - `GET /api/usage/sessions`.
+   * @returns {{engines: Array<object>, resetHours: number|null, resetAt: string|null}}
+   */
+  function usageMeterModel(windows, sessions) {
+    const w = windows && typeof windows === 'object' ? windows : {};
+    const live = sessions && Array.isArray(sessions.sessions) ? sessions.sessions : [];
+    const sum = (models, win) => Object.values(models || {}).reduce((n, m) => n + (Number(m && m[win] && m[win].totalTokens) || 0), 0);
+    const engines = USAGE_ENGINES.map(({ key, label, name }) => {
+      const models = w.byProviderModel && w.byProviderModel[key];
+      const mine = live.filter((x) => x && (x.engine === key || x.provider === key));
+      const fromPane = mine.filter((x) => x.source !== 'provider-window' && x.source !== 'none');
+      const readings = (list) => list.flatMap((x) => [pctOrNull(x.weeklyRemainingPct), pctOrNull(x.fiveHourRemainingPct)]).filter((v) => v !== null);
+      const seen = readings(fromPane);
+      const mixed = readings(fromPane.filter((x) => x.source === 'combined')).length > 0;
+      const cal = w.calibration && w.calibration[key];
+      const calibrated = cal ? [pctOrNull(cal.weeklyPct), pctOrNull(cal.fiveHourPct)].filter((v) => v !== null) : [];
+      const remainingPct = seen.length ? Math.min(...seen) : (calibrated.length ? Math.min(...calibrated) : null);
+      const state = remainingPct === null ? 'unknown' : remainingPct <= 5 ? 'critical' : remainingPct <= 25 ? 'warning' : 'healthy';
+      return {
+        key, label, name, remainingPct, state,
+        source: seen.length ? (mixed ? 'live and calibrated' : 'live') : (calibrated.length ? 'calibrated' : 'none'),
+        sessions: mine.length,
+        tokens: { fiveHour: sum(models, 'fiveHour'), weekly: sum(models, 'weekly'), sprint: sum(models, 'sprint') }
+      };
+    });
+    const reset = w.resetSchedule || {};
+    return {
+      engines,
+      resetHours: typeof reset.hoursUntilWeeklyReset === 'number' && Number.isFinite(reset.hoursUntilWeeklyReset) ? reset.hoursUntilWeeklyReset : null,
+      resetAt: typeof reset.nextWeeklyResetAt === 'string' ? reset.nextWeeklyResetAt : null
+    };
+  }
+
+  /** @param {number} n @returns {string} A token count, short: `942M`, `12.4k`, `830`. */
+  function formatTokens(n) {
+    const v = Number(n) || 0;
+    if (v >= 1e9) return `${(v / 1e9).toFixed(v >= 1e10 ? 0 : 1)}B`;
+    if (v >= 1e6) return `${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M`;
+    if (v >= 1e3) return `${(v / 1e3).toFixed(v >= 1e4 ? 0 : 1)}k`;
+    return String(Math.round(v));
+  }
+
+  /** @param {number|null} hours @returns {string} `Resets in 4d 11h`, or ''. */
+  function formatReset(hours) {
+    if (hours === null || hours < 0) return '';
+    const h = Math.floor(hours);
+    return h >= 24 ? `Resets in ${Math.floor(h / 24)}d ${h % 24}h` : `Resets in ${h}h ${Math.floor((hours - h) * 60)}m`;
+  }
+
+  /** The state classes a meter pill carries (#3085, A753-1). */
+  const USAGE_STATE_CLASSES = Object.freeze({
+    healthy: 'is-healthy is-green', unknown: 'is-healthy is-green is-unknown', warning: 'is-warning is-amber', critical: 'is-critical is-red'
+  });
+
+  /**
+   * The usage meter (#3085, A753-1): one pill per engine, coloured by what
+   * it has left, opening a breakdown with one-click calibration.
+   * @param {ReturnType<typeof usageMeterModel>} model
+   * @param {{open?: boolean, status?: {kind: string, message: string}|null}} [ui]
+   * @returns {string} HTML.
+   */
+  function usageMeterMarkup(model, ui) {
+    const open = Boolean(ui && ui.open);
+    const status = ui && ui.status ? ui.status : null;
+    const reset = formatReset(model.resetHours);
+    const pill = (e) => {
+      const left = e.remainingPct === null ? null : Math.round(e.remainingPct);
+      const reading = left === null ? `${formatTokens(e.tokens.weekly)} this week` : `${left}% left`;
+      const tip = `${e.name}: ${left === null ? 'no % left reported' : `${left}% left (${e.source})`} · ${formatTokens(e.tokens.fiveHour)} tokens in 5h, ${formatTokens(e.tokens.weekly)} this week${reset ? ` · ${reset}` : ''}`;
+      return `<span class="v6-usage-pill ${USAGE_STATE_CLASSES[e.state]}" data-engine="${e.key}" title="${escapeHtml(tip)}">`
+        + `<span class="v6-usage-label">${e.label}</span>`
+        + `<span class="v6-usage-bar" aria-hidden="true"><span class="v6-usage-fill" style="width: ${left === null ? 0 : left}%"></span></span>`
+        + `<span class="v6-usage-value">${escapeHtml(reading)}</span></span>`;
+    };
+    const summary = model.engines.map((e) => `${e.name} ${e.remainingPct === null ? 'no reading' : `${Math.round(e.remainingPct)}% left`}`).join(', ');
+    const row = (e) => `<tr data-engine="${e.key}"><th scope="row">${e.name}</th>`
+      + `<td>${formatTokens(e.tokens.fiveHour)}</td><td>${formatTokens(e.tokens.weekly)}</td><td>${formatTokens(e.tokens.sprint)}</td><td>${e.sessions}</td>`
+      + `<td>${e.remainingPct === null ? '—' : `${Math.round(e.remainingPct)}%`}</td>`
+      + `<td><span class="v6-usage-calibrate"><label><span class="sr-only">${e.name} weekly % left</span><input type="number" min="0" max="100" step="1" id="v6UsageWeekly-${e.key}" class="filter-input v6-usage-input" placeholder="wk %"></label>`
+      + `<label><span class="sr-only">${e.name} 5-hour % left</span><input type="number" min="0" max="100" step="1" id="v6UsageFiveHour-${e.key}" class="filter-input v6-usage-input" placeholder="5h %"></label>`
+      + `<button type="button" id="v6UsageSave-${e.key}" class="btn btn-secondary btn-small" data-engine="${e.key}">Set</button></span></td></tr>`;
+    return `<button type="button" id="v6EngineUsageMeter" class="v6-usage-meter" aria-expanded="${open ? 'true' : 'false'}" aria-controls="v6EngineUsagePopover"
+        aria-label="${escapeHtml(`Engine usage: ${summary}. Open the breakdown.`)}">${model.engines.map(pill).join('')}</button>`
+      + `<div id="v6EngineUsagePopover" class="v6-usage-popover" role="dialog" aria-label="Engine usage"${open ? '' : ' hidden'}>`
+      + `<p class="v6-usage-reset">${escapeHtml(reset || 'Weekly reset time unknown')}</p>`
+      + `<table class="v6-usage-table"><thead><tr><th scope="col">Engine</th><th scope="col">5h</th><th scope="col">Week</th><th scope="col">Sprint</th><th scope="col">Sessions</th><th scope="col">Left</th><th scope="col">Set % left</th></tr></thead>`
+      + `<tbody>${model.engines.map(row).join('')}</tbody></table>`
+      + `<p id="v6EngineUsageStatus" class="v6-usage-status${status ? ` is-${escapeHtml(status.kind)}` : ''}" role="status">${status ? escapeHtml(status.message) : ''}</p></div>`;
   }
 
   /**
@@ -885,17 +1016,17 @@
       // what was recorded after it (sent, not yet on screen) below.
       const parts = arrangeRecorded(v.events, liveTurns, chat.lastSent);
       stream = parts.head.length
-        ? `<ol class="v6-conversation-stream" id="v6ChatRecorded">${recordedEventsMarkup(parts.head, name)}</ol>`
+        ? `<ol class="v6-conversation-stream" id="v6ChatRecorded">${recordedEventsMarkup(parts.head, name, chat.thumbs)}</ol>`
         : (liveTurns.length || parts.tail.length ? '<ol class="v6-conversation-stream" id="v6ChatRecorded"></ol>'
           : '<p class="v6-conversation-empty">No conversation events recorded for this session yet.</p>');
-      tail = recordedEventsMarkup(parts.tail, name);
+      tail = recordedEventsMarkup(parts.tail, name, chat.thumbs);
     }
     // #3052: the replies the session's live output shows, after what is
     // recorded; its own list so a poll can replace it without a re-render.
     stream = `<div id="v6ChatStream" class="v6-chat-stream" tabindex="0">${stream}
-      <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name)}</ol>
+      <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name, chat.verbosity, chat.thumbs)}</ol>
       <ol id="v6ChatRecordedTail" class="v6-conversation-stream v6-chat-recorded-tail">${tail}</ol>
-      <ol id="v6ChatPending" class="v6-conversation-stream v6-chat-pending">${pendingMarkup(chat.pending, chat.lastSent)}</ol>
+      <ol id="v6ChatPending" class="v6-conversation-stream v6-chat-pending">${pendingMarkup(chat.pending, chat.lastSent, chat.thumbs)}</ol>
     </div>`;
     // A member reached directly is still the project's delegate when it is
     // the one the delegate resolution picks (#3053).
@@ -920,9 +1051,12 @@
           title="Switch to Delegate: ${escapeHtml(chat.delegate.name)}" aria-label="Switch to Delegate: ${escapeHtml(chat.delegate.name)}"><span aria-hidden="true">⇄</span> ${escapeHtml(chat.delegate.name)}</a>`
       : '';
     const send = chat.send && CHAT_SEND_KINDS.includes(chat.send.kind) ? chat.send : null;
-    // Disabled while a send is in flight too, so a second Enter cannot type
-    // the same message into the session twice.
-    const disabled = liveSession && !(send && send.kind === 'pending') ? '' : ' disabled';
+    // Send is disabled while a send is in flight, so a second Enter cannot
+    // type the same message in twice; the box itself stays open, since the
+    // composer empties on Enter and Force Send (#3082, Ruling A757) exists to
+    // push an urgent message in meanwhile.
+    const disabled = liveSession && !(send && send.kind === 'pending') && !chat.inFlight ? '' : ' disabled';
+    const boxDisabled = liveSession ? '' : ' disabled';
     // #3053: start an offline target, or every offline member of a group,
     // from the chat itself. Starting several agents asks a second time.
     const startButton = liveSession ? '' : `<button type="button" id="v6ChatStart" class="btn btn-primary btn-small v6-chat-start" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>`;
@@ -967,7 +1101,12 @@
       </header>
       ${stream}
       ${liveSession ? `<details id="v6ChatUnderHood" class="v6-chat-under-hood"${chat.hoodOpen ? ' open' : ''}>
-        <summary>🔧 Under the Hood (Raw CLI &amp; Tool Activity)</summary>
+        <summary>🔧 Under the Hood (Raw CLI &amp; Tool Activity) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count">${tuckedCountText(tuckedTurns(liveTurns, chat.verbosity).length)}</span></summary>
+        ${verbosityMarkup(chat.verbosity)}
+        <section class="v6-chat-tucked" aria-label="Replies tucked away">
+          <h3 class="v6-chat-switchboard-title">Tucked away</h3>
+          <ol id="v6ChatTucked" class="v6-chat-tucked-list">${tuckedMarkup(tuckedTurns(liveTurns, chat.verbosity), chat.thumbs)}</ol>
+        </section>
         <section class="v6-chat-switchboard" aria-label="Switchboard and Medusa traffic">
           <h3 class="v6-chat-switchboard-title">Switchboard &amp; Medusa traffic</h3>
           <ol id="v6ChatSwitchboard" class="v6-chat-switchboard-list" tabindex="-1">${switchboardMarkup(switchboardItems(v.events, live))}</ol>
@@ -980,10 +1119,13 @@
       ${chatActivityMarkup(chatBusyLabel(chat), chat.activityElapsed)}
       <form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form" aria-label="Message ${escapeHtml(name)}">
         <div id="v6ChatAttachments" class="v6-chat-attachments" aria-live="polite">${attachmentChipsMarkup(chat.attachments)}</div>
-        <textarea id="v6ChatInput" class="v6-chat-input" name="message" rows="3" aria-label="Message to ${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}"${disabled}>${escapeHtml(chat.draft || '')}</textarea>
+        <textarea id="v6ChatInput" class="v6-chat-input" name="message" rows="3" aria-label="Message to ${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}"${boxDisabled}>${escapeHtml(chat.draft || '')}</textarea>
         <div class="v6-chat-composer-actions">
           <button type="button" id="v6ChatAttachBtn" class="btn btn-secondary btn-small v6-chat-attach-btn" aria-label="Attach files (or drop or paste them into the message)">📎 Attach</button>
           <input type="file" id="v6ChatFileInput" class="v6-chat-file-input" multiple hidden>
+          <button type="button" id="v6ChatForceSend" class="btn btn-secondary v6-chat-force-send"${boxDisabled}
+            title="Send now, even while a reply or another send is in flight (Ctrl/Cmd+Shift+Enter)"
+            aria-label="Force send: send now, even while a reply or another send is in flight"><span aria-hidden="true">⚡</span> Force</button>
           <button type="submit" id="v6ChatSend" class="btn btn-primary v6-chat-send-btn"${disabled}>Send</button>
         </div>
       </form>
@@ -1145,6 +1287,19 @@
   const QUESTION_PREFIX = /^(?:\d+[.)]|[-*•])\s+/;
 
   /**
+   * Whether a line asks something (#3082): a `?` that ends a sentence, so
+   * one followed by a space, closing punctuation or markdown, or the end of
+   * the line — `Proceed? (y/n)`, `**Ship it?**`, `merge #12? Reply yes/no.`.
+   * A `?` inside a URL or inline code is not a question.
+   * @param {string} line
+   * @returns {boolean}
+   */
+  function asksQuestion(line) {
+    const prose = String(line).replace(/`[^`]*`/g, ' ').replace(/\bhttps?:\/\/\S+/gi, ' ');
+    return /\?(?=$|[\s)\]}"'*_~.,;:!\u2019\u201d])/.test(prose);
+  }
+
+  /**
    * The conversation a session's live output shows (#3052): its assistant
    * replies, any operator prompt not already recorded, the question the
    * assistant is waiting on, and what it is busy doing. Display only — the
@@ -1154,7 +1309,8 @@
    * @param {Array<string>} knownUserTexts - User messages already recorded, not to repeat.
    * The switchboard's own traffic is kept apart (#3076): its wakes and every
    * `tc message send` the pane shows, in order, for Under the Hood. The
-   * questions are every line of the newest assistant turn that ends in `?`,
+   * questions are every line the session has said since the operator last
+   * spoke that ends in `?` (a wake can split that into several turns),
    * list markers stripped, and none once the operator has answered (#3079).
    * @returns {{turns: Array<{role: 'user'|'assistant', text: string}>, question: string|null,
    *   questions: string[], activity: string|null, switchboard: Array<{dir: 'in'|'out', text: string}>}}
@@ -1197,9 +1353,12 @@
     // An indented line belongs to whatever started the block above it: a tool
     // line's output is noise, an assistant line's continuation is reply.
     let block = null;
+    // Whether a wake, not the operator, set the session going (#3082): its
+    // replies until the operator next speaks are switchboard-triggered.
+    let woken = false;
     const flush = () => {
       if (reply.length) {
-        turns.push({ role: 'assistant', text: reply.join('\n') });
+        turns.push(woken ? { role: 'assistant', text: reply.join('\n'), trigger: 'switchboard' } : { role: 'assistant', text: reply.join('\n') });
         answered = false;
       }
       reply = [];
@@ -1212,7 +1371,7 @@
       // A blank line decides nothing: tool output can hold blank lines, and
       // the next line's indent says whether it is still output (#3057).
       if (!text) {
-        // A blank line ends a wrapped notice (Lane-B O-Gate HOLD).
+        // A blank line ends a wrapped notice.
         if (block === 'wake') block = null;
         return;
       }
@@ -1233,11 +1392,15 @@
       const prompt = LIVE_PROMPT.exec(text);
       const promptText = prompt && !indented ? prompt[1].trim() : '';
       if (SWITCHBOARD_TEXT.test(promptText) || SWITCHBOARD_TEXT.test(text)) {
-        // A wake is the switchboard speaking, not the operator: it neither
-        // answers a question nor ends the reply it interrupts.
+        // A wake is the switchboard speaking, not the operator: it does not
+        // answer a question.
         switchboard.push({ dir: 'in', text: promptText || text });
+        // What the session had already said before the wake answered the
+        // operator, so it stays their turn; only what follows is the wake's.
+        flush();
+        woken = true;
         // Only a typed wake wraps like a prompt; what is indented under a
-        // bare notice line is still the reply's (cumulative review, #3052).
+        // bare notice line is still the reply's (#3052).
         block = promptText ? 'wake' : null;
         return;
       }
@@ -1250,6 +1413,7 @@
         if (said) {
           activity = null;
           answered = true;
+          woken = false;
           echo = recordedAs(said);
           echoCut = Boolean(echo) && /\[Full prompt \(\d+ chars\) saved to: /.test(original(echo));
           // #3079 item 6: a recorded prompt keeps its place among the
@@ -1291,11 +1455,16 @@
     });
     flush();
     const last = turns[turns.length - 1];
-    const open = last && last.role === 'assistant' && !answered ? last.text : '';
-    const tail = open ? open.split('\n').pop() : '';
+    // Everything the session has said since the operator last spoke: a wake
+    // can split it into several turns, and a question asked before the wake
+    // is still waiting (#3082).
+    let since = turns.length;
+    while (since > 0 && turns[since - 1].role === 'assistant') since--;
+    const open = last && last.role === 'assistant' && !answered ? turns.slice(since).map((t) => t.text).join('\n') : '';
+    const tail = last && last.role === 'assistant' && !answered ? last.text.split('\n').pop() : '';
     const questions = open.split('\n').map((l) => l.trim().replace(QUESTION_PREFIX, '').trim())
-      .filter((l) => /\?\s*$/.test(l));
-    return { turns, question: /\?\s*$/.test(tail) ? tail : null, questions, activity, switchboard };
+      .filter(asksQuestion);
+    return { turns, question: asksQuestion(tail) ? tail : null, questions, activity, switchboard };
   }
 
   /**
@@ -1308,6 +1477,117 @@
   function chatRoleMarkup(role, name) {
     const who = role === 'assistant' ? ` <span class="v6-conversation-who">(${escapeHtml(name)})</span>` : '';
     return `<span class="v6-conversation-role">${escapeHtml(role)}${who}</span>`;
+  }
+
+  /**
+   * A link in message text (#3082): a Markdown `[label](url)` or a bare
+   * `http(s)://` URL. A Markdown target may also be a same-origin path
+   * (`/plans/…`); nothing else — `javascript:`, `data:`, `file:` — is ever a
+   * link — nor is a path a browser would read as another host (`//host`,
+   * `/\host`). A bare URL stops at whitespace, a quote or an angle bracket, and
+   * drops trailing sentence punctuation, keeping a `)` it opened itself.
+   */
+  const MESSAGE_LINK = /\[([^\]\n]{1,300})\]\((https?:\/\/[^\s)<>"']+|\/(?![\/\\])[^\s)<>"'\\]*)\)|https?:\/\/[^\s<>"'`]+/g;
+
+  /** An image a URL names by its extension (#3082). */
+  const IMAGE_URL = /\.(?:png|jpe?g|webp|gif)(?:[?#]|$)/i;
+
+  /**
+   * Message text as HTML (#3082): every character escaped, with links opening
+   * in a new tab (`rel="noopener noreferrer"`). An external URL naming an
+   * image is a link card — its host and path, escaped — and never an `<img>`:
+   * agent text is untrusted, and an image would be fetched the moment the chat
+   * drew it, carrying whatever the URL holds to that host (Ruling A752).
+   * @param {*} text
+   * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL, from the thumbnail cache.
+   * @returns {string} HTML.
+   */
+  function messageMarkup(text, thumbs) {
+    return String(text == null ? '' : text).split('\n').map((line) => {
+      const attached = ATTACHED_LINE.exec(line);
+      return attached ? attachmentMarkup(attached[1], thumbs) : lineMarkup(line);
+    }).join('\n');
+  }
+
+  /**
+   * An `Attached:` line naming a file in the project's secrets store
+   * (#3082), as `sendChat` writes one. The file name group takes only what
+   * `sanitizeUploadName` produces.
+   */
+  const ATTACHED_LINE = /^Attached: (?:\.tangleclaw\/)?secrets\/([A-Za-z0-9._-]{1,128})\s*$/;
+
+  /** An image file name, by extension (#3082). */
+  const IMAGE_NAME = /\.(?:png|jpe?g|webp|gif)$/i;
+
+  /**
+   * An attachment in a message (#3082): an image the page has fetched as a
+   * thumbnail — a `blob:` URL from the per-(project, file) cache, opening in
+   * a new tab — or else the file's name as a chip.
+   * @param {string} filename
+   * @param {Object<string, string>} [thumbs] - File name → `blob:` URL.
+   * @returns {string} HTML.
+   */
+  function attachmentMarkup(filename, thumbs) {
+    const url = thumbs && Object.prototype.hasOwnProperty.call(thumbs, filename) ? thumbs[filename] : null;
+    if (IMAGE_NAME.test(filename) && typeof url === 'string' && /^blob:/.test(url)) {
+      const href = escapeHtml(url);
+      return `<a class="v6-chat-link-preview v6-chat-thumb-link" href="${href}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(filename)} (opens in a new tab)">`
+        + `<img class="v6-chat-thumb" src="${href}" alt="${escapeHtml(filename)}"><span class="v6-chat-thumb-name">${escapeHtml(filename)}</span></a>`;
+    }
+    return `<span class="v6-chat-attachment"><span aria-hidden="true">📎</span> ${escapeHtml(filename)}</span>`;
+  }
+
+  /**
+   * One line of message text (#3082): escaped, with its links.
+   * @param {string} raw
+   * @returns {string} HTML.
+   */
+  function lineMarkup(raw) {
+    let out = '';
+    let last = 0;
+    MESSAGE_LINK.lastIndex = 0;
+    for (let m = MESSAGE_LINK.exec(raw); m; m = MESSAGE_LINK.exec(raw)) {
+      let match = m[0];
+      let href = m[2] || match;
+      const label = m[1];
+      if (!label) {
+        // Sentence punctuation after a bare URL is not part of it.
+        while (/[.,;:!?)\]]$/.test(href) && !(href.endsWith(')') && (href.match(/\(/g) || []).length >= (href.match(/\)/g) || []).length)) {
+          href = href.slice(0, -1);
+        }
+        match = href;
+      }
+      // Nothing left once its punctuation went: not a link, and the scan moves on.
+      if (!match) {
+        MESSAGE_LINK.lastIndex = m.index + m[0].length;
+        continue;
+      }
+      out += escapeHtml(raw.slice(last, m.index));
+      out += linkMarkup(href, label);
+      last = m.index + match.length;
+      MESSAGE_LINK.lastIndex = last;
+    }
+    return out + escapeHtml(raw.slice(last));
+  }
+
+  /**
+   * One link (#3082): a new-tab anchor, or for an external image a link card.
+   * @param {string} href - An `http(s)://` URL or a same-origin path, unescaped.
+   * @param {string} [label] - A Markdown label.
+   * @returns {string} HTML.
+   */
+  function linkMarkup(href, label) {
+    const safe = escapeHtml(href);
+    const external = /^https?:\/\//i.test(href);
+    if (external && IMAGE_URL.test(href)) {
+      const at = href.indexOf('/', href.indexOf('//') + 2);
+      const host = at === -1 ? href.slice(href.indexOf('//') + 2) : href.slice(href.indexOf('//') + 2, at);
+      const path = at === -1 ? '' : href.slice(at);
+      return `<a class="v6-chat-link-preview" href="${safe}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Opens in a new tab; not loaded here">`
+        + `<span class="v6-chat-link-preview-icon" aria-hidden="true">🖼</span>`
+        + `<span class="v6-chat-link-preview-host">${escapeHtml(host)}</span><span class="v6-chat-link-preview-path">${escapeHtml(label || path)}</span></a>`;
+    }
+    return `<a class="v6-chat-link" href="${safe}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">${escapeHtml(label || href)}</a>`;
   }
 
   /**
@@ -1367,13 +1647,14 @@
   /**
    * @param {Array<object>} events
    * @param {string} name - The project's name.
+   * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
    * @returns {string} The recorded events as conversation bubbles.
    */
-  function recordedEventsMarkup(events, name) {
+  function recordedEventsMarkup(events, name, thumbs) {
     return events.map((e) => (
       `<li class="v6-conversation-event is-${escapeHtml(e && e.role)}">
             ${chatRoleMarkup(e && e.role, name)}
-            <span class="v6-conversation-content">${escapeHtml(e && e.content)}</span>
+            <span class="v6-conversation-content">${messageMarkup(e && e.content, thumbs)}</span>
           </li>`
     )).join('');
   }
@@ -1383,11 +1664,14 @@
    * (#3079 item 6), unless the chat already shows it as recorded.
    * @param {{id: *, text: string}|null|undefined} pending
    * @param {{id: *}|null|undefined} lastSent
+   * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
    * @returns {string} HTML list item, or ''.
    */
-  function pendingMarkup(pending, lastSent) {
-    if (!pending || typeof pending.text !== 'string' || (lastSent && lastSent.id === pending.id)) return '';
-    return `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${escapeHtml(pending.text)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`;
+  function pendingMarkup(pending, lastSent, thumbs) {
+    // One bubble per send on its way (#3082: a forced send can overlap another).
+    const list = (Array.isArray(pending) ? pending : [pending])
+      .filter((p) => p && typeof p.text === 'string' && !(lastSent && lastSent.id === p.id));
+    return list.map((p) => `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${messageMarkup(p.text, thumbs)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`).join('');
   }
 
   /**
@@ -1395,25 +1679,114 @@
    * they come from the pane, not the record.
    * @param {Array<{role: string, text: string}>} turns
    * @param {string} name
+   * @param {{blockers: boolean, milestones: boolean, chatter: boolean}} [verbosity] - Which switchboard replies show (#3082).
+   * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
    * @returns {string} HTML list items.
    */
-  function liveTurnsMarkup(turns, name) {
-    return (Array.isArray(turns) ? turns : []).map((t) => (
-      `<li class="v6-conversation-event is-${escapeHtml(t && t.role)} is-live">${chatRoleMarkup(t && t.role, name)}<span class="v6-conversation-content">${escapeHtml(t && t.text)}</span></li>`
+  function liveTurnsMarkup(turns, name, verbosity, thumbs) {
+    return (Array.isArray(turns) ? turns : []).filter((t) => shownInChat(t, verbosity)).map((t) => (
+      `<li class="v6-conversation-event is-${escapeHtml(t && t.role)} is-live">${chatRoleMarkup(t && t.role, name)}<span class="v6-conversation-content">${messageMarkup(t && t.text, thumbs)}</span></li>`
     )).join('');
   }
 
+  /** A reply reporting a hold, a failure, an error or a refusal (#3082). */
+  const BLOCKER_TEXT = /\b(?:HOLD|held|blocked|blocker|blocking|fail(?:ed|s|ing|ure)?|error|refus(?:ed|al|es)|cannot|can't|broken|red\b|timed out|timeout)/i;
+
+  /** A reply reporting a PR opened or merged, a release cut, or a sprint exit (#3082). */
+  const MILESTONE_TEXT = /\b(?:PR\s*#?\d+\s*(?:open|opened|merged)|merged|true-merged|released|release (?:cut|published)|cut v?\d+\.\d+|tagged|sprint exit|v\d+\.\d+\.\d+ (?:is )?(?:out|live|published))/i;
+
   /**
-   * The turns before the reply that asks the questions (#3079), each as
-   * `role:text`: what identifies that reply among the session's.
+   * What kind of turn this is, for the verbosity filter (#3082): a turn the
+   * operator's own message set going is `direct`; a switchboard-triggered
+   * reply is a `question` if it asks one, else a `blocker`, a `milestone`, or
+   * routine `chatter`.
+   * @param {{role?: string, text?: string, trigger?: string}|null} turn
+   * @returns {'direct'|'question'|'blocker'|'milestone'|'chatter'}
+   */
+  function turnKind(turn) {
+    if (!turn || turn.role !== 'assistant' || turn.trigger !== 'switchboard') return 'direct';
+    const text = String(turn.text || '');
+    if (text.split('\n').some(asksQuestion)) return 'question';
+    if (BLOCKER_TEXT.test(text)) return 'blocker';
+    if (MILESTONE_TEXT.test(text)) return 'milestone';
+    return 'chatter';
+  }
+
+  /**
+   * Whether the chat shows a turn, or tucks it Under the Hood (#3082).
+   * @param {object} turn
+   * @param {{blockers: boolean, milestones: boolean, chatter: boolean}} [verbosity]
+   * @returns {boolean}
+   */
+  function shownInChat(turn, verbosity) {
+    const v = isVerbosity(verbosity) ? verbosity : VERBOSITY_DEFAULT;
+    const kind = turnKind(turn);
+    if (kind === 'blocker') return v.blockers;
+    if (kind === 'milestone') return v.milestones;
+    if (kind === 'chatter') return v.chatter;
+    return true;
+  }
+
+  /** What each tucked kind is called (#3082). */
+  const TURN_KIND_LABELS = Object.freeze({ blocker: 'Blocker', milestone: 'Milestone', chatter: 'Fleet chatter' });
+
+  /**
+   * The switchboard-triggered replies the filter tucked away (#3082), for
+   * Under the Hood, each tagged with its kind.
+   * @param {Array<object>} turns
+   * @param {object} [verbosity]
+   * @returns {Array<object>}
+   */
+  function tuckedTurns(turns, verbosity) {
+    return (Array.isArray(turns) ? turns : []).filter((t) => !shownInChat(t, verbosity));
+  }
+
+  /**
+   * @param {Array<object>} tucked
+   * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
+   * @returns {string} HTML list items, or the empty note.
+   */
+  function tuckedMarkup(tucked, thumbs) {
+    if (!tucked.length) return '<li class="v6-chat-tucked-empty">Nothing tucked away.</li>';
+    return tucked.map((t) => `<li class="v6-chat-tucked-item is-${turnKind(t)}"><span class="v6-chat-tucked-kind">${TURN_KIND_LABELS[turnKind(t)]}</span> <span class="v6-conversation-content">${messageMarkup(t.text, thumbs)}</span></li>`).join('');
+  }
+
+  /** @param {number} n @returns {string} The summary's count of tucked replies, or ''. */
+  function tuckedCountText(n) {
+    return n ? `${n} tucked` : '';
+  }
+
+  /**
+   * The verbosity filter (#3082): one checkbox per switchboard-reply kind.
+   * @param {object} [verbosity]
+   * @returns {string} HTML.
+   */
+  function verbosityMarkup(verbosity) {
+    const v = isVerbosity(verbosity) ? verbosity : VERBOSITY_DEFAULT;
+    const box = (id, key, label) => `<label class="v6-chat-verbosity-option"><input type="checkbox" id="${id}" data-verbosity="${key}"${v[key] ? ' checked' : ''}> ${label}</label>`;
+    return `<fieldset class="v6-chat-verbosity">
+          <legend>Switchboard replies shown in the chat</legend>
+          <span class="v6-chat-verbosity-fixed">Direct chat &amp; questions: always</span>
+          ${box('v6ChatShowBlockers', 'blockers', 'Blockers')}
+          ${box('v6ChatShowMilestones', 'milestones', 'Milestones')}
+          ${box('v6ChatShowChatter', 'chatter', 'Fleet chatter')}
+        </fieldset>`;
+  }
+
+  /**
+   * The turns up to and including the operator's last message (#3079),
+   * each as `role:text`: what identifies the reply that asks the questions
+   * among the session's, however many turns a wake splits it into.
    * @param {{turns?: Array<{role: string, text: string}>}|null} live
    * @returns {string[]}
    */
   function askingPrefix(live) {
     const turns = live && Array.isArray(live.turns) ? live.turns : [];
+    // Up to the operator's last message: the session's reply after it may be
+    // split by a wake into several turns, and they all answer that message.
     let i = turns.length - 1;
-    while (i >= 0 && !(turns[i] && turns[i].role === 'assistant')) i--;
-    return turns.slice(0, Math.max(0, i)).map((t) => `${t && t.role}:${String(t && t.text).replace(/\s+/g, ' ').trim()}`);
+    while (i >= 0 && !(turns[i] && turns[i].role === 'user')) i--;
+    return turns.slice(0, i + 1).map((t) => `${t && t.role}:${String(t && t.text).replace(/\s+/g, ' ').trim()}`);
   }
 
   /**
@@ -1421,7 +1794,7 @@
    * before the reply that asked it. A dismissal holds for that same reply as
    * it grows (more text, a wake) or as older turns scroll off the top of the
    * pane; a later exchange has more turns before its reply, so the same
-   * words asked again show — even after the very same answer (PRR-B R2).
+   * words asked again show — even after the very same answer.
    * @param {{turns?: Array}|null} live
    * @param {string} question
    * @returns {{q: string, prefix: string[]}}
@@ -1965,7 +2338,10 @@
    * @returns {'send'|null}
    */
   function chatKeyAction(evt) {
-    return evt && evt.key === 'Enter' && !evt.shiftKey && !evt.isComposing ? 'send' : null;
+    if (!evt || evt.key !== 'Enter' || evt.isComposing) return null;
+    // #3082: Ctrl/Cmd+Shift+Enter is Force Send; Shift+Enter alone stays a newline.
+    if (evt.shiftKey) return evt.ctrlKey || evt.metaKey ? 'force' : null;
+    return 'send';
   }
 
   /**
@@ -2174,11 +2550,12 @@
       const activityElapsed = (extras && extras.activityElapsed) || '';
       const dismissedQuestions = (extras && extras.dismissedQuestions) || [];
       const pending = (extras && extras.pending) || null;
+      const verbosity = (extras && extras.verbosity) || VERBOSITY_DEFAULT;
       const v = detail.view || {};
       // #3063: in a chat the telemetry bar shares the chat's header row.
       const telemetry = extras && 'telemetry' in extras ? extras.telemetry : undefined;
       return conversationViewMarkup(Object.assign({}, v, {
-        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename, dismissedQuestions, pending })
+        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename, dismissedQuestions, pending, verbosity })
       }));
     }
     if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
@@ -2218,6 +2595,12 @@
     if (!doc || typeof doc.getElementById !== 'function') return;
     if (doc.body && doc.body.classList) doc.body.classList.toggle('v6-shell-active', Boolean(active));
     let menu = doc.getElementById('v6AdminMenu');
+    // Ruling A764: one top bar. The chat's header joins the dashboard bar,
+    // and the dashboard's own stats go to the shell's footer (A765). The
+    // stats move first, so the place they return to is before the bar's
+    // actions, which never move, not before a header that comes and goes.
+    moveDashStats(doc, active);
+    dockChatHeader(doc, active);
     if (!active) {
       // Last first: each control's recorded next node is then back in place.
       ADMIN_TUCK_IDS.slice().reverse().forEach((id) => {
@@ -2260,6 +2643,80 @@
       adminHomes.set(id, { parent: el.parentNode, next: el.nextSibling || null });
       panel.appendChild(el);
     });
+  }
+
+  /** Where `#dashStats` lives in the dashboard bar, so it goes back exactly there (A765). */
+  let dashStatsHome = null;
+
+  /**
+   * Put the chat's header into the dashboard's top bar, before its actions
+   * (Ruling A764), so the v6 chat has one bar, not two. A header docked
+   * earlier gives way to the one the shell just drew; leaving the shell, or
+   * a view with no chat, takes it out. Focus inside the header stays put.
+   * @param {Document} doc
+   * @param {boolean} active
+   */
+  function dockChatHeader(doc, active) {
+    if (typeof doc.querySelector !== 'function') return;
+    const bar = doc.querySelector('.dash-bar');
+    if (!bar) return;
+    const docked = typeof bar.querySelector === 'function' ? bar.querySelector('.v6-chat-header') : null;
+    const main = doc.getElementById('v6ShellMain');
+    const drawn = active && main && typeof main.querySelector === 'function' ? main.querySelector('.v6-chat-header') : null;
+    if (docked && docked !== drawn && (drawn || !active)) docked.remove();
+    if (!drawn) return;
+    const actions = bar.querySelector('.dash-actions');
+    const focus = doc.activeElement;
+    if (actions && actions.parentNode === bar) bar.insertBefore(drawn, actions);
+    else bar.appendChild(drawn);
+    if (focus && focus.id && typeof drawn.contains === 'function' && drawn.contains(focus) && typeof focus.focus === 'function') focus.focus();
+  }
+
+  /**
+   * Move the dashboard's CPU/MEM/DISK/UP stats into the shell's footer status
+   * bar while the shell shows, and back to their exact place in the bar when
+   * it does not (Ruling A765): moved, not copied, so the live readings keep
+   * updating; never hidden, so they never leave the page.
+   * @param {Document} doc
+   * @param {boolean} active
+   */
+  function moveDashStats(doc, active) {
+    const stats = doc.getElementById('dashStats');
+    if (!stats) return;
+    if (!active) {
+      returnDashStats(doc);
+      return;
+    }
+    const footer = doc.getElementById('v6ShellStatusBar');
+    if (!footer || stats.parentNode === footer) return;
+    // Where it is now is its home unless it is still in a status bar (one a
+    // redraw orphaned): never an old home, which may belong to another page.
+    const from = stats.parentNode;
+    if (!(from && from.id === 'v6ShellStatusBar')) {
+      const live = typeof stats.getAttribute === 'function' ? stats.getAttribute('aria-live') : null;
+      dashStatsHome = { parent: from, next: stats.nextSibling || null, live };
+    }
+    // The status region announces its changes; the stats refresh every 30 s
+    // and must not be read out each time.
+    if (typeof stats.setAttribute === 'function') stats.setAttribute('aria-live', 'off');
+    footer.appendChild(stats);
+  }
+
+  /**
+   * Put `#dashStats` back in the dashboard bar (A765) — before the shell
+   * redraws, since a redraw replaces the footer and would take the live
+   * stats with it.
+   * @param {Document} doc
+   */
+  function returnDashStats(doc) {
+    const stats = doc.getElementById('dashStats');
+    const home = dashStatsHome;
+    if (!stats || !home || !home.parent) return;
+    if (home.next && home.next.parentNode === home.parent) home.parent.insertBefore(stats, home.next);
+    else home.parent.appendChild(stats);
+    if (home.live !== null && home.live !== undefined) stats.setAttribute('aria-live', home.live);
+    else if (typeof stats.removeAttribute === 'function') stats.removeAttribute('aria-live');
+    dashStatsHome = null;
   }
 
   /**
@@ -2436,12 +2893,86 @@
     // recorded (its send id, recorded text and whole text), until the pane
     // shows it, so it is drawn after the replies it followed.
     const lastSentByProject = new Map();
+    // #3082: thumbnails of image attachments, one blob: URL (and one fetch in
+    // flight) per (project, file), kept across polls so a poll neither
+    // refetches the image nor revokes a URL a new tab is about to open;
+    // released when the chat moves to another project, or on teardown (A752).
+    const thumbCache = new Map();
+    const createObjectURL = deps.createObjectURL
+      || ((blob) => (global.URL && typeof global.URL.createObjectURL === 'function' ? global.URL.createObjectURL(blob) : null));
+    const revokeObjectURL = deps.revokeObjectURL
+      || ((url) => { if (global.URL && typeof global.URL.revokeObjectURL === 'function') global.URL.revokeObjectURL(url); });
+    const fetchBytes = deps.fetch || ((url, init) => global.fetch(url, init));
+    let thumbsReleaseHooked = false;
     // And the whole text of each long message this visit sent, per project
     // (the last few), so the pane's echo of one is known in full even after
     // its record, cut short, is all the events hold (#3079).
     const sentWhole = new Map();
     const SENT_WHOLE_KEPT = 10;
     let sendSeq = 0;
+    // #3085: chat reads since the usage meter last refreshed.
+    let usagePolls = 0;
+    let usageActionsGiven = false;
+
+    /**
+     * Load the 3-engine usage meter's data (#3085, A753-1) and hand it, and
+     * once its calibrate action, to the shell.
+     * @returns {Promise<void>}
+     */
+    async function loadUsage() {
+      const [windows, sessions] = await Promise.all([api('/api/usage/windows'), api('/api/usage/sessions')]);
+      const sh = getShell();
+      if (!sh || typeof sh.setUsage !== 'function' || !windows) return;
+      if (!usageActionsGiven && typeof sh.setUsageActions === 'function') {
+        sh.setUsageActions({ calibrate: calibrateUsage });
+        usageActionsGiven = true;
+      }
+      sh.setUsage({ windows, sessions });
+    }
+
+    /**
+     * Record the operator's "% left" for an engine (#3085, A753-1): the
+     * Operator-only calibration route, with the operator proof
+     * (`operatorHeaders`), as the secure-clipboard writes carry it — the
+     * page's apiMutate adds it to one config call only, and an install with
+     * its login off refuses this route without it.
+     * @param {string} provider - `claude`, `codex` or `antigravity`.
+     * @param {number} [weeklyPct]
+     * @param {number} [fiveHourPct]
+     * @returns {Promise<{ok: boolean, error?: string}>}
+     */
+    async function calibrateUsage(provider, weeklyPct, fiveHourPct) {
+      const body = { provider };
+      if (weeklyPct !== undefined) body.weeklyPct = weeklyPct;
+      if (fiveHourPct !== undefined) body.fiveHourPct = fiveHourPct;
+      let res;
+      try {
+        const headers = await operatorHeaders();
+        res = await api('/api/usage/calibrate', { method: 'POST', headers, body: JSON.stringify(body) });
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a refused operator proof becomes the meter's error line, never an unhandled rejection
+        return { ok: false, error: (err && err.message) || 'the operator proof could not be made' };
+      }
+      if (!res) return { ok: false, error: api.lastError || 'the server refused it' };
+      await loadUsage();
+      return { ok: true };
+    }
+    // Sends on their way, per project (#3082): a plain send waits while any is.
+    const sendsInFlight = new Map();
+
+    /**
+     * Whether a send's chat is the one on screen (#3082): the same project,
+     * whichever reload made the `current` showing it.
+     * @param {{project: {id: *}}} chat
+     * @returns {boolean}
+     */
+    function onScreen(chat) {
+      return Boolean(current && chat && String(current.project.id) === String(chat.project.id));
+    }
+
+    /** @param {{project: {id: *}}} chat @returns {boolean} Whether a send to its project is on its way. */
+    function inFlight(chat) {
+      return (sendsInFlight.get(String(chat.project.id)) || 0) > 0;
+    }
     const clock = typeof deps.now === 'function' ? deps.now : () => Date.now();
     // The secure-clipboard routes gate even their GET listing with operator
     // proof, and api()'s own CSRF header only rides on writes, so the token
@@ -2498,6 +3029,127 @@
         }
       }
       return awaitReply(live, project);
+    }
+
+    /**
+     * The image files a chat's messages attach (#3082).
+     * @param {Array<object>|null} events - Recorded events.
+     * @param {{turns?: Array<{text: string}>}|null} live
+     * @returns {string[]}
+     */
+    function attachedImages(events, live) {
+      const texts = (Array.isArray(events) ? events : []).map((e) => e && e.content)
+        .concat(live && Array.isArray(live.turns) ? live.turns.map((t) => t && t.text) : []);
+      const names = new Set();
+      texts.forEach((text) => String(text || '').split('\n').forEach((line) => {
+        const m = ATTACHED_LINE.exec(line);
+        if (m && IMAGE_NAME.test(m[1])) names.add(m[1]);
+      }));
+      return [...names];
+    }
+
+    /**
+     * The thumbnails a chat can show now (#3082): file name → `blob:` URL for
+     * each attached image already fetched; any not yet asked for is fetched,
+     * and the chat redrawn when it arrives.
+     * @param {object} project
+     * @param {Array<object>|null} events
+     * @param {object|null} live
+     * @returns {Object<string, string>}
+     */
+    function thumbsFor(project, events, live) {
+      const thumbs = {};
+      hookThumbRelease();
+      attachedImages(events, live).forEach((filename) => {
+        const entry = thumbCache.get(thumbKey(project, filename));
+        if (entry && entry.url) thumbs[filename] = entry.url;
+        else if (!entry) fetchThumb(project, filename);
+      });
+      return thumbs;
+    }
+
+    /**
+     * @param {{id: *}} project
+     * @param {string} filename
+     * @returns {string} The thumbnail cache key for one project's file (#3082).
+     */
+    function thumbKey(project, filename) {
+      return `${String(project.id)}\u0001${filename}`;
+    }
+
+    /**
+     * Fetch one attached image with the operator proof (it is in the
+     * project's secrets store) and keep it as a `blob:` URL (#3082). A
+     * refused or failed fetch is remembered too, so a poll does not retry it;
+     * the line stays a file-name chip.
+     * @param {object} project
+     * @param {string} filename
+     * @returns {Promise<void>}
+     */
+    async function fetchThumb(project, filename) {
+      const key = thumbKey(project, filename);
+      const entry = { projectId: String(project.id), url: null };
+      thumbCache.set(key, entry);
+      try {
+        const headers = await operatorHeaders();
+        const res = await fetchBytes(`/api/sessions/${encodeURIComponent(project.name)}/secure-clipboard/${encodeURIComponent(filename)}`,
+          { method: 'GET', headers, credentials: 'same-origin' });
+        if (!res || !res.ok || typeof res.blob !== 'function') return;
+        const blob = await res.blob();
+        if (thumbCache.get(key) !== entry) return;
+        entry.url = createObjectURL(blob) || null;
+      } catch (_err) { // prawduct:allow prawduct/broad-except -- a thumbnail that cannot be fetched stays a file-name chip; it must never break the chat
+        return;
+      }
+      if (entry.url && current && String(current.project.id) === entry.projectId) showThumbs();
+    }
+
+    /** Hand the chat on screen its current thumbnails (#3082). */
+    function showThumbs() {
+      if (!current || !current.view) return;
+      const thumbs = thumbsFor(current.project, current.view.events, current.view.chat && current.view.chat.live);
+      current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { thumbs }) });
+      const sh = getShell();
+      if (sh && typeof sh.setThumbs === 'function') sh.setThumbs(thumbs);
+    }
+
+    /**
+     * Release every thumbnail not of `keepProjectId` (#3082): the chat moved
+     * to another project, or (with none kept) the page is going.
+     * @param {string|null} keepProjectId
+     */
+    function releaseThumbs(keepProjectId) {
+      for (const [key, entry] of thumbCache) {
+        if (keepProjectId != null && entry.projectId === keepProjectId) continue;
+        if (entry.url) revokeObjectURL(entry.url);
+        thumbCache.delete(key);
+      }
+    }
+
+    /** Release them all when the shell is torn down (#3082), registered once. */
+    function hookThumbRelease() {
+      if (thumbsReleaseHooked) return;
+      const sh = getShell();
+      if (sh && typeof sh.onDestroy === 'function') {
+        sh.onDestroy(() => releaseThumbs(null));
+        thumbsReleaseHooked = true;
+      }
+    }
+
+    /**
+     * Seed the cache from a file the operator attached in this browser
+     * (#3082): its own bytes, no fetch.
+     * @param {object} project
+     * @param {string} filename - The name it was saved under.
+     * @param {Blob} file
+     */
+    function seedThumb(project, filename, file) {
+      const key = thumbKey(project, filename);
+      const known = thumbCache.get(key);
+      // A fetched image is kept; a fetch still out, or one refused, gives way.
+      if (!IMAGE_NAME.test(filename) || (known && known.url) || !file) return;
+      const url = createObjectURL(file);
+      if (url) thumbCache.set(key, { projectId: String(project.id), url });
     }
 
     /**
@@ -2626,7 +3278,8 @@
       const sessionId = status && status.active && status.sessionId != null ? status.sessionId : null;
       const chat = Object.assign({}, ctx, {
         status: sessionId == null ? 'offline' : (status.idle ? 'idle' : 'active'),
-        send: sendOutcome || null
+        send: sendOutcome || null,
+        inFlight: (sendsInFlight.get(String(project.id)) || 0) > 0
       });
       current = { project, sessionId, launchId: (status && status.launchId) || null, ctx, mine, view: null };
       if (sessionId == null) {
@@ -2671,6 +3324,8 @@
       chat.peek = peekView(peek);
       chat.live = liveView(peek, project, events && events.events);
       chat.lastSent = lastSentFor(project);
+      releaseThumbs(String(project.id));
+      chat.thumbs = thumbsFor(project, events && events.events, chat.live);
       chat.medusa = medusaView(medusaStatus, chat.live, null);
       current.view = events
         ? { project, sessionId, events: events.events, chat }
@@ -2680,15 +3335,19 @@
       if (startTimer) {
         pollId = startTimer(async () => {
           if (mine !== seq) { stopPolling(); return; }
+          // #3085: the usage meter refreshes every USAGE_EVERY_POLLS reads.
+          usagePolls = (usagePolls + 1) % USAGE_EVERY_POLLS;
+          if (usagePolls === 0) loadUsage();
           const [res, nextStatus] = await Promise.all([api(peekUrl), api(medusaUrl)]);
           if (mine !== seq || !current || !current.view) return;
           const next = peekView(res);
           const nextLive = liveView(res, current.project, current.view.events);
           const nextMedusa = medusaView(nextStatus, nextLive, current.view.chat && current.view.chat.medusa);
           const lastSent = lastSentFor(current.project);
-          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next, live: nextLive, medusa: nextMedusa, lastSent }) });
+          const thumbs = thumbsFor(current.project, current.view.events, nextLive);
+          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next, live: nextLive, medusa: nextMedusa, lastSent, thumbs }) });
           const sh = getShell();
-          if (sh && typeof sh.setLive === 'function') sh.setLive({ peek: next, live: nextLive, medusa: nextMedusa, lastSent });
+          if (sh && typeof sh.setLive === 'function') sh.setLive({ peek: next, live: nextLive, medusa: nextMedusa, lastSent, thumbs });
           else if (sh && typeof sh.setPeek === 'function') sh.setPeek(next);
         }, CHAT_POLL_MS);
       }
@@ -2748,10 +3407,20 @@
      * @param {string} text
      * @returns {Promise<void>}
      */
-    async function sendChat(text) {
+    async function sendChat(text, flags) {
       const typed = String(text || '').trim();
       const chat = current;
-      if (!chat || chat.sending || !getShell()) return;
+      // #3082 (Ruling A757): a Force Send carries its flags, as the second
+      // argument or from the shell when the page passes the text alone, and
+      // does not wait for a send already in flight.
+      const shell = getShell();
+      const given = flags || (shell && typeof shell.takeSendFlags === 'function' ? shell.takeSendFlags() : null);
+      const forced = Boolean(given && given.priority === true);
+      if (!chat || !shell) return;
+      if (inFlight(chat) && !forced) {
+        showSend({ kind: 'warning', message: `Not sent yet: the last message to ${chat.project.name} is still on its way. Use ⚡ Force to send this one now.` });
+        return;
+      }
       const files = attachments.get(String(chat.project.id)) || [];
       const ready = files.filter((a) => a.status === 'ready');
       const uploading = files.filter((a) => a.status === 'uploading').length;
@@ -2769,11 +3438,22 @@
       // the agent can open it; the text and the list are separated by a blank line.
       const refs = ready.map((a) => `Attached: ${a.relPath}`).join('\n');
       const message = typed && refs ? `${typed}\n\n${refs}` : (typed || refs);
-      chat.sending = true;
+      // Counted per project, not on `current`: a forced send that finishes
+      // reloads the chat (a new `current`) while the first may still be on
+      // its way, and neither that reload nor the forced send's own end may
+      // let a plain send through meanwhile.
+      const key = String(chat.project.id);
+      sendsInFlight.set(key, (sendsInFlight.get(key) || 0) + 1);
       try {
-        await deliverChat(chat, message, name, String(text || ''));
+        await deliverChat(chat, message, name, String(text || ''), forced);
       } finally {
-        chat.sending = false;
+        const left = (sendsInFlight.get(key) || 1) - 1;
+        if (left > 0) sendsInFlight.set(key, left); else sendsInFlight.delete(key);
+        // The last one landed: Send is free again on the chat showing it.
+        if (!left && onScreen(chat) && current.view) {
+          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { inFlight: false }) });
+          showChat(getShell());
+        }
       }
     }
 
@@ -2783,9 +3463,12 @@
      * @param {string} message
      * @param {string} name - The target project's name.
      * @param {string} draft - The composer's text, put back if the send fails.
+     * @param {boolean} [forced] - A Force Send (#3082): the command carries
+     *   `priority` and `startupIntervention`; the server still refuses at an
+     *   engine startup dialog, a running wrap, or a HOLD/STOP (Ruling A757).
      * @returns {Promise<void>}
      */
-    async function deliverChat(chat, message, name, draft) {
+    async function deliverChat(chat, message, name, draft, forced) {
       // #3079 item 6: the composer empties as Enter is pressed, and the
       // message waits at the bottom of the chat until the send settles.
       const sendId = ++sendSeq;
@@ -2794,7 +3477,7 @@
       if (begun && typeof begun.beginSend === 'function') begun.beginSend(pid, message, sendId);
       const settle = (restore) => {
         const sh = getShell();
-        if (sh && typeof sh.endSend === 'function') sh.endSend(pid, restore);
+        if (sh && typeof sh.endSend === 'function') sh.endSend(pid, restore, sendId);
       };
       showSend({ kind: 'pending', message: `Sending to ${name}…` });
       const before = chat.view && chat.view.chat ? lastReply(chat.view.chat.live) : null;
@@ -2809,13 +3492,30 @@
         const saved = await saveLongPrompt(chat, message);
         if (!saved.ok) {
           settle(draft);
-          if (chat === current) showSend({ kind: 'error', message: `Not sent: ${saved.error}` });
+          if (onScreen(chat)) showSend({ kind: 'error', message: `Not sent: ${saved.error}` });
           return;
         }
         if (message.length > MAX_COMMAND_CHARS) command = longPromptCommand(message, saved.relPath);
         toRecord = recordedText(message, saved.relPath, launchId);
       }
-      const sent = await apiMutate(`/api/sessions/${encodeURIComponent(name)}/command`, 'POST', { command, enter: true });
+      const body = forced ? { command, enter: true, priority: true, startupIntervention: true } : { command, enter: true };
+      const commandUrl = `/api/sessions/${encodeURIComponent(name)}/command`;
+      // A priority command needs the operator's full write proof (the route
+      // refuses an install with the login off without its open token), which
+      // apiMutate does not carry; a plain command asks for none.
+      let sent;
+      let proofError = null;
+      if (forced) {
+        try {
+          const headers = await operatorHeaders();
+          sent = await api(commandUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+        } catch (err) { // prawduct:allow prawduct/broad-except -- a refused operator proof becomes the chat's "Not sent" line, never an unhandled rejection
+          sent = null;
+          proofError = (err && err.message) || 'the operator proof could not be made';
+        }
+      } else {
+        sent = await apiMutate(commandUrl, 'POST', body);
+      }
       if (sent) awaitingReply = { projectId: String(chat.project.id), reply: before, reads: 0 };
       // Once it is in the session the draft is spent, even if the operator
       // has moved to another chat meanwhile: left saved, it would come back
@@ -2825,7 +3525,7 @@
       if (sent) attachments.delete(String(chat.project.id));
       if (!sent) {
         settle(draft);
-        if (chat === current) showSend({ kind: 'error', message: `Not sent: ${api.lastError || 'the server refused it'}` });
+        if (onScreen(chat)) showSend({ kind: 'error', message: `Not sent: ${proofError || api.lastError || 'the server refused it'}` });
         return;
       }
       // A delivered message is recorded against the chat it was sent from,
@@ -2838,7 +3538,7 @@
         const whole = (sentWhole.get(String(pid)) || []).concat(message).slice(-SENT_WHOLE_KEPT);
         sentWhole.set(String(pid), whole);
       }
-      if (chat !== current) { settle(); return; }
+      if (!onScreen(chat)) { settle(); return; }
       await loadConversation(chat.project, chat.mine, chat.ctx, recorded === true
         ? { kind: 'ok', message: `Sent to ${name}.` }
         : { kind: 'warning', message: `Sent to ${name}, but it could not be recorded in the conversation: ${recorded}` });
@@ -2860,7 +3560,7 @@
       } catch (err) { // prawduct:allow prawduct/broad-except -- a browser that cannot encode the text refuses the send with its reason, never an unhandled rejection
         return { ok: false, error: `the long message could not be prepared (${(err && err.message) || 'unknown error'}).` };
       }
-      // The file is the message's UTF-8 bytes (PRR-B R1: not the base64
+      // The file is the message's UTF-8 bytes (not the base64
       // length, whose padding over-counts by up to two bytes).
       if (utf8Length(message) > MAX_ATTACH_BYTES) {
         return { ok: false, error: `the message is over the 5 MB limit for a saved prompt.` };
@@ -2949,6 +3649,7 @@
       if (!shell) return;
       const key = route && route.view ? JSON.stringify(route) : null;
       if (key === lastRouteKey) return;
+      if (key !== null) loadUsage();
       const entering = lastRouteKey === null;
       lastRouteKey = key;
       const mine = ++seq;
@@ -3080,6 +3781,7 @@
         outcome = res
           ? { status: 'ready', relPath: projectRelative(res.relPath, item.name) }
           : { status: 'error', error: api.lastError || 'The server refused this file.' };
+        if (res) seedThumb(project, item.name, file);
       } catch (err) { // prawduct:allow prawduct/broad-except -- a file the browser cannot read (permissions, a vanished file) becomes the chip's error, not an unhandled rejection
         outcome = { status: 'error', error: `Could not read this file: ${err && err.message ? err.message : 'unknown error'}` };
       }
@@ -3462,18 +4164,31 @@
     // polls and visits; and which chat was last scrolled to its bottom, so a
     // chat opens at its newest line once and is then left where the operator puts it.
     let chatHoodOpen = prefs.get('tc_v6_chat_under_hood_open', false, isBoolean);
+    // #3082: which switchboard-triggered replies the chat shows, kept across visits.
+    let verbosity = Object.assign({}, prefs.get('tc_v6_chat_verbosity', VERBOSITY_DEFAULT, isVerbosity));
     // #3079: the questions dismissed in each chat, by {@link questionKey},
     // until the pane shows no question at all — the operator has answered —
     // so a poll that reads the same reply again, or the same reply grown by a
     // wake or more text, does not bring them back, and a later reply's do show.
     const dismissedQuestions = new Map();
     // What the question slot and the Medusa slot were last drawn with, so
-    // a poll redraws them only when that changes (Critic W1).
+    // a poll redraws them only when that changes.
     let paintedQuestions = null;
     let paintedMedusa = null;
     // #3079 item 6: the message being sent — its chat, text and send id —
     // drawn at the bottom of that chat until the send settles.
-    let pendingSend = null;
+    // Several when a forced send overlaps another (#3082).
+    let pendingSends = [];
+    // What to run when the shell is torn down (#3082).
+    const destroyHooks = [];
+    // The flags of the send being handed to the page right now (#3082).
+    let sendFlags = null;
+    // #3085: the usage routes' last answers, whether the breakdown is open,
+    // the last calibration's outcome, and the page's calibrate action.
+    let usage = null;
+    let usageOpen = false;
+    let usageStatus = null;
+    let usageActions = null;
     // The chat whose Start fleet button has been clicked once (#3053).
     let fleetArmedKey = null;
     // The chat whose rename form is open (#3071), the name typed into it
@@ -3548,6 +4263,7 @@
         });
       }
       wireChat();
+      wireUsage();
       wireStart();
       wireRename();
       wireTreeLinks();
@@ -3778,11 +4494,14 @@
           if (key != null) chatDrafts.set(key, String((evt && evt.target && evt.target.value) || ''));
         });
         input.addEventListener('keydown', (evt) => {
-          if (chatKeyAction(evt) !== 'send') return;
+          const action = chatKeyAction(evt);
+          if (!action) return;
           if (typeof evt.preventDefault === 'function') evt.preventDefault();
-          submitChat();
+          submitChat(action === 'force');
         });
       }
+      const force = doc.getElementById('v6ChatForceSend');
+      if (force) force.addEventListener('click', () => submitChat(true));
       const form = doc.getElementById('v6ChatForm');
       if (form) {
         form.addEventListener('submit', (evt) => {
@@ -3807,6 +4526,7 @@
       }
       wireQuestions();
       wireMedusa();
+      wireVerbosity();
       const refresh = doc.getElementById('v6ChatRefresh');
       if (refresh && typeof options.onRefreshChat === 'function') refresh.addEventListener('click', () => options.onRefreshChat());
       const settings = doc.getElementById('v6ChatSettings');
@@ -3834,7 +4554,7 @@
       const key = chatTargetKey();
       const live = chat && chat.live;
       // Only a read of the pane that asks nothing spends them; a failed
-      // read says nothing about the question (second review, W1).
+      // read says nothing about the question.
       if (key != null && live && Array.isArray(live.questions) && !live.questions.length) dismissedQuestions.delete(key);
       return openQuestions(chat && chat.live, dismissedFor(key));
     }
@@ -3855,8 +4575,8 @@
 
     /**
      * Redraw the question slot and wire its ✕ buttons — only when what it
-     * shows changed, so a poll never takes keyboard focus off a ✕ (Critic
-     * W1). The slot as last drawn is {@link paintedQuestions}.
+     * shows changed, so a poll never takes keyboard focus off a ✕. The
+     * slot as last drawn is {@link paintedQuestions}.
      * @returns {boolean} Whether it was redrawn.
      */
     function paintQuestions() {
@@ -3890,6 +4610,139 @@
       });
     }
 
+    /** @returns {string} The usage meter as it stands (#3085), or '' before the routes answer. */
+    function usageMarkupNow() {
+      return usage ? usageMeterMarkup(usageMeterModel(usage.windows, usage.sessions), { open: usageOpen, status: usageStatus }) : '';
+    }
+
+    /**
+     * Redraw the meter alone (#3085), or the shell if its footer has no slot
+     * yet. A refresh keeps what the operator has typed in the breakdown and
+     * where their focus was.
+     */
+    function paintUsage() {
+      const slot = doc.getElementById('v6EngineUsageSlot');
+      if (!slot) { render(); return; }
+      const typed = {};
+      USAGE_ENGINES.forEach(({ key }) => [`v6UsageWeekly-${key}`, `v6UsageFiveHour-${key}`].forEach((id) => {
+        const el = doc.getElementById(id);
+        if (el && typeof el.value === 'string' && el.value !== '') typed[id] = el.value;
+      }));
+      const active = doc.activeElement;
+      const focusId = active && typeof active.id === 'string' && /^v6(Usage|EngineUsage)/.test(active.id) ? active.id : null;
+      slot.innerHTML = usageMarkupNow();
+      Object.keys(typed).forEach((id) => {
+        const el = doc.getElementById(id);
+        if (el) el.value = typed[id];
+      });
+      const back = focusId ? doc.getElementById(focusId) : null;
+      if (back && typeof back.focus === 'function') back.focus();
+      wireUsage();
+    }
+
+    /**
+     * The meter opens and closes its breakdown; each engine's Set button
+     * records the operator's "% left" for it (#3085, A753-1).
+     */
+    function wireUsage() {
+      // Once per element: a redraw makes new ones, a repeat call must not double up.
+      const fresh = (el) => {
+        if (!el || (el.dataset && el.dataset.usageWired)) return false;
+        if (el.dataset) el.dataset.usageWired = '1';
+        return true;
+      };
+      // Escape closes the breakdown and hands focus back to the meter.
+      const popover = doc.getElementById('v6EngineUsagePopover');
+      if (fresh(popover)) {
+        popover.addEventListener('keydown', (evt) => {
+          if (!evt || (evt.key !== 'Escape' && evt.key !== 'Esc') || !usageOpen) return;
+          usageOpen = false;
+          paintUsage();
+          const m = doc.getElementById('v6EngineUsageMeter');
+          if (m && typeof m.focus === 'function') m.focus();
+        });
+      }
+      const meter = doc.getElementById('v6EngineUsageMeter');
+      if (fresh(meter)) {
+        meter.addEventListener('click', () => {
+          usageOpen = !usageOpen;
+          paintUsage();
+          const again = doc.getElementById('v6EngineUsageMeter');
+          if (again && typeof again.focus === 'function') again.focus();
+        });
+      }
+      USAGE_ENGINES.forEach(({ key, name }) => {
+        const btn = doc.getElementById(`v6UsageSave-${key}`);
+        if (!fresh(btn)) return;
+        btn.addEventListener('click', () => {
+          const read = (id) => {
+            const el = doc.getElementById(id);
+            const raw = el && typeof el.value === 'string' ? el.value.trim() : '';
+            return raw === '' ? undefined : Number(raw);
+          };
+          const weekly = read(`v6UsageWeekly-${key}`);
+          const fiveHour = read(`v6UsageFiveHour-${key}`);
+          const bad = [weekly, fiveHour].some((v) => v !== undefined && !(Number.isFinite(v) && v >= 0 && v <= 100));
+          if (bad || (weekly === undefined && fiveHour === undefined)) {
+            usageStatus = { kind: 'error', message: `${name}: enter a weekly or 5-hour % left between 0 and 100.` };
+            paintUsage();
+            return;
+          }
+          if (!usageActions || typeof usageActions.calibrate !== 'function') return;
+          usageStatus = { kind: 'pending', message: `Setting ${name}…` };
+          paintUsage();
+          Promise.resolve(usageActions.calibrate(key, weekly, fiveHour)).then((result) => {
+            usageStatus = result && result.ok
+              ? { kind: 'ok', message: `${name} set.` }
+              : { kind: 'error', message: `${name} not set: ${(result && result.error) || 'the server refused it'}` };
+            paintUsage();
+          });
+        });
+      });
+    }
+
+    /** @returns {Object<string, string>} The chat on screen's thumbnails: file name → `blob:` URL (#3082). */
+    function thumbsNow() {
+      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      return (chat && chat.thumbs) || {};
+    }
+
+    /**
+     * Redraw the replies the verbosity filter tucked away, and their count
+     * on the Under the Hood summary (#3082).
+     * @param {object|null} live
+     */
+    function paintTucked(live) {
+      const tucked = tuckedTurns(live && Array.isArray(live.turns) ? live.turns : [], verbosity);
+      const list = doc.getElementById('v6ChatTucked');
+      if (list) list.innerHTML = tuckedMarkup(tucked, thumbsNow());
+      const count = doc.getElementById('v6ChatTuckedCount');
+      if (count) count.innerHTML = escapeHtml(tuckedCountText(tucked.length));
+    }
+
+    /**
+     * Each verbosity checkbox (#3082) shows or tucks its kind of reply, in
+     * place, and is remembered.
+     */
+    function wireVerbosity() {
+      ['v6ChatShowBlockers', 'v6ChatShowMilestones', 'v6ChatShowChatter'].forEach((id) => {
+        const box = doc.getElementById(id);
+        if (!box) return;
+        box.addEventListener('change', (evt) => {
+          const target = evt && evt.target ? evt.target : box;
+          const key = target.getAttribute ? target.getAttribute('data-verbosity') : null;
+          const which = key || { v6ChatShowBlockers: 'blockers', v6ChatShowMilestones: 'milestones', v6ChatShowChatter: 'chatter' }[id];
+          verbosity = Object.assign({}, verbosity, { [which]: Boolean(target.checked) });
+          prefs.set('tc_v6_chat_verbosity', verbosity);
+          const view = detail && detail.kind === 'conversation' ? detail.view : null;
+          const live = view && view.chat ? view.chat.live : null;
+          const liveEl = doc.getElementById('v6ChatLive');
+          if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], String((view && view.project && view.project.name) || ''), verbosity, thumbsNow());
+          paintTucked(live);
+        });
+      });
+    }
+
     /**
      * Redraw the recorded events around the live turns, and the pending
      * bubble (#3079 item 6), as a poll moves what the pane shows.
@@ -3901,17 +4754,17 @@
       const name = String((view.project && view.project.name) || '');
       const parts = arrangeRecorded(view.events, chat.live && Array.isArray(chat.live.turns) ? chat.live.turns : [], chat.lastSent);
       const head = doc.getElementById('v6ChatRecorded');
-      if (head) head.innerHTML = recordedEventsMarkup(parts.head, name);
+      if (head) head.innerHTML = recordedEventsMarkup(parts.head, name, chat.thumbs);
       const tailEl = doc.getElementById('v6ChatRecordedTail');
-      if (tailEl) tailEl.innerHTML = recordedEventsMarkup(parts.tail, name);
+      if (tailEl) tailEl.innerHTML = recordedEventsMarkup(parts.tail, name, chat.thumbs);
       const pendingEl = doc.getElementById('v6ChatPending');
-      if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSend && pendingSend.key === chatTargetKey() ? pendingSend : null, chat.lastSent);
+      if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSends.filter((p) => p.key === chatTargetKey()), chat.lastSent, chat.thumbs);
     }
 
     /**
      * Bring the Medusa indicator up to date (#3076). While it stays on
      * screen its button is updated in place, never replaced, so a poll
-     * cannot take focus off it or swallow a click (Critic W1); it is drawn
+     * cannot take focus off it or swallow a click; it is drawn
      * or removed only when it appears or goes.
      * @param {object|null|undefined} medusa
      */
@@ -4043,15 +4896,28 @@
      * Hand the composer's text to the page, unless there is nothing to send:
      * no text and no attachment.
      */
-    function submitChat() {
+    /**
+     * Hand the composer's text to the page to send (#3047). A forced send
+     * (#3082, Ruling A757) carries `{priority, startupIntervention}`: as the
+     * second argument, and — since a page may pass the text alone — for the
+     * controller to take from {@link takeSendFlags} while this call runs.
+     * @param {boolean} [force]
+     */
+    function submitChat(force) {
       const input = doc.getElementById('v6ChatInput');
       const text = String((input && typeof input.value === 'string' ? input.value : chatDrafts.get(chatTargetKey())) || '').trim();
       const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
       const hasFiles = Boolean(chat && Array.isArray(chat.attachments) && chat.attachments.some((a) => a && a.status !== 'error'));
       if ((!text && !hasFiles) || typeof options.onSendChat !== 'function') return;
-      // #3079: sending is the operator answering; the queue clears.
-      dismissQuestions(questionsNow());
-      options.onSendChat(text);
+      const flags = force ? { priority: true, startupIntervention: true } : null;
+      sendFlags = flags;
+      try {
+        if (flags) options.onSendChat(text, flags);
+        else options.onSendChat(text);
+      } finally {
+        // Only the send this call started may take them.
+        sendFlags = null;
+      }
     }
 
     /**
@@ -4097,6 +4963,14 @@
       currentRoute = parseRoute(readHash());
       if (!root) return;
       const saved = captureViewState();
+      // A764/A765: the header docked in the dashboard bar and the stats moved
+      // into the footer belong to the drawing about to be replaced; take the
+      // header out and send the stats home first, so the redraw loses
+      // neither, and onRender docks and moves the new ones.
+      returnDashStats(doc);
+      const bar = typeof doc.querySelector === 'function' ? doc.querySelector('.dash-bar') : null;
+      const oldHeader = bar && typeof bar.querySelector === 'function' ? bar.querySelector('.v6-chat-header') : null;
+      if (oldHeader) oldHeader.remove();
       const title = routeTitle(currentRoute);
       shownTree = filterTree(tree, { text: filterText, engine: filterEngine, groups: selectedGroups }, projectRows);
       // #3053: the template wizard and attestation pills are not chat
@@ -4145,12 +5019,13 @@
             rename: renameOpenKey != null && renameOpenKey === chatTargetKey()
               ? { open: true, draft: renameDraft, warning: renameWarning } : null,
             sidebarCollapsed, activityElapsed, telemetry, dismissedQuestions: dismissedFor(chatTargetKey()),
-            pending: pendingSend && pendingSend.key === chatTargetKey() ? pendingSend : null
+            pending: pendingSends.filter((p) => p.key === chatTargetKey()),
+            verbosity
           })}</div>
           <div id="v6ShellWizard"${inChat ? ' hidden' : ''}>${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation"${inChat ? ' hidden' : ''}>${modelAttestationMarkup(attestation)}</div>
         </main>
-        ${watermarkFooterMarkup(showWatermark, telemetry)}
+        ${watermarkFooterMarkup(showWatermark, telemetry, usageMarkupNow())}
       `;
       const shownChat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
       paintedQuestions = chatQuestionInner(questionsNow());
@@ -4319,8 +5194,9 @@
         const live = update && update.live ? update.live : null;
         const name = String((detail.view.project && detail.view.project.name) || '');
         const medusa = update && 'medusa' in update ? update.medusa : detail.view.chat && detail.view.chat.medusa;
+        const thumbs = update && update.thumbs ? update.thumbs : (detail.view.chat && detail.view.chat.thumbs);
         detail = Object.assign({}, detail, {
-          view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { peek, live, medusa }) })
+          view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { peek, live, medusa, thumbs }) })
         });
         const traffic = doc.getElementById('v6ChatSwitchboard');
         if (traffic) traffic.innerHTML = switchboardMarkup(switchboardItems(detail.view.events, live));
@@ -4334,7 +5210,8 @@
         const stream = doc.getElementById('v6ChatStream');
         const streamAtBottom = isAtBottom(stream);
         const liveEl = doc.getElementById('v6ChatLive');
-        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name);
+        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name, verbosity, thumbsNow());
+        paintTucked(live);
         paintRecorded();
         if (streamAtBottom) pinToBottom(stream);
         paintQuestions();
@@ -4383,8 +5260,11 @@
       beginSend(projectId, text, id) {
         const key = String(projectId);
         chatDrafts.delete(key);
-        pendingSend = { key, text: String(text || ''), id };
+        pendingSends = pendingSends.filter((p) => p.id !== id).concat({ key, text: String(text || ''), id });
         if (key !== chatTargetKey()) return;
+        // #3079: a send going out is the operator answering, so the queue
+        // clears — here, once it really goes, not when Send was pressed.
+        dismissQuestions(questionsNow());
         const input = doc.getElementById('v6ChatInput');
         if (input) input.value = '';
         paintRecorded();
@@ -4395,10 +5275,12 @@
        * composer unless something new has been typed there since.
        * @param {*} projectId
        * @param {string} [restore]
+       * @param {*} [id] - The send that settled; its bubble alone goes.
        */
-      endSend(projectId, restore) {
+      endSend(projectId, restore, id) {
         const key = String(projectId);
-        if (pendingSend && pendingSend.key === key) pendingSend = null;
+        // That send's bubble only; without an id, every one of the project's.
+        pendingSends = pendingSends.filter((p) => !(p.key === key && (id === undefined || p.id === id)));
         if (typeof restore === 'string' && restore && !chatDrafts.get(key)) {
           chatDrafts.set(key, restore);
           const input = key === chatTargetKey() ? doc.getElementById('v6ChatInput') : null;
@@ -4406,7 +5288,49 @@
         }
         if (key === chatTargetKey()) paintRecorded();
       },
+      /**
+       * The chat's thumbnails changed (#3082): file name → `blob:` URL.
+       * Redraws the message lists in place, never the composer.
+       * @param {Object<string, string>} thumbs
+       */
+      setThumbs(thumbs) {
+        if (!detail || detail.kind !== 'conversation' || !detail.view) return;
+        detail = Object.assign({}, detail, { view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { thumbs: thumbs || {} }) }) });
+        const view = detail.view;
+        const liveEl = doc.getElementById('v6ChatLive');
+        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(view.chat.live ? view.chat.live.turns : [], String((view.project && view.project.name) || ''), verbosity, thumbsNow());
+        paintTucked(view.chat.live);
+        paintRecorded();
+      },
+      /**
+       * Run `fn` when the shell is torn down (#3082: the chat's blob URLs
+       * are released then).
+       * @param {Function} fn
+       */
+      onDestroy(fn) { if (typeof fn === 'function') destroyHooks.push(fn); },
+      /**
+       * The flags of the send the composer is handing over right now (#3082):
+       * `{priority, startupIntervention}` for a Force Send, else null.
+       * @returns {{priority: boolean, startupIntervention: boolean}|null}
+       */
+      takeSendFlags() { const f = sendFlags; sendFlags = null; return f; },
+      /**
+       * The usage routes' latest answers (#3085): redraws the meter.
+       * @param {{windows: object|null, sessions: object|null}|null} data
+       */
+      setUsage(data) {
+        usage = data && data.windows ? data : null;
+        paintUsage();
+      },
+      /**
+       * What the meter's Set buttons call (#3085): `calibrate(provider,
+       * weeklyPct, fiveHourPct)` resolving to `{ok, error?}`. Handed over by
+       * the page's controller, since the page wires no option for it.
+       * @param {{calibrate: Function}} actions
+       */
+      setUsageActions(actions) { usageActions = actions || null; },
       destroy() {
+        destroyHooks.splice(0).forEach((fn) => fn());
         if (tickerId != null) { stopTicker(tickerId); tickerId = null; }
         busy = null;
         if (win && typeof win.removeEventListener === 'function') win.removeEventListener('hashchange', handleHashChange);
@@ -4441,6 +5365,9 @@
   global.tcV6ChatKeyAction = chatKeyAction;
   global.tcV6FormatElapsed = formatElapsed;
   global.tcV6ExtractLiveTurns = extractLiveTurns;
+  global.tcV6MessageMarkup = messageMarkup;
+  global.tcV6UsageMeterModel = usageMeterModel;
+  global.tcV6UsageMeterMarkup = usageMeterMarkup;
   global.tcV6LongPromptCommand = longPromptCommand;
   global.tcV6RecordedText = recordedText;
   global.tcV6EventBodyBytes = eventBodyBytes;
