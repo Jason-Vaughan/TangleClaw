@@ -5273,3 +5273,57 @@ p.v6-history-secret {
   font-weight: 600;
   overflow-wrap: anywhere;
 }
+
+/* #3088: the car progress matrix and its six gate pills. A gate inferred
+   from the stage is outlined, not filled, so it never reads as a receipt;
+   a gate bound to an older head is struck through. */
+.sprint-gate-matrix {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.sprint-gate-matrix caption {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 6px;
+}
+.sprint-gate-matrix th,
+.sprint-gate-matrix td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--v6-outline, #3d444d);
+  text-align: left;
+  white-space: nowrap;
+}
+.sprint-gate-wave th {
+  padding-top: 10px;
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+.sprint-gate-pill {
+  display: inline-block;
+  min-width: 2.2em;
+  padding: 1px 6px;
+  border: 1.5px solid transparent;
+  border-radius: 999px;
+  font-size: 0.8em;
+  font-weight: 600;
+  text-align: center;
+}
+.sprint-gate-pill.is-pass { background: #2ea043; border-color: #2ea043; color: #fff; }
+.sprint-gate-pill.is-fail { background: #f85149; border-color: #f85149; color: #fff; }
+.sprint-gate-pill.is-blocked { background: #6e2a2a; border-color: #f85149; color: #fff; }
+.sprint-gate-pill.is-in_progress { background: #d4a72c; border-color: #d4a72c; color: #000; }
+.sprint-gate-pill.is-pending { background: transparent; border-color: #8c959f; }
+.sprint-gate-pill.is-unknown { background: transparent; border-color: #8c959f; border-style: dotted; opacity: 0.7; }
+.sprint-gate-pill.is-inferred {
+  background: transparent;
+  border-style: dashed;
+  color: inherit;
+}
+.sprint-gate-pill.is-stale {
+  text-decoration: line-through;
+  outline: 2px solid #d4a72c;
+  outline-offset: 1px;
+}

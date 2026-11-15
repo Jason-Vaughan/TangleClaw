@@ -6658,3 +6658,96 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
     assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{\s*\.v6-usage-pill\.is-critical \{\s*animation: none;/);
   });
 });
+
+describe('the car progress matrix and its six gates (#3088, Rulings A782 and PM a79f9e44)', () => {
+  const ui = require('../public/sprint-wave-ui.js');
+  const statuses = (row) => ui.carGates(row).map((g) => `${g.status}/${g.source}`);
+
+  it('lists the six gates in order', () => {
+    assert.deepEqual(ui.GATES.map((g) => g.key), ['g0', 'aGate', 'oGate', 'prr', 'ci', 'iGate']);
+    assert.deepEqual(ui.carGates({}).map((g) => g.label), ['G0', 'A', 'O', 'PRR', 'CI', 'I']);
+  });
+
+  it('infers each gate from the stage the tracker assigns, marked as inferred', () => {
+    const p = 'pass/stage';
+    assert.deepEqual(statuses({ stage: 'closed' }), [p, p, p, p, p, p]);
+    assert.deepEqual(statuses({ stage: 'in-review' }), [p, 'in_progress/stage', 'in_progress/stage', 'in_progress/stage', 'in_progress/stage', 'pending/stage']);
+    for (const stage of ['in-progress', 'claimed', 'unassigned']) {
+      assert.deepEqual(statuses({ stage }), [p, 'pending/stage', 'pending/stage', 'pending/stage', 'pending/stage', 'pending/stage'], stage);
+    }
+    assert.deepEqual(statuses({ stage: 'blocked' }), [p, 'blocked/stage', 'blocked/stage', 'blocked/stage', 'blocked/stage', 'blocked/stage']);
+    // The ruling's own names are accepted too.
+    assert.deepEqual(statuses({ stage: 'merged' }), statuses({ stage: 'closed' }));
+    assert.deepEqual(statuses({ stage: 'gating' }), statuses({ stage: 'in-review' }));
+    assert.deepEqual(statuses({ stage: 'failed' }), statuses({ stage: 'blocked' }));
+    // An unknown stage, or one that names a prototype property, infers nothing.
+    for (const stage of ['shipping', 'constructor', undefined]) {
+      assert.deepEqual(statuses({ stage }), Array(6).fill('unknown/unknown'), String(stage));
+    }
+  });
+
+  it('shows a recorded gate as recorded, with its SHA and token, over the stage', () => {
+    const row = { stage: 'in-review', headSha: 'ABCDEF1234567890',
+      gates: { aGate: { status: 'approved', sha: 'abcdef12', token: 'A778' }, oGate: 'HOLD', ci: { status: 'running' }, prr: 'not-a-status' } };
+    const gates = ui.carGates(row);
+    assert.deepEqual(plain(gates[1]), { key: 'aGate', label: 'A', name: 'A-Gate (architect, exact head)', status: 'pass', source: 'recorded', sha: 'abcdef12', token: 'A778', stale: false });
+    assert.equal(`${gates[2].status}/${gates[2].source}`, 'fail/recorded');
+    assert.equal(`${gates[4].status}/${gates[4].source}`, 'in_progress/recorded');
+    assert.equal(`${gates[3].status}/${gates[3].source}`, 'in_progress/stage', 'a status it cannot read falls back to the stage');
+    assert.equal(gates[0].sha, null, 'an inferred gate never carries a SHA');
+    // Spaces, dashes and capitals in a status are read; a status naming a prototype property is not one.
+    const more = ui.carGates({ stage: 'claimed', gates: { ci: 'In Progress', iGate: 'constructor', g0: 'in-progress' } });
+    assert.equal(`${more[4].status}/${more[4].source}`, 'in_progress/recorded');
+    assert.equal(`${more[0].status}/${more[0].source}`, 'in_progress/recorded');
+    assert.equal(`${more[5].status}/${more[5].source}`, 'pending/stage');
+  });
+
+  it('marks a recorded gate bound to a different SHA from the head as stale, and shows only real SHAs', () => {
+    const g = (gate, head) => ui.carGates({ headSha: head, gates: { ci: gate } })[4];
+    assert.equal(g({ status: 'pass', sha: '1111111' }, '2222222aaaa').stale, true);
+    assert.equal(g({ status: 'pass', sha: '2222222' }, '2222222aaaa').stale, false, 'a prefix of the head is the same commit');
+    assert.equal(g({ status: 'pass', sha: '2222222' }, undefined).stale, false, 'no head, nothing to compare');
+    assert.equal(g({ status: 'pass', sha: 'not a sha' }, '2222222').sha, null);
+    assert.equal(ui.carGates({ exactHead: '3333333', gates: { ci: { status: 'pass', sha: '4444444' } } })[4].stale, true, 'exactHead is read too');
+  });
+
+  it('draws a matrix row per car, grouped by wave, below the stage columns, all escaped', () => {
+    const html = ui.renderSprintWaveBoard(null, {
+      waves: [['B'], ['A', 'ghost']],
+      dispatch: {
+        A: { stage: 'in-review', laneName: 'TC-Lane-A', openPrNumber: 3097, headSha: 'abcdef1234', gates: { aGate: { status: 'pass', sha: 'abcdef12', token: 'A778' } } },
+        B: { stage: 'closed', laneName: null, openPrNumber: null },
+        '<x>': { stage: 'claimed', laneName: '<b>lane</b>' }
+      }
+    });
+    assert.ok(html.indexOf('class="sprint-wave-board"') < html.indexOf('class="sprint-gate-matrix"'), 'the columns stay first');
+    assert.match(html, /<caption>Cars and their gates<\/caption><thead><tr><th scope="col">Car<\/th><th scope="col">Lane<\/th><th scope="col">PR<\/th><th scope="col">Head<\/th><th scope="col" title="Gate 0 \(charter &amp; disjointness\)">G0<\/th>/);
+    const order = [...html.matchAll(/<tr class="sprint-gate-wave"><th scope="rowgroup" colspan="10">([^<]+)<\/th><\/tr>|<tr class="sprint-gate-row" data-car-id="([^"]+)">/g)].map((m) => m[1] || m[2]);
+    assert.deepEqual(order, ['Wave 1', 'B', 'Wave 2', 'A', 'Not in a wave', '&lt;x&gt;']);
+    assert.match(html, /<tr class="sprint-gate-row" data-car-id="A"><th scope="row" class="sprint-gate-car">A<\/th><td class="sprint-gate-lane">TC-Lane-A<\/td><td class="sprint-gate-pr">#3097<\/td><td class="sprint-gate-head"><code>abcdef12<\/code><\/td>/);
+    assert.match(html, /<span class="sprint-gate-pill is-pass" title="A-Gate \(architect, exact head\): passed @ abcdef12 · A778" aria-label="[^"]+">A<\/span>/);
+    assert.match(html, /<span class="sprint-gate-pill is-in_progress is-inferred" title="O-Gate \(independent peer, exact head\): in progress \(from stage\)"/);
+    assert.match(html, /data-car-id="B"><th scope="row" class="sprint-gate-car">B<\/th><td class="sprint-gate-lane">—<\/td><td class="sprint-gate-pr">—<\/td><td class="sprint-gate-head">—<\/td>/);
+    assert.match(html, /<td class="sprint-gate-lane">&lt;b&gt;lane&lt;\/b&gt;<\/td>/);
+    assert.doesNotMatch(html, /<b>lane/);
+  });
+
+  it('styles an inferred gate as an outline, never a filled receipt, and strikes a stale one', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    const rule = (sel) => (css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.]/g, '\\.')}\\s*\\{([^}]*)\\}`)) || [])[1] || '';
+    assert.match(rule('.sprint-gate-pill.is-inferred'), /background: transparent;[\s\S]*border-style: dashed;/);
+    assert.ok(css.indexOf('.sprint-gate-pill.is-inferred {') > css.indexOf('.sprint-gate-pill.is-pass {'), 'declared after the filled states, so it wins');
+    assert.match(rule('.sprint-gate-pill.is-stale'), /text-decoration: line-through;/);
+    assert.match(rule('.sprint-gate-matrix'), /overflow-x: auto;/);
+  });
+
+  it('marks a stale gate in its pill, names an unrecorded gate as such, and draws no matrix with no cars', () => {
+    const html = ui.renderSprintWaveBoard(null, { dispatch: { C: { stage: 'mystery', headSha: '9999999', gates: { ci: { status: 'pass', sha: '1234567' } } } } });
+    assert.match(html, /<span class="sprint-gate-pill is-pass is-stale" title="CI receipt: passed @ 1234567 — bound to an older head"/);
+    assert.match(html, /title="Gate 0 \(charter &amp; disjointness\): unknown \(not recorded\)"/);
+    assert.doesNotMatch(html, /<tr class="sprint-gate-wave"/, 'a lone ungrouped list has no wave heading');
+    assert.doesNotMatch(ui.renderSprintWaveBoard(null, { dispatch: {} }), /sprint-gate-matrix/);
+    const twice = ui.renderSprintWaveBoard(null, { waves: [['D'], ['D']], dispatch: { D: { stage: 'claimed' } } });
+    assert.equal((twice.match(/<tr class="sprint-gate-row" data-car-id="D">/g) || []).length, 1, 'a car listed in two waves is drawn once');
+  });
+});
