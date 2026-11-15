@@ -493,13 +493,186 @@
    * loader produced (already escaped there), or a loading line until it has.
    * @param {string} mode
    * @param {string|null|undefined} [content] - HTML from {@link workspacePanelContent}.
+   * @param {string} [extra] - HTML the shell adds after it (the train launch controls).
    * @returns {string} HTML.
    */
-  function workspacePanelMarkup(mode, content) {
+  function workspacePanelMarkup(mode, content, extra) {
     const m = WORKSPACE_MODES.find((x) => x.key === mode);
     if (!m || mode === 'chat' || mode === 'wizard') return '';
     return `<h2 class="v6-workspace-panel-title">${escapeHtml(m.label)}</h2>
-      ${typeof content === 'string' && content ? content : '<p class="v6-workspace-empty" role="status">Loading…</p>'}`;
+      ${typeof content === 'string' && content ? content : '<p class="v6-workspace-empty" role="status">Loading…</p>'}${typeof extra === 'string' ? extra : ''}`;
+  }
+
+  /** What a train launch status line can be (each is a CSS modifier). */
+  const TRAIN_STATUS_KINDS = Object.freeze(['pending', 'ok', 'error']);
+
+  /**
+   * The outcome under the train launch buttons (#3088): a status line and the
+   * escaped result of the last action.
+   * @param {{status: ({kind: string, message: string}|null), result: string}} train
+   * @returns {string} HTML.
+   */
+  function trainOutcomeMarkup(train) {
+    const t = train || {};
+    const st = t.status && TRAIN_STATUS_KINDS.includes(t.status.kind) ? t.status : null;
+    return `<p id="v6TrainStatus" class="v6-train-status${st ? ` is-${st.kind}` : ''}" role="status">${st ? escapeHtml(st.message) : ''}</p>`
+      + `<div id="v6TrainResult" class="v6-train-result">${typeof t.result === 'string' ? t.result : ''}</div>`;
+  }
+
+  /**
+   * The train launch controls under the Charter & Roadmap panel (#3088): a
+   * cars list, a fleet id, and Compute waves, Check disjointness and Start
+   * wave run, disabled while one is on its way.
+   * @param {{cars: string, fleet: string, pending: boolean, status: object|null, result: string}} train
+   * @returns {string} HTML.
+   */
+  function trainControlsMarkup(train) {
+    const t = train || {};
+    const off = t.pending ? ' disabled' : '';
+    const button = (id, label) => `<button type="button" id="${id}" class="btn btn-secondary btn-small"${off}>${label}</button>`;
+    return `<section class="v6-train-launch" aria-label="Train launch">
+      <h3 class="v6-workspace-panel-subtitle">Train launch</h3>
+      <label for="v6TrainCars">Cars (JSON: id, dependsOn, files)</label>
+      <textarea id="v6TrainCars" class="v6-train-cars" rows="6" spellcheck="false">${escapeHtml(t.cars || '')}</textarea>
+      <label for="v6TrainFleet">Fleet id</label>
+      <input type="text" id="v6TrainFleet" class="v6-train-fleet" value="${escapeHtml(t.fleet || '')}" autocomplete="off">
+      <div class="v6-train-actions">${button('v6TrainComputeWaves', 'Compute waves')}${button('v6TrainValidate', 'Check disjointness')}${button('v6TrainStartRun', 'Start wave run')}</div>
+      <div id="v6TrainOutcome">${trainOutcomeMarkup(t)}</div>
+    </section>`;
+  }
+
+  /**
+   * The Charter & Roadmap panel (#3088): the open project's charter, drawn by
+   * the sprint UI's charter builder from `{charter, activeVersion}` when it is
+   * loaded (else a built-in summary), with its versions and their Activate
+   * buttons; then the planned waves. Every value is escaped.
+   * @param {{ok: boolean, data?: object, notFound?: boolean, error?: string}|null} charter -
+   *   `GET /api/v6/projects/:id/charter`, or null with no project open.
+   * @param {{ok: boolean, data?: object, notFound?: boolean, error?: string}} waves - `GET /api/sprint-waves`.
+   * @param {object|null} ui - `window.TangleClawSprintWaveUi`, if loaded.
+   * @param {{startupSummary?: object|null, approvedRoles?: string[]}} [extra] - The active charter's
+   *   startup summary (`GET .../charter/startup-summary`, which carries its title, mission and version) and
+   *   its approved roles (`GET .../charter/export`); the charter row itself carries neither.
+   * @returns {string} HTML.
+   */
+  function charterPanelContent(charter, waves, ui, extra) {
+    const more = extra && typeof extra === 'object' ? extra : {};
+    const startupSummary = more.startupSummary && typeof more.startupSummary === 'object' ? more.startupSummary : null;
+    const approvals = (Array.isArray(more.approvedRoles) ? more.approvedRoles : []).filter((r) => typeof r === 'string' && r)
+      .map((role) => ({ approver_role: role }));
+    let top;
+    if (!charter) top = '<p class="v6-workspace-empty">Open a project\'s chat to see its charter.</p>';
+    else if (!charter.ok) {
+      top = charter.notFound ? '<p class="v6-workspace-empty">This project has no charter yet.</p>'
+        : `<p class="v6-workspace-empty is-error">Could not load the charter: ${escapeHtml(charter.error || 'the server did not answer')}.</p>`;
+    } else {
+      const d = charter.data && typeof charter.data === 'object' ? charter.data : {};
+      const c = d.charter && typeof d.charter === 'object' ? d.charter : {};
+      const versions = Array.isArray(d.versions) ? d.versions : [];
+      const activeVersion = versions.find((v) => v && c.active_version_id != null && String(v.id) === String(c.active_version_id)) || null;
+      let drawn = null;
+      if (ui && typeof ui.renderCharterReadinessPanel === 'function') {
+        try {
+          const html = ui.renderCharterReadinessPanel({ charter: c, activeVersion, startupSummary, approvals });
+          if (typeof html === 'string') drawn = html;
+        } catch (err) { // prawduct:allow prawduct/broad-except -- a builder from another car that throws must not blank the panel; the built-in summary stands in
+          drawn = null;
+        }
+      }
+      if (drawn == null) {
+        const title = startupSummary && startupSummary.title ? startupSummary.title : 'No active charter';
+        const number = startupSummary && startupSummary.versionNumber != null ? startupSummary.versionNumber : null;
+        drawn = `<p class="v6-workspace-item-stage">${escapeHtml(title)}${c.status ? ` · ${escapeHtml(c.status)}` : ''}${number != null ? ` · version ${escapeHtml(number)}` : ''}</p>`;
+      }
+      top = `${drawn}${charterVersionsMarkup(d)}`;
+    }
+    return `<section class="v6-charter-section" aria-label="Charter">${top}</section>`
+      + `<section class="v6-charter-section" aria-label="Planned waves"><h3 class="v6-workspace-panel-subtitle">Planned waves</h3>${workspacePanelContent('charter', waves, null)}</section>`;
+  }
+
+  /**
+   * Read the train launch's cars list (#3088): a JSON array of cars, each with
+   * a string `id` and optional `dependsOn` and `files` string lists.
+   * @param {string} text
+   * @returns {{ok: true, cars: Array<{id: string, dependsOn: string[], files: string[]}>}|{ok: false, error: string}}
+   */
+  function parseTrainCars(text) {
+    let parsed;
+    try {
+      parsed = JSON.parse(String(text || '').trim() || 'null');
+    } catch (err) { // prawduct:allow prawduct/broad-except -- JSON.parse only throws SyntaxError; its message becomes the operator's error line
+      return { ok: false, error: `the cars list is not valid JSON (${err.message})` };
+    }
+    if (!Array.isArray(parsed) || !parsed.length) return { ok: false, error: 'list at least one car, as [{"id": "...", "dependsOn": [], "files": []}]' };
+    const strings = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x) : []);
+    const cars = [];
+    for (const car of parsed) {
+      if (!car || typeof car !== 'object' || typeof car.id !== 'string' || !car.id.trim()) return { ok: false, error: 'every car needs a text "id"' };
+      cars.push({ id: car.id.trim(), dependsOn: strings(car.dependsOn), files: strings(car.files) });
+    }
+    return { ok: true, cars };
+  }
+
+  /**
+   * A train launch result, escaped (#3088): computed waves, a disjointness
+   * check, or a started wave run.
+   * @param {('waves'|'disjointness'|'run')} kind
+   * @param {object} data - The route's answer.
+   * @returns {string} HTML.
+   */
+  function trainResultMarkup(kind, data) {
+    const d = data && typeof data === 'object' ? data : {};
+    const code = (v) => `<code>${escapeHtml(v)}</code>`;
+    if (kind === 'waves') {
+      const waves = Array.isArray(d.waves) ? d.waves.filter(Array.isArray) : [];
+      if (!waves.length) return '<p class="v6-workspace-empty">No waves.</p>';
+      return `<ol class="v6-train-waves">${waves.map((w) => `<li>${w.map(code).join(', ')}</li>`).join('')}</ol>`;
+    }
+    if (kind === 'disjointness') {
+      const r = d.result && typeof d.result === 'object' ? d.result : d;
+      const list = (v) => (Array.isArray(v) ? v.filter((x) => x && typeof x === 'object') : []);
+      const collisions = list(r.collisions);
+      const oversized = list(r.oversizedCars);
+      const drift = list(r.scopeDrift);
+      if (!collisions.length && !oversized.length && !drift.length) return '<p class="v6-train-ok">Disjoint: no shared files, no oversized cars, no scope drift.</p>';
+      const files = (v) => (Array.isArray(v) ? v.map(code).join(', ') : '');
+      return `<ul class="v6-workspace-list">${[
+        ...collisions.map((c) => `<li class="v6-workspace-item is-error">${code(c.carA)} and ${code(c.carB)} share ${files(c.files)}</li>`),
+        ...oversized.map((c) => `<li class="v6-workspace-item is-error">${code(c.carId)} bundles ${escapeHtml(c.issueCount)} issues</li>`),
+        ...drift.map((c) => `<li class="v6-workspace-item is-error">${code(c.carId)} drifts: declared only ${files(c.declaredOnly) || 'none'}; touched only ${files(c.actualOnly) || 'none'}</li>`)
+      ].join('')}</ul>`;
+    }
+    if (kind === 'run') {
+      const waves = Array.isArray(d.waves) ? d.waves.length : 0;
+      return `<p class="v6-train-ok">Started wave run ${code(d.id || '?')} with ${waves} wave${waves === 1 ? '' : 's'}.</p>`;
+    }
+    return '';
+  }
+
+  /**
+   * A project's charter versions with an Activate button on each version that
+   * is not the active one (#3088), escaped.
+   * @param {{charter?: object, versions?: Array<object>}} data - `GET /api/v6/projects/:id/charter`.
+   * @returns {string} HTML.
+   */
+  function charterVersionsMarkup(data) {
+    const d = data && typeof data === 'object' ? data : {};
+    const charter = d.charter && typeof d.charter === 'object' ? d.charter : {};
+    const activeId = charter.active_version_id != null ? String(charter.active_version_id) : null;
+    const versions = Array.isArray(d.versions) ? d.versions.filter((v) => v && typeof v === 'object' && Number.isInteger(Number(v.id))) : [];
+    if (!versions.length) return '<p class="v6-workspace-empty">This charter has no versions yet.</p>';
+    return `<ul class="v6-workspace-list v6-charter-versions">${versions.map((v) => {
+      const id = String(Number(v.id));
+      const active = activeId === id;
+      const number = v.version_number != null ? String(v.version_number) : id;
+      const label = `Version ${number}`;
+      return `<li class="v6-workspace-item"><span class="v6-workspace-item-id">${escapeHtml(label)}</span>`
+        + (v.created_at ? ` <span class="v6-workspace-item-stage">${escapeHtml(v.created_at)}</span>` : '')
+        + (active ? ' <span class="v6-workspace-item-lane">active</span>'
+          : ` <button type="button" id="v6CharterActivate-${id}" class="btn btn-secondary btn-small v6-charter-activate" data-version-id="${id}" data-version-number="${escapeHtml(number)}"`
+            + ` aria-label="Activate ${escapeHtml(label)}">Activate</button>`)
+        + '</li>';
+    }).join('')}</ul>`;
   }
 
   /**
@@ -542,11 +715,12 @@
         : `<p class="v6-workspace-empty is-error">Could not load this: ${escapeHtml(r.error || 'the server did not answer')}.</p>`;
     }
     const data = r.data && typeof r.data === 'object' ? r.data : {};
-    const builder = mode === 'sprint' ? 'renderSprintWaveBoard'
-      : mode === 'charter' ? 'renderCharterReadinessPanel' : mode === 'kaizen' ? 'renderKaizenLedgerPanel' : null;
+    // The charter builder draws a charter, not this payload's waves (#3088), so
+    // the waves here are always the built-in list; see charterPanelContent.
+    const builder = mode === 'sprint' ? 'renderSprintWaveBoard' : mode === 'kaizen' ? 'renderKaizenLedgerPanel' : null;
     if (builder && ui && typeof ui[builder] === 'function') {
       try {
-        const html = mode === 'sprint' ? ui[builder](null, data) : ui[builder](mode === 'kaizen' ? (data.report || data) : data);
+        const html = mode === 'sprint' ? ui[builder](null, data) : ui[builder](data.report || data);
         if (typeof html === 'string') return html;
       } catch (err) { // prawduct:allow prawduct/broad-except -- a builder from another car that throws must not blank the panel; the built-in drawing stands in
         // Fall through to the built-in drawing.
@@ -3880,12 +4054,93 @@
      * @returns {Promise<void>}
      */
     async function loadWorkspacePanel(mode) {
-      const data = await api(mode === 'kaizen' ? '/api/sprint-reports/current' : '/api/sprint-waves');
-      const result = data ? { ok: true, data } : { ok: false, notFound: api.lastErrorCode === 'NOT_FOUND', error: api.lastError };
-      const ui = result.ok ? await sprintWaveUi() : null;
+      const read = async (url) => {
+        const data = await api(url);
+        return data ? { ok: true, data } : { ok: false, notFound: api.lastErrorCode === 'NOT_FOUND', error: api.lastError };
+      };
+      const result = await read(mode === 'kaizen' ? '/api/sprint-reports/current' : '/api/sprint-waves');
+      // Charter & Roadmap also reads the open project's charter (#3088).
+      const project = mode === 'charter' && current && current.project ? current.project : null;
+      const base = project ? `/api/v6/projects/${encodeURIComponent(project.id)}/charter` : null;
+      const charter = base ? await read(base) : null;
+      // The charter row has no title or approvals: an active charter's startup summary carries its title,
+      // mission and version, and the export its approved roles.
+      const extra = {};
+      if (charter && charter.ok) {
+        const c = charter.data && charter.data.charter ? charter.data.charter : {};
+        if (c.active_version_id != null) {
+          const summary = await read(`${base}/startup-summary`);
+          extra.startupSummary = summary.ok ? summary.data : null;
+        }
+        const exported = await read(`${base}/export`);
+        extra.approvedRoles = exported.ok && Array.isArray(exported.data.approvedRoles) ? exported.data.approvedRoles : [];
+      }
+      const ui = result.ok || (charter && charter.ok) ? await sprintWaveUi() : null;
+      // A charter read for a project the operator has since left is dropped: its Activate buttons would act on
+      // the project now open (cumulative review).
+      if (project && !(current && current.project && String(current.project.id) === String(project.id))) return;
       const sh = getShell();
-      if (sh && typeof sh.setWorkspacePanel === 'function') sh.setWorkspacePanel(mode, workspacePanelContent(mode, result, ui));
+      if (!sh || typeof sh.setWorkspacePanel !== 'function') return;
+      sh.setWorkspacePanel(mode, mode === 'charter' ? charterPanelContent(charter, result, ui, extra) : workspacePanelContent(mode, result, ui));
     }
+
+    /**
+     * POST to a train launch route with the operator's proof (#3088).
+     * @param {string} url
+     * @param {object} body
+     * @returns {Promise<{data: object}|{error: string}>}
+     */
+    async function trainPost(url, body) {
+      let res;
+      try {
+        const headers = await operatorHeaders();
+        res = await api(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a refused operator proof becomes the train launch's error line
+        return { error: (err && err.message) || 'the operator proof could not be made' };
+      }
+      return res ? { data: res } : { error: api.lastError || 'the server refused it' };
+    }
+
+    /** @returns {object|null} The project whose chat is open, which a wave run and a charter belong to. */
+    function trainProject() {
+      return current && current.project ? current.project : null;
+    }
+
+    // The train launch's actions (#3088, Rulings A782 and PM a79f9e44): each
+    // resolves {ok, message, html?} for the shell to show, escaped.
+    const workspaceActions = {
+      async computeWaves(cars) {
+        const r = await trainPost('/api/v6/wave-scheduler/topological-waves', { cars: cars.map((c) => ({ id: c.id, dependsOn: c.dependsOn })) });
+        if (r.error) return { ok: false, message: `Not computed: ${r.error}` };
+        const n = Array.isArray(r.data.waves) ? r.data.waves.length : 0;
+        return { ok: true, message: `${n} wave${n === 1 ? '' : 's'}.`, html: trainResultMarkup('waves', r.data) };
+      },
+      async checkDisjointness(cars) {
+        const r = await trainPost('/api/sprint-waves/validate-disjointness', { cars: cars.map((c) => ({ id: c.id, files: c.files })) });
+        if (r.error) return { ok: false, message: `Not checked: ${r.error}` };
+        const result = r.data && r.data.result && typeof r.data.result === 'object' ? r.data.result : {};
+        return { ok: result.ok === true, message: result.ok === true ? 'Disjoint.' : 'Not disjoint.', html: trainResultMarkup('disjointness', r.data) };
+      },
+      async startRun(cars, fleetId) {
+        const project = trainProject();
+        if (!project) return { ok: false, message: 'Not started: open a project\'s chat first.' };
+        const r = await trainPost(`/api/v6/projects/${encodeURIComponent(project.id)}/wave-runs`, {
+          fleetId, cars: cars.map((c) => ({ id: c.id, dependsOn: c.dependsOn, fileScope: c.files }))
+        });
+        if (r.error) return { ok: false, message: `Not started: ${r.error}` };
+        loadWorkspacePanel('charter');
+        loadWorkspacePanel('sprint');
+        return { ok: true, message: 'Wave run started.', html: trainResultMarkup('run', r.data) };
+      },
+      async activateVersion(versionId, versionNumber) {
+        const project = trainProject();
+        if (!project) return { ok: false, message: 'Not activated: open a project\'s chat first.' };
+        const r = await trainPost(`/api/v6/projects/${encodeURIComponent(project.id)}/charter/versions/${encodeURIComponent(versionId)}/activate`, {});
+        if (r.error) return { ok: false, message: `Not activated: ${r.error}` };
+        loadWorkspacePanel('charter');
+        return { ok: true, message: `Version ${versionNumber != null ? versionNumber : versionId} is active.` };
+      }
+    };
     let workspaceLoaderGiven = false;
 
     async function handleRoute(route) {
@@ -3897,6 +4152,7 @@
       if (!workspaceLoaderGiven && typeof shell.setWorkspaceLoader === 'function') {
         workspaceLoaderGiven = true;
         shell.setWorkspaceLoader((mode) => { loadWorkspacePanel(mode); });
+        if (typeof shell.setWorkspaceActions === 'function') shell.setWorkspaceActions(workspaceActions);
       }
       const key = route && route.view ? JSON.stringify(route) : null;
       if (key === lastRouteKey) return;
@@ -4424,6 +4680,100 @@
     // Each data mode's panel content, and the controller's loader for it (#3086).
     const workspacePanels = new Map();
     let workspaceLoader = null;
+    // The train launch's drafts, outcome and the controller's actions (#3088).
+    const train = { cars: '', fleet: '', pending: false, status: null, result: '' };
+    let trainActions = null;
+
+    /** @param {string} mode @returns {string} A data mode's whole panel, train controls included. */
+    function panelMarkupNow(mode) {
+      return workspacePanelMarkup(mode, workspacePanels.get(mode), mode === 'charter' ? trainControlsMarkup(train) : '');
+    }
+
+    /** Repaint only the train launch's outcome, so the cars box keeps its text and focus. */
+    function paintTrainOutcome() {
+      const outcome = doc.getElementById('v6TrainOutcome');
+      if (outcome) outcome.innerHTML = trainOutcomeMarkup(train);
+      ['v6TrainComputeWaves', 'v6TrainValidate', 'v6TrainStartRun'].forEach((id) => {
+        const btn = doc.getElementById(id);
+        if (btn) btn.disabled = train.pending;
+      });
+    }
+
+    /**
+     * Run one train launch action (#3088): read the cars list, show what is
+     * happening, and show the escaped outcome. A list that does not read, a
+     * missing fleet id, or an action already on its way stops it here.
+     * @param {('computeWaves'|'checkDisjointness'|'startRun')} name
+     * @returns {Promise<void>}
+     */
+    async function runTrain(name) {
+      if (train.pending || !trainActions || typeof trainActions[name] !== 'function') return;
+      const parsed = parseTrainCars(train.cars);
+      if (!parsed.ok) {
+        train.status = { kind: 'error', message: `Not sent: ${parsed.error}.` };
+        paintTrainOutcome();
+        return;
+      }
+      if (name === 'startRun' && !train.fleet.trim()) {
+        train.status = { kind: 'error', message: 'Not sent: a wave run needs a fleet id.' };
+        paintTrainOutcome();
+        return;
+      }
+      await runTrainAction(() => trainActions[name](parsed.cars, train.fleet.trim()), 'Working…', 'Done.');
+    }
+
+    /**
+     * Run one train launch or charter action (#3088): show it on its way with
+     * the buttons disabled, then its escaped outcome; one that throws ends as
+     * the error line.
+     * @param {function(): Promise<{ok: boolean, message?: string, html?: string}>} act
+     * @param {string} pendingMessage
+     * @param {string} doneMessage - Shown when a successful action names nothing.
+     * @returns {Promise<void>}
+     */
+    async function runTrainAction(act, pendingMessage, doneMessage) {
+      train.pending = true;
+      train.status = { kind: 'pending', message: pendingMessage };
+      paintTrainOutcome();
+      let out;
+      try {
+        out = await act();
+      } catch (err) { // prawduct:allow prawduct/broad-except -- an action that throws must end as the operator's error line, not leave the buttons disabled
+        out = { ok: false, message: (err && err.message) || 'it failed' };
+      }
+      const o = out || {};
+      train.pending = false;
+      train.status = { kind: o.ok ? 'ok' : 'error', message: String(o.message || (o.ok ? doneMessage : 'It failed.')) };
+      train.result = typeof o.html === 'string' ? o.html : '';
+      paintTrainOutcome();
+    }
+
+    /**
+     * Wire the data panel's controls after it is painted (#3088): the train
+     * launch box and buttons, and each charter version's Activate button.
+     * @param {string} mode
+     */
+    function wireWorkspacePanel(mode) {
+      if (mode !== 'charter') return;
+      const cars = doc.getElementById('v6TrainCars');
+      if (cars) cars.addEventListener('input', () => { train.cars = String(cars.value || ''); });
+      const fleet = doc.getElementById('v6TrainFleet');
+      if (fleet) fleet.addEventListener('input', () => { train.fleet = String(fleet.value || ''); });
+      [['v6TrainComputeWaves', 'computeWaves'], ['v6TrainValidate', 'checkDisjointness'], ['v6TrainStartRun', 'startRun']].forEach(([id, name]) => {
+        const btn = doc.getElementById(id);
+        if (btn) btn.addEventListener('click', () => { runTrain(name); });
+      });
+      // Each listed version's Activate button, found by its id in the panel content (#3088).
+      const content = workspacePanels.get('charter') || '';
+      for (const m of content.matchAll(/id="v6CharterActivate-(\d+)"[^>]*data-version-number="([^"]*)"/g)) {
+        const btn = doc.getElementById(`v6CharterActivate-${m[1]}`);
+        if (!btn) continue;
+        btn.addEventListener('click', () => {
+          if (train.pending || !trainActions || typeof trainActions.activateVersion !== 'function') return;
+          runTrainAction(() => trainActions.activateVersion(Number(m[1]), m[2]), 'Activating…', 'Activated.');
+        });
+      }
+    }
 
     /** Ask the controller's loader for a data mode's panel (#3086); callers pass only data modes. */
     function loadWorkspacePanel(mode) {
@@ -4468,8 +4818,9 @@
       });
       const panel = doc.getElementById('v6WorkspacePanel');
       if (panel && shown.panel) {
-        panel.innerHTML = workspacePanelMarkup(mode, workspacePanels.get(mode));
+        panel.innerHTML = panelMarkupNow(mode);
         panel.setAttribute('aria-labelledby', `v6WorkspaceMode-${mode}`);
+        wireWorkspacePanel(mode);
         loadWorkspacePanel(mode);
       }
       syncDockedHeader();
@@ -4562,6 +4913,7 @@
 
     function wireControls() {
       wireWorkspaceModes();
+      if (workspaceVisibility(workspaceMode, Boolean(detail && detail.kind === 'conversation')).panel) wireWorkspacePanel(workspaceMode);
       const skipLink = doc.getElementById('v6ShellSkipLink');
       if (skipLink) {
         // PRR-B R1 HOLD (Ruling A579-PR3015-R1-HOLD-RECONCILED): a plain
@@ -5323,6 +5675,8 @@
       if (modeRouteKey !== lastModeRouteKey) {
         lastModeRouteKey = modeRouteKey;
         workspaceMode = 'chat';
+        // The charter panel belongs to the project that was open: never show it for another (#3088).
+        workspacePanels.delete('charter');
       }
       const shown = workspaceVisibility(workspaceMode, inChat);
       const activityElapsed = syncBusy();
@@ -5376,7 +5730,7 @@
           <div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard"${shown.wizard ? '' : ' hidden'}>${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation"${shown.attestation ? '' : ' hidden'}>${modelAttestationMarkup(attestation)}</div>
           <section id="v6WorkspacePanel" class="v6-workspace-panel" role="tabpanel"
-            aria-labelledby="v6WorkspaceMode-${shown.panel ? workspaceMode : 'sprint'}"${shown.panel ? '' : ' hidden'}>${shown.panel ? workspacePanelMarkup(workspaceMode, workspacePanels.get(workspaceMode)) : ''}</section>
+            aria-labelledby="v6WorkspaceMode-${shown.panel ? workspaceMode : 'sprint'}"${shown.panel ? '' : ' hidden'}>${shown.panel ? panelMarkupNow(workspaceMode) : ''}</section>
         </main>
         ${watermarkFooterMarkup(showWatermark, telemetry, usageMarkupNow())}
       `;
@@ -5698,6 +6052,12 @@
         if (workspaceVisibility(workspaceMode, Boolean(detail && detail.kind === 'conversation')).panel) loadWorkspacePanel(workspaceMode);
       },
       /**
+       * Register the controller's train launch actions (#3088). Each takes the
+       * read cars list (and the fleet id) and resolves `{ok, message, html?}`.
+       * @param {{computeWaves?: Function, checkDisjointness?: Function, startRun?: Function, activateVersion?: Function}} actions
+       */
+      setWorkspaceActions(actions) { trainActions = actions && typeof actions === 'object' ? actions : null; },
+      /**
        * Keep a data mode's panel content (#3086), and paint it when that mode
        * is the one shown; a mode the operator has left keeps it for next time.
        * @param {string} mode
@@ -5708,7 +6068,10 @@
         workspacePanels.set(mode, html);
         const panel = doc.getElementById('v6WorkspacePanel');
         const shownNow = workspaceVisibility(workspaceMode, Boolean(detail && detail.kind === 'conversation')).panel;
-        if (panel && shownNow && workspaceMode === mode) panel.innerHTML = workspacePanelMarkup(mode, html);
+        if (panel && shownNow && workspaceMode === mode) {
+          panel.innerHTML = panelMarkupNow(mode);
+          wireWorkspacePanel(mode);
+        }
       },
       destroy() {
         destroyHooks.splice(0).forEach((fn) => fn());
@@ -5760,6 +6123,11 @@
   global.tcV6WorkspaceVisibility = workspaceVisibility;
   global.tcV6WorkspaceModeBarMarkup = workspaceModeBarMarkup;
   global.tcV6WorkspacePanelContent = workspacePanelContent;
+  global.tcV6CharterPanelContent = charterPanelContent;
+  global.tcV6ParseTrainCars = parseTrainCars;
+  global.tcV6TrainResultMarkup = trainResultMarkup;
+  global.tcV6CharterVersionsMarkup = charterVersionsMarkup;
+  global.tcV6TrainControlsMarkup = trainControlsMarkup;
   global.tcV6CreateLiveController = createLiveController;
   global.tcCreateV6Shell = tcCreateV6Shell;
 })(typeof window !== 'undefined' ? window : globalThis);
