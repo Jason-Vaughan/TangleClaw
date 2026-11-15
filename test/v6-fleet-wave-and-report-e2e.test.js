@@ -257,6 +257,75 @@ describe('v6 Stage 3-4 E2E: fleet, wave and report, against the live server (#30
     });
   });
 
+  describe('#3088: a real charter in the Charter & Roadmap mode, and activating a version from it', () => {
+    it('draws the active charter\'s real title and approvals, refuses an unapproved version, and activates an approved one by its number', async () => {
+      const charters = require('../lib/v6/e1-project-charter-lifecycle');
+      const db = store.getDb();
+      // A charter on another project first, so this one's version ids differ from its version numbers.
+      const other = Number(seedProject('e2e-charter-other'));
+      charters.createDraftCharter(db, { projectId: other, content: { title: 'Other' }, actor: 'op' });
+      charters.saveDraftVersion(db, { projectId: other, content: { title: 'Other 2' }, actor: 'op' });
+      const projectId = Number(seedProject('e2e-charter'));
+      // Charter writes need a signed-in operator over HTTP; the login is off here, so they are seeded through the
+      // same library the routes call, on the same database. Only reading and activating go through the UI.
+      const created = charters.createDraftCharter(db, { projectId, content: { title: 'Ship v6.4', purposeAndBusinessCase: 'Live gates' }, actor: 'op' });
+      assert.equal(created.ok, true, JSON.stringify(created));
+      for (const role of ['sponsor', 'pm']) charters.recordApproval(db, { projectId, versionId: created.versionId, approverRole: role, approverActor: 'op' });
+      assert.equal(charters.activateCharter(db, { projectId, versionId: created.versionId, requiredRoles: [] }).ok, true);
+      const draft = charters.saveDraftVersion(db, { projectId, content: { title: 'Ship v6.4, amended' }, actor: 'op' });
+      assert.equal(draft.versionNumber, 2);
+      assert.notEqual(draft.versionId, 2, 'the id is not the number');
+
+      const G = loadV6Shell();
+      vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'sprint-wave-ui.js'), 'utf8'), G);
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const api = async (url, init) => {
+        const res = await send((init && init.method) || 'GET', url, init && init.body ? { body: JSON.parse(init.body) } : {});
+        if (res.statusCode >= 200 && res.statusCode < 300) { api.lastError = null; return json(res); }
+        let body = {};
+        try { body = json(res); } catch { body = {}; }
+        api.lastError = body.error || body.code || `HTTP ${res.statusCode}`;
+        api.lastErrorCode = body.code || null;
+        return null;
+      };
+      const pending = [];
+      let shell = null;
+      const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, operatorHeaders: async () => ({}),
+        storage: null, setInterval: () => 0, clearInterval: () => {} });
+      const win = { location: { hash: `#/resources/${projectId}/conversation` }, addEventListener() {}, removeEventListener() {} };
+      shell = G.tcCreateV6Shell(doc, { root, window: win, storage: null, onRender: (r) => pending.push(live.handleRoute(r)) });
+      pending.push(live.handleRoute(shell.getRoute()));
+      const settle = async () => { while (pending.length) await pending.shift(); for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+      await settle();
+      withIdParsingInnerHTML(doc.getElementById('v6WorkspacePanel'), doc);
+      doc.getElementById('v6WorkspaceMode-charter').dispatch('click');
+      await settle();
+      withIdParsingInnerHTML(doc.getElementById('v6TrainOutcome'), doc);
+      const panel = () => doc.getElementById('v6WorkspacePanel').innerHTML;
+      assert.match(panel(), /<div class="sprint-panel-title">Ship v6\.4<\/div>/, 'the real title, from the startup summary');
+      assert.match(panel(), /<span class="sprint-panel-label">Status<\/span><span class="sprint-panel-value">amended<\/span>/);
+      assert.match(panel(), /<li class="sprint-panel-approval">sponsor: <\/li><li class="sprint-panel-approval">pm: <\/li>|<li class="sprint-panel-approval">pm: <\/li><li class="sprint-panel-approval">sponsor: <\/li>/);
+      assert.match(panel(), /Version 1<\/span>[^<]*(<span class="v6-workspace-item-stage">[^<]*<\/span> )?<span class="v6-workspace-item-lane">active<\/span>/);
+      const button = new RegExp(`id="v6CharterActivate-${draft.versionId}"[^>]*data-version-number="2"`);
+      assert.match(panel(), button);
+      const outcome = () => doc.getElementById('v6TrainOutcome').innerHTML
+        || ((/<div id="v6TrainOutcome">([\s\S]*?<\/div>)\s*<\/section>/.exec(panel()) || [])[1] || '');
+      doc.getElementById(`v6CharterActivate-${draft.versionId}`).dispatch('click');
+      for (let i = 0; i < 100 && /Activating…/.test(outcome()); i++) await new Promise((r) => setImmediate(r));
+      assert.match(outcome(), /is-error" role="status">Not activated: [^<]*APPROVALS_INCOMPLETE/, 'an unapproved version is refused, and says why');
+      for (const role of ['sponsor', 'pm']) charters.recordApproval(db, { projectId, versionId: draft.versionId, approverRole: role, approverActor: 'op' });
+      doc.getElementById(`v6CharterActivate-${draft.versionId}`).dispatch('click');
+      for (let i = 0; i < 100 && /Activating…/.test(outcome()); i++) await new Promise((r) => setImmediate(r));
+      assert.match(outcome(), /is-ok" role="status">Version 2 is active\./, 'named by its number, not its database id');
+      assert.equal(json(await get(`/api/v6/projects/${projectId}/charter/startup-summary`)).versionNumber, 2);
+      await settle();
+      assert.match(panel(), /<div class="sprint-panel-title">Ship v6\.4, amended<\/div>/, 'the panel reloads with the new active version');
+    });
+  });
+
   describe('E4/E6a/E6b: report presentation, search and grounded ask', () => {
     it('presents a 12-section report in 3 pillars, prints it, and serves the popover catalog', async () => {
       const view = json(await post('/api/v6/reports/present', { html: REPORT_HTML }));

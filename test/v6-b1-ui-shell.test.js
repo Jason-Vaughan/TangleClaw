@@ -6787,31 +6787,41 @@ describe('the charter panel and train launch controls (#3088, Rulings A782 and P
     assert.match(G.tcV6TrainResultMarkup('run', { id: 'r', waves: [['a']] }), /with 1 wave\./);
   });
 
-  it('lists charter versions with an Activate button on each one not active', () => {
-    const html = G.tcV6CharterVersionsMarkup({ charter: { active_version_id: 2 },
-      versions: [{ id: 1, version_number: 1, status: 'superseded' }, { id: 2, version_number: 2, status: 'approved' }, { id: 3, version_number: '3<', status: '<draft>' }, { id: 'x' }] });
-    assert.match(html, /<span class="v6-workspace-item-id">Version 1<\/span> <span class="v6-workspace-item-stage">superseded<\/span> <button type="button" id="v6CharterActivate-1" class="btn btn-secondary btn-small v6-charter-activate" data-version-id="1" aria-label="Activate Version 1">Activate<\/button>/);
-    assert.match(html, /Version 2<\/span> <span class="v6-workspace-item-stage">approved<\/span> <span class="v6-workspace-item-lane">active<\/span>/);
-    assert.doesNotMatch(html, /v6CharterActivate-2/);
-    assert.match(html, /Version 3&lt;<\/span> <span class="v6-workspace-item-stage">&lt;draft&gt;<\/span>/);
+  it('lists charter versions with an Activate button on each one not active, naming each by its number', () => {
+    // Real v6_project_charter_versions rows: id, charter_id, version_number, content_json, created_at; no status.
+    const html = G.tcV6CharterVersionsMarkup({ charter: { active_version_id: 12 },
+      versions: [{ id: 11, version_number: 1, created_at: '2026-11-14 10:00:00' }, { id: 12, version_number: 2 }, { id: 13, version_number: '3<' }, { id: 'x' }] });
+    assert.match(html, /<span class="v6-workspace-item-id">Version 1<\/span> <span class="v6-workspace-item-stage">2026-11-14 10:00:00<\/span> <button type="button" id="v6CharterActivate-11" class="btn btn-secondary btn-small v6-charter-activate" data-version-id="11" data-version-number="1" aria-label="Activate Version 1">Activate<\/button>/);
+    assert.match(html, /Version 2<\/span> <span class="v6-workspace-item-lane">active<\/span>/);
+    assert.doesNotMatch(html, /v6CharterActivate-12/);
+    assert.match(html, /id="v6CharterActivate-13"[^>]*data-version-number="3&lt;" aria-label="Activate Version 3&lt;">/);
     assert.doesNotMatch(html, /v6CharterActivate-(x|NaN)/, 'a version without a numeric id gets no button');
     assert.equal((html.match(/<button /g) || []).length, 2);
-    assert.match(html, /id="v6CharterActivate-3"[^>]*aria-label="Activate Version 3&lt;">/);
     assert.equal(G.tcV6CharterVersionsMarkup({}), '<p class="v6-workspace-empty">This charter has no versions yet.</p>');
   });
 
-  it('feeds the charter builder the charter and its active version, not the waves (fixes the V630 gap)', () => {
+  it('feeds the charter builder the charter, its active version, its startup summary and approvals (cumulative review blocking)', () => {
     const calls = [];
     const ui = { renderCharterReadinessPanel: (...a) => { calls.push(a); return '<div>readiness</div>'; } };
-    const charter = { ok: true, data: { charter: { id: 9, active_version_id: 2 }, versions: [{ id: 1 }, { id: 2, status: 'approved' }] } };
-    const html = G.tcV6CharterPanelContent(charter, { ok: true, data: { waves: [['a']] } }, ui);
-    assert.deepEqual(plain(calls), [[{ charter: { id: 9, active_version_id: 2 }, activeVersion: { id: 2, status: 'approved' } }]]);
+    // Real rows: the charter carries status and active_version_id, never a title; the summary carries the title.
+    const charter = { ok: true, data: { charter: { id: 9, status: 'active', active_version_id: 12 }, versions: [{ id: 11, version_number: 1 }, { id: 12, version_number: 2 }] } };
+    const summary = { title: 'Ship v6.4', mission: 'm', versionNumber: 2 };
+    const html = G.tcV6CharterPanelContent(charter, { ok: true, data: { waves: [['a']] } }, ui, { startupSummary: summary, approvedRoles: ['sponsor', 'pm', 7] });
+    assert.deepEqual(plain(calls), [[{ charter: { id: 9, status: 'active', active_version_id: 12 }, activeVersion: { id: 12, version_number: 2 },
+      startupSummary: summary, approvals: [{ approver_role: 'sponsor' }, { approver_role: 'pm' }] }]]);
     assert.match(html, /<section class="v6-charter-section" aria-label="Charter"><div>readiness<\/div><ul class="v6-workspace-list v6-charter-versions">/);
     assert.match(html, /<section class="v6-charter-section" aria-label="Planned waves"><h3 class="v6-workspace-panel-subtitle">Planned waves<\/h3>/);
-    // No builder, or one that throws: a built-in summary stands in.
+    // The real builder draws the summary's title, not "No active charter".
+    const real = require('../public/sprint-wave-ui.js');
+    const drawn = G.tcV6CharterPanelContent(charter, { ok: false, notFound: true }, real, { startupSummary: summary, approvedRoles: ['pm'] });
+    assert.match(drawn, /<div class="sprint-panel-title">Ship v6\.4<\/div>/);
+    assert.match(drawn, /<li class="sprint-panel-approval">pm: <\/li>/);
+    // No builder, or one that throws: a built-in summary stands in, from the summary when there is one.
     for (const u of [null, { renderCharterReadinessPanel: () => { throw new Error('x'); } }]) {
-      assert.match(G.tcV6CharterPanelContent({ ok: true, data: { charter: { title: 'T<1>', status: 'active' }, versions: [] } }, { ok: false, notFound: true }, u),
-        /<p class="v6-workspace-item-stage">Charter T&lt;1&gt; · active<\/p>/);
+      assert.match(G.tcV6CharterPanelContent(charter, { ok: false, notFound: true }, u, { startupSummary: { title: 'T<1>', versionNumber: 2 } }),
+        /<p class="v6-workspace-item-stage">T&lt;1&gt; · active · version 2<\/p>/);
+      assert.match(G.tcV6CharterPanelContent({ ok: true, data: { charter: { status: 'draft' }, versions: [] } }, { ok: false, notFound: true }, u),
+        /<p class="v6-workspace-item-stage">No active charter · draft<\/p>/);
     }
     assert.match(G.tcV6CharterPanelContent(null, { ok: false, notFound: true }, null), /Open a project's chat to see its charter\./);
     assert.match(G.tcV6CharterPanelContent({ ok: false, notFound: true }, { ok: false, notFound: true }, null), /This project has no charter yet\./);
@@ -6885,11 +6895,12 @@ describe('the charter panel and train launch controls (#3088, Rulings A782 and P
 
   it('wires an Activate button for each version the charter panel lists, and reports its outcome', async () => {
     const asked = [];
-    const m = mountTrain({ activateVersion: async (id) => { asked.push(id); return { ok: true, message: `Version ${id} is active.` }; } });
-    m.shell.setWorkspacePanel('charter', G.tcV6CharterPanelContent({ ok: true, data: { charter: { active_version_id: 2 }, versions: [{ id: 1 }, { id: 2 }, { id: 3 }] } }, { ok: false, notFound: true }, null));
-    m.doc.getElementById('v6CharterActivate-3').dispatch('click');
+    const m = mountTrain({ activateVersion: async (id, number) => { asked.push([id, number]); return { ok: true, message: `Version ${number} is active.` }; } });
+    m.shell.setWorkspacePanel('charter', G.tcV6CharterPanelContent({ ok: true, data: { charter: { active_version_id: 21 },
+      versions: [{ id: 20, version_number: 1 }, { id: 21, version_number: 2 }, { id: 22, version_number: 3 }] } }, { ok: false, notFound: true }, null));
+    m.doc.getElementById('v6CharterActivate-22').dispatch('click');
     await new Promise((r) => setImmediate(r));
-    assert.deepEqual(asked, [3]);
+    assert.deepEqual(asked, [[22, '3']], 'the database id to send, and the number to name it by');
     assert.match(m.outcome(), /is-ok" role="status">Version 3 is active\./);
   });
 
