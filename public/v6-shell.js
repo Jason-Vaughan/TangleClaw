@@ -4076,6 +4076,9 @@
         extra.approvedRoles = exported.ok && Array.isArray(exported.data.approvedRoles) ? exported.data.approvedRoles : [];
       }
       const ui = result.ok || (charter && charter.ok) ? await sprintWaveUi() : null;
+      // A charter read for a project the operator has since left is dropped: its Activate buttons would act on
+      // the project now open (cumulative review).
+      if (project && !(current && current.project && String(current.project.id) === String(project.id))) return;
       const sh = getShell();
       if (!sh || typeof sh.setWorkspacePanel !== 'function') return;
       sh.setWorkspacePanel(mode, mode === 'charter' ? charterPanelContent(charter, result, ui, extra) : workspacePanelContent(mode, result, ui));
@@ -5672,6 +5675,8 @@
       if (modeRouteKey !== lastModeRouteKey) {
         lastModeRouteKey = modeRouteKey;
         workspaceMode = 'chat';
+        // The charter panel belongs to the project that was open: never show it for another (#3088).
+        workspacePanels.delete('charter');
       }
       const shown = workspaceVisibility(workspaceMode, inChat);
       const activityElapsed = syncBusy();

@@ -6964,3 +6964,63 @@ describe('the charter panel and train launch controls (#3088, Rulings A782 and P
     assert.equal(noProof.posts.length, 0);
   });
 });
+
+describe('the charter panel never shows a project the operator has left (#3088, cumulative review)', () => {
+  const G = loadV6Shell();
+
+  it('forgets the cached charter panel when the route changes', () => {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    root.id = 'v6ShellRoot';
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('#/resources/12/conversation');
+    const shell = G.tcCreateV6Shell(doc, { root, window: win, storage: null });
+    withIdParsingInnerHTML(doc.getElementById('v6WorkspacePanel'), doc);
+    shell.setWorkspacePanel('charter', '<p>charter of A</p>');
+    doc.getElementById('v6WorkspaceMode-charter').dispatch('click');
+    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /charter of A/);
+    win.location.hash = '#/resources/13/conversation';
+    withIdParsingInnerHTML(doc.getElementById('v6WorkspacePanel'), doc);
+    doc.getElementById('v6WorkspaceMode-charter').dispatch('click');
+    assert.doesNotMatch(doc.getElementById('v6WorkspacePanel').innerHTML, /charter of A/);
+    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /Loading…/);
+  });
+
+  it('drops a charter read that finishes after the operator moved to another project', async () => {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const held = [];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'Alpha', engine: { id: 'claude' } }, { id: 13, name: 'Beta', engine: { id: 'claude' } }] };
+      if (/^\/api\/sessions\/(Alpha|Beta)\/status$/.test(url)) return { active: true, sessionId: 1 };
+      if (/conversation\/events/.test(url)) return { events: [] };
+      if (url === '/api/v6/projects/12/charter') return new Promise((r) => held.push(() => r({ charter: { status: 'draft' }, versions: [{ id: 99, version_number: 1 }] })));
+      if (/\/api\/v6\/projects\/13\/charter$/.test(url)) return { charter: { status: 'draft' }, versions: [{ id: 7, version_number: 1 }] };
+      api.lastErrorCode = 'NOT_FOUND';
+      return null;
+    };
+    const painted = [];
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null,
+      window: { TangleClawSprintWaveUi: {} }, document: null, setInterval: () => 0, clearInterval: () => {} });
+    const win = makeFakeWindow('#/resources/12/conversation');
+    shell = G.tcCreateV6Shell(doc, { root, window: win, storage: null, onRender: (r) => pending.push(live.handleRoute(r)) });
+    const realSet = shell.setWorkspacePanel;
+    shell.setWorkspacePanel = (mode, html) => { painted.push([mode, html]); return realSet(mode, html); };
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
+    await settle();
+    doc.getElementById('v6WorkspaceMode-charter').dispatch('click');
+    await settle();
+    assert.equal(held.length, 1, 'Alpha\'s charter read is on its way');
+    win.location.hash = '#/resources/13/conversation';
+    await settle();
+    held.forEach((release) => release());
+    await settle();
+    assert.equal(painted.filter(([mode, html]) => mode === 'charter' && /v6CharterActivate-99/.test(html)).length, 0, 'Alpha\'s charter is never painted');
+  });
+});
