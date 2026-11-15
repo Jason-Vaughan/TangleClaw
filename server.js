@@ -11047,6 +11047,44 @@ route('POST', '/api/v6/placement/recommend', (req, res, _params, body) => {
   }));
 });
 
+// ── Sprint waves & reports (#2644 router, mounted by #3087, Ruling A774) ──
+//
+// createSprintWaveRouter's four endpoints, each registered through this
+// route table (not a pre-dispatch hook) so they get the launch-binding floor,
+// body parsing and size limits every route here gets. Live data is the v6
+// wave scheduler's persisted runs, mapped by
+// nativeSprintTracker.sprintDataFromWaveRuns. GETs are open reads, the
+// disjointness check is pure compute over the cars in its body, and sync,
+// which writes the roadmap snapshot, is the operator's or the Master's only.
+// No roadmap source is configured on this server, so sync answers 503
+// NOT_CONFIGURED once a caller is admitted.
+{
+  const nativeSprintTracker = require('./lib/native-sprint-tracker');
+  const { createSprintWaveRouter } = require('./lib/routes/sprint-wave-routes');
+  const waveRuns = () => new c3Waves.SqliteSchedulerStore(v6Db()).read().runs;
+  const sprintWaves = createSprintWaveRouter({
+    getSprintData: () => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), 'current'),
+    getSprintDataForVersion: (version) => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), version),
+    authorizeSync: (req, res) => {
+      if (resolveControlCaller(req).kind === 'master') return true;
+      return Boolean(_requireOperatorWrite(req, res, {
+        logEvent: 'Refused a sprint wave roadmap sync',
+        logContext: {},
+        fallbackAction: 'sync the sprint roadmap',
+        sameOriginWhat: 'A sprint roadmap sync',
+        unauthenticated: 'Sign in to sync the sprint roadmap.',
+        machineClient: 'Syncing the sprint roadmap is an operator\'s decision, and a local process is not one.',
+        openToken: 'This install has no login, so a roadmap sync must carry the anti-forgery token its dashboard was issued. '
+          + 'Reload the dashboard and try again.',
+        gateUnsupported: (gateState) => `The sprint roadmap cannot be synced while the login gate is "${gateState}".`
+      }));
+    }
+  });
+  for (const endpoint of sprintWaves.endpoints) {
+    route(endpoint.method, endpoint.pattern, (req, res, params, body) => endpoint.handler(req, res, params, body));
+  }
+}
+
 // ── C3: Wave scheduler (#1886) ──
 
 route('POST', '/api/v6/wave-scheduler/topological-waves', (req, res, _params, body) => {
