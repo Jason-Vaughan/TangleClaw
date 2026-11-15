@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.2.9 — Switchboard traffic Under the Hood, a Medusa indicator, chat polish and Medusa fleet isolation](v6.2.9.md)
+- [v6.2.10 — Clickable links, attachment previews, a verbosity filter, Force Send and a three-engine usage meter](v6.2.10.md)
 
 ## Recent releases
+
+- [v6.2.9 — Switchboard traffic Under the Hood, a Medusa indicator, chat polish and Medusa fleet isolation](v6.2.9.md)
 
 - [v6.2.8 — Chat history search and Recents, renaming a member from the chat, and the Open Hood link fix](v6.2.8.md)
 
