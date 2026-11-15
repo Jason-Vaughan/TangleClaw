@@ -17,6 +17,13 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.3.0 — A workspace mode bar and wizard launcher, live sprint routes, the running engine on member badges, and a Medusa registry cache
+
+- **Workspace mode bar and wizard launcher** (#3086) — `public/v6-shell.js`: tabs for Chat, Sprint & Cars, Charter & Roadmap, Kaizen & Reports and Wizard switch the main view without losing the chat, its draft or its scroll. The template wizard opens from the sidebar or a "+ New" button at any time. The data modes load `/sprint-wave-ui.js` once, on demand, and fall back to an escaped built-in list when it or the routes are not available.
+- **Live sprint routes** (#3087) — `server.js` mounts `lib/routes/sprint-wave-routes.js`: `GET /api/sprint-waves` (the current sprint's board from the v6 wave scheduler's saved runs), `GET /api/sprint-reports/current` or `/<version>`, `POST /api/sprint-waves/validate-disjointness`, and an operator- or Master-only `POST /api/sprint-waves/sync`. `public/sprint-wave-ui.js` gains escaped Charter readiness and Kaizen ledger panels, and `public/sw.js` always fetches it fresh.
+- **The running engine on member badges** (#3094) — `lib/projects.js` reports a member's running session engine and its last session's engine; the v6 badge prefers the running engine, then the last one used, then the configured one, and names the model in its tooltip.
+- **Medusa registry cache and unreadable-registry diagnostics** (#3084) — `lib/medusa.js` keeps each project's workspace registry in memory until its file changes, and treats a registry it cannot read as unreadable rather than empty. A cross-fleet refusal names any unreadable registry in the sender's own fleet.
+
 ## v6.2.10 — Clickable links, attachment previews, a verbosity filter, Force Send and a three-engine usage meter
 
 - **Clickable links and attachment previews** (#3082, #3083) — `public/v6-shell.js`: web and Markdown links in messages open in a new tab (`http:`/`https:` only). An attached image shows as a thumbnail, fetched once with the operator's proof from the new operator-only `GET /api/sessions/:project/secure-clipboard/:filename` (`lib/routes/secure-clipboard.js`, `lib/secure-clipboard.js`: PNG, JPEG, WebP or GIF only, checked by name and leading bytes). A link to an image on another site shows as a link card and is never loaded.

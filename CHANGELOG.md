@@ -4,6 +4,16 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.3.0] - 2026-11-15
+
+### Added
+- The v6 shell gains a workspace mode bar and an always-available wizard launcher (#3086). Tabs at the top of the main view switch between 💬 Chat, 📋 Sprint & Cars, 🧭 Charter & Roadmap, 📈 Kaizen & Reports and 🧙 Wizard; the arrow keys, Home and End move between them, and opening a project or member always lands in Chat. Sprint & Cars shows the dispatch board from `/api/sprint-waves`, Charter & Roadmap the planned waves, and Kaizen & Reports the current sprint's report, each drawn by the sprint UI when it is loaded and by a plain escaped list otherwise; a server that does not serve those routes yet says so. A "+ New Project / Fleet Wizard" button in the sidebar and a "+ New" button beside the tabs open the template wizard at any time, even with a chat open, and switching modes leaves the chat, its draft and its scroll as they were. A member's engine badge in the sidebar names the model in its tooltip when one is known, and follows the engine its live session is running, else the one its last session ran, else the configured one, as soon as the server reports those engines (the server half of #3094); until then it shows the configured engine as before.
+- The sprint wave board and sprint reports are now served by the live server (#3087). `GET /api/sprint-waves` shows the current sprint's waves and where each car stands, read from the v6 wave scheduler's saved runs; it is empty when no run is saved. `GET /api/sprint-reports/current` (or `/<version>`) answers that sprint's report summary; an unknown version is 404 and anything that is not a version is refused with 400. `POST /api/sprint-waves/validate-disjointness` checks a set of cars for shared files, and `POST /api/sprint-waves/sync` is the operator's or the Master's only (it says NOT_CONFIGURED until a roadmap source is set up). The shell's sprint UI module gains Charter readiness and Kaizen ledger panels, which escape everything they show and link only to http(s) addresses, and it is now always fetched fresh so it cannot run stale against a newer shell.
+- A member's badge now shows the AI engine it is actually running, or last ran, not only the one it is configured for (#3094). The projects API reports the engine of a member's running session (even when its terminal could not be read) and the engine of its most recent session, and the v6 shell's badge picks the running engine first, then the last one used, then the configured one.
+
+### Fixed
+- Medusa no longer re-reads every project's workspace registry on every message and roster read, and an unreadable registry is no longer silently treated as empty (#3084). Each registry is kept in memory until its file changes. When one cannot be read (for example, because macOS privacy controls block the folder), a send or broadcast refused as cross-fleet now says which project registries could not be read (`details.reason: REGISTRY_UNREADABLE`), since the recipient may really be in the sender's fleet. It is still refused, never let through.
+
 ## [6.2.10] - 2026-11-14
 
 ### Fixed
