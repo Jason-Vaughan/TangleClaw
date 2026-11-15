@@ -5472,6 +5472,25 @@ describe('the verbosity filter on Under the Hood (#3082)', () => {
     assert.doesNotMatch(live, /Acked INT\./);
   });
 
+  it('a question asked before a wake still waits after the session answers the wake (verify, blocking)', () => {
+    const out = run(['> fix it', '⏺ Fixed. Shall I push?', wake, '⏺ Acked INT.']);
+    assert.deepEqual(out.questions, ['Fixed. Shall I push?']);
+    assert.deepEqual(run(['> fix it', '⏺ Fixed. Shall I push?', wake, '⏺ Acked INT.', '> yes']).questions, [], 'the operator answering clears it');
+  });
+
+  it('a dismissal holds when a wake reply splits the turn after it', () => {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+    const before = run(['> fix it', '⏺ Fixed. Shall I push?']);
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [], chat: { status: 'active', members: [], live: before } } });
+    doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    shell.setLive({ peek: null, live: run(['> fix it', '⏺ Fixed. Shall I push?', wake, '⏺ Acked INT.']) });
+    assert.doesNotMatch(doc.getElementById('v6ChatQuestion').innerHTML, /Shall I push/);
+  });
+
   it('marks a reply a wake set going, until the operator speaks again', () => {
     const out = run([wake, '⏺ Acked INT.', '> what next?', '⏺ The release.']);
     assert.deepEqual(out.turns.map((t) => t.trigger || 'direct'), ['switchboard', 'direct', 'direct']);

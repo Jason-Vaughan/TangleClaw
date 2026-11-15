@@ -1249,8 +1249,8 @@
       const prompt = LIVE_PROMPT.exec(text);
       const promptText = prompt && !indented ? prompt[1].trim() : '';
       if (SWITCHBOARD_TEXT.test(promptText) || SWITCHBOARD_TEXT.test(text)) {
-        // A wake is the switchboard speaking, not the operator: it neither
-        // answers a question nor ends the reply it interrupts.
+        // A wake is the switchboard speaking, not the operator: it does not
+        // answer a question.
         switchboard.push({ dir: 'in', text: promptText || text });
         // What the session had already said before the wake answered the
         // operator, so it stays their turn; only what follows is the wake's.
@@ -1312,8 +1312,13 @@
     });
     flush();
     const last = turns[turns.length - 1];
-    const open = last && last.role === 'assistant' && !answered ? last.text : '';
-    const tail = open ? open.split('\n').pop() : '';
+    // Everything the session has said since the operator last spoke: a wake
+    // can split it into several turns, and a question asked before the wake
+    // is still waiting (#3082).
+    let since = turns.length;
+    while (since > 0 && turns[since - 1].role === 'assistant') since--;
+    const open = last && last.role === 'assistant' && !answered ? turns.slice(since).map((t) => t.text).join('\n') : '';
+    const tail = last && last.role === 'assistant' && !answered ? last.text.split('\n').pop() : '';
     const questions = open.split('\n').map((l) => l.trim().replace(QUESTION_PREFIX, '').trim())
       .filter((l) => /\?\s*$/.test(l));
     return { turns, question: /\?\s*$/.test(tail) ? tail : null, questions, activity, switchboard };
@@ -1624,16 +1629,19 @@
   }
 
   /**
-   * The turns before the reply that asks the questions (#3079), each as
-   * `role:text`: what identifies that reply among the session's.
+   * The turns up to and including the operator's last message (#3079),
+   * each as `role:text`: what identifies the reply that asks the questions
+   * among the session's, however many turns a wake splits it into.
    * @param {{turns?: Array<{role: string, text: string}>}|null} live
    * @returns {string[]}
    */
   function askingPrefix(live) {
     const turns = live && Array.isArray(live.turns) ? live.turns : [];
+    // Up to the operator's last message: the session's reply after it may be
+    // split by a wake into several turns, and they all answer that message.
     let i = turns.length - 1;
-    while (i >= 0 && !(turns[i] && turns[i].role === 'assistant')) i--;
-    return turns.slice(0, Math.max(0, i)).map((t) => `${t && t.role}:${String(t && t.text).replace(/\s+/g, ' ').trim()}`);
+    while (i >= 0 && !(turns[i] && turns[i].role === 'user')) i--;
+    return turns.slice(0, i + 1).map((t) => `${t && t.role}:${String(t && t.text).replace(/\s+/g, ' ').trim()}`);
   }
 
   /**
