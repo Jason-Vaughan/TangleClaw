@@ -2533,6 +2533,31 @@ describe('lib/medusa — fleet isolation (#3077, Ruling A738)', () => {
       assert.equal(r.body.code, 'CROSS_FLEET_FORBIDDEN');
     });
 
+    it('lets allowCrossFleet: true through in the reverse direction too: ungrouped to grouped (A743 f)', async () => {
+      const refused = await send(9, { to: 'ws-7' });
+      assert.equal(refused.body.code, 'CROSS_FLEET_FORBIDDEN');
+      await send(9, { to: 'ws-7', allowCrossFleet: true });
+      assert.equal(hubCalls, 1);
+    });
+
+    for (const key of ['master', 'operator-bridge']) {
+      it(`lets a grouped and a tagged project send to the live "${key}" listener (A743 f)`, async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fleet-system-send-'));
+        const status = medusa.startSession({ projectPath: dir, sessionId: key, name: key, wsFactory: (u) => new FakeWS(u) });
+        try {
+          assert.ok(status.workspaceId);
+          for (const from of [7, 11]) {
+            const r = await send(from, { to: status.workspaceId });
+            assert.notEqual(r.body.code, 'CROSS_FLEET_FORBIDDEN', `project ${from} -> ${key}`);
+          }
+          assert.equal(hubCalls, 2, 'both sends reached the Hub');
+        } finally {
+          medusa.stopSession(key);
+          fs.rmSync(dir, { recursive: true, force: true });
+        }
+      });
+    }
+
     for (const kind of ['operator', 'operator-ui', 'master']) {
       it(`exempts a "${kind}" caller`, async () => {
         await send(7, { to: 'ws-remote' }, { kind });
