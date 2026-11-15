@@ -823,3 +823,334 @@ describe('the live server mounts the sprint wave routes (#3087, Ruling A774)', (
     assert.equal(r.data.result.ok, false, 'two cars sharing x.js are not disjoint');
   });
 });
+
+describe('#3093 verifySprintSetupAndRoadmapSync (Ruling A766-1, A786)', () => {
+  const HUB = '<!-- LIVE_SPRINT_CARD_START --><a href="./v6.4.0/">live</a><!-- LIVE_SPRINT_CARD_END --><a href="./v6.3.0/">x</a>';
+
+  /**
+   * A setup that passes every check; each test breaks one piece.
+   * @param {object} [over] - Fields replacing the clean input's.
+   * @returns {object}
+   */
+  function clean(over = {}) {
+    return {
+      milestones: [
+        { title: 'v6.4.0: v6 Autonomous Overnight Train', state: 'OPEN' },
+        { title: 'v6.3.0: shipped', state: 'CLOSED' },
+        { title: 'Someday', state: 'open' }
+      ],
+      roadmapData: {
+        releases: [
+          { version: '6.3.0', trains: [{ cars: [3086, 3087] }] },
+          { version: '6.4.0', trains: [{ cars: [3088, 3089] }, { cars: [3093] }] },
+          { version: '6.5.0', trains: [{ cars: [3200] }] }
+        ],
+        unversioned_trains: [{ id: 35, cars: [2642] }],
+        backlog: [{ name: 'V6 research', cars: [1886], issues: [{ number: 1900 }] }]
+      },
+      syncStatus: { state: 'ok', component: 'all' },
+      reportDirs: ['v6.3.0', 'v6.4.0', 'assets'],
+      hubHtml: HUB,
+      ...over
+    };
+  }
+
+  it('passes a clean setup, reporting as its own runtime guardrail, never as a P-row', () => {
+    const r = tracker.verifySprintSetupAndRoadmapSync(clean());
+    assert.deepEqual(r.violations, []);
+    assert.equal(r.ok, true);
+    assert.equal(r.guardrail, 'setup_and_roadmap_sync');
+    assert.equal(tracker.SETUP_GUARDRAIL_ID, r.guardrail);
+    assert.deepEqual(tracker.RUNTIME_GUARDRAIL_IDS, ['setup_and_roadmap_sync']);
+    assert.ok(!tracker.GUARDRAIL_IDS.includes(r.guardrail), 'the post-mortem ledger stays P0..P11');
+    assert.deepEqual(r.checked, { milestones: 1, placedIssues: 9, reportDirs: 2 }, 'only the open versioned milestone, and only report directories');
+  });
+
+  it('flags an open milestone with no roadmap release, but not a forecast release with no milestone', () => {
+    const r = tracker.verifySprintSetupAndRoadmapSync(clean({
+      milestones: [{ title: 'v6.4.1 follow-ups', state: 'open' }, { title: 'v6.4.0: train', state: 'open' }]
+    }));
+    assert.deepEqual(r.violations.map((v) => [v.code, v.version]), [['MISSING_MILESTONE_RELEASE', 'v6.4.1']]);
+    assert.equal(r.ok, false);
+  });
+
+  it('matches a roadmap release written with a leading v', () => {
+    const roadmapData = clean().roadmapData;
+    roadmapData.releases[1].version = 'v6.4.0';
+    assert.deepEqual(tracker.verifySprintSetupAndRoadmapSync(clean({ roadmapData })).violations, []);
+  });
+
+  it('flags an issue placed twice, across buckets and within one, naming every placement', () => {
+    const roadmapData = clean().roadmapData;
+    roadmapData.backlog[0].cars.push(3089);
+    roadmapData.releases[0].trains[0].cars.push(3086);
+    const r = tracker.verifySprintSetupAndRoadmapSync(clean({ roadmapData }));
+    const dupes = r.violations.filter((v) => v.code === 'DUPLICATE_ROADMAP_PLACEMENT');
+    assert.deepEqual(dupes.map((v) => [v.issue, v.placements]), [
+      [3086, ['releases[6.3.0]', 'releases[6.3.0]']],
+      [3089, ['releases[6.4.0]', 'backlog[V6 research]']]
+    ]);
+  });
+
+  it('counts a backlog issue given as an object, and an unversioned train', () => {
+    const roadmapData = clean().roadmapData;
+    roadmapData.unversioned_trains[0].cars.push(1900);
+    const r = tracker.verifySprintSetupAndRoadmapSync(clean({ roadmapData }));
+    assert.deepEqual(r.violations.map((v) => [v.code, v.issue]), [['DUPLICATE_ROADMAP_PLACEMENT', 1900]]);
+  });
+
+  for (const [label, syncStatus, reason] of [
+    ['missing', null, 'missing'],
+    ['not an object', 'ok', 'missing'],
+    ['an array', [], 'missing'],
+    ['state error', { state: 'error' }, 'state is "error"'],
+    ['state failed', { state: 'failed' }, 'state is "failed"'],
+    ['status error', { status: 'error' }, 'status is "error"'],
+    ['ok false', { state: 'ok', ok: false }, 'ok is false'],
+    ['an unknown state', { state: 'stale' }, 'state is "stale"'],
+    ['status not ok beside an ok state', { state: 'ok', status: 'degraded' }, 'status is "degraded"']
+  ]) {
+    it(`fails closed on a sync status that is ${label}`, () => {
+      const r = tracker.verifySprintSetupAndRoadmapSync(clean({ syncStatus }));
+      assert.deepEqual(r.violations.map((v) => [v.code, v.reason]), [['ROADMAP_SYNC_ERROR', reason]]);
+      assert.equal(r.ok, false);
+    });
+  }
+
+  it('accepts a status that says ok in either field', () => {
+    assert.equal(tracker.verifySprintSetupAndRoadmapSync(clean({ syncStatus: { status: 'ok' } })).ok, true);
+    assert.equal(tracker.verifySprintSetupAndRoadmapSync(clean({ syncStatus: { state: 'ok', status: 'ok', ok: true } })).ok, true);
+  });
+
+  it('flags a report directory the hub does not link', () => {
+    const r = tracker.verifySprintSetupAndRoadmapSync(clean({ reportDirs: ['v6.2.10', 'v6.3.0', 'v6.4.0'] }));
+    assert.deepEqual(r.violations.map((v) => [v.code, v.dir]), [['UNLINKED_REPORT_DIR', 'v6.2.10']]);
+  });
+
+  it('every code it emits is one it declares', () => {
+    const roadmapData = clean().roadmapData;
+    roadmapData.backlog[0].cars.push(3089);
+    const r = tracker.verifySprintSetupAndRoadmapSync(clean({
+      roadmapData, syncStatus: null, reportDirs: ['v6.2.10', 'v6.4.0'],
+      milestones: [{ title: 'v9.9.9', state: 'open' }]
+    }));
+    assert.deepEqual([...new Set(r.violations.map((v) => v.code))].sort(), [...tracker.SETUP_VIOLATION_CODES].sort());
+  });
+
+  it('refuses inputs it cannot check rather than passing them', () => {
+    assert.throws(() => tracker.verifySprintSetupAndRoadmapSync(clean({ milestones: null })), TypeError);
+    assert.throws(() => tracker.verifySprintSetupAndRoadmapSync(clean({ roadmapData: null })), TypeError);
+    assert.throws(() => tracker.verifySprintSetupAndRoadmapSync(clean({ hubHtml: undefined })), TypeError);
+    assert.throws(() => tracker.verifySprintSetupAndRoadmapSync(clean({ reportDirs: undefined })), TypeError);
+  });
+});
+
+describe('#3089 buildConsolidatedTrainReportSummary', () => {
+  const econ = (m, e, s, a) => ({ measured_tokens: m, estimated_tokens: e, subscription_allocated_cost_usd: s, api_shadow_cost_usd: a });
+  const closed = (n) => Array.from({ length: n }, (_, i) => ({ id: i, state: 'closed' }));
+
+  /**
+   * A three-version train's sprint data, each with PRs, closed issues, economics and fast-follow entries.
+   * @returns {Object<string, object>}
+   */
+  function train() {
+    return {
+      'v6.2.10': {
+        cars: [{ id: 'c1', issues: closed(2) }], pullRequests: [{ number: 1 }, { number: 2 }],
+        economics: econ(100, 10, 0.1, 1.25),
+        fastFollowSubversions: [{ version: 'v6.2.10', summary_remark: 'ten' }]
+      },
+      'v6.2.9': {
+        cars: [{ id: 'c2', issues: [...closed(1), { id: 9, state: 'open' }] }], pullRequests: [{ number: 3 }],
+        economics: econ(200, 20, 0.2, 2.5),
+        fastFollowSubversions: [{ version: 'v6.2.9', summary_remark: 'nine' }]
+      },
+      'v6.3.0': {
+        cars: [{ id: 'c3', issues: closed(3) }], pullRequests: [{ number: 4 }, { number: 5 }, { number: 6 }],
+        economics: econ(300, 30, 0.3, 3)
+      }
+    };
+  }
+
+  it('orders versions numerically and makes every total the sum of the rows it shows', () => {
+    const s = tracker.buildConsolidatedTrainReportSummary(['v6.3.0', 'v6.2.10', 'v6.2.9'], train());
+    assert.deepEqual(s.versions, ['v6.2.9', 'v6.2.10', 'v6.3.0']);
+    assert.deepEqual(s.perVersion.map((r) => [r.version, r.prCount, r.issuesClosed]), [
+      ['v6.2.9', 1, 1], ['v6.2.10', 2, 2], ['v6.3.0', 3, 3]
+    ]);
+    assert.equal(s.totals.prCount, s.perVersion.reduce((a, r) => a + r.prCount, 0));
+    assert.equal(s.totals.prCount, 6);
+    assert.equal(s.totals.issuesClosed, 6);
+    assert.deepEqual(s.totals.economics, econ(600, 60, 0.6, 6.75), 'cents, not 0.6000000000000001');
+    assert.deepEqual(s.missingVersions, []);
+    assert.deepEqual(s.economicsIncomplete, []);
+  });
+
+  it('collects every version\'s fast-follow remarks into one table, oldest first, tagged with its train version', () => {
+    const s = tracker.buildConsolidatedTrainReportSummary(['v6.2.10', 'v6.2.9', 'v6.3.0'], train());
+    assert.deepEqual(s.fastFollowSubversions.map((e) => [e.version, e.train_version]), [['v6.2.9', 'v6.2.9'], ['v6.2.10', 'v6.2.10']]);
+  });
+
+  it('sorts remarks by their own version even when one train version lists them out of order', () => {
+    const data = train();
+    data['v6.3.0'].fastFollowSubversions = [{ version: 'v6.3.2' }, { version: 'v6.3.1' }];
+    const s = tracker.buildConsolidatedTrainReportSummary(['v6.3.0'], data);
+    assert.deepEqual(s.fastFollowSubversions.map((e) => e.version), ['v6.3.1', 'v6.3.2']);
+  });
+
+  it('lists a version with no data instead of counting it as zero', () => {
+    const s = tracker.buildConsolidatedTrainReportSummary(['v6.2.9', 'v6.2.8'], train());
+    assert.deepEqual(s.missingVersions, ['v6.2.8']);
+    assert.deepEqual(s.perVersion.map((r) => r.version), ['v6.2.9']);
+  });
+
+  it('states no total for an economics field some version lacks, and names that version', () => {
+    const data = train();
+    delete data['v6.2.9'].economics.api_shadow_cost_usd;
+    data['v6.3.0'].economics.measured_tokens = -1;
+    const s = tracker.buildConsolidatedTrainReportSummary(['v6.2.9', 'v6.2.10', 'v6.3.0'], data);
+    assert.equal(s.totals.economics.api_shadow_cost_usd, null);
+    assert.equal(s.totals.economics.measured_tokens, null, 'a negative figure is not a figure');
+    assert.equal(s.totals.economics.estimated_tokens, 60);
+    assert.deepEqual(s.economicsIncomplete, ['v6.2.9', 'v6.3.0']);
+  });
+
+  it('a train with no data at all totals nothing rather than zero economics', () => {
+    const s = tracker.buildConsolidatedTrainReportSummary(['v6.4.0'], {});
+    assert.equal(s.totals.prCount, 0);
+    assert.equal(s.totals.economics.measured_tokens, null);
+  });
+
+  it('refuses a version list it cannot read', () => {
+    assert.throws(() => tracker.buildConsolidatedTrainReportSummary('v6.3.0', {}), TypeError);
+    assert.throws(() => tracker.buildConsolidatedTrainReportSummary(['v6.3.0', ''], {}), TypeError);
+  });
+});
+
+// ── #3089: the consolidated train report's render helpers (lib/v6/e4) and the
+// Kaizen link check for fast-follow major learnings (lib/v6/e5), including that
+// a rendered remark table satisfies the validator's Rule 11. ──
+
+const e4Presentation = require('../lib/v6/e4-rich-report-presentation');
+const e5Kaizen = require('../lib/v6/e5-kaizen-ledger');
+const reportValidator = require('../lib/v6/sprint-report-validator-v3');
+const kaizenStore = require('../lib/store');
+
+const ROUTINE = { version: 'v6.2.2', milestone: 69, prs: [3047], issues: [3046], release_tag: 'v6.2.2', summary_remark: 'Chat polish.', major_learning: false };
+const MAJOR = {
+  version: 'v6.2.9', milestone: 76, prs: [3080], issues: [3077], release_tag: 'v6.2.9',
+  summary_remark: 'Fleet isolation.', major_learning: true, kaizen_id: 'kz', postmortem_ref: 'pm-fleet'
+};
+
+describe('#3089 renderFastFollowRemarkTable', () => {
+  it('renders one row per entry that Rule 11 accepts when placed in #overview', () => {
+    const table = e4Presentation.renderFastFollowRemarkTable([ROUTINE, MAJOR]);
+    const metrics = {
+      schema_version: '3.1.0', version: 'v6.3.0',
+      diff: { feature_prs_merged: 1, release_prs_merged: 1, total_repo_prs_merged: 2 },
+      durations: { total_run_time_display: '1h 00m 00s' },
+      scope_taxonomy: { github_feature_issues_closed: 1, chartered_execution_cars_completed: 1, milestone_issues_deferred_external_gated: 0 },
+      release_state: ['code_merged_on_main'],
+      economics: { measured_tokens: 1, estimated_tokens: 1, subscription_allocated_cost_usd: 1, api_shadow_cost_usd: 1 },
+      provenance: { generated_at: 'x', verified_at: 'x', canonical_source_sha256: 'x', git_main_head_sha: 'x', validator_version: '3.1.0' },
+      fast_follow_subversions: [ROUTINE, MAJOR]
+    };
+    const sections = reportValidator.CANONICAL_SECTIONS.map((id) => {
+      if (id === 'overview') return `<section id="overview">${table}</section>`;
+      if (id === 'postmortem') return '<section id="postmortem"><h3 id="pm-fleet">Fleet isolation</h3></section>';
+      return `<section id="${id}"><p>x</p></section>`;
+    }).join('');
+    const html = `<html><body><script type="application/json" id="tc-canonical-metrics">${JSON.stringify(metrics)}</script>${sections}</body></html>`;
+    assert.deepEqual(reportValidator.validateReport(html).findings.filter((f) => f.rule === 11), []);
+    assert.match(table, /<a href="#pm-fleet">Major learning<\/a>/);
+    assert.match(table, /<td>#3047<\/td>/);
+  });
+
+  it('escapes every value, and never links an unsafe postmortem_ref', () => {
+    const hostile = '<img src=x onerror=alert(1)>';
+    const table = e4Presentation.renderFastFollowRemarkTable([{
+      version: hostile, release_tag: hostile, prs: [hostile], issues: [], summary_remark: `"${hostile}"`,
+      major_learning: true, postmortem_ref: '" onmouseover="x'
+    }]);
+    assert.ok(!table.includes('<img'), 'no markup from data');
+    assert.ok(!table.includes('onmouseover="'), 'no attribute breakout');
+    assert.match(table, /<td>Major learning<\/td>/, 'an unsafe ref is shown unlinked');
+    assert.match(table, /&quot;&lt;img/, 'quotes are escaped too');
+  });
+
+  it('refuses a non-array', () => {
+    assert.throws(() => e4Presentation.renderFastFollowRemarkTable(null), TypeError);
+  });
+});
+
+describe('#3089 renderConsolidatedTrainSummary', () => {
+  const econ = (m) => ({ measured_tokens: m, estimated_tokens: 1, subscription_allocated_cost_usd: 0.5, api_shadow_cost_usd: 2 });
+
+  it('renders the rows and the totals the summary computed, plus the fast-follow table', () => {
+    const summary = tracker.buildConsolidatedTrainReportSummary(['v6.2.9', 'v6.3.0'], {
+      'v6.2.9': { pullRequests: [{}], economics: econ(10), fastFollowSubversions: [ROUTINE] },
+      'v6.3.0': { pullRequests: [{}, {}], economics: econ(20) }
+    });
+    const html = e4Presentation.renderConsolidatedTrainSummary(summary);
+    assert.match(html, /<tr><td><code>v6\.2\.9<\/code><\/td><td>1<\/td><td>0<\/td><td>10<\/td>/);
+    assert.match(html, /<tr class="train-total"><th>Total<\/th><td>3<\/td><td>0<\/td><td>30<\/td><td>2<\/td><td>1<\/td><td>4<\/td><\/tr>/);
+    assert.match(html, /class="fast-follow-subversions"/);
+  });
+
+  it('says what it could not count, and shows an unknown total as a dash, never 0', () => {
+    const summary = tracker.buildConsolidatedTrainReportSummary(['v6.2.8', 'v6.2.9'], { 'v6.2.9': { pullRequests: [] } });
+    const html = e4Presentation.renderConsolidatedTrainSummary(summary);
+    assert.match(html, /No sprint data for <code>v6\.2\.8<\/code>; not counted\./);
+    assert.match(html, /Token economics incomplete for <code>v6\.2\.9<\/code>/);
+    assert.match(html, /<th>Total<\/th><td>0<\/td><td>0<\/td><td>—<\/td><td>—<\/td><td>—<\/td><td>—<\/td>/);
+    assert.ok(!html.includes('fast-follow-subversions'), 'no empty remark table');
+  });
+
+  it('refuses something that is not a consolidated summary', () => {
+    assert.throws(() => e4Presentation.renderConsolidatedTrainSummary({}), TypeError);
+  });
+});
+
+describe('#3089 verifyFastFollowKaizenLinks', () => {
+  let tmpDir;
+  let db;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-3089-kaizen-'));
+    kaizenStore._setBasePath(tmpDir);
+    kaizenStore.init();
+    db = kaizenStore.getDb();
+  });
+
+  afterEach(() => {
+    kaizenStore.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /** @returns {string} A real ledger item's id. */
+  function seed() {
+    const r = e5Kaizen.detectItem(db, {
+      originSprint: 'v6.2.9', findingId: 'f-1', defectCategory: 'fleet-isolation', rootCause: 'unread registry read as empty',
+      correctiveActionSpec: 'fail closed', ownerRole: 'builder', verificationClass: 'A_DETERMINISTIC', targetMetric: 'cross-fleet sends'
+    });
+    assert.equal(r.ok, true);
+    return r.id;
+  }
+
+  it('passes a major learning linked to a real ledger item, and skips routine entries', () => {
+    const id = seed();
+    assert.deepEqual(e5Kaizen.verifyFastFollowKaizenLinks(db, [ROUTINE, { ...MAJOR, kaizen_id: id }]), { ok: true, checked: 1, missing: [] });
+  });
+
+  it('names a major learning whose Kaizen item does not exist, or that names none', () => {
+    seed();
+    const r = e5Kaizen.verifyFastFollowKaizenLinks(db, [{ ...MAJOR, kaizen_id: 'no-such-item' }, { ...MAJOR, version: 'v6.2.10', kaizen_id: ' ' }]);
+    assert.equal(r.ok, false);
+    assert.equal(r.checked, 2);
+    assert.deepEqual(r.missing, [{ version: 'v6.2.9', kaizen_id: 'no-such-item' }, { version: 'v6.2.10', kaizen_id: null }]);
+  });
+
+  it('refuses a non-array', () => {
+    assert.throws(() => e5Kaizen.verifyFastFollowKaizenLinks(db, null), TypeError);
+  });
+});

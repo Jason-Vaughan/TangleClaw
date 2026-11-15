@@ -2567,6 +2567,117 @@ describe('lib/medusa — fleet isolation (#3077, Ruling A738)', () => {
       }
     });
 
+    describe('an ungrouped caller while a registry outside its fleet is unreadable (#3099)', () => {
+      let realStat;
+      beforeEach(() => {
+        // Project 8 is grouped and 9 ungrouped, so 8's registry is outside 9's fleet.
+        realStat = medusa._fleetDeps.statRegistry;
+        medusa._fleetDeps.statRegistry = (file) => {
+          if (file.startsWith(dirs[8])) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+          return realStat(file);
+        };
+      });
+      afterEach(() => {
+        medusa._fleetDeps.statRegistry = realStat;
+      });
+
+      it('refuses the hidden workspace and a remote peer alike, and reaches both again once the registry reads', () => {
+        const inFleet = medusa.fleetMembership(9);
+        assert.equal(inFleet('real-ws-8'), false, 'a grouped project\'s workspace hidden by its unreadable registry is refused');
+        const lines = [];
+        logger.setLevel('info');
+        logger.setConsoleStream({ write: (line) => lines.push(line) });
+        try {
+          assert.equal(inFleet('ws-remote'), false, 'a remote peer is refused too while the uncertainty lasts');
+        } finally {
+          logger.setConsoleStream(null);
+          logger.setLevel('error');
+        }
+        assert.ok(lines.some((l) => l.includes('unreadable') && l.includes('p8 (EPERM)')), 'the server log names the full unreadable list');
+        assert.equal(inFleet.unmappedRefusedForUnreadableRegistry, true);
+        assert.deepEqual(inFleet.unreadableRegistries, [], 'still never names the other fleet\'s registry');
+        assert.equal(inFleet('real-ws-9'), true, 'its own fleet is unaffected');
+
+        medusa._fleetDeps.statRegistry = realStat;
+        const recovered = medusa.fleetMembership(9);
+        assert.equal(recovered('ws-remote'), true, 'the remote peer is reachable again');
+        assert.equal(recovered('real-ws-8'), false, 'and the grouped workspace, now placed, is refused by its fleet');
+        assert.equal(recovered.unmappedRefusedForUnreadableRegistry, false);
+      });
+
+      it('changes nothing for a grouped caller, and nothing when the unreadable registry is in the caller\'s own fleet', () => {
+        assert.equal(medusa.fleetMembership(7)('ws-remote'), false);
+        assert.equal(medusa.fleetMembership(7).unmappedRefusedForUnreadableRegistry, false);
+        medusa._fleetDeps.statRegistry = (file) => {
+          if (file.startsWith(dirs[9])) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+          return realStat(file);
+        };
+        const ungroupedPeer = medusa.fleetMembership(9);
+        assert.equal(ungroupedPeer('ws-remote'), true, 'its own unreadable registry is no other fleet\'s, so unmapped peers stay reachable');
+        assert.equal(ungroupedPeer.unmappedRefusedForUnreadableRegistry, false);
+      });
+
+      it('refuses the send before the Hub and still lets allowCrossFleet: true through', async () => {
+        const medusaSendMod = require('../lib/medusa-send');
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-3099-send-'));
+        store._setBasePath(tmp);
+        store.init();
+        const realSend = medusa.sendMessage;
+        let hub = 0;
+        medusa.sendMessage = async ({ beforeHub }) => { hub++; beforeHub({ from: 'sender-ws' }); return { status: 'received', id: `hub-${hub}` }; };
+        try {
+          const r = await medusaSendMod.sendTracked({ sessionId: 1, senderProjectId: 9, caller: { kind: 'project', projectId: 9 }, body: { to: 'real-ws-8', message: 'hi' } });
+          assert.equal(r.status, 403);
+          assert.equal(r.body.code, 'CROSS_FLEET_FORBIDDEN');
+          assert.match(r.body.error, /allowCrossFleet: true/);
+          assert.ok(!JSON.stringify(r.body).includes('p8'), 'the other fleet\'s project is never named');
+          assert.equal(hub, 0, 'refused before the Hub');
+          const forced = await medusaSendMod.sendTracked({ sessionId: 1, senderProjectId: 9, caller: { kind: 'project', projectId: 9 }, body: { to: 'real-ws-8', message: 'hi', allowCrossFleet: true } });
+          assert.notEqual(forced.status, 403);
+          assert.equal(hub, 1, 'allowCrossFleet still sends');
+        } finally {
+          medusa.sendMessage = realSend;
+          store.close();
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
+      });
+
+      it('says why on a broadcast refusal, without naming the other fleet\'s registry', async () => {
+        await assert.rejects(medusa.broadcastAll({
+          callerKind: 'coordinator', senderId: `b-3099-${Date.now()}`, senderProjectId: 9, message: 'm',
+          targets: ['ws-remote'], fetchImpl: async () => ({ ok: true, json: async () => ({ workspaces: [] }) })
+        }), (err) => {
+          assert.equal(err.code, 'CROSS_FLEET_FORBIDDEN');
+          assert.deepEqual(err.details, { reason: 'REGISTRY_UNREADABLE_OUTSIDE_FLEET' });
+          assert.match(err.message, /registry outside your fleet could not be read/);
+          assert.match(err.message, /remote peer included/);
+          assert.ok(!err.message.includes('p8'));
+          return true;
+        });
+      });
+
+      it('still lets the Master and the Operator through', async () => {
+        const medusaSendMod = require('../lib/medusa-send');
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-3099-exempt-'));
+        store._setBasePath(tmp);
+        store.init();
+        const realSend = medusa.sendMessage;
+        let hub = 0;
+        medusa.sendMessage = async ({ beforeHub }) => { hub++; beforeHub({ from: 'sender-ws' }); return { status: 'received', id: `hub-${hub}` }; };
+        try {
+          for (const kind of ['operator', 'master']) {
+            const r = await medusaSendMod.sendTracked({ sessionId: 1, senderProjectId: 9, caller: { kind }, body: { to: 'ws-remote', message: 'hi' } });
+            assert.notEqual(r.status, 403, `${kind} is exempt`);
+          }
+          assert.equal(hub, 2);
+        } finally {
+          medusa.sendMessage = realSend;
+          store.close();
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
+      });
+    });
+
     it('names the unreadable registry on a broadcast\'s cross-fleet refusal', async () => {
       const realStat = medusa._fleetDeps.statRegistry;
       medusa._fleetDeps.statRegistry = (file) => {
