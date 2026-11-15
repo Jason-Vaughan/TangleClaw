@@ -1,1 +1,1 @@
-{"state":"ok","component":"all","message":"The v6.4.1 current roadmap card refreshed successfully.","checkedAt":"2026-11-15T23:31:37.620014+00:00","snapshot":"2026-11-15 15:31:37 PST","milestone":80,"version":"6.4.1","stage":"current"}
+{"state":"error","component":"release-roadmap","message":"The release-first refresh failed; the board retains its last successful GitHub snapshot. See the sync log.","checkedAt":"2026-11-15T23:53:21.803304+00:00","snapshot":"2026-11-06 18:06:03 PST"}
