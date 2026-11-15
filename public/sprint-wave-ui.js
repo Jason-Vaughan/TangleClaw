@@ -130,6 +130,9 @@
    * What the stage alone says about each gate when nothing records it (PM
    * ruling a79f9e44, mapped onto the stages `syncWaveDispatchState` assigns;
    * the ruling's own stage names are accepted too). Order follows {@link GATES}.
+   * A bare `closed` cannot tell a merged car from a cancelled one (the tracker
+   * closes a cancelled car's marker issue too), so past Gate 0 it says only
+   * `unknown`; the explicit `merged`/`complete` mean all six passed.
    */
   const STAGE_GATES = (() => {
     const all = (s) => GATES.map(() => s);
@@ -137,8 +140,9 @@
     const review = after0(['in_progress', 'in_progress', 'in_progress', 'in_progress', 'pending']);
     const building = after0(['pending', 'pending', 'pending', 'pending', 'pending']);
     const stopped = after0(['blocked', 'blocked', 'blocked', 'blocked', 'blocked']);
+    const ended = after0(['unknown', 'unknown', 'unknown', 'unknown', 'unknown']);
     const table = {
-      closed: all('pass'), complete: all('pass'), merged: all('pass'),
+      closed: ended, complete: all('pass'), merged: all('pass'),
       'in-review': review, review, in_review: review, gating: review,
       'in-progress': building, claimed: building, unassigned: building,
       active: building, building, running: building, planned: building, queued: building,
@@ -202,6 +206,8 @@
   /**
    * One gate pill: its short label, coloured by status, with a tip naming
    * the gate, its status, where that status came from, and any SHA or token.
+   * It is `role="img"` so a screen reader announces that tip as its name, not
+   * just the label (the status is otherwise only colour and border).
    * @param {ReturnType<typeof carGates>[number]} gate
    * @returns {string}
    */
@@ -209,9 +215,9 @@
     const from = gate.source === 'stage' ? ' (from stage)' : gate.source === 'unknown' ? ' (not recorded)' : '';
     const tip = `${gate.name}: ${GATE_STATUS_LABELS[gate.status]}${from}`
       + (gate.sha ? ` @ ${gate.sha}` : '') + (gate.token ? ` · ${gate.token}` : '')
-      + (gate.stale ? ' — bound to an older head' : '');
+      + (gate.stale ? ' — bound to a different head' : '');
     return `<span class="sprint-gate-pill is-${gate.status}${gate.source === 'stage' ? ' is-inferred' : ''}${gate.stale ? ' is-stale' : ''}"`
-      + ` title="${_escapeHtml(tip)}" aria-label="${_escapeHtml(tip)}">${_escapeHtml(gate.label)}</span>`;
+      + ` role="img" title="${_escapeHtml(tip)}" aria-label="${_escapeHtml(tip)}">${_escapeHtml(gate.label)}</span>`;
   }
 
   /**

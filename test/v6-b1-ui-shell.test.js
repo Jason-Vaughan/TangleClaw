@@ -6093,9 +6093,11 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
       renderKaizenLedgerPanel: (...a) => { calls.push(['kaizen', ...a]); return '<div>kaizen</div>'; }
     };
     assert.equal(content('sprint', { ok: true, data: waves }, ui), '<div>board</div>');
-    assert.equal(content('charter', { ok: true, data: waves }, ui), '<div>charter</div>');
+    // Restated by #3088: the charter builder draws a charter ({charter, activeVersion}), not the waves payload,
+    // so the waves are always the built-in list and the charter builder is fed by charterPanelContent instead.
+    assert.match(content('charter', { ok: true, data: waves }, ui), /Wave 1<\/span> <span class="v6-workspace-item-stage">2 cars/);
     assert.equal(content('kaizen', { ok: true, data: report }, ui), '<div>kaizen</div>');
-    assert.deepEqual(calls, [['board', null, waves], ['charter', waves], ['kaizen', report.report]]);
+    assert.deepEqual(calls, [['board', null, waves], ['kaizen', report.report]]);
   });
 
   it('falls back to its own escaped drawing when a builder is missing, throws or returns nothing', () => {
@@ -6670,14 +6672,17 @@ describe('the car progress matrix and its six gates (#3088, Rulings A782 and PM 
 
   it('infers each gate from the stage the tracker assigns, marked as inferred', () => {
     const p = 'pass/stage';
-    assert.deepEqual(statuses({ stage: 'closed' }), [p, p, p, p, p, p]);
+    const u = 'unknown/stage';
+    // A closed car may have been merged or cancelled (chunk review W-1), so past Gate 0 its stage says nothing.
+    assert.deepEqual(statuses({ stage: 'closed' }), [p, u, u, u, u, u]);
+    assert.deepEqual(statuses({ stage: 'merged' }), [p, p, p, p, p, p]);
+    assert.deepEqual(statuses({ stage: 'complete' }), [p, p, p, p, p, p]);
     assert.deepEqual(statuses({ stage: 'in-review' }), [p, 'in_progress/stage', 'in_progress/stage', 'in_progress/stage', 'in_progress/stage', 'pending/stage']);
     for (const stage of ['in-progress', 'claimed', 'unassigned']) {
       assert.deepEqual(statuses({ stage }), [p, 'pending/stage', 'pending/stage', 'pending/stage', 'pending/stage', 'pending/stage'], stage);
     }
     assert.deepEqual(statuses({ stage: 'blocked' }), [p, 'blocked/stage', 'blocked/stage', 'blocked/stage', 'blocked/stage', 'blocked/stage']);
     // The ruling's own names are accepted too.
-    assert.deepEqual(statuses({ stage: 'merged' }), statuses({ stage: 'closed' }));
     assert.deepEqual(statuses({ stage: 'gating' }), statuses({ stage: 'in-review' }));
     assert.deepEqual(statuses({ stage: 'failed' }), statuses({ stage: 'blocked' }));
     // An unknown stage, or one that names a prototype property, infers nothing.
@@ -6725,8 +6730,8 @@ describe('the car progress matrix and its six gates (#3088, Rulings A782 and PM 
     const order = [...html.matchAll(/<tr class="sprint-gate-wave"><th scope="rowgroup" colspan="10">([^<]+)<\/th><\/tr>|<tr class="sprint-gate-row" data-car-id="([^"]+)">/g)].map((m) => m[1] || m[2]);
     assert.deepEqual(order, ['Wave 1', 'B', 'Wave 2', 'A', 'Not in a wave', '&lt;x&gt;']);
     assert.match(html, /<tr class="sprint-gate-row" data-car-id="A"><th scope="row" class="sprint-gate-car">A<\/th><td class="sprint-gate-lane">TC-Lane-A<\/td><td class="sprint-gate-pr">#3097<\/td><td class="sprint-gate-head"><code>abcdef12<\/code><\/td>/);
-    assert.match(html, /<span class="sprint-gate-pill is-pass" title="A-Gate \(architect, exact head\): passed @ abcdef12 · A778" aria-label="[^"]+">A<\/span>/);
-    assert.match(html, /<span class="sprint-gate-pill is-in_progress is-inferred" title="O-Gate \(independent peer, exact head\): in progress \(from stage\)"/);
+    assert.match(html, /<span class="sprint-gate-pill is-pass" role="img" title="A-Gate \(architect, exact head\): passed @ abcdef12 · A778" aria-label="A-Gate \(architect, exact head\): passed @ abcdef12 · A778">A<\/span>/);
+    assert.match(html, /<span class="sprint-gate-pill is-in_progress is-inferred" role="img" title="O-Gate \(independent peer, exact head\): in progress \(from stage\)"/);
     assert.match(html, /data-car-id="B"><th scope="row" class="sprint-gate-car">B<\/th><td class="sprint-gate-lane">—<\/td><td class="sprint-gate-pr">—<\/td><td class="sprint-gate-head">—<\/td>/);
     assert.match(html, /<td class="sprint-gate-lane">&lt;b&gt;lane&lt;\/b&gt;<\/td>/);
     assert.doesNotMatch(html, /<b>lane/);
@@ -6743,11 +6748,208 @@ describe('the car progress matrix and its six gates (#3088, Rulings A782 and PM 
 
   it('marks a stale gate in its pill, names an unrecorded gate as such, and draws no matrix with no cars', () => {
     const html = ui.renderSprintWaveBoard(null, { dispatch: { C: { stage: 'mystery', headSha: '9999999', gates: { ci: { status: 'pass', sha: '1234567' } } } } });
-    assert.match(html, /<span class="sprint-gate-pill is-pass is-stale" title="CI receipt: passed @ 1234567 — bound to an older head"/);
+    assert.match(html, /<span class="sprint-gate-pill is-pass is-stale" role="img" title="CI receipt: passed @ 1234567 — bound to a different head"/);
     assert.match(html, /title="Gate 0 \(charter &amp; disjointness\): unknown \(not recorded\)"/);
     assert.doesNotMatch(html, /<tr class="sprint-gate-wave"/, 'a lone ungrouped list has no wave heading');
     assert.doesNotMatch(ui.renderSprintWaveBoard(null, { dispatch: {} }), /sprint-gate-matrix/);
     const twice = ui.renderSprintWaveBoard(null, { waves: [['D'], ['D']], dispatch: { D: { stage: 'claimed' } } });
     assert.equal((twice.match(/<tr class="sprint-gate-row" data-car-id="D">/g) || []).length, 1, 'a car listed in two waves is drawn once');
+  });
+});
+
+describe('the charter panel and train launch controls (#3088, Rulings A782 and PM a79f9e44)', () => {
+  const G = loadV6Shell();
+
+  it('reads a cars list, and says what is wrong with one it cannot', () => {
+    assert.deepEqual(plain(G.tcV6ParseTrainCars('[{"id":" a ","dependsOn":["b",2],"files":["x.js",""]},{"id":"b"}]')),
+      { ok: true, cars: [{ id: 'a', dependsOn: ['b'], files: ['x.js'] }, { id: 'b', dependsOn: [], files: [] }] });
+    assert.match(G.tcV6ParseTrainCars('[{').error, /^the cars list is not valid JSON \(/);
+    assert.match(G.tcV6ParseTrainCars('').error, /list at least one car/);
+    assert.match(G.tcV6ParseTrainCars('[]').error, /list at least one car/);
+    assert.match(G.tcV6ParseTrainCars('{"id":"a"}').error, /list at least one car/);
+    assert.equal(G.tcV6ParseTrainCars('[{"id":""}]').error, 'every car needs a text "id"');
+    assert.equal(G.tcV6ParseTrainCars('[null]').error, 'every car needs a text "id"');
+  });
+
+  it('shows computed waves, a disjointness check and a started run, escaped', () => {
+    assert.equal(G.tcV6TrainResultMarkup('waves', { waves: [['a', '<b>'], ['c']] }), '<ol class="v6-train-waves"><li><code>a</code>, <code>&lt;b&gt;</code></li><li><code>c</code></li></ol>');
+    assert.equal(G.tcV6TrainResultMarkup('waves', {}), '<p class="v6-workspace-empty">No waves.</p>');
+    assert.match(G.tcV6TrainResultMarkup('disjointness', { ok: true, result: { ok: true, collisions: [], oversizedCars: [], scopeDrift: [] } }), /Disjoint: no shared files/);
+    const bad = G.tcV6TrainResultMarkup('disjointness', { result: { ok: false,
+      collisions: [{ carA: 'a', carB: '<b>', files: ['x.js'] }], oversizedCars: [{ carId: 'c', issueCount: 4 }],
+      scopeDrift: [{ carId: 'd', declaredOnly: ['y'], actualOnly: [] }] } });
+    assert.match(bad, /<li class="v6-workspace-item is-error"><code>a<\/code> and <code>&lt;b&gt;<\/code> share <code>x\.js<\/code><\/li>/);
+    assert.match(bad, /<code>c<\/code> bundles 4 issues/);
+    assert.match(bad, /<code>d<\/code> drifts: declared only <code>y<\/code>; touched only none/);
+    assert.match(G.tcV6TrainResultMarkup('disjointness', { result: { scopeDrift: [{ carId: 'e', declaredOnly: [], actualOnly: ['z'] }] } }),
+      /<code>e<\/code> drifts: declared only none; touched only <code>z<\/code>/);
+    assert.equal(G.tcV6TrainResultMarkup('run', { id: 'r<1>', waves: [['a'], ['b']] }), '<p class="v6-train-ok">Started wave run <code>r&lt;1&gt;</code> with 2 waves.</p>');
+    assert.match(G.tcV6TrainResultMarkup('run', { id: 'r', waves: [['a']] }), /with 1 wave\./);
+  });
+
+  it('lists charter versions with an Activate button on each one not active', () => {
+    const html = G.tcV6CharterVersionsMarkup({ charter: { active_version_id: 2 },
+      versions: [{ id: 1, version_number: 1, status: 'superseded' }, { id: 2, version_number: 2, status: 'approved' }, { id: 3, version_number: '3<', status: '<draft>' }, { id: 'x' }] });
+    assert.match(html, /<span class="v6-workspace-item-id">Version 1<\/span> <span class="v6-workspace-item-stage">superseded<\/span> <button type="button" id="v6CharterActivate-1" class="btn btn-secondary btn-small v6-charter-activate" data-version-id="1" aria-label="Activate Version 1">Activate<\/button>/);
+    assert.match(html, /Version 2<\/span> <span class="v6-workspace-item-stage">approved<\/span> <span class="v6-workspace-item-lane">active<\/span>/);
+    assert.doesNotMatch(html, /v6CharterActivate-2/);
+    assert.match(html, /Version 3&lt;<\/span> <span class="v6-workspace-item-stage">&lt;draft&gt;<\/span>/);
+    assert.doesNotMatch(html, /v6CharterActivate-(x|NaN)/, 'a version without a numeric id gets no button');
+    assert.equal((html.match(/<button /g) || []).length, 2);
+    assert.match(html, /id="v6CharterActivate-3"[^>]*aria-label="Activate Version 3&lt;">/);
+    assert.equal(G.tcV6CharterVersionsMarkup({}), '<p class="v6-workspace-empty">This charter has no versions yet.</p>');
+  });
+
+  it('feeds the charter builder the charter and its active version, not the waves (fixes the V630 gap)', () => {
+    const calls = [];
+    const ui = { renderCharterReadinessPanel: (...a) => { calls.push(a); return '<div>readiness</div>'; } };
+    const charter = { ok: true, data: { charter: { id: 9, active_version_id: 2 }, versions: [{ id: 1 }, { id: 2, status: 'approved' }] } };
+    const html = G.tcV6CharterPanelContent(charter, { ok: true, data: { waves: [['a']] } }, ui);
+    assert.deepEqual(plain(calls), [[{ charter: { id: 9, active_version_id: 2 }, activeVersion: { id: 2, status: 'approved' } }]]);
+    assert.match(html, /<section class="v6-charter-section" aria-label="Charter"><div>readiness<\/div><ul class="v6-workspace-list v6-charter-versions">/);
+    assert.match(html, /<section class="v6-charter-section" aria-label="Planned waves"><h3 class="v6-workspace-panel-subtitle">Planned waves<\/h3>/);
+    // No builder, or one that throws: a built-in summary stands in.
+    for (const u of [null, { renderCharterReadinessPanel: () => { throw new Error('x'); } }]) {
+      assert.match(G.tcV6CharterPanelContent({ ok: true, data: { charter: { title: 'T<1>', status: 'active' }, versions: [] } }, { ok: false, notFound: true }, u),
+        /<p class="v6-workspace-item-stage">Charter T&lt;1&gt; · active<\/p>/);
+    }
+    assert.match(G.tcV6CharterPanelContent(null, { ok: false, notFound: true }, null), /Open a project's chat to see its charter\./);
+    assert.match(G.tcV6CharterPanelContent({ ok: false, notFound: true }, { ok: false, notFound: true }, null), /This project has no charter yet\./);
+    assert.match(G.tcV6CharterPanelContent({ ok: false, error: '<x>' }, { ok: false, notFound: true }, null), /Could not load the charter: &lt;x&gt;\./);
+  });
+
+  /** A shell on Charter & Roadmap, its train actions recorded. */
+  function mountTrain(actions) {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    root.id = 'v6ShellRoot';
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/tc-lane'), storage: null });
+    shell.setWorkspaceActions(actions);
+    // The test DOM registers ids only from markup set through a parsing element: the panel and its outcome box are.
+    withIdParsingInnerHTML(doc.getElementById('v6WorkspacePanel'), doc);
+    doc.getElementById('v6WorkspaceMode-charter').dispatch('click');
+    withIdParsingInnerHTML(doc.getElementById('v6TrainOutcome'), doc);
+    const type = (id, v) => { const el = doc.getElementById(id); el.value = v; el.dispatch('input'); };
+    const outcome = () => doc.getElementById('v6TrainOutcome').innerHTML;
+    return { doc, root, shell, type, outcome };
+  }
+
+  it('draws the train launch under the charter panel, and stops a list it cannot read or a run with no fleet before sending', async () => {
+    const calls = [];
+    const m = mountTrain({ computeWaves: async (...a) => { calls.push(a); return { ok: true, message: 'ok' }; }, startRun: async (...a) => { calls.push(a); return { ok: true }; } });
+    const panel = m.doc.getElementById('v6WorkspacePanel').innerHTML;
+    assert.match(panel, /<section class="v6-train-launch" aria-label="Train launch">/);
+    assert.match(panel, /<label for="v6TrainCars">Cars \(JSON: id, dependsOn, files\)<\/label>/);
+    assert.match(panel, /<button type="button" id="v6TrainStartRun" class="btn btn-secondary btn-small">Start wave run<\/button>/);
+    m.type('v6TrainCars', 'nope');
+    m.doc.getElementById('v6TrainComputeWaves').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+    assert.match(m.outcome(), /<p id="v6TrainStatus" class="v6-train-status is-error" role="status">Not sent: the cars list is not valid JSON/);
+    m.type('v6TrainCars', '[{"id":"a"}]');
+    m.doc.getElementById('v6TrainStartRun').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+    assert.match(m.outcome(), /Not sent: a wave run needs a fleet id\./);
+    assert.deepEqual(calls, []);
+  });
+
+  it('runs an action with the read cars and the fleet id, disables the buttons meanwhile, and shows its escaped outcome', async () => {
+    const calls = [];
+    let release;
+    const m = mountTrain({
+      startRun: (...a) => { calls.push(plain(a)); return new Promise((r) => { release = r; }); },
+      checkDisjointness: async () => { throw new Error('boom <x>'); }
+    });
+    m.type('v6TrainCars', '[{"id":"a","files":["x.js"]}]');
+    m.type('v6TrainFleet', ' tc-lane ');
+    m.doc.getElementById('v6TrainStartRun').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(calls, [[[{ id: 'a', dependsOn: [], files: ['x.js'] }], 'tc-lane']]);
+    assert.match(m.outcome(), /class="v6-train-status is-pending" role="status">Working…</);
+    assert.equal(m.doc.getElementById('v6TrainValidate').disabled, true);
+    m.doc.getElementById('v6TrainStartRun').dispatch('click');
+    assert.equal(calls.length, 1, 'one at a time');
+    release({ ok: true, message: 'Wave run started.', html: '<p class="v6-train-ok">done</p>' });
+    await new Promise((r) => setImmediate(r));
+    assert.match(m.outcome(), /class="v6-train-status is-ok" role="status">Wave run started\.<\/p><div id="v6TrainResult" class="v6-train-result"><p class="v6-train-ok">done<\/p><\/div>/);
+    assert.equal(m.doc.getElementById('v6TrainValidate').disabled, false);
+    m.doc.getElementById('v6TrainValidate').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+    assert.match(m.outcome(), /class="v6-train-status is-error" role="status">boom &lt;x&gt;<\/p><div id="v6TrainResult" class="v6-train-result"><\/div>/);
+    // The drafts survive a repaint of the panel.
+    m.shell.setWorkspacePanel('charter', '<p>new</p>');
+    assert.match(m.doc.getElementById('v6WorkspacePanel').innerHTML, /<textarea id="v6TrainCars"[^>]*>\[\{&quot;id&quot;:&quot;a&quot;,&quot;files&quot;:\[&quot;x\.js&quot;\]\}\]<\/textarea>/);
+    assert.match(m.doc.getElementById('v6WorkspacePanel').innerHTML, /<input type="text" id="v6TrainFleet" class="v6-train-fleet" value=" tc-lane "/);
+  });
+
+  it('wires an Activate button for each version the charter panel lists, and reports its outcome', async () => {
+    const asked = [];
+    const m = mountTrain({ activateVersion: async (id) => { asked.push(id); return { ok: true, message: `Version ${id} is active.` }; } });
+    m.shell.setWorkspacePanel('charter', G.tcV6CharterPanelContent({ ok: true, data: { charter: { active_version_id: 2 }, versions: [{ id: 1 }, { id: 2 }, { id: 3 }] } }, { ok: false, notFound: true }, null));
+    m.doc.getElementById('v6CharterActivate-3').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(asked, [3]);
+    assert.match(m.outcome(), /is-ok" role="status">Version 3 is active\./);
+  });
+
+  /** A live controller over a recording api, its train actions and panel content captured. */
+  function controllerFor(o) {
+    const opts = o || {};
+    const posts = [];
+    const reads = [];
+    const api = async (url, init) => {
+      if (init && init.method === 'POST') {
+        posts.push({ url, headers: plain(init.headers), body: JSON.parse(init.body) });
+        if (opts.refuse) { api.lastError = opts.refuse; return null; }
+        if (/topological-waves$/.test(url)) return { waves: [['a'], ['b']] };
+        if (/validate-disjointness$/.test(url)) return { ok: true, result: { ok: false, collisions: [{ carA: 'a', carB: 'b', files: ['x.js'] }], oversizedCars: [], scopeDrift: [] } };
+        if (/wave-runs$/.test(url)) return { id: 'run-1', waves: [['a']] };
+        return { ok: true };
+      }
+      reads.push(url);
+      if (/\/charter$/.test(url)) return { charter: { id: 1, active_version_id: null }, versions: [{ id: 5 }] };
+      return { ok: true, waves: [], dispatch: {} };
+    };
+    api.lastError = null;
+    let actions = null;
+    const panels = [];
+    const shell = { setWorkspaceLoader() {}, setWorkspaceActions: (a) => { actions = a; }, setWorkspacePanel: (mode, html) => panels.push([mode, html]) };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => { throw new Error('no apiMutate for train writes'); }, storage: null,
+      operatorHeaders: opts.proofFails ? async () => { throw new Error('no proof'); } : async () => ({ 'X-TC-Open-Token': 'tok' }),
+      window: { TangleClawSprintWaveUi: {} }, document: null, setInterval: () => 0, clearInterval: () => {} });
+    return { live, posts, reads, panels, actions: () => actions };
+  }
+  const flush = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r)); };
+
+  it('sends each launch write with the operator proof to the route #3088 names, and shows the answer', async () => {
+    const c = controllerFor();
+    await c.live.handleRoute(null);
+    const a = c.actions();
+    const cars = [{ id: 'a', dependsOn: [], files: ['x.js'] }, { id: 'b', dependsOn: ['a'], files: ['y.js'] }];
+    const waves = await a.computeWaves(cars);
+    assert.deepEqual(plain(waves), { ok: true, message: '2 waves.', html: '<ol class="v6-train-waves"><li><code>a</code></li><li><code>b</code></li></ol>' });
+    const disjoint = await a.checkDisjointness(cars);
+    assert.equal(disjoint.ok, false);
+    assert.equal(disjoint.message, 'Not disjoint.');
+    assert.deepEqual(c.posts.map((p) => [p.url, p.headers, p.body]), [
+      ['/api/v6/wave-scheduler/topological-waves', { 'X-TC-Open-Token': 'tok' }, { cars: [{ id: 'a', dependsOn: [] }, { id: 'b', dependsOn: ['a'] }] }],
+      ['/api/sprint-waves/validate-disjointness', { 'X-TC-Open-Token': 'tok' }, { cars: [{ id: 'a', files: ['x.js'] }, { id: 'b', files: ['y.js'] }] }]
+    ]);
+    // A run and an activation belong to the open project: none is open here.
+    assert.deepEqual(plain(await a.startRun(cars, 'tc-lane')), { ok: false, message: 'Not started: open a project\'s chat first.' });
+    assert.deepEqual(plain(await a.activateVersion(5)), { ok: false, message: 'Not activated: open a project\'s chat first.' });
+    assert.equal(c.posts.length, 2);
+  });
+
+  it('a refused write or proof is named, never shown as done', async () => {
+    const refused = controllerFor({ refuse: 'DEPENDENCY_CYCLE: a -> a' });
+    await refused.live.handleRoute(null);
+    assert.deepEqual(plain(await refused.actions().computeWaves([{ id: 'a', dependsOn: ['a'], files: [] }])), { ok: false, message: 'Not computed: DEPENDENCY_CYCLE: a -> a' });
+    assert.deepEqual(plain(await refused.actions().checkDisjointness([{ id: 'a', dependsOn: [], files: [] }])), { ok: false, message: 'Not checked: DEPENDENCY_CYCLE: a -> a' });
+    const noProof = controllerFor({ proofFails: true });
+    await noProof.live.handleRoute(null);
+    assert.deepEqual(plain(await noProof.actions().computeWaves([{ id: 'a', dependsOn: [], files: [] }])), { ok: false, message: 'Not computed: no proof' });
+    assert.equal(noProof.posts.length, 0);
   });
 });

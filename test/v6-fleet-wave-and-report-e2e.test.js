@@ -192,6 +192,71 @@ describe('v6 Stage 3-4 E2E: fleet, wave and report, against the live server (#30
     });
   });
 
+  describe('#3088: train launch from the Charter & Roadmap mode, and the car gate matrix', () => {
+    it('computes waves and starts a run bound to the open project from the shell, then draws its cars with stage-inferred gates', async () => {
+      const projectId = seedProject('e2e-train');
+      // Both shipped scripts in one page, as the browser loads them.
+      const G = loadV6Shell();
+      vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'sprint-wave-ui.js'), 'utf8'), G);
+      assert.equal(typeof G.TangleClawSprintWaveUi.carGates, 'function');
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const api = async (url, init) => {
+        const method = (init && init.method) || 'GET';
+        const res = await send(method, url, init && init.body ? { body: JSON.parse(init.body) } : {});
+        if (res.statusCode >= 200 && res.statusCode < 300) { api.lastError = null; return json(res); }
+        let body = {};
+        try { body = json(res); } catch { body = {}; }
+        api.lastError = body.error || `HTTP ${res.statusCode}`;
+        api.lastErrorCode = body.code || null;
+        return null;
+      };
+      const pending = [];
+      let shell = null;
+      const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, operatorHeaders: async () => ({}),
+        storage: null, setInterval: () => 0, clearInterval: () => {} });
+      const win = { location: { hash: `#/resources/${projectId}/conversation` }, addEventListener() {}, removeEventListener() {} };
+      shell = G.tcCreateV6Shell(doc, { root, window: win, storage: null, onRender: (r) => pending.push(live.handleRoute(r)) });
+      pending.push(live.handleRoute(shell.getRoute()));
+      const settle = async () => { while (pending.length) await pending.shift(); for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+      await settle();
+      withIdParsingInnerHTML(doc.getElementById('v6WorkspacePanel'), doc);
+      doc.getElementById('v6WorkspaceMode-charter').dispatch('click');
+      await settle();
+      withIdParsingInnerHTML(doc.getElementById('v6TrainOutcome'), doc);
+      const panel = () => doc.getElementById('v6WorkspacePanel').innerHTML;
+      assert.match(panel(), /This project has no charter yet\./, 'the open project was read, and has no charter');
+      const type = (id, v) => { const el = doc.getElementById(id); el.value = v; el.dispatch('input'); };
+      type('v6TrainCars', JSON.stringify([{ id: 'schema', files: ['lib/store.js'] }, { id: 'api', dependsOn: ['schema'], files: ['server.js'] }]));
+      type('v6TrainFleet', 'fleet-train');
+      // The test DOM keeps ids, not inner markup, across a panel repaint (a started run reloads the panel): read the
+      // outcome box, else its markup in the last panel drawing.
+      const outcome = () => doc.getElementById('v6TrainOutcome').innerHTML
+        || ((/<div id="v6TrainOutcome">([\s\S]*?<\/div>)\s*<\/section>/.exec(panel()) || [])[1] || '');
+      doc.getElementById('v6TrainComputeWaves').dispatch('click');
+      for (let i = 0; i < 100 && /Working…/.test(outcome()); i++) await new Promise((r) => setImmediate(r));
+      assert.match(outcome(), /is-ok" role="status">2 waves\.<\/p><div id="v6TrainResult" class="v6-train-result"><ol class="v6-train-waves"><li><code>schema<\/code><\/li><li><code>api<\/code><\/li><\/ol>/);
+      doc.getElementById('v6TrainValidate').dispatch('click');
+      for (let i = 0; i < 100 && /Working…/.test(outcome()); i++) await new Promise((r) => setImmediate(r));
+      assert.match(outcome(), /is-ok" role="status">Disjoint\./);
+      doc.getElementById('v6TrainStartRun').dispatch('click');
+      for (let i = 0; i < 100 && /Working…/.test(outcome()); i++) await new Promise((r) => setImmediate(r));
+      const started = /Started wave run <code>([^<]+)<\/code> with 2 waves\./.exec(outcome());
+      assert.ok(started, outcome());
+      const run = json(await get(`/api/v6/projects/${projectId}/wave-runs/${encodeURIComponent(started[1])}`));
+      assert.equal(run.fleetId, 'fleet-train');
+      assert.deepEqual(run.waves, [['schema'], ['api']]);
+      // The new run is the current sprint: Sprint & Cars draws its cars, gates inferred from their stage.
+      doc.getElementById('v6WorkspaceMode-sprint').dispatch('click');
+      for (let i = 0; i < 100 && !/sprint-gate-matrix/.test(panel()); i++) await new Promise((r) => setImmediate(r));
+      assert.match(panel(), /<tr class="sprint-gate-wave"><th scope="rowgroup" colspan="10">Wave 1<\/th><\/tr><tr class="sprint-gate-row" data-car-id="schema">/);
+      assert.match(panel(), /<span class="sprint-gate-pill is-pass is-inferred" role="img" title="Gate 0 \(charter &amp; disjointness\): passed \(from stage\)"/);
+      assert.doesNotMatch(panel(), /sprint-gate-head"><code>/, 'no head SHA is invented');
+    });
+  });
+
   describe('E4/E6a/E6b: report presentation, search and grounded ask', () => {
     it('presents a 12-section report in 3 pillars, prints it, and serves the popover catalog', async () => {
       const view = json(await post('/api/v6/reports/present', { html: REPORT_HTML }));

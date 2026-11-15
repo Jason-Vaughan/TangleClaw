@@ -5276,7 +5276,7 @@ p.v6-history-secret {
 
 /* #3088: the car progress matrix and its six gate pills. A gate inferred
    from the stage is outlined, not filled, so it never reads as a receipt;
-   a gate bound to an older head is struck through. */
+   a gate bound to a different head is struck through. */
 .sprint-gate-matrix {
   display: block;
   width: 100%;
@@ -5326,4 +5326,44 @@ p.v6-history-secret {
   text-decoration: line-through;
   outline: 2px solid #d4a72c;
   outline-offset: 1px;
+}
+
+/* #3088: the charter versions and the train launch controls under Charter & Roadmap. */
+.v6-workspace-panel-subtitle {
+  margin: 12px 0 6px;
+  font-size: 1em;
+}
+.v6-charter-activate,
+.v6-train-actions .btn {
+  min-height: 44px;
+}
+.v6-train-launch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+.v6-train-cars {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.v6-train-fleet {
+  max-width: 20em;
+}
+.v6-train-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.v6-train-status.is-error,
+.v6-workspace-item.is-error {
+  color: #f85149;
+}
+.v6-train-status.is-ok,
+.v6-train-ok {
+  color: #2ea043;
+}
+.v6-train-waves code {
+  overflow-wrap: anywhere;
 }
