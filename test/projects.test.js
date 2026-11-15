@@ -1076,6 +1076,20 @@ describe('projects', () => {
         const never = await withCountedTmux('', () => projects.enrichProject(store.projects.getByName('badge-never')));
         assert.equal(never.lastSessionEngineId, null);
       });
+
+      it('a session store that cannot be read leaves lastSessionEngineId null and still lists the project', async () => {
+        const { project, session } = projectRunning('badge-unreadable', 'codex');
+        store.sessions.kill(session.id, 'test: ended');
+        const realGetLatest = store.sessions.getLatest;
+        store.sessions.getLatest = () => { throw new Error('database is locked'); };
+        try {
+          const enriched = await withCountedTmux('', () => projects.enrichProject(store.projects.get(project.id)));
+          assert.equal(enriched.name, 'badge-unreadable');
+          assert.equal(enriched.lastSessionEngineId, null);
+        } finally {
+          store.sessions.getLatest = realGetLatest;
+        }
+      });
     });
 
     it('enrichProject with no caller-supplied snapshot answers from its own', async () => {
