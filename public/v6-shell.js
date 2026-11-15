@@ -814,7 +814,10 @@
    * the 5-hour, weekly and sprint windows summed across models (a missing
    * engine counts as none), its live sessions, and how much it has left —
    * the lowest a live session reports (a Codex footer's "weekly 0% left"),
-   * else the operator's calibration; both are percentages REMAINING. The
+   * else the operator's calibration; both are percentages REMAINING. A
+   * session reading whose `source` is `provider-window` (or `none`) is the
+   * calibration reported back, so it is not a live reading; one that is
+   * `combined` mixes the pane with calibration and is labelled so. The
    * state follows: critical at 5% or less, warning at 25% or less, else
    * healthy (unknown when nothing reports a percentage).
    * @param {object|null} windows - `GET /api/usage/windows`.
@@ -828,14 +831,17 @@
     const engines = USAGE_ENGINES.map(({ key, label, name }) => {
       const models = w.byProviderModel && w.byProviderModel[key];
       const mine = live.filter((x) => x && (x.engine === key || x.provider === key));
-      const seen = mine.flatMap((x) => [pctOrNull(x.weeklyRemainingPct), pctOrNull(x.fiveHourRemainingPct)]).filter((v) => v !== null);
+      const fromPane = mine.filter((x) => x.source !== 'provider-window' && x.source !== 'none');
+      const readings = (list) => list.flatMap((x) => [pctOrNull(x.weeklyRemainingPct), pctOrNull(x.fiveHourRemainingPct)]).filter((v) => v !== null);
+      const seen = readings(fromPane);
+      const mixed = readings(fromPane.filter((x) => x.source === 'combined')).length > 0;
       const cal = w.calibration && w.calibration[key];
       const calibrated = cal ? [pctOrNull(cal.weeklyPct), pctOrNull(cal.fiveHourPct)].filter((v) => v !== null) : [];
       const remainingPct = seen.length ? Math.min(...seen) : (calibrated.length ? Math.min(...calibrated) : null);
       const state = remainingPct === null ? 'unknown' : remainingPct <= 5 ? 'critical' : remainingPct <= 25 ? 'warning' : 'healthy';
       return {
         key, label, name, remainingPct, state,
-        source: seen.length ? 'live' : (calibrated.length ? 'calibrated' : 'none'),
+        source: seen.length ? (mixed ? 'live and calibrated' : 'live') : (calibrated.length ? 'calibrated' : 'none'),
         sessions: mine.length,
         tokens: { fiveHour: sum(models, 'fiveHour'), weekly: sum(models, 'weekly'), sprint: sum(models, 'sprint') }
       };
@@ -1281,6 +1287,19 @@
   const QUESTION_PREFIX = /^(?:\d+[.)]|[-*•])\s+/;
 
   /**
+   * Whether a line asks something (#3082): a `?` that ends a sentence, so
+   * one followed by a space, closing punctuation or markdown, or the end of
+   * the line — `Proceed? (y/n)`, `**Ship it?**`, `merge #12? Reply yes/no.`.
+   * A `?` inside a URL or inline code is not a question.
+   * @param {string} line
+   * @returns {boolean}
+   */
+  function asksQuestion(line) {
+    const prose = String(line).replace(/`[^`]*`/g, ' ').replace(/\bhttps?:\/\/\S+/gi, ' ');
+    return /\?(?=$|[\s)\]}"'*_~.,;:!\u2019\u201d])/.test(prose);
+  }
+
+  /**
    * The conversation a session's live output shows (#3052): its assistant
    * replies, any operator prompt not already recorded, the question the
    * assistant is waiting on, and what it is busy doing. Display only — the
@@ -1444,8 +1463,8 @@
     const open = last && last.role === 'assistant' && !answered ? turns.slice(since).map((t) => t.text).join('\n') : '';
     const tail = last && last.role === 'assistant' && !answered ? last.text.split('\n').pop() : '';
     const questions = open.split('\n').map((l) => l.trim().replace(QUESTION_PREFIX, '').trim())
-      .filter((l) => /\?\s*$/.test(l));
-    return { turns, question: /\?\s*$/.test(tail) ? tail : null, questions, activity, switchboard };
+      .filter(asksQuestion);
+    return { turns, question: asksQuestion(tail) ? tail : null, questions, activity, switchboard };
   }
 
   /**
@@ -1687,7 +1706,7 @@
   function turnKind(turn) {
     if (!turn || turn.role !== 'assistant' || turn.trigger !== 'switchboard') return 'direct';
     const text = String(turn.text || '');
-    if (text.split('\n').some((l) => /\?\s*$/.test(l.trim()))) return 'question';
+    if (text.split('\n').some(asksQuestion)) return 'question';
     if (BLOCKER_TEXT.test(text)) return 'blocker';
     if (MILESTONE_TEXT.test(text)) return 'milestone';
     return 'chatter';

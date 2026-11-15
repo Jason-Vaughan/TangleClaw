@@ -5502,6 +5502,25 @@ describe('the verbosity filter on Under the Hood (#3082)', () => {
     assert.deepEqual(out.turns.map((t) => t.trigger || 'direct'), ['switchboard', 'direct', 'direct']);
   });
 
+  it('shows a question whose ? is followed by more words, a parenthetical or markdown, and queues it (O-Gate B2)', () => {
+    const asked = ['Operator: should I merge #12? Reply yes/no.', 'Proceed? (y/n)', '**Need your call: ship it?**'];
+    for (const text of asked) {
+      const out = run([wake, `⏺ ${text}`]);
+      assert.deepEqual(out.questions, [text], `${text} reaches Waiting on you`);
+      const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+        chat: { status: 'active', members: [], live: { turns: out.turns } } });
+      const live = html.slice(html.indexOf('id="v6ChatLive"'), html.indexOf('id="v6ChatRecordedTail"'));
+      assert.match(live, new RegExp(text.slice(-8).replace(/[?*()]/g, '\\$&')), `${text} stays in the chat`);
+      assert.match(html, /id="v6ChatTuckedCount"[^>]*><\/span>|id="v6ChatTuckedCount"[^>]*hidden/, `${text} is not tucked`);
+    }
+  });
+
+  it('a ? inside a URL or inline code is not a question', () => {
+    for (const text of ['Acked; see https://example.com/pr?_id=12 for it.', 'Ran `ls build? out` and routed it.', 'Acked INT re: a?b.']) {
+      assert.deepEqual(run([wake, `⏺ ${text}`]).questions, [], text);
+    }
+  });
+
   /** A chat whose live turns hold one reply of each kind after a wake. */
   function view(verbosity) {
     const turns = [
@@ -5995,6 +6014,15 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
     assert.deepEqual(m.engines[2].tokens, { fiveHour: 0, weekly: 0, sprint: 0 });
     assert.equal(m.resetHours, 106.5);
     assert.deepEqual(model(null).engines.map((e) => e.state), ['unknown', 'unknown', 'unknown']);
+  });
+
+  it('a session reading that only reports the calibration back is not live; a combined one says so (O-Gate N2)', () => {
+    const echoed = model(windows(), { sessions: [{ engine: 'claude', source: 'provider-window', weeklyRemainingPct: 3 }] });
+    assert.deepEqual([echoed.engines[0].remainingPct, echoed.engines[0].source, echoed.engines[0].sessions], [40, 'calibrated', 1]);
+    const mixed = model(windows(), { sessions: [{ engine: 'claude', source: 'combined', weeklyRemainingPct: 30 },
+      { engine: 'codex', source: 'terminal-statusline', weeklyRemainingPct: 50 }] });
+    assert.deepEqual(mixed.engines.slice(0, 2).map((e) => [e.remainingPct, e.source]), [[30, 'live and calibrated'], [50, 'live']]);
+    assert.equal(model(windows(), { sessions: [{ engine: 'claude', source: 'none', weeklyRemainingPct: 1 }] }).engines[0].source, 'calibrated');
   });
 
   it('% left is the lowest a live session reports, else the calibration (both REMAINING), else unknown', () => {
