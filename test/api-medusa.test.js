@@ -2443,6 +2443,18 @@ describe('lib/medusa — fleet isolation (#3077, Ruling A738)', () => {
       assert.deepEqual(reads, [dirs[8]]);
     });
 
+    it('drops a project\'s cached ids when this module starts a session there, even if the file looks unchanged', () => {
+      medusa._fleetDeps.statRegistry = () => ({ mtimeMs: 1, size: 1 });
+      medusa.fleetMembership(7)('real-ws-8');
+      const status = medusa.startSession({ projectPath: dirs[8], sessionId: 's8-new', name: 'p8', workspaceId: 'real-ws-8-new', wsFactory: (u) => new FakeWS(u) });
+      try {
+        assert.equal(status.workspaceId, 'real-ws-8-new');
+        assert.equal(medusa.fleetMembership(7)('real-ws-8-new'), true, 'the new workspace is placed at once, not hidden behind a stale cache');
+      } finally {
+        medusa.stopSession('s8-new');
+      }
+    });
+
     for (const [where, code] of [['stat', 'EPERM'], ['read', 'EACCES']]) {
       it(`reports a registry that cannot be ${where === 'stat' ? 'stat-ed' : 'read'} (${code}) as unreadable, never as empty`, () => {
         const realStat = medusa._fleetDeps.statRegistry;
