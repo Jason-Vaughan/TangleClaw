@@ -5180,6 +5180,17 @@ describe('a wrapped wake never swallows the session\'s reply (Lane-B O-Gate and 
     assert.deepEqual(out.questions, ['Fixed. Shall I push?']);
   });
 
+  it('reply guidance as long as a project may set (2000 characters) still joins, and so does an address keeping \'()!*\' (fifth review)', () => {
+    const guidance = 'Answer in the PR thread first, then ack it here. '.repeat(40).slice(0, 2000);
+    const wakeText = `[TangleClaw Switchboard] You have 3 unread Medusa message(s): tc message read. Reply where an answer is needed, BEFORE marking it handled: ${guidance}. The initiator closes the exchange, so no answer leaves them blocked; tc message owed lists what you owe. Never use /clear as an acknowledgement. Without tc: API at http://localhost:3102/api/sessions/it's(new)!*/medusa: GET /messages; POST /send (inReplyTo) and /read need launch headers. (wake ref 0123456789ab)`;
+    const chunks = [];
+    for (let i = 0; i < wakeText.length; i += 61) chunks.push(wakeText.slice(i, i + 61));
+    const out = run([`> ${chunks[0]}`].concat(chunks.slice(1).map((c) => `  ${c.trim()}`), ['  Shall I merge?']), 'antigravity');
+    assert.equal(out.switchboard.length, 1);
+    assert.equal(out.switchboard[0].text.replace(/\s+/g, ''), wakeText.replace(/\s+/g, ''));
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Shall I merge?' }]);
+  });
+
   it('a blank line ends a wake, even mid-sentence', () => {
     const out = run(['> [TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.', '', '  Reply where an answer is needed, BEFORE'], 'antigravity');
     assert.equal(out.switchboard[0].text, '[TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.');

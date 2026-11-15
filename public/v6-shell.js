@@ -1071,12 +1071,20 @@
     '[TangleClaw] Your workload report has expired, so coordinators now read this lane as UNKNOWN. Report what you are doing with `tc workload set <working|waiting-external|blocked|complete> --clearance <safe-to-clear|do-not-clear|unknown> --summary "<one line>"`. This is a reminder, sent once for this report; it changes nothing about your task.'
   ].flatMap((t) => [`${t} (wake ref %)`, t]).map(compileNotice));
 
-  /** What each slot kind in {@link NOTICE_TEMPLATES} takes, and how much of it at most. */
+  /**
+   * What each slot kind in {@link NOTICE_TEMPLATES} takes, and how much of it
+   * at most, whitespace removed — each as the producer can emit it: a count
+   * (`\d+` in `lib/medusa-wake.js#_ownNudgePattern`); an address, any text
+   * (that pattern takes `[^/\s]+` for an encoded project name, which may
+   * keep `'()!*`) as long as an origin plus a switchboard path; a 12-hex
+   * wake ref (`lib/wake-transports.js`); and reply guidance up to
+   * `lib/project-config.js` REPLY_GUIDANCE_TEXT_MAX (2000 characters).
+   */
   const NOTICE_SLOTS = Object.freeze({
-    '#': { re: /[0-9]/, max: 6 },
-    '@': { re: /[A-Za-z0-9:/._~?=&%+-]/, max: 300 },
+    '#': { re: /[0-9]/, max: 12 },
+    '@': { re: /./, max: 1000 },
     '%': { re: /[0-9a-f]/, max: 32 },
-    '~': { re: /./, max: 400 }
+    '~': { re: /./, max: 2000 }
   });
 
   /**
