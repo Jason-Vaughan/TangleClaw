@@ -4413,11 +4413,40 @@ describe('the Waiting on you queue (#3079)', () => {
     assert.doesNotMatch(m.doc.getElementById('v6ChatQuestion').innerHTML, /One\?/);
   });
 
-  it('the same words asked in a later reply show again', () => {
+  it('the same words asked in a later reply show again, once the first was answered', () => {
     const m = mountQuestions();
     m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'ok' }], questions: [] } });
     m.shell.setLive({ peek: null, live: { turns: [{ role: 'assistant', text: 'New reply. One?' }], questions: ['One?'] } });
     assert.match(m.doc.getElementById('v6ChatQuestion').innerHTML, /One\?/);
+  });
+
+  it('a dismissal holds while the same reply grows, by a wake or by more text (Critic W2)', () => {
+    const m = mountQuestions();
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'assistant', text: 'One?\nTwo?\nAnd a reply to the wake.' }], questions: ['One?', 'Two?'] } });
+    const html = m.doc.getElementById('v6ChatQuestion').innerHTML;
+    assert.doesNotMatch(html, /One\?/);
+    assert.match(html, /Two\?/);
+  });
+
+  it('a poll that changes nothing leaves the question slot, and the ✕ that has focus, alone (Critic W1)', () => {
+    const m = mountQuestions();
+    const q = m.doc.getElementById('v6ChatQuestion');
+    let writes = 0;
+    let html = q.innerHTML;
+    Object.defineProperty(q, 'innerHTML', { configurable: true, get: () => html, set: (v) => { writes++; html = v; } });
+    m.shell.setLive({ peek: null, live: m.live });
+    m.shell.setLive({ peek: null, live: m.live });
+    assert.equal(writes, 0);
+  });
+
+  it('dismissing a question moves focus to the ✕ now in its place, then to the message box', () => {
+    const m = mountQuestions();
+    m.doc.getElementById('v6ChatQuestionDismiss1').dispatch('click');
+    assert.equal(m.doc.activeElement, m.doc.getElementById('v6ChatQuestionDismiss0'));
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    assert.equal(m.doc.activeElement, m.doc.getElementById('v6ChatInput'));
   });
 
   it('sending a reply clears the queue', () => {
@@ -4479,29 +4508,53 @@ describe('the Medusa indicator, live through the controller (#3076)', () => {
       [['> go'], ['> go'], ['> go', '⏺ Bash(tc message send peer "hi")'], ['> go', '⏺ Bash(tc message send peer "hi")']],
       [{ state: 'listening', unread: 0 }, { state: 'listening', unread: 1 }, { state: 'listening', unread: 1 }, { state: 'listening', unread: 1 }]);
     await m.settle();
+    // Updated in place, so the button the operator may be on is never replaced (Critic W1).
+    const btn = m.doc.getElementById('v6ChatMedusa');
     await m.timers[0]();
-    assert.match(m.doc.getElementById('v6ChatMedusaSlot').innerHTML, /class="v6-chat-medusa is-listening is-flow-in"/);
+    assert.equal(btn.className, 'v6-chat-medusa is-listening is-flow-in');
+    assert.equal(m.doc.getElementById('v6ChatMedusaBadge').textContent, '1');
+    assert.equal(m.doc.getElementById('v6ChatMedusaBadge').className, 'v6-chat-medusa-badge has-unread');
+    assert.equal(btn.getAttribute('aria-label'), 'Medusa: listening · 1 unread · on screen: 0 in, 0 out — open Under the Hood for the traffic');
     await m.timers[0]();
-    assert.match(m.doc.getElementById('v6ChatMedusaSlot').innerHTML, /class="v6-chat-medusa is-listening is-flow-out"/);
+    assert.equal(btn.className, 'v6-chat-medusa is-listening is-flow-out');
     assert.match(m.doc.getElementById('v6ChatSwitchboard').innerHTML, /is-out[\s\S]*tc message send peer/);
     await m.timers[0]();
-    assert.match(m.doc.getElementById('v6ChatMedusaSlot').innerHTML, /class="v6-chat-medusa is-listening"/);
+    assert.equal(btn.className, 'v6-chat-medusa is-listening');
+    assert.equal(m.doc.getElementById('v6ChatMedusa'), btn);
+  });
+
+  it('a quiet poll does not touch the indicator at all, and one that hides it removes it', async () => {
+    const m = mountMedusa([['> go']], [{ state: 'listening', unread: 0 }, { state: 'listening', unread: 0 }, { state: 'listening', enabled: false }]);
+    await m.settle();
+    const slot = m.doc.getElementById('v6ChatMedusaSlot');
+    let writes = 0;
+    let html = slot.innerHTML;
+    Object.defineProperty(slot, 'innerHTML', { configurable: true, get: () => html, set: (v) => { writes++; html = v; } });
+    await m.timers[0]();
+    assert.equal(writes, 0);
+    await m.timers[0]();
+    assert.equal(writes, 1);
+    assert.equal(html, '');
   });
 
   it('a new wake on screen blinks the inbound head even before unread moves', async () => {
     const m = mountMedusa([['> go'], ['> go', '> [TangleClaw Switchboard] You have 1 unread']], [{ state: 'listening', unread: 1 }]);
     await m.settle();
     await m.timers[0]();
-    assert.match(m.doc.getElementById('v6ChatMedusaSlot').innerHTML, /is-flow-in/);
+    assert.equal(m.doc.getElementById('v6ChatMedusa').className, 'v6-chat-medusa is-listening is-flow-in');
   });
 
   it('a failed status read keeps the last reading without blinking', async () => {
     const m = mountMedusa([['> go']], [{ state: 'listening', unread: 1 }, null]);
     await m.settle();
+    const slot = m.doc.getElementById('v6ChatMedusaSlot');
+    let writes = 0;
+    Object.defineProperty(slot, 'innerHTML', { configurable: true, get: () => '', set: () => { writes++; } });
     await m.timers[0]();
-    const slot = m.doc.getElementById('v6ChatMedusaSlot').innerHTML;
-    assert.match(slot, /class="v6-chat-medusa is-listening"/);
-    assert.match(slot, />1<\/span>/);
+    assert.equal(writes, 0, 'the indicator was neither emptied nor redrawn');
+    // Nothing changed, so nothing was redrawn: the first render's markup stands.
+    assert.match(m.root.innerHTML, /<button type="button" id="v6ChatMedusa" class="v6-chat-medusa is-listening" /);
+    assert.match(m.root.innerHTML, /<span id="v6ChatMedusaBadge" class="v6-chat-medusa-badge has-unread" aria-hidden="true">1<\/span>/);
   });
 
   it('clicking it opens Under the Hood at the switchboard traffic, and remembers the drawer open', async () => {

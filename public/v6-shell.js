@@ -1208,31 +1208,26 @@
   }
 
   /**
-   * How a dismissed question is remembered (#3079): with the reply that
-   * asked it, so the same words asked again in a later reply still show.
-   * @param {{turns?: Array<{role: string, text: string}>}|null} live
-   * @param {string} question
-   * @returns {string}
-   */
-  function questionKey(live, question) {
-    const turns = live && Array.isArray(live.turns) ? live.turns : [];
-    const last = turns[turns.length - 1];
-    return `${last && last.role === 'assistant' ? last.text : ''}\u0001${question}`;
-  }
-
-  /**
    * The questions still waiting on the operator (#3079): the live view's
    * queue (or its one question, from a caller that predates the queue),
    * less any the operator dismissed.
-   * @param {{question?: string|null, questions?: string[], turns?: Array}|null} live
-   * @param {string[]} [dismissed] - {@link questionKey}s dismissed in this chat.
+   * @param {{question?: string|null, questions?: string[]}|null} live
+   * @param {string[]} [dismissed] - Question texts dismissed in this chat.
    * @returns {string[]}
    */
   function openQuestions(live, dismissed) {
+    const gone = new Set(Array.isArray(dismissed) ? dismissed : []);
+    return askedQuestions(live).filter((q) => !gone.has(q));
+  }
+
+  /**
+   * @param {{question?: string|null, questions?: string[]}|null} live
+   * @returns {string[]} Every question the live view asks, dismissed or not.
+   */
+  function askedQuestions(live) {
     if (!live) return [];
     const all = Array.isArray(live.questions) ? live.questions : (live.question ? [live.question] : []);
-    const gone = new Set(Array.isArray(dismissed) ? dismissed : []);
-    return all.filter((q) => typeof q === 'string' && q && !gone.has(questionKey(live, q)));
+    return all.filter((q) => typeof q === 'string' && q);
   }
 
   /**
@@ -1312,6 +1307,29 @@
   });
 
   /**
+   * What the Medusa indicator says (#3076), as plain text and class names
+   * — the markup escapes them, and an in-place update sets them as
+   * properties.
+   * @param {object} medusa
+   * @returns {{className: string, tip: string, badge: string, badgeClass: string}}
+   */
+  function medusaIndicatorParts(medusa) {
+    const state = MEDUSA_STATE_LABELS[medusa.state] ? medusa.state : 'off';
+    const unread = Math.max(0, Number(medusa.unread) || 0);
+    const inbound = Math.max(0, Number(medusa.inbound) || 0);
+    const outbound = Math.max(0, Number(medusa.outbound) || 0);
+    const tip = `Medusa: ${MEDUSA_STATE_LABELS[state]}${state === 'error' && medusa.lastError ? ` (${medusa.lastError})` : ''}`
+      + ` · ${unread} unread · on screen: ${inbound} in, ${outbound} out — open Under the Hood for the traffic`;
+    const flow = (medusa.flowIn ? ' is-flow-in' : '') + (medusa.flowOut ? ' is-flow-out' : '');
+    return {
+      className: `v6-chat-medusa is-${state}${flow}`,
+      tip,
+      badge: unread ? String(unread) : '@',
+      badgeClass: `v6-chat-medusa-badge${unread ? ' has-unread' : ''}`
+    };
+  }
+
+  /**
    * The chat's Medusa traffic indicator (#3076): the inbound (left) and
    * outbound (right) heads, which blink when traffic moves, around an `@`
    * badge that becomes the unread count. Nothing until the status answers,
@@ -1323,17 +1341,11 @@
    */
   function medusaIndicatorMarkup(medusa) {
     if (!medusa || medusa.enabled === false) return '';
-    const state = MEDUSA_STATE_LABELS[medusa.state] ? medusa.state : 'off';
-    const unread = Math.max(0, Number(medusa.unread) || 0);
-    const inbound = Math.max(0, Number(medusa.inbound) || 0);
-    const outbound = Math.max(0, Number(medusa.outbound) || 0);
-    const tip = `Medusa: ${MEDUSA_STATE_LABELS[state]}${state === 'error' && medusa.lastError ? ` (${medusa.lastError})` : ''}`
-      + ` · ${unread} unread · on screen: ${inbound} in, ${outbound} out — open Under the Hood for the traffic`;
-    const flow = (medusa.flowIn ? ' is-flow-in' : '') + (medusa.flowOut ? ' is-flow-out' : '');
-    return `<button type="button" id="v6ChatMedusa" class="v6-chat-medusa is-${state}${flow}" aria-controls="v6ChatUnderHood"
-        title="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}">
+    const parts = medusaIndicatorParts(medusa);
+    return `<button type="button" id="v6ChatMedusa" class="${parts.className}" aria-controls="v6ChatUnderHood"
+        title="${escapeHtml(parts.tip)}" aria-label="${escapeHtml(parts.tip)}">
         <img class="v6-medusa-head v6-medusa-head--in" src="/medusa-head-left.webp" alt="" width="16" height="19">
-        <span id="v6ChatMedusaBadge" class="v6-chat-medusa-badge${unread ? ' has-unread' : ''}" aria-hidden="true">${unread ? escapeHtml(String(unread)) : '@'}</span>
+        <span id="v6ChatMedusaBadge" class="${parts.badgeClass}" aria-hidden="true">${escapeHtml(parts.badge)}</span>
         <img class="v6-medusa-head v6-medusa-head--out" src="/medusa-head-right.webp" alt="" width="16" height="19">
       </button>`;
   }
@@ -2315,8 +2327,9 @@
       }
       const base = `/api/v6/projects/${encodeURIComponent(project.id)}/sessions/${encodeURIComponent(sessionId)}`;
       const peekUrl = `/api/sessions/${name}/peek?lines=80`;
-      // #3076: the listener's state and unread count. This read records
-      // nothing and clears nothing, unlike opening the inbox.
+      // #3076: the listener's state and unread count. Unlike opening the
+      // inbox, this read marks nothing read and leaves the unread count
+      // alone; while listening, the route also asks the Bridge for loops.
       const medusaUrl = `/api/sessions/${name}/medusa/status`;
       const [events, attestations, peek, medusaStatus] = await Promise.all([
         api(`${base}/conversation/events`),
@@ -3077,10 +3090,15 @@
     // polls and visits; and which chat was last scrolled to its bottom, so a
     // chat opens at its newest line once and is then left where the operator puts it.
     let chatHoodOpen = prefs.get('tc_v6_chat_under_hood_open', false, isBoolean);
-    // #3079: the questions dismissed in each chat, keyed with the reply
-    // that asked them, so a poll that reads the same reply again does not
-    // bring them back.
+    // #3079: the questions dismissed in each chat, by text, until the pane
+    // shows no question at all — the operator has answered — so a poll that
+    // reads the same reply again, or the same reply grown by a wake or more
+    // text, does not bring them back, and a later reply's do show.
     const dismissedQuestions = new Map();
+    // What the question slot and the Medusa slot were last drawn with, so
+    // a poll redraws them only when that changes (Critic W1).
+    let paintedQuestions = null;
+    let paintedMedusa = null;
     // The chat whose Start fleet button has been clicked once (#3053).
     let fleetArmedKey = null;
     // The chat whose rename form is open (#3071), the name typed into it
@@ -3431,10 +3449,16 @@
       return key != null && dismissedQuestions.has(key) ? [...dismissedQuestions.get(key)] : [];
     }
 
-    /** @returns {string[]} The questions the chat on screen still shows (#3079). */
+    /**
+     * The questions the chat on screen still shows (#3079). Once the live
+     * view asks nothing, the chat's dismissals are spent and forgotten.
+     * @returns {string[]}
+     */
     function questionsNow() {
       const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
-      return openQuestions(chat && chat.live, dismissedFor(chatTargetKey()));
+      const key = chatTargetKey();
+      if (key != null && !askedQuestions(chat && chat.live).length) dismissedQuestions.delete(key);
+      return openQuestions(chat && chat.live, dismissedFor(key));
     }
 
     /**
@@ -3444,30 +3468,76 @@
     function dismissQuestions(texts) {
       const key = chatTargetKey();
       if (key == null || !texts.length) return;
-      const chat = detail && detail.view ? detail.view.chat : null;
       const set = dismissedQuestions.get(key) || new Set();
-      texts.forEach((t) => set.add(questionKey(chat && chat.live, t)));
+      texts.forEach((t) => set.add(t));
       dismissedQuestions.set(key, set);
       paintQuestions();
     }
 
-    /** Redraw the question slot in place and wire its ✕ buttons. */
+    /**
+     * Redraw the question slot and wire its ✕ buttons — only when what it
+     * shows changed, so a poll never takes keyboard focus off a ✕ (Critic
+     * W1). The slot as last drawn is {@link paintedQuestions}.
+     * @returns {boolean} Whether it was redrawn.
+     */
     function paintQuestions() {
       const q = doc.getElementById('v6ChatQuestion');
-      if (!q) return;
+      if (!q) return false;
       const list = questionsNow();
-      q.innerHTML = chatQuestionInner(list);
+      const html = chatQuestionInner(list);
+      if (html === paintedQuestions) return false;
+      paintedQuestions = html;
+      q.innerHTML = html;
       q.className = `v6-chat-question${list.length ? ' is-asking' : ''}`;
       wireQuestions();
+      return true;
     }
 
-    /** Each question's ✕ dismisses that question (#3079). */
+    /**
+     * Each question's ✕ dismisses that question (#3079), and focus moves to
+     * the ✕ now in its place, else to the message box.
+     */
     function wireQuestions() {
       const list = questionsNow();
       list.forEach((text, i) => {
         const btn = doc.getElementById(`v6ChatQuestionDismiss${i}`);
-        if (btn) btn.addEventListener('click', () => dismissQuestions([text]));
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+          dismissQuestions([text]);
+          const left = questionsNow().length;
+          const next = doc.getElementById(left ? `v6ChatQuestionDismiss${Math.min(i, left - 1)}` : 'v6ChatInput');
+          if (next && typeof next.focus === 'function') next.focus();
+        });
       });
+    }
+
+    /**
+     * Bring the Medusa indicator up to date (#3076). While it stays on
+     * screen its button is updated in place, never replaced, so a poll
+     * cannot take focus off it or swallow a click (Critic W1); it is drawn
+     * or removed only when it appears or goes.
+     * @param {object|null|undefined} medusa
+     */
+    function paintMedusa(medusa) {
+      const slot = doc.getElementById('v6ChatMedusaSlot');
+      if (!slot) return;
+      const html = medusaIndicatorMarkup(medusa);
+      if (html === paintedMedusa) return;
+      const btn = paintedMedusa ? doc.getElementById('v6ChatMedusa') : null;
+      const badge = paintedMedusa ? doc.getElementById('v6ChatMedusaBadge') : null;
+      paintedMedusa = html;
+      if (html && btn && badge) {
+        const parts = medusaIndicatorParts(medusa);
+        btn.className = parts.className;
+        btn.title = parts.tip;
+        btn.setAttribute('title', parts.tip);
+        btn.setAttribute('aria-label', parts.tip);
+        badge.className = parts.badgeClass;
+        badge.textContent = parts.badge;
+        return;
+      }
+      slot.innerHTML = html;
+      wireMedusa();
     }
 
     /**
@@ -3684,6 +3754,9 @@
         </main>
         ${watermarkFooterMarkup(showWatermark, telemetry)}
       `;
+      const shownChat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      paintedQuestions = chatQuestionInner(questionsNow());
+      paintedMedusa = medusaIndicatorMarkup(shownChat && shownChat.medusa);
       wireControls();
       restoreViewState(saved);
       if (typeof options.onRender === 'function') options.onRender(currentRoute);
@@ -3853,11 +3926,7 @@
         });
         const traffic = doc.getElementById('v6ChatSwitchboard');
         if (traffic) traffic.innerHTML = switchboardMarkup(switchboardItems(detail.view.events, live));
-        const slot = doc.getElementById('v6ChatMedusaSlot');
-        if (slot) {
-          slot.innerHTML = medusaIndicatorMarkup(medusa);
-          wireMedusa();
-        }
+        paintMedusa(medusa);
         const peekEl = doc.getElementById('v6ChatPeek');
         if (peekEl) {
           const atBottom = isAtBottom(peekEl);
