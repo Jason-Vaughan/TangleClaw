@@ -17,6 +17,14 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.2.10 — Clickable links, attachment previews, a verbosity filter, Force Send and a three-engine usage meter
+
+- **Clickable links and attachment previews** (#3082, #3083) — `public/v6-shell.js`: web and Markdown links in messages open in a new tab (`http:`/`https:` only). An attached image shows as a thumbnail, fetched once with the operator's proof from the new operator-only `GET /api/sessions/:project/secure-clipboard/:filename` (`lib/routes/secure-clipboard.js`, `lib/secure-clipboard.js`: PNG, JPEG, WebP or GIF only, checked by name and leading bytes). A link to an image on another site shows as a link card and is never loaded.
+- **Verbosity filter** (#3082) — Under the Hood has checkboxes for which switchboard-triggered replies show in the chat: Blockers and Milestones on, Fleet chatter off by default; the rest are listed there with a count.
+- **Force Send** (#3082, #3083) — a ⚡ Force button (or Ctrl/Cmd+Shift+Enter) sends at once with `priority: true` on the session command route (`lib/routes/sessions.js`, `lib/sessions.js`). It is operator-only and skips the launch and model waits, but never a hold, an engine startup dialog or a running wrap.
+- **Three-engine usage meter** (#3085) — the v6 footer shows Claude, Codex and Antigravity bars, coloured by "% left", with a breakdown and one-click calibration. `lib/usage-windows.js` reports all three engines, splits a bounded scan fairly between them and reads a live Codex "5h NN% left"; schema v84 lets `usage_calibration` hold Antigravity.
+- **Delegated model switch and one top bar** (#3083, #3082) — a session with delegated lifecycle authority over a lane can switch its model at a safe boundary; in the v6 shell the chat header sits in the dashboard's top bar.
+
 ## v6.2.9 — Switchboard traffic Under the Hood, a Medusa indicator, chat polish and Medusa fleet isolation
 
 - **Switchboard traffic Under the Hood and a Medusa indicator** (#3076) — `public/v6-shell.js`: `[TangleClaw Switchboard]` wakes, which are typed into the pane and so read as the operator, and recorded wake events leave the conversation for a "Switchboard & Medusa traffic" list Under the Hood, alongside every `tc message send` the pane shows. A read-only `#v6ChatMedusa` indicator in the chat header reads `GET .../medusa/status`: its inbound and outbound heads blink when traffic moves, the `@` badge becomes the unread count, and clicking it opens that list.

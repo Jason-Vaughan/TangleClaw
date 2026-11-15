@@ -41,6 +41,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-14 — v6.2.10 release cut (Milestone #77)
+
+<!-- prawduct: type=internal | scope=v6210-release -->
+
+- Compiled 3 accepted `changelog.d/` fragments (#3083, plus the #3085 backend sentence inside it, from PR #3091; #3082 and the #3085 shell half from PR #3095) into `CHANGELOG.md` section `[6.2.10]` (Fixed, patch tier) using the wrap's own compile/splice/promote functions. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap state. Folded in both PRs' change-log entries below, verbatim. Builder Rule #271 cl.3 kept them out of the feature PRs.
+- Tier disclosure: the link previews, verbosity filter, Force Send and the three-engine meter are new features filed `.fixed` to keep the v6.2.x patch train (charter A749), so this release is the patch 6.2.10. Schema v84 (Ruling A758) rebuilds `usage_calibration` on upgrade; the release notes say so.
+- PR #3095's entry carries no `<!-- prawduct: ... -->` tag line; it is folded in verbatim as written.
+- Follow-up filed during review: #3092 (the empty-usage message in `tc usage` and the Classic panel; verifying the v84 migration inside its transaction).
+
+## 2026-11-15 — Car V6210-W1-B: attachment image preview, operator force-send, delegated model switch (#3083) + usage windows for three engines (#3085 backend)
+
+<!-- prawduct: type=fix | scope=v6210-w1-b -->
+
+- #3083 (A751): GET /api/sessions/:project/secure-clipboard/:filename serves one PNG/JPEG/WebP/GIF to a proven operator (launch-binding excluded), checked by extension and leading bytes, O_NOFOLLOW, nosniff, CSP default-src 'none'; img-src 'self', Cache-Control private, no-store; anything else is 415.
+- #3083: priority: true on /command (operator-proof only) skips the startup and model-admission waits, never a HOLD/STOP, dialog or wrap. switch-model admits #2824 delegated lifecycle authority at a boundary; an unreadable matrix is 503.
+- #3085 backend (A753/A758): PROVIDERS claude/codex/antigravity; fair per-provider scan budget; live Codex 5h% read when present; schema v84 rebuilds usage_calibration to admit antigravity, rows preserved, idempotent.
+- Envelope: A758's 10 files, all touched.
+
+## 2026-11-15 — v6 chat: clickable links, attachment thumbnails, verbosity filter, Force Send, one top bar; 3-engine usage meter (#3082, #3085 shell half)
+
+**Why:** #3082 asked for the v6 chat to link URLs, show attached images, keep switchboard chatter out of the conversation, and let an urgent message go out while a reply is in flight. #3085 asked for one view of the Claude/Codex/Antigravity quota. A764/A765 asked for a single top bar.
+**What:** public/v6-shell.js (link markup with a scheme guard and no-referrer; blob-URL thumbnails fetched with operator proof and cached per project+file; switchboard-trigger tagging and a five-kind verbosity filter with a tucked list; Force Send with per-send tracking; header docked into the dash bar and dash stats moved to the footer; the usage meter, its breakdown and calibration), public/style.css, test/v6-b1-ui-shell.test.js, test/v6-browser-shell-and-conversation-e2e.test.js, two changelog.d fragments.
+**Verified:** shell suite 458/458, E2E incl. the real usage route, adjacent sweep, stage 1, tiers, cache guard, large tier, mutation checks per chunk, cumulative Critic plus verify-resolutions clean.
+
 ## 2026-11-14 — v6.2.9 release cut (Milestone #76)
 
 <!-- prawduct: type=internal | scope=v629-release -->
