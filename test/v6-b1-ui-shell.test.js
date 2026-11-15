@@ -5795,3 +5795,129 @@ describe('Force Send (#3082 item 3, Ruling A757)', () => {
     assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*>now!<\/textarea>/);
   });
 });
+
+describe('one top bar in the v6 shell (Rulings A764, A765)', () => {
+  const G = loadV6Shell();
+
+  /** A small page with real sibling order: the dashboard bar, and the shell's main and footer. */
+  function makePage() {
+    const byId = {};
+    const node = (tag, id, className) => {
+      const classes = new Set(String(className || '').split(/\s+/).filter(Boolean));
+      const el = {
+        tagName: tag.toUpperCase(), id: id || '', childNodes: [], parentNode: null, open: false, textContent: '', title: '', attrs: {}, listeners: {},
+        get className() { return [...classes].join(' '); }, set className(v) { classes.clear(); String(v).split(/\s+/).filter(Boolean).forEach((c) => classes.add(c)); },
+        classList: { contains: (c) => classes.has(c), toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)) },
+        get nextSibling() { const p = el.parentNode; return p ? p.childNodes[p.childNodes.indexOf(el) + 1] || null : null; },
+        setAttribute(k, v) { el.attrs[k] = String(v); },
+        addEventListener(t, fn) { (el.listeners[t] = el.listeners[t] || []).push(fn); },
+        appendChild(c) { if (c.parentNode) c.remove(); c.parentNode = el; el.childNodes.push(c); return c; },
+        insertBefore(c, ref) { if (c.parentNode) c.remove(); c.parentNode = el; el.childNodes.splice(el.childNodes.indexOf(ref), 0, c); return c; },
+        // As a browser does, moving a node that holds focus blurs it.
+        remove() { const p = el.parentNode; if (p) p.childNodes.splice(p.childNodes.indexOf(el), 1); el.parentNode = null; if (doc.activeElement && el.contains(doc.activeElement)) doc.activeElement = body; },
+        contains(other) { for (let n = other; n; n = n.parentNode) if (n === el) return true; return false; },
+        focus() { doc.activeElement = el; },
+        querySelector(sel) {
+          const cls = sel.replace(/^\./, '');
+          for (const c of el.childNodes) { if (c.classList.contains(cls)) return c; const d = c.querySelector(sel); if (d) return d; }
+          return null;
+        }
+      };
+      if (id) byId[id] = el;
+      return el;
+    };
+    const body = node('body');
+    const attached = (el) => { for (let n = el; n; n = n.parentNode) if (n === body) return true; return false; };
+    const doc = {
+      body, activeElement: null,
+      createElement: (tag) => node(tag),
+      getElementById: (id) => (byId[id] && attached(byId[id]) ? byId[id] : null),
+      querySelector: (sel) => body.querySelector(sel),
+      _register: (el) => { if (el.id) byId[el.id] = el; }
+    };
+    const bar = body.appendChild(node('header', '', 'dash-bar'));
+    const brand = bar.appendChild(node('div', '', 'dash-brand'));
+    const stats = bar.appendChild(node('div', 'dashStats', 'dash-stats'));
+    const actions = bar.appendChild(node('div', '', 'dash-actions'));
+    actions.appendChild(node('button', 'v6ViewToggleBtn'));
+    const shellRoot = body.appendChild(node('div', 'v6ShellRoot'));
+    const drawChat = () => {
+      shellRoot.childNodes.slice().forEach((c) => c.remove());
+      const main = shellRoot.appendChild(node('main', 'v6ShellMain'));
+      const header = main.appendChild(node('header', '', 'v6-chat-header'));
+      header.appendChild(node('button', 'v6ChatRename'));
+      shellRoot.appendChild(node('footer', '', 'v6-shell-watermark')).appendChild(node('div', 'v6ShellStatusBar', 'v6-shell-status-bar'));
+      return header;
+    };
+    return { doc, bar, brand, stats, actions, drawChat };
+  }
+  const kids = (el) => el.childNodes.map((c) => c.id || c.className);
+
+  it('docks the chat header into the dashboard bar, before its actions, keeping focus inside it', () => {
+    const p = makePage();
+    const header = p.drawChat();
+    p.doc.getElementById('v6ChatRename').focus();
+    G.tcV6TuckAdminControls(p.doc, true);
+    assert.deepEqual(kids(p.bar), ['dash-brand', 'v6-chat-header', 'dash-actions']);
+    assert.equal(header.parentNode, p.bar);
+    assert.equal(p.doc.activeElement, p.doc.getElementById('v6ChatRename'), 'focus stayed in the moved header');
+  });
+
+  it('a later drawing replaces the docked header, never leaving two; leaving the shell takes it out', () => {
+    const p = makePage();
+    p.drawChat();
+    G.tcV6TuckAdminControls(p.doc, true);
+    const second = p.drawChat();
+    G.tcV6TuckAdminControls(p.doc, true);
+    assert.equal(kids(p.bar).filter((k) => k === 'v6-chat-header').length, 1);
+    assert.equal(p.bar.querySelector('.v6-chat-header'), second);
+    G.tcV6TuckAdminControls(p.doc, false);
+    assert.equal(p.bar.querySelector('.v6-chat-header'), null);
+  });
+
+  it('moves the CPU/MEM/DISK/UP stats into the footer status bar, and back to their exact place in Classic', () => {
+    const p = makePage();
+    p.drawChat();
+    G.tcV6TuckAdminControls(p.doc, true);
+    assert.equal(p.stats.parentNode, p.doc.getElementById('v6ShellStatusBar'));
+    assert.ok(!kids(p.bar).includes('dashStats'), 'not shown twice');
+    G.tcV6TuckAdminControls(p.doc, false);
+    assert.deepEqual(kids(p.bar), ['dash-brand', 'dashStats', 'dash-actions']);
+  });
+
+  it('a shell redraw sends the live stats home first, so the same node survives and moves into the new footer', () => {
+    const { doc } = makeDocument([]);
+    const bar = doc.createElement('header');
+    bar.className = 'dash-bar';
+    const stats = doc.createElement('div');
+    stats.id = 'dashStats';
+    doc._register(stats);
+    bar.appendChild(stats);
+    doc.body.appendChild(bar);
+    doc.querySelector = (sel) => doc.body.querySelector(sel);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    // Where the stats are as the shell hands over to onRender: home in the bar, never left in the
+    // footer the redraw just replaced (a browser would have dropped them with it).
+    const atHandover = [];
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null,
+      onRender: () => { atHandover.push(stats.parentNode); G.tcV6TuckAdminControls(doc, true); } });
+    const bar1 = { scope: 'global', metrics: { activeSessions: { value: 1, confidence: 'observed' } } };
+    shell.setTelemetry(bar1);
+    const footer1 = doc.getElementById('v6ShellStatusBar');
+    assert.equal(stats.parentNode, footer1);
+    shell.setTelemetry(Object.assign({}, bar1));
+    const footer2 = doc.getElementById('v6ShellStatusBar');
+    assert.notEqual(footer2, footer1, 'the footer was redrawn');
+    assert.equal(doc.getElementById('dashStats'), stats, 'the same live node');
+    assert.equal(stats.parentNode, footer2);
+    assert.equal(atHandover[atHandover.length - 1], bar, 'the redraw sent the stats home first');
+  });
+
+  it('styles the docked header as a segment of the one bar, and the moved stats in the footer', () => {
+    const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(CSS, /\.dash-bar \.v6-chat-header \{[^}]*flex: 1 1 auto;[^}]*min-width: 0;[^}]*margin: 0;[^}]*padding: 0;[^}]*border: 0;[^}]*background: transparent;/);
+    assert.match(CSS, /\.v6-shell-status-bar \.dash-stats \{[^}]*display: inline-flex;/);
+  });
+});

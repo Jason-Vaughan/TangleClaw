@@ -5006,3 +5006,31 @@ p.v6-history-secret {
 .v6-chat-force-send:focus-visible {
   background: rgba(212, 167, 44, 0.15);
 }
+
+/* Ruling A764: in the v6 shell the chat's header sits inside the dashboard
+   bar, between the brand and the actions, so there is one top bar. */
+.dash-bar .v6-chat-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.dash-bar .v6-chat-header .v6-detail-title {
+  margin: 0;
+  font-size: 1em;
+}
+/* Ruling A765: the dashboard's CPU/MEM/DISK/UP stats, moved into the v6
+   footer status bar, sit in line with the shell's own readings. */
+.v6-shell-status-bar .dash-stats {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 0.8em;
+}

@@ -2459,6 +2459,12 @@
     if (!doc || typeof doc.getElementById !== 'function') return;
     if (doc.body && doc.body.classList) doc.body.classList.toggle('v6-shell-active', Boolean(active));
     let menu = doc.getElementById('v6AdminMenu');
+    // Ruling A764: one top bar. The chat's header joins the dashboard bar,
+    // and the dashboard's own stats go to the shell's footer (A765). The
+    // stats move first, so the place they return to is before the bar's
+    // actions, which never move, not before a header that comes and goes.
+    moveDashStats(doc, active);
+    dockChatHeader(doc, active);
     if (!active) {
       // Last first: each control's recorded next node is then back in place.
       ADMIN_TUCK_IDS.slice().reverse().forEach((id) => {
@@ -2501,6 +2507,72 @@
       adminHomes.set(id, { parent: el.parentNode, next: el.nextSibling || null });
       panel.appendChild(el);
     });
+  }
+
+  /** Where `#dashStats` lives in the dashboard bar, so it goes back exactly there (A765). */
+  let dashStatsHome = null;
+
+  /**
+   * Put the chat's header into the dashboard's top bar, before its actions
+   * (Ruling A764), so the v6 chat has one bar, not two. A header docked
+   * earlier gives way to the one the shell just drew; leaving the shell, or
+   * a view with no chat, takes it out. Focus inside the header stays put.
+   * @param {Document} doc
+   * @param {boolean} active
+   */
+  function dockChatHeader(doc, active) {
+    if (typeof doc.querySelector !== 'function') return;
+    const bar = doc.querySelector('.dash-bar');
+    if (!bar) return;
+    const docked = typeof bar.querySelector === 'function' ? bar.querySelector('.v6-chat-header') : null;
+    const main = doc.getElementById('v6ShellMain');
+    const drawn = active && main && typeof main.querySelector === 'function' ? main.querySelector('.v6-chat-header') : null;
+    if (docked && docked !== drawn && (drawn || !active)) docked.remove();
+    if (!drawn) return;
+    const actions = bar.querySelector('.dash-actions');
+    const focus = doc.activeElement;
+    if (actions && actions.parentNode === bar) bar.insertBefore(drawn, actions);
+    else bar.appendChild(drawn);
+    if (focus && focus.id && typeof drawn.contains === 'function' && drawn.contains(focus) && typeof focus.focus === 'function') focus.focus();
+  }
+
+  /**
+   * Move the dashboard's CPU/MEM/DISK/UP stats into the shell's footer status
+   * bar while the shell shows, and back to their exact place in the bar when
+   * it does not (Ruling A765): moved, not copied, so the live readings keep
+   * updating; never hidden, so they never leave the page.
+   * @param {Document} doc
+   * @param {boolean} active
+   */
+  function moveDashStats(doc, active) {
+    const stats = doc.getElementById('dashStats');
+    if (!stats) return;
+    if (!active) {
+      returnDashStats(doc);
+      return;
+    }
+    const footer = doc.getElementById('v6ShellStatusBar');
+    if (!footer || stats.parentNode === footer) return;
+    // Where it is now is its home unless it is still in a status bar (one a
+    // redraw orphaned): never an old home, which may belong to another page.
+    const from = stats.parentNode;
+    if (!(from && from.id === 'v6ShellStatusBar')) dashStatsHome = { parent: from, next: stats.nextSibling || null };
+    footer.appendChild(stats);
+  }
+
+  /**
+   * Put `#dashStats` back in the dashboard bar (A765) — before the shell
+   * redraws, since a redraw replaces the footer and would take the live
+   * stats with it.
+   * @param {Document} doc
+   */
+  function returnDashStats(doc) {
+    const stats = doc.getElementById('dashStats');
+    const home = dashStatsHome;
+    if (!stats || !home || !home.parent) return;
+    if (home.next && home.next.parentNode === home.parent) home.parent.insertBefore(stats, home.next);
+    else home.parent.appendChild(stats);
+    dashStatsHome = null;
   }
 
   /**
@@ -4583,6 +4655,14 @@
       currentRoute = parseRoute(readHash());
       if (!root) return;
       const saved = captureViewState();
+      // A764/A765: the header docked in the dashboard bar and the stats moved
+      // into the footer belong to the drawing about to be replaced; take the
+      // header out and send the stats home first, so the redraw loses
+      // neither, and onRender docks and moves the new ones.
+      returnDashStats(doc);
+      const bar = typeof doc.querySelector === 'function' ? doc.querySelector('.dash-bar') : null;
+      const oldHeader = bar && typeof bar.querySelector === 'function' ? bar.querySelector('.v6-chat-header') : null;
+      if (oldHeader) oldHeader.remove();
       const title = routeTitle(currentRoute);
       shownTree = filterTree(tree, { text: filterText, engine: filterEngine, groups: selectedGroups }, projectRows);
       // #3053: the template wizard and attestation pills are not chat
