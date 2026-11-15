@@ -4889,3 +4889,111 @@ p.v6-history-secret {
   justify-content: flex-start;
   text-align: left;
 }
+
+/* #3082: links in messages open in a new tab; an external image is a card,
+   never loaded here; an attached image shows as a thumbnail. */
+.v6-chat-link {
+  color: #58a6ff;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+[data-theme="light"] .v6-chat-link {
+  color: #0969da;
+}
+.v6-chat-link-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin: 2px 0;
+  padding: 4px 8px;
+  border: 1px solid var(--v6-outline, #3d444d);
+  border-radius: 6px;
+  color: inherit;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.v6-chat-link-preview:hover,
+.v6-chat-link-preview:focus-visible {
+  border-color: #58a6ff;
+}
+.v6-chat-link-preview-host {
+  font-weight: 600;
+}
+.v6-chat-link-preview-path {
+  opacity: 0.8;
+}
+.v6-chat-thumb-link {
+  flex-direction: column;
+  align-items: flex-start;
+}
+.v6-chat-thumb {
+  display: block;
+  max-width: 220px;
+  max-height: 160px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+.v6-chat-thumb-name {
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+.v6-chat-attachment {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid var(--v6-outline, #3d444d);
+  border-radius: 999px;
+  font-size: 0.85em;
+}
+/* #3082: which switchboard replies the chat shows; the rest are tucked. */
+.v6-chat-verbosity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--v6-outline, #3d444d);
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+.v6-chat-verbosity legend {
+  padding: 0 4px;
+}
+.v6-chat-verbosity-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  cursor: pointer;
+}
+.v6-chat-verbosity-fixed {
+  opacity: 0.75;
+}
+.v6-chat-tucked {
+  margin-bottom: 6px;
+}
+.v6-chat-tucked-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 14em;
+  overflow: auto;
+  font-size: 0.85em;
+}
+.v6-chat-tucked-item {
+  padding: 2px 0;
+  border-bottom: 1px dashed var(--v6-outline, #3d444d);
+}
+.v6-chat-tucked-kind {
+  font-weight: 600;
+  opacity: 0.8;
+}
+.v6-chat-tucked-count:not(:empty) {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #d4a72c;
+  color: #000;
+  font-size: 0.8em;
+}

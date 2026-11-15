@@ -2146,7 +2146,9 @@ describe('Above-the-Hood chat view (#3052)', () => {
   it('puts the raw output in a collapsed Under the Hood drawer, open only when asked', () => {
     const closed = G.tcV6ConversationViewMarkup(view({ peek: { lines: ['$ ok'] } }));
     // Restated by #3076: the switchboard's traffic list sits above the raw output, inside the drawer.
-    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\)<\/summary>\s*<section class="v6-chat-switchboard"[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
+    // Restated by #3082: the summary carries the tucked count, and the verbosity filter and the
+    // tucked list come first.
+    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count"><\/span><\/summary>\s*<fieldset class="v6-chat-verbosity">[\s\S]*?<\/fieldset>\s*<section class="v6-chat-tucked"[\s\S]*?<\/section>\s*<section class="v6-chat-switchboard"[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
     assert.match(G.tcV6ConversationViewMarkup(view({ peek: { lines: [] }, hoodOpen: true })), /<details id="v6ChatUnderHood" class="v6-chat-under-hood" open>/);
   });
 
@@ -2792,7 +2794,8 @@ describe('tcV6ExtractLiveTurns keeps ordinary prose (cumulative review)', () => 
 
   it('an indented line under a status or boilerplate line is kept; only a tool line hides what is indented under it', () => {
     const out = plain(G.tcV6ExtractLiveTurns(['> go', '[TangleClaw Switchboard] wake', '  This reply line is indented.'], 'claude', []));
-    assert.deepEqual(out.turns[1], { role: 'assistant', text: 'This reply line is indented.' });
+    // Restated by #3082: a reply after a wake is marked as switchboard-triggered.
+    assert.deepEqual(out.turns[1], { role: 'assistant', text: 'This reply line is indented.', trigger: 'switchboard' });
   });
 });
 
@@ -5152,7 +5155,7 @@ describe('a wrapped wake never swallows the session\'s reply (Lane-B O-Gate and 
   it('Antigravity\'s indented reply after a typed wake is a reply, questions and all', () => {
     const out = run(['❯ [TangleClaw Switchboard] You have 1 unread', '  I read the message from PM.', '  Shall I proceed?'], 'antigravity');
     assert.equal(out.switchboard.length, 1);
-    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'I read the message from PM.\nShall I proceed?' }]);
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'I read the message from PM.\nShall I proceed?', trigger: 'switchboard' }]);
     assert.deepEqual(out.questions, ['Shall I proceed?']);
   });
 
@@ -5163,7 +5166,7 @@ describe('a wrapped wake never swallows the session\'s reply (Lane-B O-Gate and 
     lines.push('  Reading them now.');
     const out = run(lines, 'antigravity');
     assert.deepEqual(out.switchboard, [{ dir: 'in', text: wake }]);
-    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Reading them now.' }]);
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Reading them now.', trigger: 'switchboard' }]);
   });
 
   it('a wake with a project\'s own reply guidance, wrapped mid-word, is joined whole; the reply after it is not (third review, blocking)', () => {
@@ -5176,7 +5179,7 @@ describe('a wrapped wake never swallows the session\'s reply (Lane-B O-Gate and 
     const out = run(lines, 'antigravity');
     assert.equal(out.switchboard.length, 1);
     assert.equal(out.switchboard[0].text.replace(/\s+/g, ''), custom.replace(/\s+/g, ''));
-    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Fixed. Shall I push?' }]);
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Fixed. Shall I push?', trigger: 'switchboard' }]);
     assert.deepEqual(out.questions, ['Fixed. Shall I push?']);
   });
 
@@ -5188,7 +5191,7 @@ describe('a wrapped wake never swallows the session\'s reply (Lane-B O-Gate and 
     const out = run([`> ${chunks[0]}`].concat(chunks.slice(1).map((c) => `  ${c.trim()}`), ['  Shall I merge?']), 'antigravity');
     assert.equal(out.switchboard.length, 1);
     assert.equal(out.switchboard[0].text.replace(/\s+/g, ''), wakeText.replace(/\s+/g, ''));
-    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Shall I merge?' }]);
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Shall I merge?', trigger: 'switchboard' }]);
   });
 
   it('a blank line ends a wake, even mid-sentence', () => {
@@ -5242,5 +5245,311 @@ describe('a dismissal belongs to the reply that asked it (PRR-B R2)', () => {
     assert.equal(shows(m), false, 'grown');
     m.shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'ok' }, { role: 'assistant', text: 'One?\nAnd more.' }], questions: ['One?'] } });
     assert.equal(shows(m), false, 'scrolled');
+  });
+});
+
+// ── #3082 (Car V6210-W1-A): links, thumbnails, verbosity filter ──
+
+describe('links in messages open in a new tab, and only http(s) is ever a link (#3082)', () => {
+  const G = loadV6Shell();
+  const f = (t, thumbs) => G.tcV6MessageMarkup(t, thumbs);
+
+  it('a bare URL, MagicDNS port and all, is a new-tab link; trailing punctuation is not part of it', () => {
+    const html = f('Plan: https://cursatory.tail123678.ts.net:8443/plans/111/p.md, read it.');
+    assert.equal(html, 'Plan: <a class="v6-chat-link" href="https://cursatory.tail123678.ts.net:8443/plans/111/p.md" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">https://cursatory.tail123678.ts.net:8443/plans/111/p.md</a>, read it.');
+    assert.match(f('(see https://x.example/a)'), /href="https:\/\/x\.example\/a"[^>]*>https:\/\/x\.example\/a<\/a>\)$/);
+    assert.match(f('https://x.example/wiki/A_(b)'), /href="https:\/\/x\.example\/wiki\/A_\(b\)"/);
+  });
+
+  it('a Markdown link shows its label; a same-origin path may be a target', () => {
+    assert.match(f('[the plan](https://a.example/p)'), /<a class="v6-chat-link" href="https:\/\/a\.example\/p"[^>]*>the plan<\/a>/);
+    assert.match(f('[plans](/plans/111/x.md)'), /<a class="v6-chat-link" href="\/plans\/111\/x\.md"/);
+  });
+
+  it('javascript:, data:, vbscript:, file: and protocol-relative targets are never links', () => {
+    for (const t of ['[x](javascript:alert(1))', 'javascript:alert(1)', 'data:text/html,<b>1</b>', '[y](vbscript:msgbox(1))', 'file:///etc/passwd', '[z](//evil.example/x)']) {
+      assert.doesNotMatch(f(t), /<a /, t);
+    }
+  });
+
+  it('escapes everything around and inside links', () => {
+    const html = f('<b>hi</b> [<i>lbl</i>](https://a.example/?q=1&r=2) "https://b.example/x"');
+    assert.doesNotMatch(html, /<b>|<i>/);
+    assert.match(html, /href="https:\/\/a\.example\/\?q=1&amp;r=2"[^>]*>&lt;i&gt;lbl&lt;\/i&gt;<\/a>/);
+    // A quote ends a bare URL, so it can never break out of the href.
+    assert.match(f('https://a.example/x"onmouseover="y'), /href="https:\/\/a\.example\/x"[^>]*>https:\/\/a\.example\/x<\/a>&quot;onmouseover=&quot;y/);
+    assert.match(html, /&quot;<a class="v6-chat-link" href="https:\/\/b\.example\/x"/);
+  });
+
+  it('an external image URL in an assistant turn is a link card and NO img, so nothing is fetched (A752-1)', () => {
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'See https://attacker.example/p.png?d=SECRET now' }] } } });
+    const live = html.slice(html.indexOf('id="v6ChatLive"'), html.indexOf('id="v6ChatRecordedTail"'));
+    assert.match(live, /<a class="v6-chat-link-preview" href="https:\/\/attacker\.example\/p\.png\?d=SECRET" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"/);
+    assert.match(live, /<span class="v6-chat-link-preview-host">attacker\.example<\/span><span class="v6-chat-link-preview-path">\/p\.png\?d=SECRET<\/span>/);
+    assert.doesNotMatch(html, /<img[^>]*attacker/);
+    assert.doesNotMatch(live, /<img/);
+  });
+
+  it('an attached image with a blob URL is a thumbnail opening in a new tab; otherwise, or any non-blob value, a chip', () => {
+    const thumb = f('look\nAttached: .tangleclaw/secrets/shot.png', { 'shot.png': 'blob:http://h/1' });
+    assert.match(thumb, /^look\n<a class="v6-chat-link-preview v6-chat-thumb-link" href="blob:http:\/\/h\/1" target="_blank" rel="noopener noreferrer"[^>]*><img class="v6-chat-thumb" src="blob:http:\/\/h\/1" alt="shot\.png">/);
+    assert.match(f('Attached: secrets/shot.png'), /^<span class="v6-chat-attachment"><span aria-hidden="true">📎<\/span> shot\.png<\/span>$/);
+    assert.doesNotMatch(f('Attached: .tangleclaw/secrets/shot.png', { 'shot.png': 'javascript:alert(1)' }), /<img|href/);
+    assert.doesNotMatch(f('Attached: .tangleclaw/secrets/notes.txt', { 'notes.txt': 'blob:http://h/2' }), /<img/);
+  });
+});
+
+describe('attachment thumbnails through the controller (#3082, A752-2)', () => {
+  /** A live chat whose messages attach shot.png, with fetch and object-URL seams. */
+  function mountThumbs(opts) {
+    const o = opts || {};
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const fetches = [];
+    const created = [];
+    const revoked = [];
+    let n = 0;
+    const rows = [{ id: 12, name: 'TC Lane PM', engine: { id: 'claude' } }, { id: 13, name: 'Other', engine: { id: 'claude' } }];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: rows };
+      if (/\/status$/.test(url)) return { active: true, sessionId: 1592 };
+      if (/conversation\/events/.test(url)) return { events: [{ seq: 1, role: 'user', content: 'see this\n\nAttached: .tangleclaw/secrets/shot.png' }] };
+      if (/peek/.test(url)) return { lines: ['⏺ Got it.'] };
+      return null;
+    };
+    const timers = [];
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => ({ ok: true }), storage: null,
+      operatorHeaders: async () => ({ 'X-TC-Open-Token': 'tok' }),
+      // A refused Response still has blob(); only ok tells the two apart.
+      fetch: async (url, init) => { fetches.push({ url, headers: init.headers }); return o.fail ? { ok: false, status: 403, blob: async () => ({ kind: 'json-error' }) } : { ok: true, blob: async () => ({ kind: 'blob' }) }; },
+      createObjectURL: () => { const u = `blob:test/${++n}`; created.push(u); return u; },
+      revokeObjectURL: (u) => revoked.push(u),
+      setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
+    const win = makeFakeWindow('#/resources/12/conversation');
+    shell = G.tcCreateV6Shell(doc, { root, window: win, storage: null, onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { for (let i = 0; i < 5; i++) { while (pending.length) await pending.shift(); await new Promise((r) => setImmediate(r)); } };
+    return { shell, root, doc, win, timers, settle, fetches, created, revoked };
+  }
+  const thumbIn = (m) => (/<img class="v6-chat-thumb" src="([^"]+)"/.exec(m.root.innerHTML + (m.doc.getElementById('v6ChatRecorded') || {}).innerHTML) || [])[1];
+
+  it('fetches the attached image once, with the operator proof, from the project\'s secure-clipboard file route', async () => {
+    const m = mountThumbs();
+    await m.settle();
+    assert.equal(m.fetches.length, 1);
+    assert.equal(m.fetches[0].url, '/api/sessions/TC%20Lane%20PM/secure-clipboard/shot.png');
+    assert.equal(m.fetches[0].headers['X-TC-Open-Token'], 'tok');
+    assert.equal(thumbIn(m), 'blob:test/1');
+  });
+
+  it('keeps the exact same blob URL across a live poll, fetching and creating nothing new (A752-2)', async () => {
+    const m = mountThumbs();
+    await m.settle();
+    const before = thumbIn(m);
+    await m.timers[m.timers.length - 1]();
+    await m.settle();
+    assert.equal(thumbIn(m), before);
+    assert.equal(m.fetches.length, 1);
+    assert.deepEqual(m.created, ['blob:test/1']);
+    assert.deepEqual(m.revoked, [], 'a poll revokes nothing');
+  });
+
+  it('releases the blob URL when the chat moves to another project, and on teardown', async () => {
+    const m = mountThumbs();
+    await m.settle();
+    m.win.location.hash = '#/resources/13/conversation';
+    await m.settle();
+    assert.deepEqual(m.revoked, ['blob:test/1']);
+    const t = mountThumbs();
+    await t.settle();
+    t.shell.destroy();
+    assert.deepEqual(t.revoked, ['blob:test/1']);
+  });
+
+  it('an image the operator attached in this browser seeds the cache from its own bytes, so nothing is fetched', async () => {
+    const G = loadV6Shell();
+    const created = [];
+    const fetches = [];
+    let events = [];
+    let shell = null;
+    const live = G.tcV6CreateLiveController({ getShell: () => shell,
+      api: async (url, init) => {
+        if (url === '/api/projects') return { projects: [{ id: 12, name: 'P', engine: { id: 'claude' } }] };
+        if (/\/status$/.test(url)) return { active: true, sessionId: 1 };
+        if (/secure-clipboard$/.test(url) && init && init.method === 'GET') return { files: [] };
+        if (/secure-clipboard$/.test(url)) return { relPath: 'secrets/shot.png' };
+        if (/conversation\/events/.test(url)) return { events };
+        if (/peek/.test(url)) return { lines: [] };
+        return null;
+      },
+      apiMutate: async () => ({ ok: true }), storage: null, operatorHeaders: async () => ({}), readFileAsBase64: async () => 'eA==',
+      fetch: async (url) => { fetches.push(url); return { ok: false }; },
+      createObjectURL: (b) => { created.push(b); return 'blob:local/1'; }, revokeObjectURL: () => {},
+      setInterval: () => 0, clearInterval: () => {} });
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const pending = [];
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null, onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    while (pending.length) await pending.shift();
+    const file = { name: 'shot.png', size: 3 };
+    await live.attachFiles([file]);
+    assert.deepEqual(created, [file], 'the local file itself became the blob URL');
+    // The message that attaches it is then sent and recorded.
+    events = [{ seq: 1, role: 'user', content: 'Attached: .tangleclaw/secrets/shot.png' }];
+    await live.refresh();
+    assert.deepEqual(fetches, [], 'no fetch for a file this browser already holds');
+    assert.match(root.innerHTML + doc.getElementById('v6ChatRecorded').innerHTML, /<img class="v6-chat-thumb" src="blob:local\/1"/);
+  });
+
+  it('a file attached in this browser replaces a fetch that was refused', async () => {
+    const G = loadV6Shell();
+    let shell = null;
+    const created = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell,
+      api: async (url, init) => {
+        if (url === '/api/projects') return { projects: [{ id: 12, name: 'P', engine: { id: 'claude' } }] };
+        if (/\/status$/.test(url)) return { active: true, sessionId: 1 };
+        if (/secure-clipboard$/.test(url) && init && init.method === 'GET') return { files: [] };
+        if (/secure-clipboard$/.test(url)) return { relPath: 'secrets/shot.png' };
+        if (/conversation\/events/.test(url)) return { events: [{ seq: 1, role: 'user', content: 'Attached: .tangleclaw/secrets/shot.png' }] };
+        if (/peek/.test(url)) return { lines: [] };
+        return null;
+      },
+      apiMutate: async () => ({ ok: true }), storage: null, operatorHeaders: async () => ({}), readFileAsBase64: async () => 'eA==',
+      fetch: async () => ({ ok: false, status: 404, blob: async () => ({}) }),
+      createObjectURL: (b) => { created.push(b); return 'blob:local/9'; }, revokeObjectURL: () => {},
+      setInterval: () => 0, clearInterval: () => {} });
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const pending = [];
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null, onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    for (let i = 0; i < 4; i++) { while (pending.length) await pending.shift(); await new Promise((r) => setImmediate(r)); }
+    assert.deepEqual(created, [], 'the refused fetch made no URL');
+    const file = { name: 'shot.png', size: 3 };
+    await live.attachFiles([file]);
+    await live.refresh();
+    assert.deepEqual(created, [file]);
+    assert.match(root.innerHTML + doc.getElementById('v6ChatRecorded').innerHTML, /<img class="v6-chat-thumb" src="blob:local\/9"/);
+  });
+
+  it('a refused fetch leaves a file-name chip and is not retried on the next poll', async () => {
+    const m = mountThumbs({ fail: true });
+    await m.settle();
+    assert.equal(thumbIn(m), undefined);
+    assert.match(m.root.innerHTML, /<span class="v6-chat-attachment"><span aria-hidden="true">📎<\/span> shot\.png<\/span>/);
+    await m.timers[m.timers.length - 1]();
+    await m.settle();
+    assert.equal(m.fetches.length, 1);
+  });
+});
+
+describe('the verbosity filter on Under the Hood (#3082)', () => {
+  const G = loadV6Shell();
+  const run = (lines) => plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+  const wake = '> [TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.';
+
+  it('marks a reply a wake set going, until the operator speaks again', () => {
+    const out = run([wake, '⏺ Acked INT.', '> what next?', '⏺ The release.']);
+    assert.deepEqual(out.turns.map((t) => t.trigger || 'direct'), ['switchboard', 'direct', 'direct']);
+  });
+
+  /** A chat whose live turns hold one reply of each kind after a wake. */
+  function view(verbosity) {
+    const turns = [
+      { role: 'assistant', text: 'PR 3081 merged as d78e877e.', trigger: 'switchboard' },
+      { role: 'assistant', text: 'CI failed on the large tier.', trigger: 'switchboard' },
+      { role: 'assistant', text: 'Acked and routed to INT.', trigger: 'switchboard' },
+      { role: 'assistant', text: 'Shall I rebase?', trigger: 'switchboard' },
+      { role: 'assistant', text: 'Direct answer.' }
+    ];
+    return G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns }, verbosity } });
+  }
+  const liveOf = (html) => html.slice(html.indexOf('id="v6ChatLive"'), html.indexOf('id="v6ChatRecordedTail"'));
+
+  it('by default shows blockers, milestones, questions and direct chat, and tucks fleet chatter with a count', () => {
+    const html = view();
+    const live = liveOf(html);
+    assert.match(live, /PR 3081 merged/);
+    assert.match(live, /CI failed/);
+    assert.match(live, /Shall I rebase\?/);
+    assert.match(live, /Direct answer\./);
+    assert.doesNotMatch(live, /Acked and routed/);
+    assert.match(html, /<span id="v6ChatTuckedCount" class="v6-chat-tucked-count">1 tucked<\/span>/);
+    assert.match(html, /<li class="v6-chat-tucked-item is-chatter"><span class="v6-chat-tucked-kind">Fleet chatter<\/span> <span class="v6-conversation-content">Acked and routed to INT\.<\/span>/);
+    assert.match(html, /<input type="checkbox" id="v6ChatShowBlockers" data-verbosity="blockers" checked>/);
+    assert.match(html, /<input type="checkbox" id="v6ChatShowMilestones" data-verbosity="milestones" checked>/);
+    assert.match(html, /<input type="checkbox" id="v6ChatShowChatter" data-verbosity="chatter">/);
+  });
+
+  it('a tucked reply is escaped like any other', () => {
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'Acked <img src=x onerror=alert(1)>', trigger: 'switchboard' }] } } });
+    const tucked = html.slice(html.indexOf('id="v6ChatTucked"'), html.indexOf('</ol>', html.indexOf('id="v6ChatTucked"')));
+    assert.match(tucked, /Acked &lt;img src=x onerror=alert\(1\)&gt;/);
+    assert.doesNotMatch(html, /<img src=x/);
+  });
+
+  it('each kind follows its own box; questions and direct chat always show', () => {
+    const live = liveOf(view({ blockers: false, milestones: false, chatter: true }));
+    assert.doesNotMatch(live, /PR 3081 merged/);
+    assert.doesNotMatch(live, /CI failed/);
+    assert.match(live, /Acked and routed/);
+    assert.match(live, /Shall I rebase\?/);
+    assert.match(live, /Direct answer\./);
+  });
+
+  it('a box changes the chat in place and is remembered', () => {
+    const storage = makeStorage();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage });
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'Acked.', trigger: 'switchboard' }] } } } });
+    // The badge as the page drew it ("1 tucked"); the mini-DOM's stub starts empty.
+    doc.getElementById('v6ChatTuckedCount').innerHTML = '1 tucked';
+    const box = doc.getElementById('v6ChatShowChatter');
+    box.checked = true;
+    box.setAttribute('data-verbosity', 'chatter');
+    box.dispatch('change');
+    assert.match(doc.getElementById('v6ChatLive').innerHTML, /Acked\./);
+    assert.equal(doc.getElementById('v6ChatTuckedCount').innerHTML, '');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_chat_verbosity), { blockers: true, milestones: true, chatter: true });
+    // A later visit starts from the remembered choice.
+    const next = makeDocument([]);
+    const root2 = next.doc.createElement('div');
+    withIdParsingInnerHTML(root2, next.doc);
+    next.doc.body.appendChild(root2);
+    const again = G.tcCreateV6Shell(next.doc, { root: root2, window: makeFakeWindow('#/projects/x'), storage });
+    again.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'Acked.', trigger: 'switchboard' }] } } } });
+    const html = root2.innerHTML;
+    assert.match(html.slice(html.indexOf('id="v6ChatLive"'), html.indexOf('id="v6ChatRecordedTail"')), /Acked\./);
+    assert.match(html, /<input type="checkbox" id="v6ChatShowChatter" data-verbosity="chatter" checked>/);
+  });
+});
+
+describe('V6210 chunk 01 styles (#3082)', () => {
+  const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  it('styles links, the external image card, thumbnails, the filter and the tucked count', () => {
+    assert.match(CSS, /\.v6-chat-link \{[^}]*text-decoration: underline;/);
+    assert.match(CSS, /\.v6-chat-link-preview \{[^}]*display: inline-flex;/);
+    assert.match(CSS, /\.v6-chat-thumb \{[^}]*max-width: 220px;[^}]*max-height: 160px;/);
+    assert.match(CSS, /\.v6-chat-verbosity \{[^}]*display: flex;/);
+    assert.match(CSS, /\.v6-chat-tucked-count:not\(:empty\) \{[^}]*background: #d4a72c;/);
   });
 });

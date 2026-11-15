@@ -641,6 +641,14 @@
   const AWAIT_REPLY_POLLS = 3;
   const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
+  /**
+   * Which switchboard-triggered replies the chat shows (#3082), by kind; the
+   * rest are tucked Under the Hood. Direct chat and questions always show.
+   */
+  const VERBOSITY_DEFAULT = Object.freeze({ blockers: true, milestones: true, chatter: false });
+  const isVerbosity = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
+    && ['blockers', 'milestones', 'chatter'].every((k) => typeof v[k] === 'boolean');
+
   /** Every metric a B4 telemetry bar carries, in its own listed display order, mirroring `lib/v6/b4-telemetry-header.js#METRIC_KEYS`. */
   const TELEMETRY_METRIC_LABELS = Object.freeze({
     tokens: 'Tokens',
@@ -885,17 +893,17 @@
       // what was recorded after it (sent, not yet on screen) below.
       const parts = arrangeRecorded(v.events, liveTurns, chat.lastSent);
       stream = parts.head.length
-        ? `<ol class="v6-conversation-stream" id="v6ChatRecorded">${recordedEventsMarkup(parts.head, name)}</ol>`
+        ? `<ol class="v6-conversation-stream" id="v6ChatRecorded">${recordedEventsMarkup(parts.head, name, chat.thumbs)}</ol>`
         : (liveTurns.length || parts.tail.length ? '<ol class="v6-conversation-stream" id="v6ChatRecorded"></ol>'
           : '<p class="v6-conversation-empty">No conversation events recorded for this session yet.</p>');
-      tail = recordedEventsMarkup(parts.tail, name);
+      tail = recordedEventsMarkup(parts.tail, name, chat.thumbs);
     }
     // #3052: the replies the session's live output shows, after what is
     // recorded; its own list so a poll can replace it without a re-render.
     stream = `<div id="v6ChatStream" class="v6-chat-stream" tabindex="0">${stream}
-      <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name)}</ol>
+      <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name, chat.verbosity, chat.thumbs)}</ol>
       <ol id="v6ChatRecordedTail" class="v6-conversation-stream v6-chat-recorded-tail">${tail}</ol>
-      <ol id="v6ChatPending" class="v6-conversation-stream v6-chat-pending">${pendingMarkup(chat.pending, chat.lastSent)}</ol>
+      <ol id="v6ChatPending" class="v6-conversation-stream v6-chat-pending">${pendingMarkup(chat.pending, chat.lastSent, chat.thumbs)}</ol>
     </div>`;
     // A member reached directly is still the project's delegate when it is
     // the one the delegate resolution picks (#3053).
@@ -967,7 +975,12 @@
       </header>
       ${stream}
       ${liveSession ? `<details id="v6ChatUnderHood" class="v6-chat-under-hood"${chat.hoodOpen ? ' open' : ''}>
-        <summary>🔧 Under the Hood (Raw CLI &amp; Tool Activity)</summary>
+        <summary>🔧 Under the Hood (Raw CLI &amp; Tool Activity) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count">${tuckedCountText(tuckedTurns(liveTurns, chat.verbosity).length)}</span></summary>
+        ${verbosityMarkup(chat.verbosity)}
+        <section class="v6-chat-tucked" aria-label="Replies tucked away">
+          <h3 class="v6-chat-switchboard-title">Tucked away</h3>
+          <ol id="v6ChatTucked" class="v6-chat-tucked-list">${tuckedMarkup(tuckedTurns(liveTurns, chat.verbosity), chat.thumbs)}</ol>
+        </section>
         <section class="v6-chat-switchboard" aria-label="Switchboard and Medusa traffic">
           <h3 class="v6-chat-switchboard-title">Switchboard &amp; Medusa traffic</h3>
           <ol id="v6ChatSwitchboard" class="v6-chat-switchboard-list" tabindex="-1">${switchboardMarkup(switchboardItems(v.events, live))}</ol>
@@ -1197,9 +1210,12 @@
     // An indented line belongs to whatever started the block above it: a tool
     // line's output is noise, an assistant line's continuation is reply.
     let block = null;
+    // Whether a wake, not the operator, set the session going (#3082): its
+    // replies until the operator next speaks are switchboard-triggered.
+    let woken = false;
     const flush = () => {
       if (reply.length) {
-        turns.push({ role: 'assistant', text: reply.join('\n') });
+        turns.push(woken ? { role: 'assistant', text: reply.join('\n'), trigger: 'switchboard' } : { role: 'assistant', text: reply.join('\n') });
         answered = false;
       }
       reply = [];
@@ -1212,7 +1228,7 @@
       // A blank line decides nothing: tool output can hold blank lines, and
       // the next line's indent says whether it is still output (#3057).
       if (!text) {
-        // A blank line ends a wrapped notice (Lane-B O-Gate HOLD).
+        // A blank line ends a wrapped notice.
         if (block === 'wake') block = null;
         return;
       }
@@ -1236,8 +1252,9 @@
         // A wake is the switchboard speaking, not the operator: it neither
         // answers a question nor ends the reply it interrupts.
         switchboard.push({ dir: 'in', text: promptText || text });
+        woken = true;
         // Only a typed wake wraps like a prompt; what is indented under a
-        // bare notice line is still the reply's (cumulative review, #3052).
+        // bare notice line is still the reply's (#3052).
         block = promptText ? 'wake' : null;
         return;
       }
@@ -1250,6 +1267,7 @@
         if (said) {
           activity = null;
           answered = true;
+          woken = false;
           echo = recordedAs(said);
           echoCut = Boolean(echo) && /\[Full prompt \(\d+ chars\) saved to: /.test(original(echo));
           // #3079 item 6: a recorded prompt keeps its place among the
@@ -1311,6 +1329,115 @@
   }
 
   /**
+   * A link in message text (#3082): a Markdown `[label](url)` or a bare
+   * `http(s)://` URL. A Markdown target may also be a same-origin path
+   * (`/plans/…`); nothing else — `javascript:`, `data:`, `file:` — is ever a
+   * link. A bare URL stops at whitespace, a quote or an angle bracket, and
+   * drops trailing sentence punctuation, keeping a `)` it opened itself.
+   */
+  const MESSAGE_LINK = /\[([^\]\n]{1,300})\]\((https?:\/\/[^\s)<>"']+|\/(?!\/)[^\s)<>"']*)\)|https?:\/\/[^\s<>"'`]+/g;
+
+  /** An image a URL names by its extension (#3082). */
+  const IMAGE_URL = /\.(?:png|jpe?g|webp|gif)(?:[?#]|$)/i;
+
+  /**
+   * Message text as HTML (#3082): every character escaped, with links opening
+   * in a new tab (`rel="noopener noreferrer"`). An external URL naming an
+   * image is a link card — its host and path, escaped — and never an `<img>`:
+   * agent text is untrusted, and an image would be fetched the moment the chat
+   * drew it, carrying whatever the URL holds to that host (Ruling A752).
+   * @param {*} text
+   * @returns {string} HTML.
+   */
+  function messageMarkup(text, thumbs) {
+    return String(text == null ? '' : text).split('\n').map((line) => {
+      const attached = ATTACHED_LINE.exec(line);
+      return attached ? attachmentMarkup(attached[1], thumbs) : lineMarkup(line);
+    }).join('\n');
+  }
+
+  /**
+   * An `Attached:` line naming a file in the project's secrets store
+   * (#3082), as `sendChat` writes one. The file name group takes only what
+   * `sanitizeUploadName` produces.
+   */
+  const ATTACHED_LINE = /^Attached: (?:\.tangleclaw\/)?secrets\/([A-Za-z0-9._-]{1,128})\s*$/;
+
+  /** An image file name, by extension (#3082). */
+  const IMAGE_NAME = /\.(?:png|jpe?g|webp|gif)$/i;
+
+  /**
+   * An attachment in a message (#3082): an image the page has fetched as a
+   * thumbnail — a `blob:` URL from the per-(project, file) cache, opening in
+   * a new tab — or else the file's name as a chip.
+   * @param {string} filename
+   * @param {Object<string, string>} [thumbs] - File name → `blob:` URL.
+   * @returns {string} HTML.
+   */
+  function attachmentMarkup(filename, thumbs) {
+    const url = thumbs && Object.prototype.hasOwnProperty.call(thumbs, filename) ? thumbs[filename] : null;
+    if (IMAGE_NAME.test(filename) && typeof url === 'string' && /^blob:/.test(url)) {
+      const href = escapeHtml(url);
+      return `<a class="v6-chat-link-preview v6-chat-thumb-link" href="${href}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(filename)} (opens in a new tab)">`
+        + `<img class="v6-chat-thumb" src="${href}" alt="${escapeHtml(filename)}"><span class="v6-chat-thumb-name">${escapeHtml(filename)}</span></a>`;
+    }
+    return `<span class="v6-chat-attachment"><span aria-hidden="true">📎</span> ${escapeHtml(filename)}</span>`;
+  }
+
+  /**
+   * One line of message text (#3082): escaped, with its links.
+   * @param {string} raw
+   * @returns {string} HTML.
+   */
+  function lineMarkup(raw) {
+    let out = '';
+    let last = 0;
+    MESSAGE_LINK.lastIndex = 0;
+    for (let m = MESSAGE_LINK.exec(raw); m; m = MESSAGE_LINK.exec(raw)) {
+      let match = m[0];
+      let href = m[2] || match;
+      const label = m[1];
+      if (!label) {
+        // Sentence punctuation after a bare URL is not part of it.
+        while (/[.,;:!?)\]]$/.test(href) && !(href.endsWith(')') && (href.match(/\(/g) || []).length >= (href.match(/\)/g) || []).length)) {
+          href = href.slice(0, -1);
+        }
+        match = href;
+      }
+      // Nothing left once its punctuation went: not a link, and the scan moves on.
+      if (!match) {
+        MESSAGE_LINK.lastIndex = m.index + m[0].length;
+        continue;
+      }
+      out += escapeHtml(raw.slice(last, m.index));
+      out += linkMarkup(href, label);
+      last = m.index + match.length;
+      MESSAGE_LINK.lastIndex = last;
+    }
+    return out + escapeHtml(raw.slice(last));
+  }
+
+  /**
+   * One link (#3082): a new-tab anchor, or for an external image a link card.
+   * @param {string} href - An `http(s)://` URL or a same-origin path, unescaped.
+   * @param {string} [label] - A Markdown label.
+   * @returns {string} HTML.
+   */
+  function linkMarkup(href, label) {
+    const safe = escapeHtml(href);
+    const external = /^https?:\/\//i.test(href);
+    if (external && IMAGE_URL.test(href)) {
+      const at = href.indexOf('/', href.indexOf('//') + 2);
+      const host = at === -1 ? href.slice(href.indexOf('//') + 2) : href.slice(href.indexOf('//') + 2, at);
+      const path = at === -1 ? '' : href.slice(at);
+      return `<a class="v6-chat-link-preview" href="${safe}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Opens in a new tab; not loaded here">`
+        + `<span class="v6-chat-link-preview-icon" aria-hidden="true">🖼</span>`
+        + `<span class="v6-chat-link-preview-host">${escapeHtml(host)}</span><span class="v6-chat-link-preview-path">${escapeHtml(label || path)}</span></a>`;
+    }
+    return `<a class="v6-chat-link" href="${safe}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">${escapeHtml(label || href)}</a>`;
+  }
+
+  /**
    * Whether a recorded user message is the one a turn shows (#3079): the
    * same words, or — for a long message recorded only in part — the turn
    * starts with what was recorded before the saved-path line.
@@ -1369,11 +1496,11 @@
    * @param {string} name - The project's name.
    * @returns {string} The recorded events as conversation bubbles.
    */
-  function recordedEventsMarkup(events, name) {
+  function recordedEventsMarkup(events, name, thumbs) {
     return events.map((e) => (
       `<li class="v6-conversation-event is-${escapeHtml(e && e.role)}">
             ${chatRoleMarkup(e && e.role, name)}
-            <span class="v6-conversation-content">${escapeHtml(e && e.content)}</span>
+            <span class="v6-conversation-content">${messageMarkup(e && e.content, thumbs)}</span>
           </li>`
     )).join('');
   }
@@ -1385,9 +1512,9 @@
    * @param {{id: *}|null|undefined} lastSent
    * @returns {string} HTML list item, or ''.
    */
-  function pendingMarkup(pending, lastSent) {
+  function pendingMarkup(pending, lastSent, thumbs) {
     if (!pending || typeof pending.text !== 'string' || (lastSent && lastSent.id === pending.id)) return '';
-    return `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${escapeHtml(pending.text)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`;
+    return `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${messageMarkup(pending.text, thumbs)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`;
   }
 
   /**
@@ -1397,10 +1524,93 @@
    * @param {string} name
    * @returns {string} HTML list items.
    */
-  function liveTurnsMarkup(turns, name) {
-    return (Array.isArray(turns) ? turns : []).map((t) => (
-      `<li class="v6-conversation-event is-${escapeHtml(t && t.role)} is-live">${chatRoleMarkup(t && t.role, name)}<span class="v6-conversation-content">${escapeHtml(t && t.text)}</span></li>`
+  function liveTurnsMarkup(turns, name, verbosity, thumbs) {
+    return (Array.isArray(turns) ? turns : []).filter((t) => shownInChat(t, verbosity)).map((t) => (
+      `<li class="v6-conversation-event is-${escapeHtml(t && t.role)} is-live">${chatRoleMarkup(t && t.role, name)}<span class="v6-conversation-content">${messageMarkup(t && t.text, thumbs)}</span></li>`
     )).join('');
+  }
+
+  /** A reply reporting a hold, a failure, an error or a refusal (#3082). */
+  const BLOCKER_TEXT = /\b(?:HOLD|held|blocked|blocker|blocking|fail(?:ed|s|ing|ure)?|error|refus(?:ed|al|es)|cannot|can't|broken|red\b|timed out|timeout)/i;
+
+  /** A reply reporting a PR opened or merged, a release cut, or a sprint exit (#3082). */
+  const MILESTONE_TEXT = /\b(?:PR\s*#?\d+\s*(?:open|opened|merged)|merged|true-merged|released|release (?:cut|published)|cut v?\d+\.\d+|tagged|sprint exit|v\d+\.\d+\.\d+ (?:is )?(?:out|live|published))/i;
+
+  /**
+   * What kind of turn this is, for the verbosity filter (#3082): a turn the
+   * operator's own message set going is `direct`; a switchboard-triggered
+   * reply is a `question` if it asks one, else a `blocker`, a `milestone`, or
+   * routine `chatter`.
+   * @param {{role?: string, text?: string, trigger?: string}|null} turn
+   * @returns {'direct'|'question'|'blocker'|'milestone'|'chatter'}
+   */
+  function turnKind(turn) {
+    if (!turn || turn.role !== 'assistant' || turn.trigger !== 'switchboard') return 'direct';
+    const text = String(turn.text || '');
+    if (text.split('\n').some((l) => /\?\s*$/.test(l.trim()))) return 'question';
+    if (BLOCKER_TEXT.test(text)) return 'blocker';
+    if (MILESTONE_TEXT.test(text)) return 'milestone';
+    return 'chatter';
+  }
+
+  /**
+   * Whether the chat shows a turn, or tucks it Under the Hood (#3082).
+   * @param {object} turn
+   * @param {{blockers: boolean, milestones: boolean, chatter: boolean}} [verbosity]
+   * @returns {boolean}
+   */
+  function shownInChat(turn, verbosity) {
+    const v = isVerbosity(verbosity) ? verbosity : VERBOSITY_DEFAULT;
+    const kind = turnKind(turn);
+    if (kind === 'blocker') return v.blockers;
+    if (kind === 'milestone') return v.milestones;
+    if (kind === 'chatter') return v.chatter;
+    return true;
+  }
+
+  /** What each tucked kind is called (#3082). */
+  const TURN_KIND_LABELS = Object.freeze({ blocker: 'Blocker', milestone: 'Milestone', chatter: 'Fleet chatter' });
+
+  /**
+   * The switchboard-triggered replies the filter tucked away (#3082), for
+   * Under the Hood, each tagged with its kind.
+   * @param {Array<object>} turns
+   * @param {object} [verbosity]
+   * @returns {Array<object>}
+   */
+  function tuckedTurns(turns, verbosity) {
+    return (Array.isArray(turns) ? turns : []).filter((t) => !shownInChat(t, verbosity));
+  }
+
+  /**
+   * @param {Array<object>} tucked
+   * @returns {string} HTML list items, or the empty note.
+   */
+  function tuckedMarkup(tucked, thumbs) {
+    if (!tucked.length) return '<li class="v6-chat-tucked-empty">Nothing tucked away.</li>';
+    return tucked.map((t) => `<li class="v6-chat-tucked-item is-${turnKind(t)}"><span class="v6-chat-tucked-kind">${TURN_KIND_LABELS[turnKind(t)]}</span> <span class="v6-conversation-content">${messageMarkup(t.text, thumbs)}</span></li>`).join('');
+  }
+
+  /** @param {number} n @returns {string} The summary's count of tucked replies, or ''. */
+  function tuckedCountText(n) {
+    return n ? `${n} tucked` : '';
+  }
+
+  /**
+   * The verbosity filter (#3082): one checkbox per switchboard-reply kind.
+   * @param {object} [verbosity]
+   * @returns {string} HTML.
+   */
+  function verbosityMarkup(verbosity) {
+    const v = isVerbosity(verbosity) ? verbosity : VERBOSITY_DEFAULT;
+    const box = (id, key, label) => `<label class="v6-chat-verbosity-option"><input type="checkbox" id="${id}" data-verbosity="${key}"${v[key] ? ' checked' : ''}> ${label}</label>`;
+    return `<fieldset class="v6-chat-verbosity">
+          <legend>Switchboard replies shown in the chat</legend>
+          <span class="v6-chat-verbosity-fixed">Direct chat &amp; questions: always</span>
+          ${box('v6ChatShowBlockers', 'blockers', 'Blockers')}
+          ${box('v6ChatShowMilestones', 'milestones', 'Milestones')}
+          ${box('v6ChatShowChatter', 'chatter', 'Fleet chatter')}
+        </fieldset>`;
   }
 
   /**
@@ -1421,7 +1631,7 @@
    * before the reply that asked it. A dismissal holds for that same reply as
    * it grows (more text, a wake) or as older turns scroll off the top of the
    * pane; a later exchange has more turns before its reply, so the same
-   * words asked again show — even after the very same answer (PRR-B R2).
+   * words asked again show — even after the very same answer.
    * @param {{turns?: Array}|null} live
    * @param {string} question
    * @returns {{q: string, prefix: string[]}}
@@ -2174,11 +2384,12 @@
       const activityElapsed = (extras && extras.activityElapsed) || '';
       const dismissedQuestions = (extras && extras.dismissedQuestions) || [];
       const pending = (extras && extras.pending) || null;
+      const verbosity = (extras && extras.verbosity) || VERBOSITY_DEFAULT;
       const v = detail.view || {};
       // #3063: in a chat the telemetry bar shares the chat's header row.
       const telemetry = extras && 'telemetry' in extras ? extras.telemetry : undefined;
       return conversationViewMarkup(Object.assign({}, v, {
-        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename, dismissedQuestions, pending })
+        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename, dismissedQuestions, pending, verbosity })
       }));
     }
     if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
@@ -2436,6 +2647,17 @@
     // recorded (its send id, recorded text and whole text), until the pane
     // shows it, so it is drawn after the replies it followed.
     const lastSentByProject = new Map();
+    // #3082: thumbnails of image attachments, one blob: URL (and one fetch in
+    // flight) per (project, file), kept across polls so a poll neither
+    // refetches the image nor revokes a URL a new tab is about to open;
+    // released when the chat moves to another project, or on teardown (A752).
+    const thumbCache = new Map();
+    const createObjectURL = deps.createObjectURL
+      || ((blob) => (global.URL && typeof global.URL.createObjectURL === 'function' ? global.URL.createObjectURL(blob) : null));
+    const revokeObjectURL = deps.revokeObjectURL
+      || ((url) => { if (global.URL && typeof global.URL.revokeObjectURL === 'function') global.URL.revokeObjectURL(url); });
+    const fetchBytes = deps.fetch || ((url, init) => global.fetch(url, init));
+    let thumbsReleaseHooked = false;
     // And the whole text of each long message this visit sent, per project
     // (the last few), so the pane's echo of one is known in full even after
     // its record, cut short, is all the events hold (#3079).
@@ -2498,6 +2720,123 @@
         }
       }
       return awaitReply(live, project);
+    }
+
+    /**
+     * The image files a chat's messages attach (#3082).
+     * @param {Array<object>|null} events - Recorded events.
+     * @param {{turns?: Array<{text: string}>}|null} live
+     * @returns {string[]}
+     */
+    function attachedImages(events, live) {
+      const texts = (Array.isArray(events) ? events : []).map((e) => e && e.content)
+        .concat(live && Array.isArray(live.turns) ? live.turns.map((t) => t && t.text) : []);
+      const names = new Set();
+      texts.forEach((text) => String(text || '').split('\n').forEach((line) => {
+        const m = ATTACHED_LINE.exec(line);
+        if (m && IMAGE_NAME.test(m[1])) names.add(m[1]);
+      }));
+      return [...names];
+    }
+
+    /**
+     * The thumbnails a chat can show now (#3082): file name → `blob:` URL for
+     * each attached image already fetched; any not yet asked for is fetched,
+     * and the chat redrawn when it arrives.
+     * @param {object} project
+     * @param {Array<object>|null} events
+     * @param {object|null} live
+     * @returns {Object<string, string>}
+     */
+    function thumbsFor(project, events, live) {
+      const thumbs = {};
+      hookThumbRelease();
+      attachedImages(events, live).forEach((filename) => {
+        const entry = thumbCache.get(thumbKey(project, filename));
+        if (entry && entry.url) thumbs[filename] = entry.url;
+        else if (!entry) fetchThumb(project, filename);
+      });
+      return thumbs;
+    }
+
+    /** @returns {string} The cache key for one project's file. */
+    function thumbKey(project, filename) {
+      return `${String(project.id)}\u0001${filename}`;
+    }
+
+    /**
+     * Fetch one attached image with the operator proof (it is in the
+     * project's secrets store) and keep it as a `blob:` URL (#3082). A
+     * refused or failed fetch is remembered too, so a poll does not retry it;
+     * the line stays a file-name chip.
+     * @param {object} project
+     * @param {string} filename
+     * @returns {Promise<void>}
+     */
+    async function fetchThumb(project, filename) {
+      const key = thumbKey(project, filename);
+      const entry = { projectId: String(project.id), url: null };
+      thumbCache.set(key, entry);
+      try {
+        const headers = await operatorHeaders();
+        const res = await fetchBytes(`/api/sessions/${encodeURIComponent(project.name)}/secure-clipboard/${encodeURIComponent(filename)}`,
+          { method: 'GET', headers, credentials: 'same-origin' });
+        if (!res || !res.ok || typeof res.blob !== 'function') return;
+        const blob = await res.blob();
+        if (thumbCache.get(key) !== entry) return;
+        entry.url = createObjectURL(blob) || null;
+      } catch (_err) { // prawduct:allow prawduct/broad-except -- a thumbnail that cannot be fetched stays a file-name chip; it must never break the chat
+        return;
+      }
+      if (entry.url && current && String(current.project.id) === entry.projectId) showThumbs();
+    }
+
+    /** Hand the chat on screen its current thumbnails (#3082). */
+    function showThumbs() {
+      if (!current || !current.view) return;
+      const thumbs = thumbsFor(current.project, current.view.events, current.view.chat && current.view.chat.live);
+      current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { thumbs }) });
+      const sh = getShell();
+      if (sh && typeof sh.setThumbs === 'function') sh.setThumbs(thumbs);
+    }
+
+    /**
+     * Release every thumbnail not of `keepProjectId` (#3082): the chat moved
+     * to another project, or (with none kept) the page is going.
+     * @param {string|null} keepProjectId
+     */
+    function releaseThumbs(keepProjectId) {
+      for (const [key, entry] of thumbCache) {
+        if (keepProjectId != null && entry.projectId === keepProjectId) continue;
+        if (entry.url) revokeObjectURL(entry.url);
+        thumbCache.delete(key);
+      }
+    }
+
+    /** Release them all when the shell is torn down (#3082), registered once. */
+    function hookThumbRelease() {
+      if (thumbsReleaseHooked) return;
+      const sh = getShell();
+      if (sh && typeof sh.onDestroy === 'function') {
+        sh.onDestroy(() => releaseThumbs(null));
+        thumbsReleaseHooked = true;
+      }
+    }
+
+    /**
+     * Seed the cache from a file the operator attached in this browser
+     * (#3082): its own bytes, no fetch.
+     * @param {object} project
+     * @param {string} filename - The name it was saved under.
+     * @param {Blob} file
+     */
+    function seedThumb(project, filename, file) {
+      const key = thumbKey(project, filename);
+      const known = thumbCache.get(key);
+      // A fetched image is kept; a fetch still out, or one refused, gives way.
+      if (!IMAGE_NAME.test(filename) || (known && known.url) || !file) return;
+      const url = createObjectURL(file);
+      if (url) thumbCache.set(key, { projectId: String(project.id), url });
     }
 
     /**
@@ -2671,6 +3010,8 @@
       chat.peek = peekView(peek);
       chat.live = liveView(peek, project, events && events.events);
       chat.lastSent = lastSentFor(project);
+      releaseThumbs(String(project.id));
+      chat.thumbs = thumbsFor(project, events && events.events, chat.live);
       chat.medusa = medusaView(medusaStatus, chat.live, null);
       current.view = events
         ? { project, sessionId, events: events.events, chat }
@@ -2686,9 +3027,10 @@
           const nextLive = liveView(res, current.project, current.view.events);
           const nextMedusa = medusaView(nextStatus, nextLive, current.view.chat && current.view.chat.medusa);
           const lastSent = lastSentFor(current.project);
-          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next, live: nextLive, medusa: nextMedusa, lastSent }) });
+          const thumbs = thumbsFor(current.project, current.view.events, nextLive);
+          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next, live: nextLive, medusa: nextMedusa, lastSent, thumbs }) });
           const sh = getShell();
-          if (sh && typeof sh.setLive === 'function') sh.setLive({ peek: next, live: nextLive, medusa: nextMedusa, lastSent });
+          if (sh && typeof sh.setLive === 'function') sh.setLive({ peek: next, live: nextLive, medusa: nextMedusa, lastSent, thumbs });
           else if (sh && typeof sh.setPeek === 'function') sh.setPeek(next);
         }, CHAT_POLL_MS);
       }
@@ -2860,7 +3202,7 @@
       } catch (err) { // prawduct:allow prawduct/broad-except -- a browser that cannot encode the text refuses the send with its reason, never an unhandled rejection
         return { ok: false, error: `the long message could not be prepared (${(err && err.message) || 'unknown error'}).` };
       }
-      // The file is the message's UTF-8 bytes (PRR-B R1: not the base64
+      // The file is the message's UTF-8 bytes (not the base64
       // length, whose padding over-counts by up to two bytes).
       if (utf8Length(message) > MAX_ATTACH_BYTES) {
         return { ok: false, error: `the message is over the 5 MB limit for a saved prompt.` };
@@ -3080,6 +3422,7 @@
         outcome = res
           ? { status: 'ready', relPath: projectRelative(res.relPath, item.name) }
           : { status: 'error', error: api.lastError || 'The server refused this file.' };
+        if (res) seedThumb(project, item.name, file);
       } catch (err) { // prawduct:allow prawduct/broad-except -- a file the browser cannot read (permissions, a vanished file) becomes the chip's error, not an unhandled rejection
         outcome = { status: 'error', error: `Could not read this file: ${err && err.message ? err.message : 'unknown error'}` };
       }
@@ -3462,18 +3805,22 @@
     // polls and visits; and which chat was last scrolled to its bottom, so a
     // chat opens at its newest line once and is then left where the operator puts it.
     let chatHoodOpen = prefs.get('tc_v6_chat_under_hood_open', false, isBoolean);
+    // #3082: which switchboard-triggered replies the chat shows, kept across visits.
+    let verbosity = Object.assign({}, prefs.get('tc_v6_chat_verbosity', VERBOSITY_DEFAULT, isVerbosity));
     // #3079: the questions dismissed in each chat, by {@link questionKey},
     // until the pane shows no question at all — the operator has answered —
     // so a poll that reads the same reply again, or the same reply grown by a
     // wake or more text, does not bring them back, and a later reply's do show.
     const dismissedQuestions = new Map();
     // What the question slot and the Medusa slot were last drawn with, so
-    // a poll redraws them only when that changes (Critic W1).
+    // a poll redraws them only when that changes.
     let paintedQuestions = null;
     let paintedMedusa = null;
     // #3079 item 6: the message being sent — its chat, text and send id —
     // drawn at the bottom of that chat until the send settles.
     let pendingSend = null;
+    // What to run when the shell is torn down (#3082).
+    const destroyHooks = [];
     // The chat whose Start fleet button has been clicked once (#3053).
     let fleetArmedKey = null;
     // The chat whose rename form is open (#3071), the name typed into it
@@ -3807,6 +4154,7 @@
       }
       wireQuestions();
       wireMedusa();
+      wireVerbosity();
       const refresh = doc.getElementById('v6ChatRefresh');
       if (refresh && typeof options.onRefreshChat === 'function') refresh.addEventListener('click', () => options.onRefreshChat());
       const settings = doc.getElementById('v6ChatSettings');
@@ -3834,7 +4182,7 @@
       const key = chatTargetKey();
       const live = chat && chat.live;
       // Only a read of the pane that asks nothing spends them; a failed
-      // read says nothing about the question (second review, W1).
+      // read says nothing about the question.
       if (key != null && live && Array.isArray(live.questions) && !live.questions.length) dismissedQuestions.delete(key);
       return openQuestions(chat && chat.live, dismissedFor(key));
     }
@@ -3855,8 +4203,8 @@
 
     /**
      * Redraw the question slot and wire its ✕ buttons — only when what it
-     * shows changed, so a poll never takes keyboard focus off a ✕ (Critic
-     * W1). The slot as last drawn is {@link paintedQuestions}.
+     * shows changed, so a poll never takes keyboard focus off a ✕. The
+     * slot as last drawn is {@link paintedQuestions}.
      * @returns {boolean} Whether it was redrawn.
      */
     function paintQuestions() {
@@ -3890,6 +4238,48 @@
       });
     }
 
+    /** @returns {Object<string, string>} The chat on screen's thumbnails: file name → `blob:` URL (#3082). */
+    function thumbsNow() {
+      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      return (chat && chat.thumbs) || {};
+    }
+
+    /**
+     * Redraw the replies the verbosity filter tucked away, and their count
+     * on the Under the Hood summary (#3082).
+     * @param {object|null} live
+     */
+    function paintTucked(live) {
+      const tucked = tuckedTurns(live && Array.isArray(live.turns) ? live.turns : [], verbosity);
+      const list = doc.getElementById('v6ChatTucked');
+      if (list) list.innerHTML = tuckedMarkup(tucked, thumbsNow());
+      const count = doc.getElementById('v6ChatTuckedCount');
+      if (count) count.innerHTML = escapeHtml(tuckedCountText(tucked.length));
+    }
+
+    /**
+     * Each verbosity checkbox (#3082) shows or tucks its kind of reply, in
+     * place, and is remembered.
+     */
+    function wireVerbosity() {
+      ['v6ChatShowBlockers', 'v6ChatShowMilestones', 'v6ChatShowChatter'].forEach((id) => {
+        const box = doc.getElementById(id);
+        if (!box) return;
+        box.addEventListener('change', (evt) => {
+          const target = evt && evt.target ? evt.target : box;
+          const key = target.getAttribute ? target.getAttribute('data-verbosity') : null;
+          const which = key || { v6ChatShowBlockers: 'blockers', v6ChatShowMilestones: 'milestones', v6ChatShowChatter: 'chatter' }[id];
+          verbosity = Object.assign({}, verbosity, { [which]: Boolean(target.checked) });
+          prefs.set('tc_v6_chat_verbosity', verbosity);
+          const view = detail && detail.kind === 'conversation' ? detail.view : null;
+          const live = view && view.chat ? view.chat.live : null;
+          const liveEl = doc.getElementById('v6ChatLive');
+          if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], String((view && view.project && view.project.name) || ''), verbosity, thumbsNow());
+          paintTucked(live);
+        });
+      });
+    }
+
     /**
      * Redraw the recorded events around the live turns, and the pending
      * bubble (#3079 item 6), as a poll moves what the pane shows.
@@ -3901,17 +4291,17 @@
       const name = String((view.project && view.project.name) || '');
       const parts = arrangeRecorded(view.events, chat.live && Array.isArray(chat.live.turns) ? chat.live.turns : [], chat.lastSent);
       const head = doc.getElementById('v6ChatRecorded');
-      if (head) head.innerHTML = recordedEventsMarkup(parts.head, name);
+      if (head) head.innerHTML = recordedEventsMarkup(parts.head, name, chat.thumbs);
       const tailEl = doc.getElementById('v6ChatRecordedTail');
-      if (tailEl) tailEl.innerHTML = recordedEventsMarkup(parts.tail, name);
+      if (tailEl) tailEl.innerHTML = recordedEventsMarkup(parts.tail, name, chat.thumbs);
       const pendingEl = doc.getElementById('v6ChatPending');
-      if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSend && pendingSend.key === chatTargetKey() ? pendingSend : null, chat.lastSent);
+      if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSend && pendingSend.key === chatTargetKey() ? pendingSend : null, chat.lastSent, chat.thumbs);
     }
 
     /**
      * Bring the Medusa indicator up to date (#3076). While it stays on
      * screen its button is updated in place, never replaced, so a poll
-     * cannot take focus off it or swallow a click (Critic W1); it is drawn
+     * cannot take focus off it or swallow a click; it is drawn
      * or removed only when it appears or goes.
      * @param {object|null|undefined} medusa
      */
@@ -4145,7 +4535,8 @@
             rename: renameOpenKey != null && renameOpenKey === chatTargetKey()
               ? { open: true, draft: renameDraft, warning: renameWarning } : null,
             sidebarCollapsed, activityElapsed, telemetry, dismissedQuestions: dismissedFor(chatTargetKey()),
-            pending: pendingSend && pendingSend.key === chatTargetKey() ? pendingSend : null
+            pending: pendingSend && pendingSend.key === chatTargetKey() ? pendingSend : null,
+            verbosity
           })}</div>
           <div id="v6ShellWizard"${inChat ? ' hidden' : ''}>${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation"${inChat ? ' hidden' : ''}>${modelAttestationMarkup(attestation)}</div>
@@ -4319,8 +4710,9 @@
         const live = update && update.live ? update.live : null;
         const name = String((detail.view.project && detail.view.project.name) || '');
         const medusa = update && 'medusa' in update ? update.medusa : detail.view.chat && detail.view.chat.medusa;
+        const thumbs = update && update.thumbs ? update.thumbs : (detail.view.chat && detail.view.chat.thumbs);
         detail = Object.assign({}, detail, {
-          view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { peek, live, medusa }) })
+          view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { peek, live, medusa, thumbs }) })
         });
         const traffic = doc.getElementById('v6ChatSwitchboard');
         if (traffic) traffic.innerHTML = switchboardMarkup(switchboardItems(detail.view.events, live));
@@ -4334,7 +4726,8 @@
         const stream = doc.getElementById('v6ChatStream');
         const streamAtBottom = isAtBottom(stream);
         const liveEl = doc.getElementById('v6ChatLive');
-        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name);
+        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name, verbosity, thumbsNow());
+        paintTucked(live);
         paintRecorded();
         if (streamAtBottom) pinToBottom(stream);
         paintQuestions();
@@ -4406,7 +4799,28 @@
         }
         if (key === chatTargetKey()) paintRecorded();
       },
+      /**
+       * The chat's thumbnails changed (#3082): file name → `blob:` URL.
+       * Redraws the message lists in place, never the composer.
+       * @param {Object<string, string>} thumbs
+       */
+      setThumbs(thumbs) {
+        if (!detail || detail.kind !== 'conversation' || !detail.view) return;
+        detail = Object.assign({}, detail, { view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { thumbs: thumbs || {} }) }) });
+        const view = detail.view;
+        const liveEl = doc.getElementById('v6ChatLive');
+        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(view.chat.live ? view.chat.live.turns : [], String((view.project && view.project.name) || ''), verbosity, thumbsNow());
+        paintTucked(view.chat.live);
+        paintRecorded();
+      },
+      /**
+       * Run `fn` when the shell is torn down (#3082: the chat's blob URLs
+       * are released then).
+       * @param {Function} fn
+       */
+      onDestroy(fn) { if (typeof fn === 'function') destroyHooks.push(fn); },
       destroy() {
+        destroyHooks.splice(0).forEach((fn) => fn());
         if (tickerId != null) { stopTicker(tickerId); tickerId = null; }
         busy = null;
         if (win && typeof win.removeEventListener === 'function') win.removeEventListener('hashchange', handleHashChange);
@@ -4441,6 +4855,7 @@
   global.tcV6ChatKeyAction = chatKeyAction;
   global.tcV6FormatElapsed = formatElapsed;
   global.tcV6ExtractLiveTurns = extractLiveTurns;
+  global.tcV6MessageMarkup = messageMarkup;
   global.tcV6LongPromptCommand = longPromptCommand;
   global.tcV6RecordedText = recordedText;
   global.tcV6EventBodyBytes = eventBodyBytes;
