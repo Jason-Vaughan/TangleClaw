@@ -5166,6 +5166,20 @@ describe('a wrapped wake never swallows the session\'s reply (Lane-B O-Gate and 
     assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Reading them now.' }]);
   });
 
+  it('a wake with a project\'s own reply guidance, wrapped mid-word, is joined whole; the reply after it is not (third review, blocking)', () => {
+    // lib/medusa-wake.js#_nudgeText puts replyGuidance where the default reply step goes.
+    const custom = '[TangleClaw Switchboard] You have 12 unread Medusa message(s): tc message read. Reply where an answer is needed, BEFORE marking it handled: answer in the PR thread first, then ack. The initiator closes the exchange, so no answer leaves them blocked; tc message owed lists what you owe. Never use /clear as an acknowledgement. Without tc: API at https://host.example:8443/api/sessions/P/medusa: GET /messages; POST /send (inReplyTo) and /read need launch headers. (wake ref 0123456789ab)';
+    // Cut every 37 characters, through words, as a narrow pane would.
+    const chunks = [];
+    for (let i = 0; i < custom.length; i += 37) chunks.push(custom.slice(i, i + 37));
+    const lines = [`> ${chunks[0]}`].concat(chunks.slice(1).map((c) => `  ${c.trim()}`), ['  Fixed. Shall I push?']);
+    const out = run(lines, 'antigravity');
+    assert.equal(out.switchboard.length, 1);
+    assert.equal(out.switchboard[0].text.replace(/\s+/g, ''), custom.replace(/\s+/g, ''));
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Fixed. Shall I push?' }]);
+    assert.deepEqual(out.questions, ['Fixed. Shall I push?']);
+  });
+
   it('a blank line ends a wake, even mid-sentence', () => {
     const out = run(['> [TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.', '', '  Reply where an answer is needed, BEFORE'], 'antigravity');
     assert.equal(out.switchboard[0].text, '[TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.');
