@@ -2502,6 +2502,44 @@ describe('lib/medusa — fleet isolation (#3077, Ruling A738)', () => {
       }
     });
 
+    it('never names ANOTHER fleet\'s unreadable registry to a refused caller (TC-Lane-C O-Gate H1, #3077)', async () => {
+      // Project 9 is ungrouped, so it is in another fleet from 7. Its
+      // unreadable registry can neither hide 7's recipients nor be shown to 7.
+      const realStat = medusa._fleetDeps.statRegistry;
+      medusa._fleetDeps.statRegistry = (file) => {
+        if (file.startsWith(dirs[9])) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+        return realStat(file);
+      };
+      const inFleet = medusa.fleetMembership(7);
+      assert.equal(inFleet('real-ws-9'), false);
+      assert.deepEqual(inFleet.unreadableRegistries, [], 'no other-fleet project is reported');
+
+      const medusaSendMod = require('../lib/medusa-send');
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-3084-leak-'));
+      store._setBasePath(tmp);
+      store.init();
+      const realSend = medusa.sendMessage;
+      medusa.sendMessage = async () => ({ status: 'received', id: 'x' });
+      try {
+        const r = await medusaSendMod.sendTracked({ sessionId: 1, senderProjectId: 7, caller: { kind: 'project', projectId: 7 }, body: { to: 'real-ws-9', message: 'hi' } });
+        assert.equal(r.body.code, 'CROSS_FLEET_FORBIDDEN');
+        assert.equal(r.body.details, undefined);
+        assert.ok(!JSON.stringify(r.body).includes('p9'), 'the other fleet\'s project name never reaches the caller');
+        await assert.rejects(medusa.broadcastAll({
+          callerKind: 'coordinator', senderId: `b-leak-${Date.now()}`, senderProjectId: 7, message: 'm',
+          targets: ['real-ws-9'], fetchImpl: async () => ({ ok: true, json: async () => ({ workspaces: [] }) })
+        }), (err) => {
+          assert.equal(err.code, 'CROSS_FLEET_FORBIDDEN');
+          assert.equal(err.details, undefined);
+          return true;
+        });
+      } finally {
+        medusa.sendMessage = realSend;
+        store.close();
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
     it('names the unreadable registry on a broadcast\'s cross-fleet refusal', async () => {
       const realStat = medusa._fleetDeps.statRegistry;
       medusa._fleetDeps.statRegistry = (file) => {
