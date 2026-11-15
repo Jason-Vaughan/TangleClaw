@@ -6041,6 +6041,35 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
     assert.match(m.doc.getElementById('v6EngineUsageSlot').innerHTML, /Antigravity set\./);
   });
 
+  it('a refresh keeps what the operator typed in the breakdown, and their focus; Escape closes it', () => {
+    const m = mountMeter();
+    // A redraw makes new elements, as a browser's would.
+    const slot = withIdParsingInnerHTML(m.doc.getElementById('v6EngineUsageSlot'), m.doc);
+    m.doc.getElementById('v6EngineUsageMeter').dispatch('click');
+    m.doc.getElementById('v6UsageWeekly-codex').value = '17';
+    m.doc.getElementById('v6UsageFiveHour-codex').focus();
+    m.shell.setUsage({ windows: windows(), sessions: { sessions: [] } });
+    assert.equal(m.doc.getElementById('v6UsageWeekly-codex').value, '17');
+    assert.equal(m.doc.activeElement, m.doc.getElementById('v6UsageFiveHour-codex'));
+    // Catch the keydown handler the next redraw gives the breakdown, to send it a real Escape.
+    const keydowns = [];
+    const realRegister = m.doc._register;
+    m.doc._register = (el) => {
+      if (el && el.id === 'v6EngineUsagePopover') {
+        const add = el.addEventListener;
+        el.addEventListener = (type, fn) => { if (type === 'keydown') keydowns.push(fn); return add.call(el, type, fn); };
+      }
+      return realRegister(el);
+    };
+    m.shell.setUsage({ windows: windows(), sessions: { sessions: [] } });
+    assert.ok(keydowns.length >= 1);
+    keydowns[keydowns.length - 1]({ key: 'Enter' });
+    assert.match(slot.innerHTML, /aria-expanded="true"/, 'another key closes nothing');
+    keydowns[keydowns.length - 1]({ key: 'Escape' });
+    assert.match(slot.innerHTML, /aria-expanded="false"/);
+    assert.equal(m.doc.activeElement, m.doc.getElementById('v6EngineUsageMeter'), 'focus goes back to the meter');
+  });
+
   it('a refused calibration shows the server\'s reason', async () => {
     const m = mountMeter(() => ({ ok: false, error: 'Only the Operator or the Project Master may calibrate usage windows.' }));
     m.doc.getElementById('v6EngineUsageMeter').dispatch('click');
@@ -6050,14 +6079,18 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
     assert.match(m.doc.getElementById('v6EngineUsageSlot').innerHTML, /Claude not set: Only the Operator or the Project Master may calibrate usage windows\./);
   });
 
-  it('the controller loads the meter on a route, posts a calibration with the write proof path, and refreshes every 15 chat reads', async () => {
+  it('the controller loads the meter on a route, posts a calibration with the operator proof, and refreshes every 15 chat reads', async () => {
     const calls = [];
     const mutations = [];
     let shell = null;
     const pending = [];
     const live = G.tcV6CreateLiveController({ getShell: () => shell,
-      api: async (url) => {
+      operatorHeaders: async () => ({ 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' }),
+      api: async (url, init) => {
         calls.push(url);
+        // Restated by the cumulative review: the calibration carries the operator proof itself
+        // (the page's apiMutate adds it to one config call only).
+        if (url === '/api/usage/calibrate') { mutations.push({ url, method: init.method, headers: init.headers, body: JSON.parse(init.body) }); return { calibration: {} }; }
         if (url === '/api/projects') return { projects: [{ id: 12, name: 'P', engine: { id: 'claude' } }] };
         if (/\/status$/.test(url)) return { active: true, sessionId: 1 };
         if (url === '/api/usage/windows') return windows();
@@ -6065,7 +6098,7 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
         if (/conversation\/events/.test(url)) return { events: [] };
         return null;
       },
-      apiMutate: async (url, method, body) => { mutations.push({ url, method, body: plain(body) }); return { calibration: {} }; },
+      apiMutate: async () => { throw new Error('the calibration must not go through apiMutate'); },
       storage: null, setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
     const timers = [];
     const { doc } = makeDocument([]);
@@ -6083,7 +6116,8 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
     doc.getElementById('v6UsageSave-codex').dispatch('click');
     const loadsBefore = calls.filter((c) => c === '/api/usage/windows').length;
     for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r));
-    assert.deepEqual(mutations, [{ url: '/api/usage/calibrate', method: 'POST', body: { provider: 'codex', weeklyPct: 0, fiveHourPct: 5 } }]);
+    assert.deepEqual(plain(mutations), [{ url: '/api/usage/calibrate', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' }, body: { provider: 'codex', weeklyPct: 0, fiveHourPct: 5 } }]);
     assert.equal(calls.filter((c) => c === '/api/usage/windows').length, loadsBefore + 1, 'the meter reloads after a calibration');
     const before = calls.filter((c) => c === '/api/usage/windows').length;
     const poll = timers[timers.length - 1];

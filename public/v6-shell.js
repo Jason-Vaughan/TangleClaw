@@ -2913,7 +2913,10 @@
 
     /**
      * Record the operator's "% left" for an engine (#3085, A753-1): the
-     * Operator-only calibration route, with the page's write proof.
+     * Operator-only calibration route, with the operator proof
+     * (`operatorHeaders`), as the secure-clipboard writes carry it — the
+     * page's apiMutate adds it to one config call only, and an install with
+     * its login off refuses this route without it.
      * @param {string} provider - `claude`, `codex` or `antigravity`.
      * @param {number} [weeklyPct]
      * @param {number} [fiveHourPct]
@@ -2923,7 +2926,13 @@
       const body = { provider };
       if (weeklyPct !== undefined) body.weeklyPct = weeklyPct;
       if (fiveHourPct !== undefined) body.fiveHourPct = fiveHourPct;
-      const res = await apiMutate('/api/usage/calibrate', 'POST', body);
+      let res;
+      try {
+        const headers = await operatorHeaders();
+        res = await api('/api/usage/calibrate', { method: 'POST', headers, body: JSON.stringify(body) });
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a refused operator proof becomes the meter's error line, never an unhandled rejection
+        return { ok: false, error: (err && err.message) || 'the operator proof could not be made' };
+      }
       if (!res) return { ok: false, error: api.lastError || 'the server refused it' };
       await loadUsage();
       return { ok: true };
@@ -4571,11 +4580,28 @@
       return usage ? usageMeterMarkup(usageMeterModel(usage.windows, usage.sessions), { open: usageOpen, status: usageStatus }) : '';
     }
 
-    /** Redraw the meter alone (#3085), or the shell if its footer has no slot yet. */
+    /**
+     * Redraw the meter alone (#3085), or the shell if its footer has no slot
+     * yet. A refresh keeps what the operator has typed in the breakdown and
+     * where their focus was.
+     */
     function paintUsage() {
       const slot = doc.getElementById('v6EngineUsageSlot');
       if (!slot) { render(); return; }
+      const typed = {};
+      USAGE_ENGINES.forEach(({ key }) => [`v6UsageWeekly-${key}`, `v6UsageFiveHour-${key}`].forEach((id) => {
+        const el = doc.getElementById(id);
+        if (el && typeof el.value === 'string' && el.value !== '') typed[id] = el.value;
+      }));
+      const active = doc.activeElement;
+      const focusId = active && typeof active.id === 'string' && /^v6(Usage|EngineUsage)/.test(active.id) ? active.id : null;
       slot.innerHTML = usageMarkupNow();
+      Object.keys(typed).forEach((id) => {
+        const el = doc.getElementById(id);
+        if (el) el.value = typed[id];
+      });
+      const back = focusId ? doc.getElementById(focusId) : null;
+      if (back && typeof back.focus === 'function') back.focus();
       wireUsage();
     }
 
@@ -4590,6 +4616,17 @@
         if (el.dataset) el.dataset.usageWired = '1';
         return true;
       };
+      // Escape closes the breakdown and hands focus back to the meter.
+      const popover = doc.getElementById('v6EngineUsagePopover');
+      if (fresh(popover)) {
+        popover.addEventListener('keydown', (evt) => {
+          if (!evt || (evt.key !== 'Escape' && evt.key !== 'Esc') || !usageOpen) return;
+          usageOpen = false;
+          paintUsage();
+          const m = doc.getElementById('v6EngineUsageMeter');
+          if (m && typeof m.focus === 'function') m.focus();
+        });
+      }
       const meter = doc.getElementById('v6EngineUsageMeter');
       if (fresh(meter)) {
         meter.addEventListener('click', () => {
