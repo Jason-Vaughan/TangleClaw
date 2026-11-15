@@ -3480,7 +3480,23 @@
         toRecord = recordedText(message, saved.relPath, launchId);
       }
       const body = forced ? { command, enter: true, priority: true, startupIntervention: true } : { command, enter: true };
-      const sent = await apiMutate(`/api/sessions/${encodeURIComponent(name)}/command`, 'POST', body);
+      const commandUrl = `/api/sessions/${encodeURIComponent(name)}/command`;
+      // A priority command needs the operator's full write proof (the route
+      // refuses an install with the login off without its open token), which
+      // apiMutate does not carry; a plain command asks for none.
+      let sent;
+      let proofError = null;
+      if (forced) {
+        try {
+          const headers = await operatorHeaders();
+          sent = await api(commandUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+        } catch (err) { // prawduct:allow prawduct/broad-except -- a refused operator proof becomes the chat's "Not sent" line, never an unhandled rejection
+          sent = null;
+          proofError = (err && err.message) || 'the operator proof could not be made';
+        }
+      } else {
+        sent = await apiMutate(commandUrl, 'POST', body);
+      }
       if (sent) awaitingReply = { projectId: String(chat.project.id), reply: before, reads: 0 };
       // Once it is in the session the draft is spent, even if the operator
       // has moved to another chat meanwhile: left saved, it would come back
@@ -3490,7 +3506,7 @@
       if (sent) attachments.delete(String(chat.project.id));
       if (!sent) {
         settle(draft);
-        if (onScreen(chat)) showSend({ kind: 'error', message: `Not sent: ${api.lastError || 'the server refused it'}` });
+        if (onScreen(chat)) showSend({ kind: 'error', message: `Not sent: ${proofError || api.lastError || 'the server refused it'}` });
         return;
       }
       // A delivered message is recorded against the chat it was sent from,

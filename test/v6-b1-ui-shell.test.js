@@ -5631,19 +5631,36 @@ describe('Force Send (#3082 item 3, Ruling A757)', () => {
       return null;
     };
     api.lastError = null;
-    const apiMutate = async (url, method, body) => {
-      if (!/\/command$/.test(url)) return { ok: true };
+    const headersSeen = [];
+    // The command route: a forced send must arrive with the operator proof.
+    const command = async (body, headers) => {
       commands.push(plain(body));
+      headersSeen.push(headers === undefined ? undefined : plain(headers));
       if (o.refuse && body.priority) { api.lastError = o.refuse; return null; }
       const first = commands.length === 1;
       if (o.hold && first) await new Promise((r) => releases.push(r));
       if (o.refuseFirst && first) { api.lastError = o.refuseFirst; return null; }
       return { ok: true };
     };
+    const apiRead = api;
+    const apiWithPost = async (url, opts) => {
+      if (opts && opts.method === 'POST' && /\/command$/.test(url)) return command(JSON.parse(opts.body), opts.headers);
+      return apiRead(url, opts);
+    };
+    Object.defineProperty(apiWithPost, 'lastError', { get: () => api.lastError, set: (v) => { api.lastError = v; } });
+    const apiMutate = async (url, method, body) => {
+      if (!/\/command$/.test(url)) return { ok: true };
+      // apiMutate carries no operator proof, so a priority command through it is refused by the route.
+      if (body && body.priority) throw new Error('a priority command went through apiMutate, without the operator proof');
+      return command(body, undefined);
+    };
+    const operatorHeaders = o.proofFails
+      ? async () => { throw new Error('no open token'); }
+      : async () => ({ 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' });
     let shell = null;
     const pending = [];
     const timers = [];
-    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null,
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api: apiWithPost, apiMutate, operatorHeaders, storage: null,
       setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
     shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
       onRender: (r) => pending.push(live.handleRoute(r)),
@@ -5653,9 +5670,33 @@ describe('Force Send (#3082 item 3, Ruling A757)', () => {
     const type = (text) => { const input = doc.getElementById('v6ChatInput'); input.value = text; input.dispatch('input'); };
     // What the queue has dismissed so far, read through the shell's own question slot markup.
     const dismissed = () => (/id="v6ChatQuestion"[^>]*>([\s\S]*?)<\/div>/.exec(root.innerHTML) || [])[1];
-    return { doc, root, shell, commands, settle, type, dismissed, timers, release: () => releases.forEach((r) => r()) };
+    return { doc, root, shell, commands, headersSeen, settle, type, dismissed, timers, release: () => releases.forEach((r) => r()) };
   }
   const flags = { command: 'now!', enter: true, priority: true, startupIntervention: true };
+
+  it('sends a forced message with the operator proof, and a plain one without it', async () => {
+    const m = mountForce();
+    await m.settle();
+    m.type('now!');
+    m.doc.getElementById('v6ChatForceSend').dispatch('click');
+    await m.settle();
+    m.type('later');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.settle();
+    assert.deepEqual(m.commands, [flags, { command: 'later', enter: true }]);
+    assert.deepEqual(m.headersSeen, [{ 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' }, undefined]);
+  });
+
+  it('a forced send whose operator proof cannot be made is not sent, says why and keeps the text', async () => {
+    const m = mountForce({ proofFails: true });
+    await m.settle();
+    m.type('now!');
+    m.doc.getElementById('v6ChatForceSend').dispatch('click');
+    await m.settle();
+    assert.deepEqual(m.commands, []);
+    assert.match(m.root.innerHTML, /Not sent: no open token/);
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*>now!<\/textarea>/);
+  });
 
   it('pushes an urgent message in while another send is still in flight, even through a page that passes the text alone', async () => {
     const m = mountForce({ hold: true });
