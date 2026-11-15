@@ -2458,6 +2458,38 @@ describe('lib/medusa — fleet isolation (#3077, Ruling A738)', () => {
       });
     }
 
+    it('names the unreadable registry on a refused cross-fleet SEND (A772)', async () => {
+      const medusaSendMod = require('../lib/medusa-send');
+      const realStat = medusa._fleetDeps.statRegistry;
+      medusa._fleetDeps.statRegistry = (file) => {
+        if (file.startsWith(dirs[8])) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+        return realStat(file);
+      };
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-3084-send-'));
+      store._setBasePath(tmp);
+      store.init();
+      const realSend = medusa.sendMessage;
+      let hub = 0;
+      medusa.sendMessage = async () => { hub++; return { status: 'received', id: 'x' }; };
+      try {
+        const r = await medusaSendMod.sendTracked({ sessionId: 1, senderProjectId: 7, caller: { kind: 'project', projectId: 7 }, body: { to: 'real-ws-8', message: 'hi' } });
+        assert.equal(r.status, 403);
+        assert.equal(r.body.code, 'CROSS_FLEET_FORBIDDEN');
+        assert.equal(r.body.details.reason, 'REGISTRY_UNREADABLE');
+        assert.deepEqual(r.body.details.unreadableRegistries.map((u) => ({ ...u })), [{ projectId: 8, project: 'p8', code: 'EPERM' }]);
+        assert.match(r.body.error, /could not be read/);
+        assert.equal(hub, 0, 'still refused before the Hub');
+        medusa._fleetDeps.statRegistry = realStat;
+        const plain = await medusaSendMod.sendTracked({ sessionId: 1, senderProjectId: 7, caller: { kind: 'project', projectId: 7 }, body: { to: 'real-ws-9', message: 'hi' } });
+        assert.equal(plain.body.code, 'CROSS_FLEET_FORBIDDEN');
+        assert.equal(plain.body.details, undefined, 'no diagnostic when every registry was read');
+      } finally {
+        medusa.sendMessage = realSend;
+        store.close();
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
     it('names the unreadable registry on a broadcast\'s cross-fleet refusal', async () => {
       const realStat = medusa._fleetDeps.statRegistry;
       medusa._fleetDeps.statRegistry = (file) => {
