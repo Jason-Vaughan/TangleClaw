@@ -48,7 +48,6 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 - Compiled 4 accepted `changelog.d/` fragments (#3086 from PR #3097; #3084, #3087 and #3094 from PR #3098) into `CHANGELOG.md` section `[6.3.0]` using the wrap's own compile/splice/promote functions. The three `.added` fragments make this a minor release (Ruling A756), so 6.2.10 -> 6.3.0 via `_decideBumpLevel(_parseUnreleased(...))`. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap state. Folded in both PRs' change-log entries below, verbatim.
 - PR #3097's entry carries no `<!-- prawduct: ... -->` tag line; it is folded in verbatim as written.
 - The #3084 fragment says a refused send names the registries that could not be read; after the O-Gate H1 fix (Rulings A781/A782) it names only those in the sender's own fleet, so another fleet's projects are never disclosed. The release notes say so.
-- Milestone #78 also still lists #3092, which Rulings A771/A784 charter into v6.4.0 (V640-W1-B); it is not part of this release.
 
 ## 2026-11-15 — v6 workspace mode bar, always-available wizard launcher, sprint/charter/kaizen panels; member engine badge follows the session engine (#3086, #3094 shell half)
 
