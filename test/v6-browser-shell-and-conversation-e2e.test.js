@@ -556,6 +556,29 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.match(html, /<span class="v6-usage-label">AGY<\/span>/);
     });
 
+    it('the Sprint & Cars mode reads the real sprint route, and says plainly when this server does not serve it yet (#3086)', async () => {
+      seedProject('e2e-modes');
+      const { root, calls, settle, doc, shell } = mountShell('#/projects/1');
+      await settle();
+      assert.match(root.innerHTML, /<div id="v6WorkspaceModeBar" class="v6-workspace-mode-bar" role="tablist" aria-label="Workspace">/);
+      assert.match(root.innerHTML, /id="v6ShellWizardOpenBtn"/);
+      doc.getElementById('v6WorkspaceMode-sprint').dispatch('click');
+      // The test DOM keeps ids, not inner markup, across a redraw: read the panel element, else the last drawing of it.
+      const panel = () => {
+        const painted = doc.getElementById('v6WorkspacePanel').innerHTML;
+        if (painted) return painted;
+        const drawn = /<section id="v6WorkspacePanel" class="v6-workspace-panel" role="tabpanel"\s+aria-labelledby="v6WorkspaceMode-sprint">([\s\S]*?)<\/section>/.exec(root.innerHTML);
+        return drawn ? drawn[1] : '';
+      };
+      // The route is mounted by V630-W1-B; either merge order must read cleanly, so wait for the loading line to go.
+      for (let i = 0; i < 300 && (!panel() || /Loading…/.test(panel())); i++) await new Promise((r) => setTimeout(r, 50));
+      assert.equal(shell.getWorkspaceMode(), 'sprint', 'a redraw on the same route keeps the mode');
+      assert.ok(calls.includes('GET /api/sprint-waves'), JSON.stringify(calls));
+      assert.doesNotMatch(panel(), /Loading…/);
+      assert.match(panel(), /<h2 class="v6-workspace-panel-title">Sprint &amp; Cars<\/h2>/);
+      assert.match(panel(), /Not available on this server yet\.|sprint-wave-board|v6-workspace-list|No cars are on the board yet\./);
+    });
+
     it('the sidebar\'s four icons and fleet picker work over the real project list (#3068)', async () => {
       seedProject('e2epick-PM');
       seedProject('e2epick-A');
