@@ -497,12 +497,25 @@ describe('sprint-wave-routes: createSprintWaveRouter', () => {
   });
 
   it('GET /api/sprint-reports/:version 404s an unknown version', async () => {
+    // A well-formed version nothing knows. A malformed one ('vNope', a path)
+    // is refused 400 before the lookup since #3087 (Ruling A774), pinned below.
     const router = createSprintWaveRouter({ getSprintDataForVersion: async () => null });
-    const { req } = fakeReq('GET', '/api/sprint-reports/vNope');
+    const { req } = fakeReq('GET', '/api/sprint-reports/v9.9.9');
     const { res, status, json } = fakeRes();
     await router.handle(req, res);
     assert.equal(status(), 404);
     assert.equal(json().code, 'NOT_FOUND');
+  });
+
+  it('GET /api/sprint-reports/:version refuses a malformed version 400 without calling the lookup (#3087)', async () => {
+    let asked = 0;
+    const router = createSprintWaveRouter({ getSprintDataForVersion: async () => { asked++; return null; } });
+    const { req } = fakeReq('GET', '/api/sprint-reports/vNope');
+    const { res, status, json } = fakeRes();
+    await router.handle(req, res);
+    assert.equal(status(), 400);
+    assert.equal(json().code, 'BAD_REQUEST');
+    assert.equal(asked, 0);
   });
 
   it('POST /api/sprint-waves/sync runs the backoff helper and saves the snapshot', async () => {
@@ -585,5 +598,228 @@ describe('public/sprint-wave-ui', () => {
     const copy = JSON.parse(JSON.stringify(rows));
     sprintWaveUi.filterSprintWaveRows(rows, { stage: 'closed' });
     assert.deepEqual(rows, copy);
+  });
+});
+
+describe('public/sprint-wave-ui: Charter & Kaizen panels (#3087, Rulings A760/A761)', () => {
+  const HOSTILE = '<img src=x onerror=alert(1)>';
+  /** No raw tag from the hostile string survives; its escaped form does. */
+  const inert = (html, where) => {
+    assert.ok(!html.includes('<img'), `${where}: a raw <img> tag reached the HTML`);
+    assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'), `${where}: the hostile text is not shown escaped`);
+  };
+
+  it('escapes hostile markup in EVERY charter text field', () => {
+    const fields = {
+      'charter.title': { charter: { title: HOSTILE } },
+      'charter.status': { charter: { status: HOSTILE } },
+      'startupSummary.title': { startupSummary: { title: HOSTILE } },
+      'startupSummary.mission': { startupSummary: { mission: HOSTILE } },
+      'startupSummary.activeConstraints': { startupSummary: { activeConstraints: HOSTILE } },
+      'startupSummary.versionNumber': { startupSummary: { versionNumber: HOSTILE } },
+      'activeVersion.version_number': { activeVersion: { version_number: HOSTILE } },
+      'approvals[].approver_role': { approvals: [{ approver_role: HOSTILE, approver_actor: 'op' }] },
+      'approvals[].approver_actor': { approvals: [{ approver_role: 'pm', approver_actor: HOSTILE }] }
+    };
+    for (const [where, data] of Object.entries(fields)) inert(sprintWaveUi.renderCharterReadinessPanel(data), where);
+  });
+
+  it('escapes hostile markup in EVERY Kaizen text field, and renders a report link for http(s) only', () => {
+    const fields = {
+      'items[].defect_category': { items: [{ defect_category: HOSTILE }] },
+      'items[].root_cause': { items: [{ root_cause: HOSTILE }] },
+      'items[].corrective_action_spec': { items: [{ corrective_action_spec: HOSTILE }] },
+      'items[].lifecycle_state': { items: [{ lifecycle_state: HOSTILE }] },
+      'gate0Feed[].title': { gate0Feed: [{ title: HOSTILE }] },
+      'gate0Feed[].gate0_disposition': { gate0Feed: [{ title: 't', gate0_disposition: HOSTILE }] },
+      'reportSummary.title': { reportSummary: { title: HOSTILE } }
+    };
+    for (const [where, data] of Object.entries(fields)) inert(sprintWaveUi.renderKaizenLedgerPanel(data), where);
+    for (const bad of ['javascript:alert(1)', 'JAVASCRIPT:alert(1)', 'data:text/html,x', '//evil.example/x', '/relative', 'https://x.example/"onmouseover=1']) {
+      const html = sprintWaveUi.renderKaizenLedgerPanel({ reportSummary: { title: 'r', reportUrl: bad } });
+      assert.ok(!html.includes('<a '), `no link for ${bad}`);
+    }
+    const ok = sprintWaveUi.renderKaizenLedgerPanel({ reportSummary: { title: 'v6.3.0', reportUrl: 'https://x.example/r?a=1&b=2' } });
+    assert.match(ok, /<a href="https:\/\/x\.example\/r\?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">v6\.3\.0<\/a>/);
+  });
+
+  it('reads camelCase view-models as well as raw snake_case rows, and writes into a container when given one', () => {
+    const container = { innerHTML: '' };
+    const html = sprintWaveUi.renderKaizenLedgerPanel({ items: [{ rootCause: 'missing guard', lifecycleState: 'Verified' }] }, container);
+    assert.equal(container.innerHTML, html);
+    assert.match(html, /missing guard/);
+    assert.match(html, /data-state="Verified"/);
+    const charter = sprintWaveUi.renderCharterReadinessPanel({ approvals: [{ approverRole: 'sponsor', approverActor: 'op', revokedAt: 'x' }] });
+    assert.match(charter, /sponsor: op \(revoked\)/);
+  });
+
+  it('exports the A774 alias names for the same two builders', () => {
+    assert.equal(sprintWaveUi.renderSprintCharterRoadmapPanel, sprintWaveUi.renderCharterReadinessPanel);
+    assert.equal(sprintWaveUi.renderSprintKaizenReportsPanel, sprintWaveUi.renderKaizenLedgerPanel);
+  });
+
+  it('every field is optional: an empty call renders a calm empty panel', () => {
+    assert.match(sprintWaveUi.renderCharterReadinessPanel(), /No active charter/);
+    assert.match(sprintWaveUi.renderKaizenLedgerPanel(), /No Kaizen items/);
+  });
+
+  it('refuses a container passed first, so a swapped call fails loudly instead of rendering an empty panel', () => {
+    assert.throws(() => sprintWaveUi.renderCharterReadinessPanel({ innerHTML: '' }), /data comes first/);
+    assert.throws(() => sprintWaveUi.renderKaizenLedgerPanel({ innerHTML: '' }, {}), /data comes first/);
+  });
+});
+
+describe('native-sprint-tracker: sprintDataFromWaveRuns (#3087, Ruling A774)', () => {
+  const run = (id, createdAt, status, cars, metadata = {}) => ({
+    id, fleetId: 'f', status, createdAt, metadata, waves: [Object.keys(cars)],
+    cars: Object.fromEntries(Object.entries(cars).map(([cid, c]) => [cid, { id: cid, status: 'pending', payload: {}, startedAt: null, completedAt: null, ...c }]))
+  });
+
+  it('answers an empty sprint for "current" when no run is persisted, and null for an unknown version', () => {
+    assert.deepEqual(tracker.sprintDataFromWaveRuns({}, 'current'),
+      { cars: [], lanes: [], pullRequests: [], waves: [], learnings: [], releaseCommit: null });
+    assert.equal(tracker.sprintDataFromWaveRuns({}, '9.9.9'), null);
+  });
+
+  it('reads the newest ACTIVE run as current, and a version by metadata.version or id', () => {
+    const runs = {
+      old: run('old', 1, 'active', { a: {} }, { version: '6.3.0' }),
+      newer: run('newer', 3, 'complete', { b: {} }),
+      mid: run('mid', 2, 'active', { c: {} }),
+      v640: run('v6.4.0', 4, 'complete', { d: {} })
+    };
+    assert.deepEqual(tracker.sprintDataFromWaveRuns(runs, 'current').cars.map((c) => c.id), ['c'], 'newest active, not newest overall');
+    assert.deepEqual(tracker.sprintDataFromWaveRuns(runs, 'v6.3.0').cars.map((c) => c.id), ['a']);
+    assert.deepEqual(tracker.sprintDataFromWaveRuns(runs, '6.4.0').cars.map((c) => c.id), ['d'], 'by run id, v-prefix ignored');
+    assert.deepEqual(tracker.sprintDataFromWaveRuns({ x: run('x', 1, 'complete', { e: {} }) }, 'current').cars.map((c) => c.id), ['e'],
+      'with no active run, the newest run');
+  });
+
+  it('maps assignees to lanes, running work to committed, held or stalled work to a hold, and finished cars to closed', () => {
+    const data = tracker.sprintDataFromWaveRuns({
+      r: run('r', 1, 'active', {
+        idle: {},
+        run: { status: 'running', payload: { lane: 'TC-Lane-B' }, startedAt: Date.UTC(2026, 10, 15) },
+        gate: { status: 'awaiting-gate', payload: { assignee: 'TC-Lane-A' } },
+        held: { status: 'gate-held', payload: { laneName: 'TC-Lane-C' } },
+        done: { status: 'complete', payload: { lane: 'TC-Lane-B' }, completedAt: Date.UTC(2026, 10, 16) },
+        issues: { status: 'complete', payload: { issues: [{ id: '#1', state: 'open' }] } }
+      })
+    }, 'current');
+    const dispatch = tracker.syncWaveDispatchState({ cars: data.cars, lanes: data.lanes, pullRequests: data.pullRequests });
+    assert.equal(dispatch.idle.stage, 'unassigned');
+    assert.equal(dispatch.run.stage, 'in-progress');
+    assert.equal(dispatch.run.laneName, 'TC-Lane-B');
+    assert.equal(dispatch.gate.stage, 'in-progress');
+    assert.equal(dispatch.held.stage, 'blocked');
+    assert.equal(dispatch.done.stage, 'closed');
+    assert.equal(dispatch.issues.stage, 'unassigned', 'real payload issues win over the closed marker');
+    assert.equal(data.cars.find((c) => c.id === 'run').dispatchedAt, '2026-11-15T00:00:00.000Z');
+    assert.deepEqual(data.pullRequests, []);
+    assert.equal(data.releaseCommit, null);
+  });
+
+  it('SPRINT_VERSION_RE admits current and X.Y.Z only', () => {
+    for (const ok of ['current', '6.3.0', 'v6.2.10']) assert.ok(tracker.SPRINT_VERSION_RE.test(ok), ok);
+    for (const bad of ['..', '../etc', '6.3', 'v6.3.0/x', 'latest', '6.3.0 ', '']) assert.ok(!tracker.SPRINT_VERSION_RE.test(bad), JSON.stringify(bad));
+  });
+});
+
+describe('the live server mounts the sprint wave routes (#3087, Ruling A774)', () => {
+  const http = require('node:http');
+  let tmpDir;
+  let store;
+  let server;
+  let operatorHeaders;
+  let openInstallToken;
+
+  /**
+   * @param {string} method
+   * @param {string} urlPath
+   * @param {object} [body]
+   * @param {Record<string, string>} [headers]
+   * @returns {Promise<{status: number, data: *}>}
+   */
+  function request(method, urlPath, body, headers = {}) {
+    return new Promise((resolve, reject) => {
+      const payload = body !== undefined ? JSON.stringify(body) : null;
+      const h = { 'Content-Type': 'application/json', ...headers };
+      if (payload) h['Content-Length'] = Buffer.byteLength(payload);
+      const req = http.request({ hostname: '127.0.0.1', port: server.address().port, path: urlPath, method, headers: h }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let data;
+          try { data = JSON.parse(raw); } catch { data = raw; }
+          resolve({ status: res.statusCode, data });
+        });
+      });
+      req.on('error', reject);
+      if (payload) req.write(payload);
+      req.end();
+    });
+  }
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-sprint-mount-'));
+    store = require('../lib/store');
+    store._setBasePath(tmpDir);
+    store.init();
+    ({ operatorHeaders } = require('./_shared-docs-callers'));
+    openInstallToken = require('../lib/open-install-token');
+    server = require('../server').createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  afterEach(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('GET /api/sprint-waves answers an empty board with no run, and the scheduler\'s run once one exists', async () => {
+    const empty = await request('GET', '/api/sprint-waves');
+    assert.equal(empty.status, 200, JSON.stringify(empty.data));
+    assert.deepEqual(empty.data, { ok: true, waves: [], dispatch: {} });
+    const c3 = require('../lib/v6/c3-wave-scheduler');
+    new c3.WaveScheduler({ store: new c3.SqliteSchedulerStore(store.getDb()) }).createRun({
+      id: 'run1', fleetId: 'f', cars: [{ id: 'car-a', fileScope: ['lib/a.js'], payload: { lane: 'TC-Lane-B' } }, { id: 'car-b', fileScope: ['lib/b.js'] }]
+    });
+    const live = await request('GET', '/api/sprint-waves');
+    assert.equal(live.status, 200);
+    assert.deepEqual(live.data.waves, [['car-a', 'car-b']]);
+    assert.equal(live.data.dispatch['car-a'].stage, 'claimed');
+    assert.equal(live.data.dispatch['car-a'].laneName, 'TC-Lane-B');
+    assert.equal(live.data.dispatch['car-b'].stage, 'unassigned');
+  });
+
+  it('GET /api/sprint-reports/:version: current answers, an unknown version 404s, anything else 400s before any lookup', async () => {
+    const current = await request('GET', '/api/sprint-reports/current');
+    assert.equal(current.status, 200, JSON.stringify(current.data));
+    assert.equal(current.data.ok, true);
+    assert.equal((await request('GET', '/api/sprint-reports/9.9.9')).status, 404);
+    for (const bad of ['..%2F..%2Fetc', 'latest', '6.3']) {
+      const r = await request('GET', `/api/sprint-reports/${bad}`);
+      assert.equal(r.status, 400, `${bad}: ${JSON.stringify(r.data)}`);
+      assert.equal(r.data.code, 'BAD_REQUEST');
+    }
+  });
+
+  it('POST /api/sprint-waves/sync is the operator\'s only: refused without the proof, admitted with it (then NOT_CONFIGURED)', async () => {
+    const noToken = await request('POST', '/api/sprint-waves/sync', {}, operatorHeaders(server));
+    assert.equal(noToken.status, 403, JSON.stringify(noToken.data));
+    assert.equal(noToken.data.code, 'OPEN_INSTALL_TOKEN_INVALID');
+    const admitted = await request('POST', '/api/sprint-waves/sync', {}, { ...operatorHeaders(server), 'X-TC-Open-Token': openInstallToken.mint() });
+    assert.equal(admitted.status, 503);
+    assert.equal(admitted.data.code, 'NOT_CONFIGURED');
+  });
+
+  it('POST /api/sprint-waves/validate-disjointness computes over the posted cars', async () => {
+    const r = await request('POST', '/api/sprint-waves/validate-disjointness',
+      { cars: [{ id: 'a', files: ['x.js'] }, { id: 'b', files: ['x.js'] }] }, { ...operatorHeaders(server), 'X-TC-Open-Token': openInstallToken.mint() });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal(r.data.ok, true);
+    assert.equal(r.data.result.ok, false, 'two cars sharing x.js are not disjoint');
   });
 });

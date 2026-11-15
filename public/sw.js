@@ -168,6 +168,11 @@ const NETWORK_FIRST_PATHS = new Set([
   // connection, which is the exact lie the pair was changed to remove.
   '/openclaw-view.js',
   '/openclaw-tunnel-state.js',
+  // sprint-wave-ui.js (#3087, Ruling A775) is loaded by v6-shell.js
+  // (network-first) on demand and called through window.TangleClawSprintWaveUi,
+  // so a cached old copy against a fresh shell is the same version skew as the
+  // lockstep pairs above: a builder the shell expects would be missing.
+  '/sprint-wave-ui.js',
   '/session.css',
   // The dashboard shell's core UI assets (category 2). ui.js builds every
   // dashboard view + the settings modal, and style.css skins them — exactly the
