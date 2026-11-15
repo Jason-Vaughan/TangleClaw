@@ -4425,6 +4425,16 @@ describe('the Waiting on you queue (#3079)', () => {
     assert.match(m.doc.getElementById('v6ChatQuestion').innerHTML, /One\?/);
   });
 
+  it('the same words asked in the very next reply show, with no empty poll between (PRR-B R1)', () => {
+    const m = mountQuestions();
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'u1' }, { role: 'assistant', text: 'One?' }], questions: ['One?'] } });
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    assert.doesNotMatch(m.doc.getElementById('v6ChatQuestion').innerHTML, /One\?/);
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'u1' }, { role: 'assistant', text: 'One?' },
+      { role: 'user', text: 'u2' }, { role: 'assistant', text: 'Still: One?' }], questions: ['One?'] } });
+    assert.match(m.doc.getElementById('v6ChatQuestion').innerHTML, /One\?/);
+  });
+
   it('a dismissal holds while the same reply grows, by a wake or by more text (Critic W2)', () => {
     const m = mountQuestions();
     m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
@@ -4888,11 +4898,21 @@ describe('a message longer than the command route takes (#3079 item 5)', () => {
   });
 
   it('over the 5 MB limit for a saved file it is refused before anything is uploaded', async () => {
-    const m = mountLong({ textToBase64: () => 'A'.repeat(Math.ceil((5 * 1024 * 1024 + 3) / 3) * 4) });
-    await m.send('z'.repeat(5000));
+    // Restated by PRR-B R1: the limit counts the message's UTF-8 bytes, so exactly 5 MiB is allowed.
+    const m = mountLong();
+    await m.send('z'.repeat(5 * 1024 * 1024 + 1));
     assert.equal(m.uploads.length, 0);
     assert.equal(m.sends.length, 0);
     assert.match(m.root.innerHTML, /Not sent: the message is over the 5 MB limit for a saved prompt\./);
+  });
+
+  it('a message of exactly 5 MiB of UTF-8 is saved, base64 padding notwithstanding (PRR-B R1)', async () => {
+    const m = mountLong();
+    const text = 'é'.repeat(5 * 1024 * 1024 / 2);
+    assert.equal(Buffer.byteLength(text), 5242880);
+    await m.send(text);
+    assert.equal(m.uploads.length, 1);
+    assert.equal(Buffer.from(m.uploads[0].body.text, 'base64').length, 5242880);
   });
 
   it('the stand-in command fills the limit exactly and never splits a surrogate pair', () => {

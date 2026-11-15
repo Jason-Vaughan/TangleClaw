@@ -1307,16 +1307,34 @@
   }
 
   /**
+   * How a dismissed question is remembered (#3079): its words with the user
+   * turn the asking reply answers. That turn stays put while the reply grows
+   * (more text, a wake), so a dismissal holds; a new exchange has a new one,
+   * so the same words asked in a later reply show again (PRR-B R1).
+   * @param {{turns?: Array<{role: string, text: string}>}|null} live
+   * @param {string} question
+   * @returns {string}
+   */
+  function questionKey(live, question) {
+    const turns = live && Array.isArray(live.turns) ? live.turns : [];
+    let i = turns.length - 1;
+    while (i >= 0 && !(turns[i] && turns[i].role === 'assistant')) i--;
+    while (i >= 0 && !(turns[i] && turns[i].role === 'user')) i--;
+    const anchor = i >= 0 ? String(turns[i].text).replace(/\s+/g, ' ').trim() : '';
+    return `${anchor}\u0001${question}`;
+  }
+
+  /**
    * The questions still waiting on the operator (#3079): the live view's
    * queue (or its one question, from a caller that predates the queue),
    * less any the operator dismissed.
-   * @param {{question?: string|null, questions?: string[]}|null} live
-   * @param {string[]} [dismissed] - Question texts dismissed in this chat.
+   * @param {{question?: string|null, questions?: string[], turns?: Array}|null} live
+   * @param {string[]} [dismissed] - {@link questionKey}s dismissed in this chat.
    * @returns {string[]}
    */
   function openQuestions(live, dismissed) {
     const gone = new Set(Array.isArray(dismissed) ? dismissed : []);
-    return askedQuestions(live).filter((q) => !gone.has(q));
+    return askedQuestions(live).filter((q) => !gone.has(questionKey(live, q)));
   }
 
   /**
@@ -2732,8 +2750,9 @@
       } catch (err) { // prawduct:allow prawduct/broad-except -- a browser that cannot encode the text refuses the send with its reason, never an unhandled rejection
         return { ok: false, error: `the long message could not be prepared (${(err && err.message) || 'unknown error'}).` };
       }
-      // Four base64 characters carry three bytes.
-      if (Math.floor(text.length / 4) * 3 > MAX_ATTACH_BYTES) {
+      // The file is the message's UTF-8 bytes (PRR-B R1: not the base64
+      // length, whose padding over-counts by up to two bytes).
+      if (utf8Length(message) > MAX_ATTACH_BYTES) {
         return { ok: false, error: `the message is over the 5 MB limit for a saved prompt.` };
       }
       // The route overwrites a file of the same name, so the name is chosen
@@ -3333,10 +3352,10 @@
     // polls and visits; and which chat was last scrolled to its bottom, so a
     // chat opens at its newest line once and is then left where the operator puts it.
     let chatHoodOpen = prefs.get('tc_v6_chat_under_hood_open', false, isBoolean);
-    // #3079: the questions dismissed in each chat, by text, until the pane
-    // shows no question at all — the operator has answered — so a poll that
-    // reads the same reply again, or the same reply grown by a wake or more
-    // text, does not bring them back, and a later reply's do show.
+    // #3079: the questions dismissed in each chat, by {@link questionKey},
+    // until the pane shows no question at all — the operator has answered —
+    // so a poll that reads the same reply again, or the same reply grown by a
+    // wake or more text, does not bring them back, and a later reply's do show.
     const dismissedQuestions = new Map();
     // What the question slot and the Medusa slot were last drawn with, so
     // a poll redraws them only when that changes (Critic W1).
@@ -3717,8 +3736,9 @@
     function dismissQuestions(texts) {
       const key = chatTargetKey();
       if (key == null || !texts.length) return;
+      const chat = detail && detail.view ? detail.view.chat : null;
       const set = dismissedQuestions.get(key) || new Set();
-      texts.forEach((t) => set.add(t));
+      texts.forEach((t) => set.add(questionKey(chat && chat.live, t)));
       dismissedQuestions.set(key, set);
       paintQuestions();
     }
