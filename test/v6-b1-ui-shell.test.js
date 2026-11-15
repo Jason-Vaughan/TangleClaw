@@ -5112,3 +5112,13 @@ describe('a long message recorded only in part is not read back as a reply (thir
     assert.match(liveHtml, /is-assistant is-live">[\s\S]*收到。/);
   });
 });
+
+describe('a short prompt is never taken for a longer one that contains its words (fourth review, O-1)', () => {
+  it('"ok" stays "ok" beside a recorded "look at the logs", and a line of a longer message still finds it', () => {
+    const G = loadV6Shell();
+    const out = plain(G.tcV6ExtractLiveTurns(['> look at the logs', '⏺ Looking.', '> ok', '⏺ Done.'], 'claude', ['look at the logs', 'ok']));
+    assert.deepEqual(out.turns.filter((t) => t.role === 'user').map((t) => t.text), ['look at the logs', 'ok']);
+    const multi = plain(G.tcV6ExtractLiveTurns(['> check this', 'Attached: a.png', '⏺ Seen.'], 'claude', ['check this\n\nAttached: a.png', 'look']));
+    assert.equal(multi.turns[0].text, 'check this\n\nAttached: a.png');
+  });
+});

@@ -1092,7 +1092,9 @@
     const longest = (list) => list.reduce((best, m) => (best && best.length >= m.length ? best : m), null);
     const recordedAs = (said) => {
       const one = squash(said);
-      if (knownLines.has(said)) return longest(sent.filter((m) => m.includes(one))) || one;
+      // A line of a recorded message: the longest message holding it as a
+      // whole line — never one that merely contains the words ("ok" in "look").
+      if (knownLines.has(said)) return longest(sent.filter((m, i) => String(known[i]).split('\n').some((l) => l.trim() === said))) || one;
       return one.length >= 20 ? longest(sent.filter((m) => m.startsWith(one))) : null;
     };
     let echo = null;
