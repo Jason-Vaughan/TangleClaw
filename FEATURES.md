@@ -17,6 +17,13 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.2.9 — Switchboard traffic Under the Hood, a Medusa indicator, chat polish and Medusa fleet isolation
+
+- **Switchboard traffic Under the Hood and a Medusa indicator** (#3076) — `public/v6-shell.js`: `[TangleClaw Switchboard]` wakes, which are typed into the pane and so read as the operator, and recorded wake events leave the conversation for a "Switchboard & Medusa traffic" list Under the Hood, alongside every `tc message send` the pane shows. A read-only `#v6ChatMedusa` indicator in the chat header reads `GET .../medusa/status`: its inbound and outbound heads blink when traffic moves, the `@` badge becomes the unread count, and clicking it opens that list.
+- **Chat polish** (#3079) — `public/v6-shell.js`, `public/ui.js`, `public/style.css`: each message is tinted in its accent colour under a matching dashed divider; "Waiting on you" lists every question in the newest reply, each dismissable; Active sessions, Health and Version move to the footer status bar; the Classic admin controls sit in a "⋯ More" menu while the Fleet Shell shows. Messages over 4,096 characters are saved to a file in the project's secrets store and the session is sent their start plus the path. Enter clears the message box at once, and messages and replies show in the order they happened.
+- **Medusa fleet isolation** (#3077) — `lib/medusa.js`, `lib/medusa-send.js`, `lib/medusa-startup-announce.js`, `server.js`: a fleet is a project's groups plus its tags, and projects with neither share one default pool. Sends outside the sender's fleet are refused with `403 CROSS_FLEET_FORBIDDEN` unless they carry `allowCrossFleet: true`; rosters, broadcasts and startup announcements are scoped to the fleet. The Operator and the Master are exempt, and the Master and the operator bridge stay reachable from every fleet.
+- **CI job limit** (#3075) — `.github/workflows/test.yml`: the Tests job's `timeout-minutes` rises from 20 to 35, so a healthy run of the full suite is no longer cancelled partway through.
+
 ## v6.2.8 — Chat history search and Recents, renaming a member from the chat, and the Open Hood link fix
 
 - **Chat history and Recents** (#3066) — `public/v6-shell.js`: the sidebar's `🕓` (the slot v6.2.7 reserved) and a `🕓` among the chat's buttons open a history panel: the member's recent sessions, and a search of wrap summaries or transcripts for that member or the whole fleet (one `/api/continuity/:project/search` per member, merged), with a read-only snapshot and "Reference in chat". Transcripts flagged as holding secrets are marked and never quoted.

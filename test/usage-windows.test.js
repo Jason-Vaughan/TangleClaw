@@ -846,19 +846,19 @@ describe('lib/usage-windows — parseSessionTerminalUsage (#2787)', () => {
   it('parses Codex\'s own "Context NN% left" status-row item, with no weekly segment present', () => {
     const pane = ['', '› Ask Codex to do anything', '', '  GPT-6-Astra default · Ready · never · Context 92% left'];
     const result = uw.parseSessionTerminalUsage(pane.join('\n'), 'codex');
-    assert.deepEqual(result, { contextRemainingPct: 92, weeklyRemainingPct: null, source: 'terminal-statusline' });
+    assert.deepEqual(result, { contextRemainingPct: 92, weeklyRemainingPct: null, fiveHourRemainingPct: null, source: 'terminal-statusline' });
   });
 
   it('parses Codex\'s own live "weekly NN% left" segment alongside context (verified live on three real Codex sessions, 2026-11-02, #2787 Round 2)', () => {
     const pane = ['', '› Ask Codex to do anything', '', '  GPT-6-Sol medium · Ready · never · Context 43% left · weekly 1% left'];
     const result = uw.parseSessionTerminalUsage(pane.join('\n'), 'codex');
-    assert.deepEqual(result, { contextRemainingPct: 43, weeklyRemainingPct: 1, source: 'terminal-statusline' });
+    assert.deepEqual(result, { contextRemainingPct: 43, weeklyRemainingPct: 1, fiveHourRemainingPct: null, source: 'terminal-statusline' });
   });
 
   it('parses Claude Code\'s own trailing "NN% left" status-row segment, never a weekly one (Claude\'s status row carries no quota item at all)', () => {
     const pane = ['done', '───', '  TangleClaw (main) | Opus 5 (1M context) | 77% left'];
     const result = uw.parseSessionTerminalUsage(pane.join('\n'), 'claude');
-    assert.deepEqual(result, { contextRemainingPct: 77, weeklyRemainingPct: null, source: 'terminal-statusline' });
+    assert.deepEqual(result, { contextRemainingPct: 77, weeklyRemainingPct: null, fiveHourRemainingPct: null, source: 'terminal-statusline' });
   });
 
   it('reads the LAST matching row, not an earlier stale one left in scrollback', () => {
@@ -869,12 +869,12 @@ describe('lib/usage-windows — parseSessionTerminalUsage (#2787)', () => {
 
   it('returns nulls when the pane has no matching status row at all', () => {
     const result = uw.parseSessionTerminalUsage('just some ordinary pane text\nwith no status row', 'claude');
-    assert.deepEqual(result, { contextRemainingPct: null, weeklyRemainingPct: null, source: null });
+    assert.deepEqual(result, { contextRemainingPct: null, weeklyRemainingPct: null, fiveHourRemainingPct: null, source: null });
   });
 
   it('returns nulls for empty or non-string pane text (a capture failure)', () => {
-    assert.deepEqual(uw.parseSessionTerminalUsage(null, 'codex'), { contextRemainingPct: null, weeklyRemainingPct: null, source: null });
-    assert.deepEqual(uw.parseSessionTerminalUsage(undefined, 'claude'), { contextRemainingPct: null, weeklyRemainingPct: null, source: null });
+    assert.deepEqual(uw.parseSessionTerminalUsage(null, 'codex'), { contextRemainingPct: null, weeklyRemainingPct: null, fiveHourRemainingPct: null, source: null });
+    assert.deepEqual(uw.parseSessionTerminalUsage(undefined, 'claude'), { contextRemainingPct: null, weeklyRemainingPct: null, fiveHourRemainingPct: null, source: null });
   });
 });
 
@@ -1184,5 +1184,198 @@ describe('lib/routes/sessions — GET /api/usage/sessions (#2787)', () => {
       store.sessions.wrap(lowSession.id, 'test cleanup');
       store.sessions.wrap(okSession.id, 'test cleanup');
     }
+  });
+});
+
+describe('lib/usage-windows — three engines (#3085, Ruling A753)', () => {
+  afterEach(() => {
+    uw._resetUsageWindowsCacheForTests();
+  });
+
+  /** Nothing to read anywhere: every provider's tree is empty. */
+  const EMPTY = { readdir: () => [], stat: () => ({ mtimeMs: 1, size: 1 }), readFile: () => '' };
+
+  it('reports all three providers in byProviderModel and calibration, even with no records', () => {
+    const result = uw.getUsageWindows({ deps: EMPTY, aggregatesStore: { upsertMany: () => {} } });
+    assert.deepEqual(Object.keys(result.byProviderModel).sort(), ['antigravity', 'claude', 'codex']);
+    for (const p of ['antigravity', 'claude', 'codex']) assert.deepEqual(result.byProviderModel[p], {}, p);
+    assert.deepEqual(Object.keys(result.calibration).sort(), ['antigravity', 'claude', 'codex']);
+    assert.equal(result.calibration.antigravity, null);
+  });
+
+  it('splits a bounded scan budget fairly, so a large slow Claude tree cannot starve Codex', () => {
+    const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    const codexReads = [];
+    const truncated = { any: false };
+    const deps = {
+      readdir: (dir) => (String(dir).includes('fake-claude') || String(dir).includes('fake-codex')
+        ? Array.from({ length: 10 }, (_, i) => ({ name: `f${i}.jsonl`, isFile: () => true })) : []),
+      stat: () => ({ mtimeMs: 1000, size: 1 }),
+      readFile: (file) => {
+        if (String(file).includes('fake-claude')) sleepSync(150);
+        else codexReads.push(file);
+        return '';
+      },
+      scanDeadlineMs: Date.now() + 600,
+      truncated
+    };
+    uw.getUsageWindows({
+      deps, claudeProjectsDir: '/fake-claude', codexSessionsDir: '/fake-codex', antigravityBrainDir: '/fake-agy',
+      aggregatesStore: { upsertMany: () => {} }
+    });
+    // A shared deadline lets Claude's 10 x 150ms spend all 600ms and Codex
+    // reads nothing; with fair slices Claude stops at its share and Codex,
+    // whose files are instant, reads every one of them.
+    assert.equal(codexReads.length, 10, `Codex was starved (${codexReads.length} of 10 read)`);
+    assert.equal(truncated.any, true, 'Claude\'s cut-short slice still marks the pass truncated');
+  });
+
+  it('records an operator calibration for each of the three providers, and persists Antigravity\'s', () => {
+    for (const provider of ['claude', 'codex', 'antigravity']) {
+      assert.equal(uw.calibrateUsage({ provider, weeklyPct: 10, fiveHourPct: 20 }).ok, true, provider);
+    }
+    const agy = store.usageCalibration.get('antigravity');
+    assert.equal(agy.weeklyPct, 10);
+    assert.equal(agy.fiveHourPct, 20);
+  });
+
+});
+
+describe('lib/usage-windows — the Codex 5-hour quota item (#3085, Ruling A753)', () => {
+  it('reads "5h NN% left" and "5-hour NN% left" from a Codex status row, alongside weekly', () => {
+    const a = uw.parseSessionTerminalUsage('  GPT-6-Sol medium · Ready · Context 43% left · 5h 20% left · weekly 1% left', 'codex');
+    assert.deepEqual(a, { contextRemainingPct: 43, weeklyRemainingPct: 1, fiveHourRemainingPct: 20, source: 'terminal-statusline' });
+    const b = uw.parseSessionTerminalUsage('  GPT-6-Sol · Context 9% left · 5-hour 7% left', 'codex');
+    assert.equal(b.fiveHourRemainingPct, 7);
+    assert.equal(b.weeklyRemainingPct, null);
+  });
+
+  it('never reads a 5-hour item for Claude, and refuses a percentage over 100', () => {
+    const claude = uw.parseSessionTerminalUsage('  TangleClaw (main) | 5h 20% left | Opus 5 | 77% left', 'claude');
+    assert.equal(claude.fiveHourRemainingPct, null);
+    const silly = uw.parseSessionTerminalUsage('  GPT-6 · Context 50% left · 5h 250% left · weekly 300% left', 'codex');
+    assert.equal(silly.fiveHourRemainingPct, null);
+    assert.equal(silly.weeklyRemainingPct, null);
+  });
+
+  it('prefers a live 5-hour pane reading over calibration, and still falls back to calibration without one', async () => {
+    uw.calibrateUsage({ provider: 'codex', weeklyPct: 60, fiveHourPct: 90 });
+    const session = { id: 7, projectId: 70, engineId: 'codex', tmuxSession: 'p7', startedAt: '2026-11-02 18:00:00' };
+    const projects = new Map([[70, { id: 70, name: 'p7', path: '/repo/p7' }]]);
+    const read = (pane) => uw.buildSessionUsageReadings({
+      sessions: [session], projects, capturePaneOutput: async () => pane, getActiveModel: async () => null, now: 1
+    }).then((r) => r[0]);
+    const live = await read('  GPT-6 · Context 40% left · 5h 5% left');
+    assert.equal(live.fiveHourRemainingPct, 5, 'the pane wins over the calibrated 90%');
+    assert.equal(live.weeklyRemainingPct, 60, 'weekly, absent from the pane, comes from calibration');
+    assert.equal(live.source, 'combined');
+    assert.equal(live.lowUsageHandOffRecommended, true);
+    const paneOnly = await read('  GPT-6 · Context 40% left · 5h 5% left · weekly 2% left');
+    assert.equal(paneOnly.source, 'terminal-statusline', 'nothing came from calibration');
+    const calOnly = await read('  GPT-6 · Context 40% left');
+    assert.equal(calOnly.fiveHourRemainingPct, 90);
+    assert.equal(calOnly.weeklyRemainingPct, 60);
+  });
+
+  it('gives an Antigravity session its own calibrated quota alongside its pane context reading', async () => {
+    const asked = [];
+    const r = await uw.buildSessionUsageReadings({
+      sessions: [{ id: 8, projectId: 80, engineId: 'antigravity', tmuxSession: 'p8', startedAt: '2026-11-02 18:00:00' }],
+      projects: new Map([[80, { id: 80, name: 'p8', path: '/repo/p8' }]]),
+      capturePaneOutput: async () => '  p8 | Gemini | 66% left',
+      getActiveModel: async () => null,
+      getCalibration: (p) => { asked.push(p); return { provider: p, weeklyPct: 44, fiveHourPct: 11 }; },
+      now: 1
+    });
+    assert.equal(r[0].engine, 'antigravity');
+    assert.equal(r[0].contextRemainingPct, 66);
+    assert.deepEqual(asked, ['antigravity']);
+    assert.equal(r[0].weeklyRemainingPct, 44);
+    assert.equal(r[0].fiveHourRemainingPct, 11);
+    assert.equal(r[0].source, 'combined');
+  });
+
+});
+
+describe('usage_calibration v83 -> v84: Antigravity becomes a calibrated provider (#3085, Ruling A758)', () => {
+  // The file-wide beforeEach gives every test a fresh store, already at the
+  // current schema. To exercise the migration on real data, the old v83 table
+  // is swapped in, schema_version is rolled back to 83, and the store is
+  // reopened: only the v84 step then runs.
+  const OLD_DDL = `CREATE TABLE usage_calibration (
+      provider      TEXT    PRIMARY KEY CHECK (provider IN ('claude','codex')),
+      weekly_pct    REAL    CHECK (weekly_pct IS NULL OR (weekly_pct >= 0 AND weekly_pct <= 100)),
+      five_hour_pct REAL    CHECK (five_hour_pct IS NULL OR (five_hour_pct >= 0 AND five_hour_pct <= 100)),
+      calibrated_at INTEGER NOT NULL
+    )`;
+
+  /** Put the store back to a v83 usage_calibration holding two calibrations, then reopen it. */
+  function reopenFromV83() {
+    const db = store.getDb();
+    db.exec('DROP TABLE usage_calibration');
+    db.exec(OLD_DDL);
+    db.prepare('INSERT INTO usage_calibration VALUES (?, ?, ?, ?)').run('claude', 40, 12.5, 1111);
+    db.prepare('INSERT INTO usage_calibration VALUES (?, ?, ?, ?)').run('codex', null, 77, 2222);
+    // A real v83 install has a v83 row; an EMPTY schema_version reads as a
+    // fresh install, which is stamped current without migrating.
+    db.prepare('DELETE FROM schema_version WHERE version > 83').run();
+    db.prepare('INSERT INTO schema_version (version) VALUES (83)').run();
+    assert.throws(() => db.prepare('INSERT INTO usage_calibration VALUES (?, ?, ?, ?)').run('antigravity', 1, 1, 1),
+      /CHECK/, 'precondition: the v83 table refuses antigravity');
+    store.close();
+    store._setBasePath(_storeTmpDir);
+    store.init();
+  }
+
+  it('the current schema version is 84, and a fresh store accepts an Antigravity calibration', () => {
+    assert.equal(store.CURRENT_SCHEMA_VERSION, 84);
+    assert.equal(uw.calibrateUsage({ provider: 'antigravity', weeklyPct: 33, fiveHourPct: 66 }).ok, true);
+    assert.deepEqual(
+      { w: uw.getCalibration('antigravity').weeklyPct, f: uw.getCalibration('antigravity').fiveHourPct }, { w: 33, f: 66 });
+  });
+
+  it('upgrades a v83 table in place, keeping every Claude and Codex calibration exactly, and then admits Antigravity', () => {
+    reopenFromV83();
+    const rows = store.getDb().prepare('SELECT provider, weekly_pct, five_hour_pct, calibrated_at FROM usage_calibration ORDER BY provider').all();
+    assert.deepEqual(rows.map((r) => ({ ...r })), [
+      { provider: 'claude', weekly_pct: 40, five_hour_pct: 12.5, calibrated_at: 1111 },
+      { provider: 'codex', weekly_pct: null, five_hour_pct: 77, calibrated_at: 2222 }
+    ]);
+    assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 84);
+    assert.equal(uw.calibrateUsage({ provider: 'antigravity', weeklyPct: 5 }).ok, true);
+    assert.equal(uw.getCalibration('antigravity').weeklyPct, 5);
+    assert.equal(uw.getCalibration('claude').weeklyPct, 40);
+  });
+
+  it('is a no-op when run again on a table that already admits Antigravity', () => {
+    uw.calibrateUsage({ provider: 'codex', weeklyPct: 9 });
+    const schema = require('../lib/store/_schema');
+    const ddlBefore = store.getDb().prepare("SELECT sql FROM sqlite_master WHERE name = 'usage_calibration'").get().sql;
+    schema._migrateUsageCalibrationAntigravityV84();
+    schema._migrateUsageCalibrationAntigravityV84();
+    const ddlAfter = store.getDb().prepare("SELECT sql FROM sqlite_master WHERE name = 'usage_calibration'").get().sql;
+    assert.equal(ddlAfter, ddlBefore);
+    assert.equal(uw.getCalibration('codex').weeklyPct, 9);
+  });
+
+  it('the v84 postcondition refuses a rebuild that lost or changed a row, or did not widen the CHECK', () => {
+    const schema = require('../lib/store/_schema');
+    uw.calibrateUsage({ provider: 'claude', weeklyPct: 40, calibratedAt: 1111 });
+    const rows = store.getDb().prepare('SELECT provider, weekly_pct, five_hour_pct, calibrated_at FROM usage_calibration ORDER BY provider').all();
+    assert.doesNotThrow(() => schema._verifyUsageCalibrationAntigravityV84(rows));
+    assert.throws(() => schema._verifyUsageCalibrationAntigravityV84([...rows, { provider: 'codex', weekly_pct: 1, five_hour_pct: null, calibrated_at: 2 }]),
+      /rows changed across the rebuild/);
+    assert.throws(() => schema._verifyUsageCalibrationAntigravityV84([{ ...rows[0], weekly_pct: 41 }]), /rows changed/);
+    const db = store.getDb();
+    db.exec('DROP TABLE usage_calibration');
+    db.exec("CREATE TABLE usage_calibration (provider TEXT PRIMARY KEY CHECK (provider IN ('claude','codex')), weekly_pct REAL, five_hour_pct REAL, calibrated_at INTEGER NOT NULL)");
+    assert.throws(() => schema._verifyUsageCalibrationAntigravityV84([]), /without "antigravity" in its provider CHECK/);
+  });
+
+  it('every provider usage windows reports can now be calibrated, and nothing else', () => {
+    for (const provider of ['claude', 'codex', 'antigravity']) assert.equal(uw.calibrateUsage({ provider, weeklyPct: 50 }).ok, true, provider);
+    const bad = uw.calibrateUsage({ provider: 'gemini', weeklyPct: 50 });
+    assert.equal(bad.ok, false);
+    assert.match(bad.errors.join(' '), /provider must be one of claude, codex, antigravity/);
   });
 });

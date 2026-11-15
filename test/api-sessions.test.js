@@ -611,6 +611,84 @@ describe('api-sessions', () => {
       });
     }
 
+    describe('POST /api/sessions/:project/switch-model — delegated lifecycle authority (#3083)', () => {
+      const modelSwitch = require('../lib/model-switch');
+      let realSwitch;
+      let calls;
+      before(() => {
+        realSwitch = modelSwitch.switchSessionModel;
+        modelSwitch.switchSessionModel = async (projectName, req, ctx) => { calls.push({ projectName, req, ctx }); return { ok: true, switched: true }; };
+      });
+      after(() => { modelSwitch.switchSessionModel = realSwitch; });
+
+      it('lets a session with delegated lifecycle authority switch the target lane\'s model at a boundary', async () => {
+        calls = [];
+        const pm = newProject('pm-3083a');
+        const target = newProject('target-3083a');
+        const pmBound = bindProject(pm);
+        const targetBound = bindProject(target);
+        await grantLifecycleAuthority(target, pm);
+        try {
+          const res = await request(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/switch-model`,
+            { model: 'claude-opus-5-5' }, pmBound.headers);
+          assert.equal(res.status, 200, JSON.stringify(res.body));
+          assert.equal(calls.length, 1);
+          assert.equal(calls[0].ctx.requester.projectId, pm.id);
+        } finally {
+          store.sessions.kill(pmBound.sessionId, 'test cleanup');
+          store.sessions.kill(targetBound.sessionId, 'test cleanup');
+        }
+      });
+
+      it('still refuses a session without that authority, and a delegated one asking for outage-takeover', async () => {
+        calls = [];
+        const pm = newProject('pm-3083b');
+        const stranger = newProject('stranger-3083b');
+        const target = newProject('target-3083b');
+        const pmBound = bindProject(pm);
+        const strangerBound = bindProject(stranger);
+        const targetBound = bindProject(target);
+        await grantLifecycleAuthority(target, pm);
+        try {
+          const nope = await request(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/switch-model`,
+            { model: 'claude-opus-5-5' }, strangerBound.headers);
+          assert.equal(nope.status, 403);
+          assert.equal(nope.body.code, 'FORBIDDEN');
+          const takeover = await request(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/switch-model`,
+            { model: 'claude-opus-5-5', mode: 'outage-takeover' }, pmBound.headers);
+          assert.equal(takeover.status, 403, 'delegated authority covers a safe boundary only');
+          assert.equal(calls.length, 0);
+        } finally {
+          for (const b of [pmBound, strangerBound, targetBound]) store.sessions.kill(b.sessionId, 'test cleanup');
+        }
+      });
+
+      it('answers 503 when the target\'s authority matrix is unreadable, rather than reading it as no authority', async () => {
+        calls = [];
+        const pm = newProject('pm-3083c');
+        const target = newProject('target-3083c');
+        const pmBound = bindProject(pm);
+        const targetBound = bindProject(target);
+        await grantLifecycleAuthority(target, pm);
+        const origGetOpen = store.control.getOpenForProject;
+        store.control.getOpenForProject = function (projectId) {
+          const row = origGetOpen.call(store.control, projectId);
+          return row && projectId === target.id ? { ...row, authority_json: '{not json' } : row;
+        };
+        try {
+          const res = await request(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/switch-model`,
+            { model: 'claude-opus-5-5' }, pmBound.headers);
+          assert.equal(res.status, 503, JSON.stringify(res.body));
+          assert.equal(res.body.code, 'CONTROL_STATE_UNAVAILABLE');
+          assert.equal(calls.length, 0);
+        } finally {
+          store.control.getOpenForProject = origGetOpen;
+          store.sessions.kill(pmBound.sessionId, 'test cleanup');
+          store.sessions.kill(targetBound.sessionId, 'test cleanup');
+        }
+      });
+    });
+
     it('a delegated coordinator may /clear a target lane that composes AVAILABLE/safe-to-clear', async () => {
       const pm = newProject('pm-2824a');
       const target = newProject('target-2824a');
@@ -741,6 +819,76 @@ describe('api-sessions', () => {
       }
     });
 
+    describe('priority: true (#3083)', () => {
+      /** @returns {Record<string, string>} The dashboard's full operator proof on this open install. */
+      const proofHeaders = () => ({ ...operatorHeaders(server), 'X-TC-Open-Token': require('../lib/open-install-token').mint() });
+
+      it('lets a proven operator\'s priority send past the startup gate, and says so in the receipt', async () => {
+        const project = store.projects.getByName('api-sess-test');
+        const { session } = bindLaunchSequence(project);
+        const sessionsMod = require('../lib/sessions');
+        const realInject = sessionsMod.injectCommand;
+        const injected = [];
+        sessionsMod.injectCommand = (name, command, options) => { injected.push({ name, command, options }); return { ok: true, error: null }; };
+        try {
+          const res = await request(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls', priority: true }, proofHeaders());
+          assert.equal(res.status, 200, JSON.stringify(res.body));
+          assert.equal(res.body.receipt.priority, true);
+          assert.equal(injected.length, 1);
+          assert.equal(injected[0].options.priority, true, 'the model-admission skip reaches injectCommand');
+          const ordinary = await request(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls' }, proofHeaders());
+          assert.equal(ordinary.body.code, 'STARTUP_NOT_READY', 'without priority the same send still waits');
+          assert.equal(injected.length, 1);
+        } finally {
+          sessionsMod.injectCommand = realInject;
+          store.sessions.kill(session.id, 'test cleanup');
+        }
+      });
+
+      it('refuses priority from a caller without the full operator proof, instead of sending it at ordinary priority', async () => {
+        const project = store.projects.getByName('api-sess-test');
+        const { session } = bindLaunchSequence(project);
+        try {
+          const noToken = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls', priority: true });
+          assert.equal(noToken.status, 403, JSON.stringify(noToken.body));
+          assert.equal(noToken.body.code, 'OPEN_INSTALL_TOKEN_INVALID');
+        } finally {
+          store.sessions.kill(session.id, 'test cleanup');
+        }
+      });
+
+      it('refuses priority from a project session, even one dressed as the dashboard (403 OPERATOR_ONLY)', async () => {
+        const peer = store.projects.create({ name: `peer-3083-${Math.random().toString(36).slice(2)}`,
+          path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-peer-3083-')), engine: 'claude' });
+        const bound = bindProject(peer);
+        try {
+          const plain = await request(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls', priority: true }, bound.headers);
+          assert.equal(plain.status, 403, JSON.stringify(plain.body));
+          assert.equal(plain.body.code, 'OPERATOR_ONLY');
+          const dressed = await request(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls', priority: true },
+            { ...proofHeaders(), ...bound.headers });
+          assert.equal(dressed.status, 403, JSON.stringify(dressed.body));
+          assert.equal(dressed.body.code, 'OPERATOR_ONLY');
+        } finally {
+          store.sessions.kill(bound.sessionId, 'test cleanup');
+        }
+      });
+
+      it('refuses a non-boolean priority (400), and treats priority: false as an ordinary send', async () => {
+        const bad = await request(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls', priority: 'yes' }, proofHeaders());
+        assert.equal(bad.status, 400);
+        assert.equal(bad.body.code, 'BAD_REQUEST');
+        const project = store.projects.getByName('api-sess-test');
+        const { session } = bindLaunchSequence(project);
+        try {
+          const off = await request(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls', priority: false }, proofHeaders());
+          assert.equal(off.body.code, 'STARTUP_NOT_READY');
+        } finally {
+          store.sessions.kill(session.id, 'test cleanup');
+        }
+      });
+    });
+
     it('admits ordinary task submission once the launch is READY', async () => {
       const project = store.projects.getByName('api-sess-test');
       const { session, sequence } = bindLaunchSequence(project);
@@ -811,6 +959,33 @@ describe('api-sessions', () => {
       } finally {
         wrapRunRegistry.finish('api-sess-test', claim.runId, null);
         wrapRunRegistry._resetForTests();
+        cleanup();
+      }
+    });
+
+    it('a priority send skips the model-admission hold, but never a running wrap (#3083)', () => {
+      const sessions = require('../lib/sessions');
+      const reconciler = require('../lib/profile-reconciler');
+      const wrapRunRegistry = require('../lib/wrap-run-registry');
+      const { session, typed, cleanup } = readySession();
+      reconciler.setDesiredProfile(`session:${session.id}`, { engine: 'claude', model: 'claude-opus-5-5' });
+      try {
+        const held = sessions.injectCommand('api-sess-test', 'ls');
+        assert.equal(held.code, 'MODEL_ADMISSION_HELD', 'precondition: an ordinary send is held');
+        assert.equal(sessions.injectCommand('api-sess-test', 'ls', { priority: true }).ok, true);
+        assert.equal(typed(), 1);
+        const claim = wrapRunRegistry.begin('api-sess-test', null, {});
+        try {
+          const refused = sessions.injectCommand('api-sess-test', 'ls', { priority: true });
+          assert.equal(refused.ok, false);
+          assert.equal(refused.wrapRunning.code, 'WRAP_RUNNING');
+          assert.equal(typed(), 1, 'nothing more was typed');
+        } finally {
+          wrapRunRegistry.finish('api-sess-test', claim.runId, null);
+        }
+      } finally {
+        wrapRunRegistry._resetForTests();
+        reconciler._resetForTests();
         cleanup();
       }
     });

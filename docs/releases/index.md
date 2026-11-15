@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.2.8 — Chat history search and Recents, renaming a member from the chat, and the Open Hood link fix](v6.2.8.md)
+- [v6.2.9 — Switchboard traffic Under the Hood, a Medusa indicator, chat polish and Medusa fleet isolation](v6.2.9.md)
 
 ## Recent releases
+
+- [v6.2.8 — Chat history search and Recents, renaming a member from the chat, and the Open Hood link fix](v6.2.8.md)
 
 - [v6.2.7 — A Fleet Shell link on every Classic page, a four-icon sidebar and a higher-contrast chat](v6.2.7.md)
 
