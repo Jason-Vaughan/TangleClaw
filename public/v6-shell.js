@@ -1087,12 +1087,18 @@
     const original = (m) => known[sent.indexOf(m)] || m;
     const knownLines = new Set((Array.isArray(knownUserTexts) ? knownUserTexts : [])
       .flatMap((t) => String(t).split('\n')).map((t) => t.trim()).filter(Boolean));
+    // The longest known text that fits, so a long message's whole text wins
+    // over its record cut short (#3079).
+    const longest = (list) => list.reduce((best, m) => (best && best.length >= m.length ? best : m), null);
     const recordedAs = (said) => {
       const one = squash(said);
-      if (knownLines.has(said)) return sent.find((m) => m.includes(one)) || one;
-      return one.length >= 20 ? sent.find((m) => m.startsWith(one)) || null : null;
+      if (knownLines.has(said)) return longest(sent.filter((m) => m.includes(one))) || one;
+      return one.length >= 20 ? longest(sent.filter((m) => m.startsWith(one))) : null;
     };
     let echo = null;
+    // Whether the echoed prompt was recorded only in part (#3079): the pane
+    // then shows more of it than the record holds.
+    let echoCut = false;
     const turns = [];
     let reply = [];
     let activity = null;
@@ -1146,6 +1152,7 @@
           activity = null;
           answered = true;
           echo = recordedAs(said);
+          echoCut = Boolean(echo) && /\[Full prompt \(\d+ chars\) saved to: /.test(original(echo));
           // #3079 item 6: a recorded prompt keeps its place among the
           // replies, marked so the recorded copy is not drawn again.
           turns.push(echo ? { role: 'user', text: original(echo), recorded: true } : { role: 'user', text: said });
@@ -1153,7 +1160,9 @@
         return;
       }
       // The rest of a recorded message the pane is still echoing.
-      if (echo && (knownLines.has(text) || echo.includes(squash(text)) || LONG_PROMPT_NOTE.test(text))) return;
+      // A prompt recorded only in part goes on, indented, past what the
+      // record holds; those lines are still the prompt, not a reply.
+      if (echo && (knownLines.has(text) || echo.includes(squash(text)) || LONG_PROMPT_NOTE.test(text) || (echoCut && indented))) return;
       echo = null;
       if (LIVE_BUSY.test(text) && !/Thought for/i.test(text)) {
         activity = text.replace(/^[✶✻✽✢⠀-⣿\s]+/, '').replace(/\s*\(?esc to interrupt\)?/i, '').trim() || 'Working…';
@@ -2297,6 +2306,11 @@
     // recorded (its send id, recorded text and whole text), until the pane
     // shows it, so it is drawn after the replies it followed.
     const lastSentByProject = new Map();
+    // And the whole text of each long message this visit sent, per project
+    // (the last few), so the pane's echo of one is known in full even after
+    // its record, cut short, is all the events hold (#3079).
+    const sentWhole = new Map();
+    const SENT_WHOLE_KEPT = 10;
     let sendSeq = 0;
     const clock = typeof deps.now === 'function' ? deps.now : () => Date.now();
     // The secure-clipboard routes gate even their GET listing with operator
@@ -2345,8 +2359,8 @@
       if (res && Array.isArray(res.lines)) {
         const engine = project && project.engine && project.engine.id ? String(project.engine.id) : '';
         const said = (Array.isArray(events) ? events : []).filter((e) => e && e.role === 'user').map((e) => e.content);
-        // The whole of a long message, so its pane echo is known in full.
-        if (sent && sent.full) said.push(sent.full);
+        // The whole of each long message sent, so its pane echo is known in full.
+        said.push(...(sentWhole.get(key) || []));
         live = extractLiveTurns(res.lines, engine, said);
         // Once the pane shows it, it is placed by the pane.
         if (sent && live.turns.some((t) => t.role === 'user' && t.recorded && (sameMessage(sent.text, t.text) || sameMessage(sent.full, t.text)))) {
@@ -2690,6 +2704,10 @@
       // operator still being here.
       const recorded = await recordUserEvent(chat, toRecord);
       if (recorded === true) lastSentByProject.set(String(pid), { id: sendId, text: toRecord, full: message });
+      if (toRecord !== message) {
+        const whole = (sentWhole.get(String(pid)) || []).concat(message).slice(-SENT_WHOLE_KEPT);
+        sentWhole.set(String(pid), whole);
+      }
       if (chat !== current) { settle(); return; }
       await loadConversation(chat.project, chat.mine, chat.ctx, recorded === true
         ? { kind: 'ok', message: `Sent to ${name}.` }

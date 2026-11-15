@@ -4752,6 +4752,7 @@ describe('a message longer than the command route takes (#3079 item 5)', () => {
       if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
       if (/conversation\/events/.test(url)) return { events: events.map((e, i) => ({ seq: i + 1, role: e.role, content: e.content })) };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80' && o.peek) return { lines: o.peek() };
       if (url === '/api/sessions/TC-Lane-PM/secure-clipboard' && init && init.method === 'GET') {
         listings.push(init.headers);
         api.lastError = o.listing === null ? 'listing refused' : null;
@@ -4773,7 +4774,9 @@ describe('a message longer than the command route takes (#3079 item 5)', () => {
     };
     let shell = null;
     const pending = [];
-    const deps = { getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {},
+    const timers = [];
+    const deps = { getShell: () => shell, api, apiMutate, storage: null,
+      setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {},
       now: () => 1700000000000, operatorHeaders: async () => ({ 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' }) };
     if (o.textToBase64) deps.textToBase64 = o.textToBase64;
     const live = G.tcV6CreateLiveController(deps);
@@ -4790,7 +4793,7 @@ describe('a message longer than the command route takes (#3079 item 5)', () => {
       doc.getElementById('v6ChatForm').dispatch('submit');
       await settle();
     };
-    return { G, doc, root, uploads, listings, sends, events, send, shell };
+    return { G, doc, root, uploads, listings, sends, events, send, shell, timers };
   }
 
   it('a message within the limit is sent as it is, with nothing saved', async () => {
@@ -5039,5 +5042,73 @@ describe('sending, through the controller (#3079 item 6)', () => {
     assert.doesNotMatch(m.root.innerHTML, /is-pending/);
     assert.match(m.root.innerHTML, /Not sent: the lane is held/);
     assert.equal(m.events.length, 0);
+  });
+});
+
+describe('a long message recorded only in part is not read back as a reply (third review, R-4)', () => {
+  // CJK text that never repeats, so no later line is already part of the recorded start.
+  const zh = Array.from({ length: 6000 }, (_, i) => String.fromCodePoint(0x4e00 + ((i * 7919) % 20000))).join('');
+
+  it('after a reload, with only the cut record known, its indented continuation is still the prompt', () => {
+    const G = loadV6Shell();
+    const recorded = G.tcV6RecordedText(zh, '.tangleclaw/secrets/p.md', 'v6-chat-ui');
+    assert.ok(recorded.length < 3990, 'the record is shorter than the command');
+    const lines = [`> ${zh.slice(0, 40)}`, `  ${zh.slice(3000, 3060)}`, `  ${zh.slice(3900, 3960)}`,
+      `[Full prompt (${zh.length} chars) saved to: .tangleclaw/secrets/p.md — read that file in full]`, '⏺ 收到。'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', [recorded]));
+    assert.deepEqual(out.turns.map((t) => t.role), ['user', 'assistant']);
+    assert.equal(out.turns[1].text, '收到。');
+  });
+
+  it('through the controller, every later poll still knows the whole message it sent', async () => {
+    let pane = ['⏺ Ready.'];
+    const H = loadV6Shell();
+    H.TextEncoder = TextEncoder;
+    H.btoa = btoa;
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const events = [];
+    const api = async (url, init) => {
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
+      if (/conversation\/events/.test(url)) return { events: events.map((e, i) => ({ seq: i + 1, role: e.role, content: e.content })) };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: pane };
+      if (/secure-clipboard$/.test(url) && init && init.method === 'GET') return { files: [] };
+      if (/secure-clipboard$/.test(url)) return { relPath: `secrets/${JSON.parse(init.body).filename}` };
+      return null;
+    };
+    api.lastError = null;
+    const apiMutate = async (url, method, body) => {
+      if (/conversation\/events$/.test(url)) events.push(plain(body));
+      return { ok: true };
+    };
+    const timers = [];
+    let shell = null;
+    const pending = [];
+    const live = H.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null, now: () => 1,
+      operatorHeaders: async () => ({}), setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
+    shell = H.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
+      setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)), onSendChat: (t) => pending.push(live.sendChat(t)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    await settle();
+    const input = doc.getElementById('v6ChatInput');
+    input.value = zh;
+    input.dispatch('input');
+    doc.getElementById('v6ChatForm').dispatch('submit');
+    await settle();
+    // The pane echoes the command, wrapped flush left, past what the record holds.
+    pane = [`> ${zh.slice(0, 40)}`, zh.slice(3000, 3060), zh.slice(3900, 3960), '⏺ 收到。'];
+    const tick = timers[timers.length - 1];
+    await tick();
+    await tick();
+    const liveHtml = doc.getElementById('v6ChatLive').innerHTML;
+    assert.equal((liveHtml.match(/is-assistant/g) || []).length, 1, liveHtml.slice(0, 400));
+    const replies = [...liveHtml.matchAll(/<li class="v6-conversation-event is-assistant is-live">[\s\S]*?<\/li>/g)].map((x) => x[0]).join('');
+    assert.ok(!replies.includes(zh.slice(3000, 3060)) && !replies.includes(zh.slice(3900, 3960)), 'no line of the message reads as a reply');
+    assert.match(liveHtml, /is-assistant is-live">[\s\S]*收到。/);
   });
 });
