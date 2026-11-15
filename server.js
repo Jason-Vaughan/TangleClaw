@@ -6013,7 +6013,8 @@ function registerMedusaRoutes(prefix, resolve) {
       });
       jsonResponse(res, 200, result);
     } catch (err) {
-      errorResponse(res, err.httpStatus || 500, err.message, err.code || 'BROADCAST_FAILED');
+      // A refusal's details (#3084: which registries could not be read) reach the caller.
+      errorResponse(res, err.httpStatus || 500, err.message, err.code || 'BROADCAST_FAILED', err.details);
     }
   }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES, gatedAction: 'medusa-send' });
 

@@ -2395,6 +2395,87 @@ describe('lib/medusa — fleet isolation (#3077, Ruling A738)', () => {
     });
   }
 
+  describe('registry cache and unreadable registries (#3084)', () => {
+    const registryMod = require('../lib/medusa-registry');
+    let dirs;
+    let reads;
+
+    beforeEach(() => {
+      // Three real projects on disk, each with a real registry: 7 and 8 share
+      // group 1 (from the outer stub), 9 is ungrouped.
+      dirs = { 7: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-3084-7-')), 8: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-3084-8-')),
+        9: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-3084-9-')) };
+      for (const id of [7, 8, 9]) registryMod.ensureWorkspaceId(dirs[id], `s${id}`, `p${id}`, `real-ws-${id}`);
+      reads = [];
+      Object.assign(medusa._fleetDeps, {
+        listProjects: () => [7, 8, 9].map((id) => ({ id, name: `p${id}`, path: dirs[id] })),
+        workspaceIdsFor: (projectPath) => { reads.push(projectPath); return registryMod.readWorkspaceIds(projectPath); }
+      });
+    });
+
+    afterEach(() => {
+      for (const d of Object.values(dirs)) fs.rmSync(d, { recursive: true, force: true });
+    });
+
+    it('reads each registry once, then serves it from the cache while it is unchanged', () => {
+      assert.equal(medusa.fleetMembership(7)('real-ws-8'), true);
+      const first = reads.length;
+      assert.equal(first, 3, 'every registry read once');
+      assert.equal(medusa.fleetMembership(7)('real-ws-8'), true);
+      assert.equal(medusa.fleetMembership(9)('real-ws-7'), false);
+      assert.equal(reads.length, first, 'no registry re-read while unchanged');
+    });
+
+    it('re-reads a registry that changed, and only that one', () => {
+      medusa.fleetMembership(7)('real-ws-8');
+      reads.length = 0;
+      registryMod.ensureWorkspaceId(dirs[8], 's8b', 'p8', 'real-ws-8b-with-a-longer-id');
+      assert.equal(medusa.fleetMembership(7)('real-ws-8b-with-a-longer-id'), true);
+      assert.deepEqual(reads, [dirs[8]]);
+    });
+
+    it('drops a project\'s cached ids when this module forgets one of its sessions, even if the file looks unchanged', () => {
+      medusa._fleetDeps.statRegistry = () => ({ mtimeMs: 1, size: 1 });
+      medusa.fleetMembership(7)('real-ws-8');
+      reads.length = 0;
+      medusa.forgetSession({ projectPath: dirs[8], sessionId: 's8' });
+      assert.equal(medusa.fleetMembership(7)('real-ws-8'), false, 'the forgotten workspace is gone, not served stale');
+      assert.deepEqual(reads, [dirs[8]]);
+    });
+
+    for (const [where, code] of [['stat', 'EPERM'], ['read', 'EACCES']]) {
+      it(`reports a registry that cannot be ${where === 'stat' ? 'stat-ed' : 'read'} (${code}) as unreadable, never as empty`, () => {
+        const realStat = medusa._fleetDeps.statRegistry;
+        const realRead = medusa._fleetDeps.canReadRegistry;
+        const fail = (file) => { if (file.startsWith(dirs[8])) throw Object.assign(new Error(code), { code }); };
+        if (where === 'stat') medusa._fleetDeps.statRegistry = (file) => { fail(file); return realStat(file); };
+        else medusa._fleetDeps.canReadRegistry = (file) => { fail(file); return realRead(file); };
+        const inFleet = medusa.fleetMembership(7);
+        assert.equal(inFleet('real-ws-8'), false, 'fails closed');
+        assert.deepEqual(inFleet.unreadableRegistries.map((u) => ({ ...u })), [{ projectId: 8, project: 'p8', code }]);
+        assert.ok(!reads.includes(dirs[8]), 'the unreadable registry is not read as empty');
+        assert.equal(inFleet('real-ws-7'), true, 'readable registries still answer');
+      });
+    }
+
+    it('names the unreadable registry on a broadcast\'s cross-fleet refusal', async () => {
+      const realStat = medusa._fleetDeps.statRegistry;
+      medusa._fleetDeps.statRegistry = (file) => {
+        if (file.startsWith(dirs[8])) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+        return realStat(file);
+      };
+      await assert.rejects(medusa.broadcastAll({
+        callerKind: 'coordinator', senderId: `b-3084-${Date.now()}`, senderProjectId: 7, message: 'm',
+        targets: ['real-ws-8'], fetchImpl: async () => ({ ok: true, json: async () => ({ workspaces: [] }) })
+      }), (err) => {
+        assert.equal(err.code, 'CROSS_FLEET_FORBIDDEN');
+        assert.equal(err.details.reason, 'REGISTRY_UNREADABLE');
+        assert.deepEqual(err.details.unreadableRegistries.map((u) => u.project), ['p8']);
+        return true;
+      });
+    });
+  });
+
   it('filterRosterToFleet keeps the fleet and the Master', () => {
     const roster = [...ROSTER, { id: 'master-ws', isMaster: true }];
     assert.deepEqual(medusa.filterRosterToFleet(roster, 7).map((w) => w.id), ['ws-7', 'ws-8', 'master-ws']);
