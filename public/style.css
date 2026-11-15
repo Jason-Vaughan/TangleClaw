@@ -4997,3 +4997,12 @@ p.v6-history-secret {
   color: #000;
   font-size: 0.8em;
 }
+
+/* #3082: Force Send sits beside Send, set apart in amber. */
+.v6-chat-force-send {
+  border-color: #d4a72c;
+}
+.v6-chat-force-send:hover,
+.v6-chat-force-send:focus-visible {
+  background: rgba(212, 167, 44, 0.15);
+}

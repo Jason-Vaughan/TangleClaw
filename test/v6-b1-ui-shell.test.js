@@ -1903,7 +1903,7 @@ describe('Project Delegate Chat review fixes (#3047)', () => {
     assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*>for the PM only<\/textarea>/, 'the draft is still there on return');
   });
 
-  it('a second Enter or Send while the first is still sending is ignored, and the composer is disabled meanwhile', async () => {
+  it('a second Enter or Send while the first is still sending is ignored, and Send is disabled meanwhile', async () => {
     const m = mountPair({ hold: true });
     await m.settle();
     const input = m.doc.getElementById('v6ChatInput');
@@ -1911,8 +1911,11 @@ describe('Project Delegate Chat review fixes (#3047)', () => {
     input.dispatch('input');
     m.doc.getElementById('v6ChatForm').dispatch('submit');
     await new Promise((r) => setImmediate(r));
-    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*disabled/);
+    // Restated by #3082 (Ruling A757): the box stays open so Force Send can push an urgent
+    // message in meanwhile; Send itself stays disabled, so a plain second send cannot happen.
+    assert.doesNotMatch(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*disabled/);
     assert.match(m.root.innerHTML, /<button type="submit"[^>]*disabled/);
+    assert.doesNotMatch(m.root.innerHTML, /<button type="button" id="v6ChatForceSend"[^>]*disabled/);
     m.doc.getElementById('v6ChatForm').dispatch('submit');
     await m.live.sendChat('once');
     m.release();
@@ -5582,5 +5585,141 @@ describe('V6210 chunk 01 styles (#3082)', () => {
     assert.match(CSS, /\.v6-chat-thumb \{[^}]*max-width: 220px;[^}]*max-height: 160px;/);
     assert.match(CSS, /\.v6-chat-verbosity \{[^}]*display: flex;/);
     assert.match(CSS, /\.v6-chat-tucked-count:not\(:empty\) \{[^}]*background: #d4a72c;/);
+  });
+});
+
+describe('Force Send (#3082 item 3, Ruling A757)', () => {
+  const G = loadV6Shell();
+
+  it('Ctrl/Cmd+Shift+Enter is Force Send; Shift+Enter alone stays a newline; Enter sends', () => {
+    assert.equal(G.tcV6ChatKeyAction({ key: 'Enter', shiftKey: true, ctrlKey: true }), 'force');
+    assert.equal(G.tcV6ChatKeyAction({ key: 'Enter', shiftKey: true, metaKey: true }), 'force');
+    assert.equal(G.tcV6ChatKeyAction({ key: 'Enter', shiftKey: true }), null);
+    assert.equal(G.tcV6ChatKeyAction({ key: 'Enter' }), 'send');
+    assert.equal(G.tcV6ChatKeyAction({ key: 'Enter', shiftKey: true, ctrlKey: true, isComposing: true }), null);
+  });
+
+  it('draws a named Force button that stays enabled while a send is pending, and is off with no session', () => {
+    const view = (chat, extra) => G.tcV6ConversationViewMarkup(Object.assign({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: Object.assign({ status: 'active', members: [] }, chat || {}) }, extra || {}));
+    const pending = view({ send: { kind: 'pending', message: 'Sending…' } });
+    assert.match(pending, /<button type="button" id="v6ChatForceSend" class="btn btn-secondary v6-chat-force-send"\s+title="Send now, even while a reply or another send is in flight \(Ctrl\/Cmd\+Shift\+Enter\)"\s+aria-label="Force send: send now, even while a reply or another send is in flight"><span aria-hidden="true">⚡<\/span> Force<\/button>/);
+    assert.match(pending, /<button type="submit" id="v6ChatSend"[^>]*disabled/);
+    assert.match(view({ status: 'offline' }, { sessionId: null }), /id="v6ChatForceSend"[^>]*disabled/);
+  });
+
+  /**
+   * A live chat wired as public/ui.js wires it (onSendChat gets the text
+   * alone), whose command route can be held in flight or refuse.
+   */
+  function mountForce(opts) {
+    const o = opts || {};
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const commands = [];
+    const releases = [];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
+      if (/conversation\/events/.test(url)) return { events: [] };
+      return null;
+    };
+    api.lastError = null;
+    const apiMutate = async (url, method, body) => {
+      if (!/\/command$/.test(url)) return { ok: true };
+      commands.push(plain(body));
+      if (o.refuse && body.priority) { api.lastError = o.refuse; return null; }
+      if (o.hold && commands.length === 1) await new Promise((r) => releases.push(r));
+      return { ok: true };
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
+      onRender: (r) => pending.push(live.handleRoute(r)),
+      onSendChat: o.twoArgs ? (t, f) => { o.seen = f; pending.push(live.sendChat(t, f)); } : (t) => pending.push(live.sendChat(t)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    const type = (text) => { const input = doc.getElementById('v6ChatInput'); input.value = text; input.dispatch('input'); };
+    return { doc, root, shell, commands, settle, type, release: () => releases.forEach((r) => r()) };
+  }
+  const flags = { command: 'now!', enter: true, priority: true, startupIntervention: true };
+
+  it('pushes an urgent message in while another send is still in flight, even through a page that passes the text alone', async () => {
+    const m = mountForce({ hold: true });
+    await m.settle();
+    m.type('first');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    m.type('second');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(m.commands.length, 1, 'a plain send still waits');
+    m.type('now!');
+    m.doc.getElementById('v6ChatForceSend').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(m.commands, [{ command: 'first', enter: true }, flags]);
+    // The forced send is done, the first is not: a plain send still waits for it.
+    await new Promise((r) => setImmediate(r));
+    m.type('third');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(m.commands.length, 2);
+    m.release();
+    await m.settle();
+  });
+
+  it('the keyboard shortcut forces too, and a forced send leaves the next plain one plain', async () => {
+    const m = mountForce();
+    await m.settle();
+    // Catch the keydown handler the shell gives the box, to call it with a real key event's fields.
+    const keydowns = [];
+    const realRegister = m.doc._register;
+    m.doc._register = (el) => {
+      if (el && el.id === 'v6ChatInput') {
+        const add = el.addEventListener;
+        el.addEventListener = (type, fn) => { if (type === 'keydown') keydowns.push(fn); return add.call(el, type, fn); };
+      }
+      return realRegister(el);
+    };
+    m.shell.setTelemetry(null);
+    m.type('now!');
+    let prevented = false;
+    keydowns.forEach((fn) => fn({ key: 'Enter', shiftKey: true, ctrlKey: true, preventDefault: () => { prevented = true; } }));
+    await m.settle();
+    assert.ok(keydowns.length >= 1, 'the shell gave the box a keydown handler');
+    assert.equal(prevented, true);
+    m.type('later');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.settle();
+    assert.deepEqual(m.commands, [flags, { command: 'later', enter: true }]);
+  });
+
+  it('also hands the flags to a page that takes a second argument', async () => {
+    const o = { twoArgs: true };
+    const m = mountForce(o);
+    await m.settle();
+    m.type('now!');
+    m.doc.getElementById('v6ChatForceSend').dispatch('click');
+    await m.settle();
+    assert.deepEqual(plain(o.seen), { priority: true, startupIntervention: true });
+    assert.deepEqual(m.commands, [flags]);
+    // Such a page never takes them from the shell, and the next plain send must not inherit them.
+    m.type('later');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await m.settle();
+    assert.deepEqual(m.commands, [flags, { command: 'later', enter: true }]);
+  });
+
+  it('a refusal the server still makes (an engine startup dialog) shows its reason and puts the text back', async () => {
+    const m = mountForce({ refuse: 'An engine startup dialog is on the pane' });
+    await m.settle();
+    m.type('now!');
+    m.doc.getElementById('v6ChatForceSend').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /Not sent: An engine startup dialog is on the pane/);
+    assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*>now!<\/textarea>/);
   });
 });

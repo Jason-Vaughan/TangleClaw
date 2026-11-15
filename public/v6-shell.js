@@ -928,9 +928,12 @@
           title="Switch to Delegate: ${escapeHtml(chat.delegate.name)}" aria-label="Switch to Delegate: ${escapeHtml(chat.delegate.name)}"><span aria-hidden="true">⇄</span> ${escapeHtml(chat.delegate.name)}</a>`
       : '';
     const send = chat.send && CHAT_SEND_KINDS.includes(chat.send.kind) ? chat.send : null;
-    // Disabled while a send is in flight too, so a second Enter cannot type
-    // the same message into the session twice.
+    // Send is disabled while a send is in flight, so a second Enter cannot
+    // type the same message in twice; the box itself stays open, since the
+    // composer empties on Enter and Force Send (#3082, Ruling A757) exists to
+    // push an urgent message in meanwhile.
     const disabled = liveSession && !(send && send.kind === 'pending') ? '' : ' disabled';
+    const boxDisabled = liveSession ? '' : ' disabled';
     // #3053: start an offline target, or every offline member of a group,
     // from the chat itself. Starting several agents asks a second time.
     const startButton = liveSession ? '' : `<button type="button" id="v6ChatStart" class="btn btn-primary btn-small v6-chat-start" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>`;
@@ -993,10 +996,13 @@
       ${chatActivityMarkup(chatBusyLabel(chat), chat.activityElapsed)}
       <form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form" aria-label="Message ${escapeHtml(name)}">
         <div id="v6ChatAttachments" class="v6-chat-attachments" aria-live="polite">${attachmentChipsMarkup(chat.attachments)}</div>
-        <textarea id="v6ChatInput" class="v6-chat-input" name="message" rows="3" aria-label="Message to ${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}"${disabled}>${escapeHtml(chat.draft || '')}</textarea>
+        <textarea id="v6ChatInput" class="v6-chat-input" name="message" rows="3" aria-label="Message to ${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}"${boxDisabled}>${escapeHtml(chat.draft || '')}</textarea>
         <div class="v6-chat-composer-actions">
           <button type="button" id="v6ChatAttachBtn" class="btn btn-secondary btn-small v6-chat-attach-btn" aria-label="Attach files (or drop or paste them into the message)">📎 Attach</button>
           <input type="file" id="v6ChatFileInput" class="v6-chat-file-input" multiple hidden>
+          <button type="button" id="v6ChatForceSend" class="btn btn-secondary v6-chat-force-send"${boxDisabled}
+            title="Send now, even while a reply or another send is in flight (Ctrl/Cmd+Shift+Enter)"
+            aria-label="Force send: send now, even while a reply or another send is in flight"><span aria-hidden="true">⚡</span> Force</button>
           <button type="submit" id="v6ChatSend" class="btn btn-primary v6-chat-send-btn"${disabled}>Send</button>
         </div>
       </form>
@@ -1167,7 +1173,8 @@
    * @param {Array<string>} knownUserTexts - User messages already recorded, not to repeat.
    * The switchboard's own traffic is kept apart (#3076): its wakes and every
    * `tc message send` the pane shows, in order, for Under the Hood. The
-   * questions are every line of the newest assistant turn that ends in `?`,
+   * questions are every line the session has said since the operator last
+   * spoke that ends in `?` (a wake can split that into several turns),
    * list markers stripped, and none once the operator has answered (#3079).
    * @returns {{turns: Array<{role: 'user'|'assistant', text: string}>, question: string|null,
    *   questions: string[], activity: string|null, switchboard: Array<{dir: 'in'|'out', text: string}>}}
@@ -2193,7 +2200,10 @@
    * @returns {'send'|null}
    */
   function chatKeyAction(evt) {
-    return evt && evt.key === 'Enter' && !evt.shiftKey && !evt.isComposing ? 'send' : null;
+    if (!evt || evt.key !== 'Enter' || evt.isComposing) return null;
+    // #3082: Ctrl/Cmd+Shift+Enter is Force Send; Shift+Enter alone stays a newline.
+    if (evt.shiftKey) return evt.ctrlKey || evt.metaKey ? 'force' : null;
+    return 'send';
   }
 
   /**
@@ -2682,6 +2692,13 @@
     const sentWhole = new Map();
     const SENT_WHOLE_KEPT = 10;
     let sendSeq = 0;
+    // Sends on their way, per project (#3082): a plain send waits while any is.
+    const sendsInFlight = new Map();
+
+    /** @param {{project: {id: *}}} chat @returns {boolean} Whether a send to its project is on its way. */
+    function inFlight(chat) {
+      return (sendsInFlight.get(String(chat.project.id)) || 0) > 0;
+    }
     const clock = typeof deps.now === 'function' ? deps.now : () => Date.now();
     // The secure-clipboard routes gate even their GET listing with operator
     // proof, and api()'s own CSRF header only rides on writes, so the token
@@ -3112,10 +3129,16 @@
      * @param {string} text
      * @returns {Promise<void>}
      */
-    async function sendChat(text) {
+    async function sendChat(text, flags) {
       const typed = String(text || '').trim();
       const chat = current;
-      if (!chat || chat.sending || !getShell()) return;
+      // #3082 (Ruling A757): a Force Send carries its flags, as the second
+      // argument or from the shell when the page passes the text alone, and
+      // does not wait for a send already in flight.
+      const shell = getShell();
+      const given = flags || (shell && typeof shell.takeSendFlags === 'function' ? shell.takeSendFlags() : null);
+      const forced = Boolean(given && given.priority === true);
+      if (!chat || (inFlight(chat) && !forced) || !shell) return;
       const files = attachments.get(String(chat.project.id)) || [];
       const ready = files.filter((a) => a.status === 'ready');
       const uploading = files.filter((a) => a.status === 'uploading').length;
@@ -3133,11 +3156,17 @@
       // the agent can open it; the text and the list are separated by a blank line.
       const refs = ready.map((a) => `Attached: ${a.relPath}`).join('\n');
       const message = typed && refs ? `${typed}\n\n${refs}` : (typed || refs);
-      chat.sending = true;
+      // Counted per project, not on `current`: a forced send that finishes
+      // reloads the chat (a new `current`) while the first may still be on
+      // its way, and neither that reload nor the forced send's own end may
+      // let a plain send through meanwhile.
+      const key = String(chat.project.id);
+      sendsInFlight.set(key, (sendsInFlight.get(key) || 0) + 1);
       try {
-        await deliverChat(chat, message, name, String(text || ''));
+        await deliverChat(chat, message, name, String(text || ''), forced);
       } finally {
-        chat.sending = false;
+        const left = (sendsInFlight.get(key) || 1) - 1;
+        if (left > 0) sendsInFlight.set(key, left); else sendsInFlight.delete(key);
       }
     }
 
@@ -3147,9 +3176,12 @@
      * @param {string} message
      * @param {string} name - The target project's name.
      * @param {string} draft - The composer's text, put back if the send fails.
+     * @param {boolean} [forced] - A Force Send (#3082): the command carries
+     *   `priority` and `startupIntervention`; the server still refuses at an
+     *   engine startup dialog, a running wrap, or a HOLD/STOP (Ruling A757).
      * @returns {Promise<void>}
      */
-    async function deliverChat(chat, message, name, draft) {
+    async function deliverChat(chat, message, name, draft, forced) {
       // #3079 item 6: the composer empties as Enter is pressed, and the
       // message waits at the bottom of the chat until the send settles.
       const sendId = ++sendSeq;
@@ -3179,7 +3211,8 @@
         if (message.length > MAX_COMMAND_CHARS) command = longPromptCommand(message, saved.relPath);
         toRecord = recordedText(message, saved.relPath, launchId);
       }
-      const sent = await apiMutate(`/api/sessions/${encodeURIComponent(name)}/command`, 'POST', { command, enter: true });
+      const body = forced ? { command, enter: true, priority: true, startupIntervention: true } : { command, enter: true };
+      const sent = await apiMutate(`/api/sessions/${encodeURIComponent(name)}/command`, 'POST', body);
       if (sent) awaitingReply = { projectId: String(chat.project.id), reply: before, reads: 0 };
       // Once it is in the session the draft is spent, even if the operator
       // has moved to another chat meanwhile: left saved, it would come back
@@ -3843,6 +3876,8 @@
     let pendingSend = null;
     // What to run when the shell is torn down (#3082).
     const destroyHooks = [];
+    // The flags of the send being handed to the page right now (#3082).
+    let sendFlags = null;
     // The chat whose Start fleet button has been clicked once (#3053).
     let fleetArmedKey = null;
     // The chat whose rename form is open (#3071), the name typed into it
@@ -4147,11 +4182,14 @@
           if (key != null) chatDrafts.set(key, String((evt && evt.target && evt.target.value) || ''));
         });
         input.addEventListener('keydown', (evt) => {
-          if (chatKeyAction(evt) !== 'send') return;
+          const action = chatKeyAction(evt);
+          if (!action) return;
           if (typeof evt.preventDefault === 'function') evt.preventDefault();
-          submitChat();
+          submitChat(action === 'force');
         });
       }
+      const force = doc.getElementById('v6ChatForceSend');
+      if (force) force.addEventListener('click', () => submitChat(true));
       const form = doc.getElementById('v6ChatForm');
       if (form) {
         form.addEventListener('submit', (evt) => {
@@ -4455,7 +4493,14 @@
      * Hand the composer's text to the page, unless there is nothing to send:
      * no text and no attachment.
      */
-    function submitChat() {
+    /**
+     * Hand the composer's text to the page to send (#3047). A forced send
+     * (#3082, Ruling A757) carries `{priority, startupIntervention}`: as the
+     * second argument, and — since a page may pass the text alone — for the
+     * controller to take from {@link takeSendFlags} while this call runs.
+     * @param {boolean} [force]
+     */
+    function submitChat(force) {
       const input = doc.getElementById('v6ChatInput');
       const text = String((input && typeof input.value === 'string' ? input.value : chatDrafts.get(chatTargetKey())) || '').trim();
       const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
@@ -4463,7 +4508,15 @@
       if ((!text && !hasFiles) || typeof options.onSendChat !== 'function') return;
       // #3079: sending is the operator answering; the queue clears.
       dismissQuestions(questionsNow());
-      options.onSendChat(text);
+      const flags = force ? { priority: true, startupIntervention: true } : null;
+      sendFlags = flags;
+      try {
+        if (flags) options.onSendChat(text, flags);
+        else options.onSendChat(text);
+      } finally {
+        // Only the send this call started may take them.
+        sendFlags = null;
+      }
     }
 
     /**
@@ -4841,6 +4894,12 @@
        * @param {Function} fn
        */
       onDestroy(fn) { if (typeof fn === 'function') destroyHooks.push(fn); },
+      /**
+       * The flags of the send the composer is handing over right now (#3082):
+       * `{priority, startupIntervention}` for a Force Send, else null.
+       * @returns {{priority: boolean, startupIntervention: boolean}|null}
+       */
+      takeSendFlags() { const f = sendFlags; sendFlags = null; return f; },
       destroy() {
         destroyHooks.splice(0).forEach((fn) => fn());
         if (tickerId != null) { stopTicker(tickerId); tickerId = null; }
