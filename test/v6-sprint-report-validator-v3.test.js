@@ -353,7 +353,7 @@ describe('#2979 validateReport end to end', () => {
     assert.deepEqual(r.findings, []);
     assert.equal(r.ok, true);
     assert.equal(r.validatorVersion, v3.VALIDATOR_VERSION);
-    assert.equal(v3.VALIDATOR_VERSION, '3.0.0');
+    assert.equal(v3.VALIDATOR_VERSION, '3.1.0');
   });
 
   it('a fully clean retrospective-mode report passes too', () => {
@@ -588,5 +588,104 @@ describe('#3093 hub report links (Ruling A766-2)', () => {
     const html = hub('v6.4.0', ['v6.3.0']);
     const r = v3.ensureHubReportLinks(html, ['v6.3.0', 'v6.4.0']);
     assert.deepEqual(r, { ok: true, html, inserted: [], unlinked: [] });
+  });
+});
+
+describe('#3089 Rule 11 — Fast-Follow Sub-Version Remarks (contract v3.1)', () => {
+  const routine = {
+    version: 'v6.2.2', milestone: 69, prs: [3047], issues: [3046], release_tag: 'v6.2.2',
+    summary_remark: 'Chat polish fast-follow.', major_learning: false
+  };
+  const major = {
+    version: 'v6.2.9', milestone: 76, prs: [3080, 3081], issues: [3075, 3077], release_tag: 'v6.2.9',
+    summary_remark: 'Fleet isolation.', major_learning: true, kaizen_id: 'kz-1', postmortem_ref: 'pm-fleet-isolation'
+  };
+  const TABLE = '<table class="fast-follow-subversions"><tr><th>Version</th><th>Remark</th></tr>'
+    + '<tr><td><code>v6.2.2</code></td><td>Chat polish.</td></tr><tr><td>v6.2.9</td><td>Fleet isolation.</td></tr></table>';
+  const POSTMORTEM = '<h3 id="pm-fleet-isolation">Fleet isolation</h3><p>What it taught.</p>';
+
+  /**
+   * A report carrying fast-follow entries, with the remark table and the postmortem by default.
+   * @param {object} [over]
+   * @returns {object[]} Rule 11's findings only.
+   */
+  function rule11(over = {}) {
+    const html = fixture({
+      metrics: { fast_follow_subversions: over.entries !== undefined ? over.entries : [routine, major] },
+      sections: {
+        overview: over.overview !== undefined ? over.overview : TABLE,
+        deliverables: over.deliverables,
+        postmortem: over.postmortem !== undefined ? over.postmortem : POSTMORTEM
+      }
+    });
+    return v3.validateReport(html).findings.filter((f) => f.rule === 11);
+  }
+
+  it('passes complete entries with their table rows and a linked major learning', () => {
+    assert.deepEqual(rule11(), []);
+  });
+
+  it('checks nothing on a report with no fast-follow entries', () => {
+    assert.deepEqual(v3.validateReport(fixture()).findings.filter((f) => f.rule === 11), []);
+  });
+
+  it('accepts the remark table in #deliverables instead of #overview', () => {
+    assert.deepEqual(rule11({ overview: '<p>none</p>', deliverables: TABLE }), []);
+  });
+
+  it('fails a remark table that is outside #overview and #deliverables', () => {
+    const findings = rule11({ overview: '<p>none</p>', postmortem: POSTMORTEM + TABLE });
+    assert.deepEqual(findings.map((f) => f.code), ['FAST_FOLLOW_ROW_MISSING', 'FAST_FOLLOW_ROW_MISSING']);
+    assert.equal(findings[0].severity, 'blocking');
+  });
+
+  it('matches a row by its exact version, not a prefix of a longer one', () => {
+    const table = '<table><tr><td>v6.2.22</td></tr><tr><td>v6.2.9</td></tr></table>';
+    assert.deepEqual(rule11({ overview: table }).map((f) => f.message), [
+      'v6.2.2 has no row in a Fast-Follow Sub-Versions table in #overview or #deliverables.'
+    ]);
+  });
+
+  it('fails a major learning with no Kaizen item, and one whose postmortem_ref names nothing in #postmortem', () => {
+    assert.deepEqual(rule11({ entries: [routine, { ...major, kaizen_id: ' ' }] }).map((f) => f.code), ['FAST_FOLLOW_KAIZEN_LINK_MISSING']);
+    assert.deepEqual(rule11({ entries: [routine, { ...major, postmortem_ref: 'pm-elsewhere' }] }).map((f) => f.code), ['FAST_FOLLOW_POSTMORTEM_REF_MISSING']);
+    assert.deepEqual(rule11({ postmortem: '<p>no anchors</p>' }).map((f) => f.code), ['FAST_FOLLOW_POSTMORTEM_REF_MISSING']);
+    assert.deepEqual(rule11({ postmortem: '<p data-id="pm-fleet-isolation">x</p>' }).map((f) => f.code), ['FAST_FOLLOW_POSTMORTEM_REF_MISSING'],
+      'another attribute ending in id is not an id');
+    assert.deepEqual(rule11({ entries: [routine, { ...major, postmortem_ref: 'pm"x' }] }).map((f) => f.code), ['FAST_FOLLOW_POSTMORTEM_REF_MISSING']);
+    assert.deepEqual(rule11({ entries: [routine, { ...major, postmortem_ref: 'pm-f(?:leet-isolation)' }] }).map((f) => f.code), ['FAST_FOLLOW_POSTMORTEM_REF_MISSING'],
+      'a ref is an id matched as written, never a pattern');
+  });
+
+  it('a routine entry needs no Kaizen link', () => {
+    assert.deepEqual(rule11({ entries: [routine], overview: TABLE, postmortem: '<p>none</p>' }), []);
+  });
+
+  for (const [label, change] of [
+    ['a version that is not vX.Y.Z', { version: '6.2.2' }],
+    ['a missing milestone', { milestone: undefined }],
+    ['prs that are not numbers', { prs: ['#3047'] }],
+    ['issues that are not a list', { issues: 3046 }],
+    ['an empty release tag', { release_tag: '' }],
+    ['an empty summary remark', { summary_remark: '  ' }],
+    ['a major_learning that is not a boolean', { major_learning: 'no' }]
+  ]) {
+    it(`fails an entry with ${label}`, () => {
+      const findings = rule11({ entries: [{ ...routine, ...change }] });
+      assert.deepEqual(findings.map((f) => f.code), ['FAST_FOLLOW_INVALID']);
+      assert.equal(findings[0].field, 'fast_follow_subversions');
+    });
+  }
+
+  it('fails a list that is not an array, an entry that is not an object, and a version listed twice', () => {
+    assert.deepEqual(rule11({ entries: { v: routine } }).map((f) => f.code), ['FAST_FOLLOW_INVALID']);
+    assert.deepEqual(rule11({ entries: null }).map((f) => f.code), ['FAST_FOLLOW_INVALID'], 'present but null is not absent');
+    assert.deepEqual(rule11({ entries: [routine, null] }).map((f) => f.code), ['FAST_FOLLOW_INVALID']);
+    assert.deepEqual(rule11({ entries: [routine, { ...routine }] }).map((f) => f.code), ['FAST_FOLLOW_DUPLICATE']);
+  });
+
+  it('fails the whole report: a Rule 11 finding is blocking', () => {
+    const html = fixture({ metrics: { fast_follow_subversions: [routine] } });
+    assert.equal(v3.validateReport(html).ok, false);
   });
 });

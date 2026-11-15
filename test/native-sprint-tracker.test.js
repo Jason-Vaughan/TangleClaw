@@ -944,3 +944,85 @@ describe('#3093 verifySprintSetupAndRoadmapSync (Ruling A766-1, A786)', () => {
     assert.throws(() => tracker.verifySprintSetupAndRoadmapSync(clean({ reportDirs: undefined })), TypeError);
   });
 });
+
+describe('#3089 buildConsolidatedTrainReportSummary', () => {
+  const econ = (m, e, s, a) => ({ measured_tokens: m, estimated_tokens: e, subscription_allocated_cost_usd: s, api_shadow_cost_usd: a });
+  const closed = (n) => Array.from({ length: n }, (_, i) => ({ id: i, state: 'closed' }));
+
+  /**
+   * A three-version train's sprint data, each with PRs, closed issues, economics and fast-follow entries.
+   * @returns {Object<string, object>}
+   */
+  function train() {
+    return {
+      'v6.2.10': {
+        cars: [{ id: 'c1', issues: closed(2) }], pullRequests: [{ number: 1 }, { number: 2 }],
+        economics: econ(100, 10, 0.1, 1.25),
+        fastFollowSubversions: [{ version: 'v6.2.10', summary_remark: 'ten' }]
+      },
+      'v6.2.9': {
+        cars: [{ id: 'c2', issues: [...closed(1), { id: 9, state: 'open' }] }], pullRequests: [{ number: 3 }],
+        economics: econ(200, 20, 0.2, 2.5),
+        fastFollowSubversions: [{ version: 'v6.2.9', summary_remark: 'nine' }]
+      },
+      'v6.3.0': {
+        cars: [{ id: 'c3', issues: closed(3) }], pullRequests: [{ number: 4 }, { number: 5 }, { number: 6 }],
+        economics: econ(300, 30, 0.3, 3)
+      }
+    };
+  }
+
+  it('orders versions numerically and makes every total the sum of the rows it shows', () => {
+    const s = tracker.buildConsolidatedTrainReportSummary(['v6.3.0', 'v6.2.10', 'v6.2.9'], train());
+    assert.deepEqual(s.versions, ['v6.2.9', 'v6.2.10', 'v6.3.0']);
+    assert.deepEqual(s.perVersion.map((r) => [r.version, r.prCount, r.issuesClosed]), [
+      ['v6.2.9', 1, 1], ['v6.2.10', 2, 2], ['v6.3.0', 3, 3]
+    ]);
+    assert.equal(s.totals.prCount, s.perVersion.reduce((a, r) => a + r.prCount, 0));
+    assert.equal(s.totals.prCount, 6);
+    assert.equal(s.totals.issuesClosed, 6);
+    assert.deepEqual(s.totals.economics, econ(600, 60, 0.6, 6.75), 'cents, not 0.6000000000000001');
+    assert.deepEqual(s.missingVersions, []);
+    assert.deepEqual(s.economicsIncomplete, []);
+  });
+
+  it('collects every version\'s fast-follow remarks into one table, oldest first, tagged with its train version', () => {
+    const s = tracker.buildConsolidatedTrainReportSummary(['v6.2.10', 'v6.2.9', 'v6.3.0'], train());
+    assert.deepEqual(s.fastFollowSubversions.map((e) => [e.version, e.train_version]), [['v6.2.9', 'v6.2.9'], ['v6.2.10', 'v6.2.10']]);
+  });
+
+  it('sorts remarks by their own version even when one train version lists them out of order', () => {
+    const data = train();
+    data['v6.3.0'].fastFollowSubversions = [{ version: 'v6.3.2' }, { version: 'v6.3.1' }];
+    const s = tracker.buildConsolidatedTrainReportSummary(['v6.3.0'], data);
+    assert.deepEqual(s.fastFollowSubversions.map((e) => e.version), ['v6.3.1', 'v6.3.2']);
+  });
+
+  it('lists a version with no data instead of counting it as zero', () => {
+    const s = tracker.buildConsolidatedTrainReportSummary(['v6.2.9', 'v6.2.8'], train());
+    assert.deepEqual(s.missingVersions, ['v6.2.8']);
+    assert.deepEqual(s.perVersion.map((r) => r.version), ['v6.2.9']);
+  });
+
+  it('states no total for an economics field some version lacks, and names that version', () => {
+    const data = train();
+    delete data['v6.2.9'].economics.api_shadow_cost_usd;
+    data['v6.3.0'].economics.measured_tokens = -1;
+    const s = tracker.buildConsolidatedTrainReportSummary(['v6.2.9', 'v6.2.10', 'v6.3.0'], data);
+    assert.equal(s.totals.economics.api_shadow_cost_usd, null);
+    assert.equal(s.totals.economics.measured_tokens, null, 'a negative figure is not a figure');
+    assert.equal(s.totals.economics.estimated_tokens, 60);
+    assert.deepEqual(s.economicsIncomplete, ['v6.2.9', 'v6.3.0']);
+  });
+
+  it('a train with no data at all totals nothing rather than zero economics', () => {
+    const s = tracker.buildConsolidatedTrainReportSummary(['v6.4.0'], {});
+    assert.equal(s.totals.prCount, 0);
+    assert.equal(s.totals.economics.measured_tokens, null);
+  });
+
+  it('refuses a version list it cannot read', () => {
+    assert.throws(() => tracker.buildConsolidatedTrainReportSummary('v6.3.0', {}), TypeError);
+    assert.throws(() => tracker.buildConsolidatedTrainReportSummary(['v6.3.0', ''], {}), TypeError);
+  });
+});

@@ -1,4 +1,4 @@
-# Sprint Report Contract v3.0.0
+# Sprint Report Contract v3.1.0
 
 Canonical schema and validation contract for Individual Sprint Reports and Multi-Version
 Retrospectives. Supersedes the v2.0.0/v2.1.0 contract `validate-sprint-report.py` enforced
@@ -105,6 +105,34 @@ in two different rules.
 seven-term vocabulary in Rule 5 — a report states which of the seven have happened, never a prose
 synonym for one of them.
 
+#### `fast_follow_subversions` (optional, new in v3.1.0)
+
+A parent or consolidated train report may record its small fast-follow point releases (for
+example `v6.2.2`–`v6.2.10`) here instead of publishing a full twelve-section report for each. A
+full report per fast-follow adds ceremony without signal, while leaving them out breaks the
+longitudinal record, so each one gets a single remark row:
+
+```json
+"fast_follow_subversions": [
+  { "version": "v6.2.2", "milestone": 69, "prs": [3047], "issues": [3046], "release_tag": "v6.2.2",
+    "summary_remark": "Chat polish fast-follow.", "major_learning": false },
+  { "version": "v6.2.9", "milestone": 76, "prs": [3080], "issues": [3077], "release_tag": "v6.2.9",
+    "summary_remark": "Medusa fleet isolation.", "major_learning": true,
+    "kaizen_id": "<kaizen_items.id>", "postmortem_ref": "pm-fleet-isolation" }
+]
+```
+
+Each entry has its own row in a Fast-Follow Sub-Versions remark table inside `#overview` or
+`#deliverables` (`lib/v6/e4-rich-report-presentation.js#renderFastFollowRemarkTable` renders one).
+A routine fast-follow stays that one row. One with `major_learning: true` must also link the Kaizen
+ledger item it produced (`kaizen_id`) and its postmortem entry (`postmortem_ref`, the `id` of an
+element inside `#postmortem`), so a fast-follow that taught something is never reduced to a line.
+Rule 11 checks all of this from the HTML; it cannot see the Kaizen ledger, so
+`lib/v6/e5-kaizen-ledger.js#verifyFastFollowKaizenLinks` confirms each `kaizen_id` names a real
+ledger item.
+
+Absent, Rule 11 has nothing to check. Present, it must be an array, even an empty one.
+
 ### `#tc-report-errata` (new in v3.0.0)
 
 Absent on a report with nothing to reconcile. Present — and required for Rule 9/10 to pass a
@@ -139,7 +167,7 @@ A report carrying `#tc-report-errata` renders a visible audit banner reading exa
 whose rendered HTML carries no such banner, or whose banner names a revision the ledger disagrees
 with.
 
-## The ten rules
+## The eleven rules
 
 | # | Name | Fails when | Severity |
 |---|---|---|---|
@@ -153,11 +181,38 @@ with.
 | 8 | Cross-Report Contamination Detector | An n-gram run of 8+ words (configurable) in ANY narrative section — including `#next-sprint` and `#retro` — matches a run in the supplied corpus or, in `retrospective` mode, another leg's narrative, AND is not a citation, a shared boilerplate allowlist entry, or a longitudinal cross-reference the two sections both legitimately describe | warning |
 | 9 | Contradiction Gate | Rule 1–8 found any blocking violation and `#tc-report-errata`'s ledger does not already carry a matching entry reconciling it | blocking |
 | 10 | Errata Ledger Integrity | `errata_ledger[]` has a mutated/removed prior entry (compared against a caller-supplied prior ledger snapshot, when one is supplied), or the visible audit banner's revision disagrees with the ledger's `revision` | blocking |
+| 11 | Fast-Follow Sub-Version Remarks (v3.1.0) | `fast_follow_subversions` is present and not an array; an entry lacks a `vX.Y.Z` version, milestone number, PR or issue list, release tag, summary remark or boolean `major_learning`; a version is listed twice; an entry has no row in a remark table in `#overview` or `#deliverables`; or a `major_learning: true` entry has no `kaizen_id`, or a `postmortem_ref` that is not the `id` of an element in `#postmortem` | blocking |
 
 Severity: a **blocking** violation fails `validateReport()`'s overall `ok`; a **warning** is
 reported but does not. Rule 9 is what turns a would-be-blocking Rule 1–8 finding into a pass: an
 entry in the errata ledger that names the exact field and reconciles it is the only thing that
-can.
+can. Rule 11 runs after Rule 9 and is not reconciled by the errata ledger: an incomplete
+fast-follow entry is fixed in the entry itself.
+
+## Consolidated multi-version train reports (v3.1.0)
+
+A train report spanning several versions (`v6.2.0`–`v6.2.10`, `v6.3.0`–`v6.4.0`) states its
+per-version figures and their totals from one computation, so it can never state a total its own
+rows disagree with. `lib/native-sprint-tracker.js#buildConsolidatedTrainReportSummary(versions,
+sprintDataByVersion)` returns each version's PR count, issues closed and the four `economics`
+fields, their totals, and every version's `fast_follow_subversions` entries in one list.
+`lib/v6/e4-rich-report-presentation.js#renderConsolidatedTrainSummary` renders that summary. A
+version with no data is named, not counted as zero, and an `economics` total that some version
+cannot contribute to is not stated (rendered as a dash), not summed over the versions that have it.
+
+## Sprint Reports Hub links and the setup gate
+
+Every report directory (`vX.Y.Z`, or a range such as `vA.B.C-vX.Y.Z-retrospective`) must be linked
+from the hub's `sprint-reports/index.html`. When the hub's live sprint card moves on to the next
+version, the version it used to link loses its only link. `validateHubReportLinks(hubHtml,
+reportDirs)` names such a directory, and `ensureHubReportLinks(hubHtml, reportDirs)` gives it a card
+of its own directly after the `<!-- LIVE_SPRINT_CARD_END -->` marker, newest first. Running it again
+changes nothing, and a hub without that marker is left unchanged and reported, never guessed at.
+
+`lib/native-sprint-tracker.js#verifySprintSetupAndRoadmapSync` is the runtime check Gate 0 and
+Sprint Exit certify against (`setup_and_roadmap_sync`). It fails when an open `vX.Y.Z` milestone has
+no roadmap release, an issue is placed twice in the roadmap, the roadmap sync status is missing or
+not `ok`, or a report directory is unlinked.
 
 ## CLI
 
