@@ -2375,6 +2375,12 @@ describe('lib/medusa — fleet isolation (#3077, Ruling A738)', () => {
       [require('../lib/bridge-gateway').GATEWAY_KEY, require('../lib/master').MASTER_MEDUSA_KEY].sort());
   });
 
+  it('reads registered system ids from the targets the Master and the bridge start their listeners from', () => {
+    assert.deepEqual(realFleetDeps.systemTargets(),
+      [require('../lib/master').masterMedusaTarget(), require('../lib/bridge-gateway').gatewayTarget()]);
+    assert.deepEqual(realFleetDeps.systemTargets().map((t) => t.sessionId).sort(), [...medusa.SYSTEM_LISTENER_KEYS].sort());
+  });
+
   for (const key of ['operator-bridge', 'master']) {
     it(`a live "${key}" listener is in every fleet`, () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fleet-system-'));
@@ -2557,6 +2563,37 @@ describe('lib/medusa — fleet isolation (#3077, Ruling A738)', () => {
         }
       });
     }
+
+    it('lets a grouped and a tagged project reach a STOPPED operator bridge by its registered id (PRR-B R1)', async () => {
+      // The listener is off; only the registry, where lib/bridge-gateway.js
+      // starts it from, knows the id. Mail to it must queue, not be refused.
+      const registryMod = require('../lib/medusa-registry');
+      const target = require('../lib/bridge-gateway').gatewayTarget();
+      const id = registryMod.ensureWorkspaceId(target.projectPath, target.sessionId, target.name);
+      assert.equal(medusa.getStatus('operator-bridge').workspaceId || null, null, 'precondition: not listening');
+      for (const from of [7, 11]) {
+        const r = await send(from, { to: id });
+        assert.notEqual(r.body.code, 'CROSS_FLEET_FORBIDDEN', `project ${from}`);
+      }
+      assert.equal(hubCalls, 2);
+    });
+
+    it('lets a grouped project reach a STOPPED Master by its registered id, and only a system key counts', async () => {
+      const registryMod = require('../lib/medusa-registry');
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fleet-master-home-'));
+      const masterId = registryMod.ensureWorkspaceId(home, 'master', 'Project Master');
+      const impostorId = registryMod.ensureWorkspaceId(home, 'impostor', 'Impostor');
+      medusa._fleetDeps.systemTargets = () => [{ projectPath: home, sessionId: 'master', name: 'Project Master' },
+        { projectPath: home, sessionId: 'impostor', name: 'Impostor' }];
+      try {
+        await send(7, { to: masterId });
+        assert.equal(hubCalls, 1);
+        const r = await send(7, { to: impostorId });
+        assert.equal(r.body.code, 'CROSS_FLEET_FORBIDDEN', 'a registered id under a non-system key is not a system participant');
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
 
     for (const kind of ['operator', 'operator-ui', 'master']) {
       it(`exempts a "${kind}" caller`, async () => {
