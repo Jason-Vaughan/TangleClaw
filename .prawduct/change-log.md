@@ -41,6 +41,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-15 — v6.4.0 release cut (Milestone #79)
+
+<!-- prawduct: type=internal | scope=v640-release -->
+
+- Compiled 4 accepted `changelog.d/` fragments (#3088 from PR #3102; #3089, #3093 and #3099 from PR #3101) into `CHANGELOG.md` section `[6.4.0]` using the wrap's own compile/splice/promote functions. Three `.added` fragments make this a minor release (Ruling A756), so 6.3.0 -> 6.4.0 via `_decideBumpLevel(_parseUnreleased(...))`. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap state. Folded in both PRs' change-log entries below, verbatim.
+- PR #3102's entry carries no `<!-- prawduct: ... -->` tag line; it is folded in verbatim as written.
+- Status corrections the release notes carry: #3092 was deferred to v6.4.1 by Ruling A786 and has no milestone (the v6.3.0 notes said it was chartered for v6.4.0); #3103 (the send path's wording for #3099) is a follow-up for whichever car next owns `lib/medusa-send.js`.
+- This car's own Gate 0 was requested from TC-Lane-B at dispatch; the queue records none for V640-W-REL.
+
+## 2026-11-15 — Car V640-W1-B: fleet isolation fails closed (#3099), sprint setup gate + hub links (#3093), consolidated train reports + fast-follow remarks (#3089)
+
+<!-- prawduct: type=feature | scope=v640-w1-b -->
+
+- #3099 (A784): lib/medusa.js fleetMembership refuses unmapped workspaces to an ungrouped caller while an other-fleet registry is unreadable (remote peers included); full list logged; name-free flag drives the broadcast refusal's REGISTRY_UNREADABLE_OUTSIDE_FLEET reason. Send refusal text unchanged (medusa-send.js out of envelope).
+- #3093 (A766, A786 Q1/I1/I2): verifySprintSetupAndRoadmapSync (MISSING_MILESTONE_RELEASE / DUPLICATE_ROADMAP_PLACEMENT / ROADMAP_SYNC_ERROR fail-closed / UNLINKED_REPORT_DIR) as runtime guardrail setup_and_roadmap_sync; GUARDRAIL_IDS stays P0..P11. validateHubReportLinks / ensureHubReportLinks (idempotent, marker-anchored).
+- #3089 (A786 I3): contract v3.1 fast_follow_subversions + Rule 11; e5 verifyFastFollowKaizenLinks; buildConsolidatedTrainReportSummary (totals from the rows, null over partial economics); e4 renderers. VALIDATOR_VERSION 3.1.0 (pin updated).
+- Envelope: 12 files per A786. e4/e5 tests live in test/native-sprint-tracker.test.js (tiers.json out of envelope). #3092 deferred to v6.4.1.
+
+## 2026-11-15 — v6 car progress matrix with a 6-gate receipt board; charter version activation and train launch controls (#3088)
+
+**Why:** #3088: the Sprint & Cars board showed stages only, and the v6 workspace had no way to activate a charter version or plan and launch a wave run. Charter & Roadmap also drew almost nothing (V630 fed its charter builder the waves payload).
+**What:** public/sprint-wave-ui.js (carGates: recorded / stage-inferred / unknown gates, stale-SHA marking; a per-car matrix with six role=img gate pills below the stage columns), public/v6-shell.js (Charter & Roadmap reads the charter, startup summary and export; Activate per version; train launch over topological-waves, validate-disjointness and wave-runs with operator proof), public/style.css, test/v6-b1-ui-shell.test.js, test/v6-fleet-wave-and-report-e2e.test.js, changelog.d/3088 fragment.
+**Verified:** shell suite 501/501, fleet/wave E2E 14/14 against the real server including a real charter, adjacent sweep, stage 1, tiers, cache guard, large tier, mutation checks, chunk + cumulative Critic and verify-resolutions clean.
+
 ## 2026-11-15 — v6.3.0 release cut (Milestone #78)
 
 <!-- prawduct: type=internal | scope=v630-release -->

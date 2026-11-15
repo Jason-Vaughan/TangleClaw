@@ -17,6 +17,14 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.4.0 — A car gate matrix and train launch, consolidated train reports, a sprint setup gate, and fail-closed fleet isolation
+
+- **Car progress matrix and gate board** (#3088) — `public/sprint-wave-ui.js`: the Sprint & Cars board gives each car a row, grouped by wave, with its lane, pull request, head commit and a pill for each of its six gates (Gate 0, A-Gate, O-Gate, PRR, CI, I-Gate). A recorded gate shows its status, commit and token; a gate inferred from the car's stage is outlined and never shows a commit; one recorded against another commit is struck through.
+- **Charter versions and train launch** (#3088) — `public/v6-shell.js`: Charter & Roadmap shows the open project's own charter, an Activate button on each version not yet active, and train launch controls (Compute waves, Check disjointness, Start a wave run) that send the operator's proof.
+- **Consolidated train reports** (#3089) — `lib/v6/sprint-report-validator-v3.js`, `lib/v6/e4-rich-report-presentation.js`, `lib/v6/e5-kaizen-ledger.js`, `docs/SPRINT_REPORT_CONTRACT.md`: Sprint Report Contract v3.1 adds `fast_follow_subversions`, one remark row per fast-follow release; validator Rule 11 requires a major learning to link its Kaizen item and postmortem entry; `buildConsolidatedTrainReportSummary` totals a train's versions.
+- **Sprint setup gate** (#3093) — `lib/native-sprint-tracker.js`: `verifySprintSetupAndRoadmapSync` holds certification when a milestone has no roadmap release, an issue is placed twice, the roadmap sync is missing or failing, or a report directory is unlinked from the Sprint Reports Hub; the validator gains `validateHubReportLinks` and `ensureHubReportLinks`.
+- **Fail-closed fleet isolation** (#3099) — `lib/medusa.js`: a project in no group is refused a workspace no local project claims while another fleet's registry cannot be read, so an unreadable registry can no longer let it reach that fleet.
+
 ## v6.3.0 — A workspace mode bar and wizard launcher, live sprint routes, the running engine on member badges, and a Medusa registry cache
 
 - **Workspace mode bar and wizard launcher** (#3086) — `public/v6-shell.js`: tabs for Chat, Sprint & Cars, Charter & Roadmap, Kaizen & Reports and Wizard switch the main view without losing the chat, its draft or its scroll. The template wizard opens from the sidebar or a "+ New" button at any time. The data modes load `/sprint-wave-ui.js` once, on demand, and fall back to an escaped built-in list when it or the routes are not available.
