@@ -489,16 +489,103 @@
   }
 
   /**
-   * A data mode's panel (#3086). Its content is filled by the panel loader;
-   * until then it names the mode and says nothing is loaded.
+   * A data mode's panel (#3086): its title, then the content the panel
+   * loader produced (already escaped there), or a loading line until it has.
    * @param {string} mode
+   * @param {string|null|undefined} [content] - HTML from {@link workspacePanelContent}.
    * @returns {string} HTML.
    */
-  function workspacePanelMarkup(mode) {
+  function workspacePanelMarkup(mode, content) {
     const m = WORKSPACE_MODES.find((x) => x.key === mode);
     if (!m || mode === 'chat' || mode === 'wizard') return '';
     return `<h2 class="v6-workspace-panel-title">${escapeHtml(m.label)}</h2>
-      <p class="v6-workspace-empty">Nothing loaded yet.</p>`;
+      ${typeof content === 'string' && content ? content : '<p class="v6-workspace-empty" role="status">Loading…</p>'}`;
+  }
+
+  /**
+   * What each dispatch stage is called when the sprint UI has not loaded
+   * (the stages `lib/native-sprint-tracker.js#syncWaveDispatchState` assigns,
+   * named as `public/sprint-wave-ui.js` names them).
+   */
+  const WORKSPACE_STAGE_LABELS = Object.freeze({
+    unassigned: 'Unassigned', claimed: 'Claimed', 'in-progress': 'In Progress', 'in-review': 'In Review',
+    blocked: 'Blocked', closed: 'Closed'
+  });
+
+  /** The sprint report's hero figures, in the order the built-in Kaizen & Reports panel lists them. */
+  const WORKSPACE_KPI_LABELS = Object.freeze([
+    ['issuesClosed', 'Issues closed'], ['builderPRs', 'Builder PRs'], ['waves', 'Waves'],
+    ['fileCollisions', 'File collisions'], ['reviewRounds', 'Review rounds'], ['cycleTimeHours', 'Cycle time (h)'],
+    ['netLOC', 'Net LOC'], ['releaseCommit', 'Release commit']
+  ]);
+
+  /**
+   * A data mode's panel content (#3086, Rulings A760, A761, A774). A failed
+   * read says so: a missing route or version is "not available on this
+   * server yet", anything else names the reason. Otherwise the sprint UI's
+   * own builder draws it when loaded — `renderSprintWaveBoard(container,
+   * data)` container-first as on main, the two new builders data-first — and
+   * an escaped built-in drawing stands in when it is not, or when it throws.
+   * @param {string} mode - `sprint`, `charter` or `kaizen`.
+   * @param {{ok: boolean, data?: object, notFound?: boolean, error?: string}} result - The read.
+   * @param {object|null} ui - `window.TangleClawSprintWaveUi`, if loaded.
+   * @returns {string} HTML.
+   */
+  function workspacePanelContent(mode, result, ui) {
+    const r = result || { ok: false };
+    if (!r.ok) {
+      return r.notFound
+        ? '<p class="v6-workspace-empty">Not available on this server yet.</p>'
+        : `<p class="v6-workspace-empty is-error">Could not load this: ${escapeHtml(r.error || 'the server did not answer')}.</p>`;
+    }
+    const data = r.data && typeof r.data === 'object' ? r.data : {};
+    const builder = mode === 'sprint' ? 'renderSprintWaveBoard'
+      : mode === 'charter' ? 'renderCharterReadinessPanel' : mode === 'kaizen' ? 'renderKaizenLedgerPanel' : null;
+    if (builder && ui && typeof ui[builder] === 'function') {
+      try {
+        const html = mode === 'sprint' ? ui[builder](null, data) : ui[builder](mode === 'kaizen' ? (data.report || data) : data);
+        if (typeof html === 'string') return html;
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a builder from another car that throws must not blank the panel; the built-in drawing stands in
+        // Fall through to the built-in drawing.
+      }
+    }
+    if (mode === 'sprint') {
+      const dispatch = data.dispatch && typeof data.dispatch === 'object' ? data.dispatch : {};
+      const ids = Object.keys(dispatch);
+      if (!ids.length) return '<p class="v6-workspace-empty">No cars are on the board yet.</p>';
+      return `<ul class="v6-workspace-list">${ids.map((id) => {
+        const row = dispatch[id] || {};
+        const stage = String(row.stage || '');
+        const label = Object.prototype.hasOwnProperty.call(WORKSPACE_STAGE_LABELS, stage) ? WORKSPACE_STAGE_LABELS[stage] : stage;
+        return `<li class="v6-workspace-item"><span class="v6-workspace-item-id">${escapeHtml(id)}</span>`
+          + (label ? ` <span class="v6-workspace-item-stage">${escapeHtml(label)}</span>` : '')
+          + (row.laneName ? ` <span class="v6-workspace-item-lane">${escapeHtml(row.laneName)}</span>` : '')
+          + (row.openPrNumber != null ? ` <span class="v6-workspace-item-pr">#${escapeHtml(row.openPrNumber)}</span>` : '')
+          + '</li>';
+      }).join('')}</ul>`;
+    }
+    if (mode === 'charter') {
+      const waves = Array.isArray(data.waves) ? data.waves.filter((w) => w && typeof w === 'object') : [];
+      if (!waves.length) return '<p class="v6-workspace-empty">No waves are planned yet.</p>';
+      return `<ul class="v6-workspace-list">${waves.map((w) => {
+        const cars = Array.isArray(w.cars) ? w.cars.length : 0;
+        return `<li class="v6-workspace-item"><span class="v6-workspace-item-id">Wave ${escapeHtml(w.id == null ? '?' : w.id)}</span>`
+          + ` <span class="v6-workspace-item-stage">${cars} car${cars === 1 ? '' : 's'}</span></li>`;
+      }).join('')}</ul>`;
+    }
+    if (mode === 'kaizen') {
+      const report = data.report && typeof data.report === 'object' ? data.report : null;
+      if (!report) return '<p class="v6-workspace-empty">No report for this version yet.</p>';
+      const kpis = report.heroKpis && typeof report.heroKpis === 'object' ? report.heroKpis : {};
+      const triggered = (Array.isArray(report.guardrailLedger) ? report.guardrailLedger : []).filter((g) => g && g.triggered);
+      return `<p class="v6-workspace-item-stage">Version ${escapeHtml(report.version || 'unknown')}</p>
+        <dl class="v6-workspace-kpis">${WORKSPACE_KPI_LABELS.map(([key, label]) => {
+          const v = kpis[key];
+          return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(v === null || v === undefined ? '—' : v)}</dd></div>`;
+        }).join('')}</dl>
+        ${triggered.length ? `<ul class="v6-workspace-list">${triggered.map((g) => `<li class="v6-workspace-item">Guardrail ${escapeHtml(g.guardrail)}: ${escapeHtml(g.count)}</li>`).join('')}</ul>` : ''}`;
+    }
+    return '';
   }
 
   /**
@@ -3725,12 +3812,85 @@
       shell.setDetail({ kind: 'settings', view: { profiles, catalog, walkthroughs, projects: projects || [] } });
     }
 
+    // The sprint UI script (Rulings A760, A761): public/index.html does not
+    // load it, so it is added once, on first use, and never twice.
+    const SPRINT_UI_SRC = '/sprint-wave-ui.js';
+    const SPRINT_UI_ID = 'tcSprintWaveUiScript';
+    const pageWindow = deps.window || global;
+    const pageDocument = deps.document || (pageWindow && pageWindow.document) || null;
+    const later = deps.setTimeout || ((fn, ms) => setTimeout(fn, ms));
+    let sprintUiLoad = null;
+
+    /**
+     * `window.TangleClawSprintWaveUi`, loading `/sprint-wave-ui.js` at most
+     * once (#3086, A760/A761): a script already in the page, by its id or its
+     * src, is waited on rather than added again. Resolves null when the script
+     * fails or has not defined it within 10 seconds; a later call tries again.
+     * @returns {Promise<object|null>}
+     */
+    function sprintWaveUi() {
+      const present = pageWindow && pageWindow.TangleClawSprintWaveUi;
+      if (present) return Promise.resolve(present);
+      if (sprintUiLoad) return sprintUiLoad;
+      if (!pageDocument || typeof pageDocument.createElement !== 'function') return Promise.resolve(null);
+      sprintUiLoad = new Promise((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          resolve((pageWindow && pageWindow.TangleClawSprintWaveUi) || null);
+        };
+        let script = (typeof pageDocument.getElementById === 'function' && pageDocument.getElementById(SPRINT_UI_ID))
+          || (typeof pageDocument.querySelector === 'function' ? pageDocument.querySelector(`script[src="${SPRINT_UI_SRC}"]`) : null);
+        if (!script) {
+          script = pageDocument.createElement('script');
+          script.id = SPRINT_UI_ID;
+          script.src = SPRINT_UI_SRC;
+          (pageDocument.head || pageDocument.body).appendChild(script);
+        }
+        script.addEventListener('load', done);
+        script.addEventListener('error', done);
+        later(done, 10000);
+      });
+      sprintUiLoad.then((ui) => { if (!ui) sprintUiLoad = null; });
+      return sprintUiLoad;
+    }
+
+    /**
+     * Load a data mode's panel (#3086): read its route, draw it through the
+     * sprint UI when that loads (else the shell's escaped built-in drawing),
+     * and hand it to the shell. Kaizen & Reports reads the running version's
+     * report; with no version known it says so without asking.
+     * @param {string} mode - `sprint`, `charter` or `kaizen`.
+     * @param {{version: string|null}} context
+     * @returns {Promise<void>}
+     */
+    async function loadWorkspacePanel(mode, context) {
+      const version = context && typeof context.version === 'string' && context.version ? context.version : null;
+      let result;
+      if (mode === 'kaizen' && !version) {
+        result = { ok: false, error: 'the running version is not known yet' };
+      } else {
+        const url = mode === 'kaizen' ? `/api/sprint-reports/${encodeURIComponent(version)}` : '/api/sprint-waves';
+        const data = await api(url);
+        result = data ? { ok: true, data } : { ok: false, notFound: api.lastErrorCode === 'NOT_FOUND', error: api.lastError };
+      }
+      const ui = result.ok ? await sprintWaveUi() : null;
+      const sh = getShell();
+      if (sh && typeof sh.setWorkspacePanel === 'function') sh.setWorkspacePanel(mode, workspacePanelContent(mode, result, ui));
+    }
+    let workspaceLoaderGiven = false;
+
     async function handleRoute(route) {
       // The shell's first render runs inside tcCreateV6Shell itself, before
       // the caller holds the returned handle; leave the route unrecorded so
       // the next call (the caller's own kick-off) still loads it.
       const shell = getShell();
       if (!shell) return;
+      if (!workspaceLoaderGiven && typeof shell.setWorkspaceLoader === 'function') {
+        workspaceLoaderGiven = true;
+        shell.setWorkspaceLoader((mode, context) => { loadWorkspacePanel(mode, context); });
+      }
       const key = route && route.view ? JSON.stringify(route) : null;
       if (key === lastRouteKey) return;
       if (key !== null) loadUsage();
@@ -4250,8 +4410,33 @@
     let chatHoodOpen = prefs.get('tc_v6_chat_under_hood_open', false, isBoolean);
     // #3082: which switchboard-triggered replies the chat shows, kept across visits.
     let verbosity = Object.assign({}, prefs.get('tc_v6_chat_verbosity', VERBOSITY_DEFAULT, isVerbosity));
-    // The workspace mode (#3086), remembered per viewer.
-    let workspaceMode = prefs.get('tc_v6_workspace_mode', 'chat', isWorkspaceMode);
+    // The workspace mode (#3086): Chat on each route, until the operator picks another.
+    let workspaceMode = 'chat';
+    // The route the mode was last reset on; a different one resets it to Chat.
+    let lastModeRouteKey;
+    // Each data mode's panel content, and the controller's loader for it (#3086).
+    const workspacePanels = new Map();
+    let workspaceLoader = null;
+
+    /** Ask the controller's loader for a data mode's panel, with what it needs (#3086); callers pass only data modes. */
+    function loadWorkspacePanel(mode) {
+      if (typeof workspaceLoader !== 'function') return;
+      const version = telemetry && telemetry.versionDrift && typeof telemetry.versionDrift.value === 'string'
+        ? telemetry.versionDrift.value : null;
+      workspaceLoader(mode, { version });
+    }
+
+    /**
+     * Hide the chat's header docked in the top bar (A764) while the mode
+     * hides the chat, so its Start, delegate and rename buttons never act on
+     * a chat the operator cannot see (#3086); show it again on Chat.
+     */
+    function syncDockedHeader() {
+      if (typeof doc.querySelector !== 'function') return;
+      const bar = doc.querySelector('.dash-bar');
+      const header = bar && typeof bar.querySelector === 'function' ? bar.querySelector('.v6-chat-header') : null;
+      if (header) header.hidden = !workspaceVisibility(workspaceMode, Boolean(detail && detail.kind === 'conversation')).detail;
+    }
 
     /**
      * Switch the workspace mode in place (#3086): show and hide the regions,
@@ -4263,7 +4448,6 @@
     function setWorkspaceMode(mode, opts) {
       if (!isWorkspaceMode(mode)) return;
       workspaceMode = mode;
-      prefs.set('tc_v6_workspace_mode', mode);
       const shown = workspaceVisibility(mode, Boolean(detail && detail.kind === 'conversation'));
       [['v6ShellDetail', shown.detail], ['v6ShellWizard', shown.wizard], ['v6ShellAttestation', shown.attestation],
         ['v6WorkspacePanel', shown.panel]].forEach(([id, show]) => {
@@ -4280,9 +4464,11 @@
       });
       const panel = doc.getElementById('v6WorkspacePanel');
       if (panel && shown.panel) {
-        panel.innerHTML = workspacePanelMarkup(mode);
+        panel.innerHTML = workspacePanelMarkup(mode, workspacePanels.get(mode));
         panel.setAttribute('aria-labelledby', `v6WorkspaceMode-${mode}`);
+        loadWorkspacePanel(mode);
       }
+      syncDockedHeader();
       const target = opts && opts.focus ? doc.getElementById(opts.focus) : null;
       if (target && typeof target.focus === 'function') target.focus();
       if (typeof options.onWorkspaceMode === 'function') options.onWorkspaceMode(mode);
@@ -5126,6 +5312,15 @@
       // #3053: the template wizard and attestation pills are not chat
       // content; they stay in the page (and wired) but out of sight.
       const inChat = Boolean(detail && detail.kind === 'conversation');
+      // Going somewhere shows it (#3086): a member click, or the first drawing
+      // after a reload, opens in Chat, so a chat is never hidden behind a mode
+      // chosen elsewhere. A redraw on the same route (a poll, or the chat
+      // arriving after the operator picked a tab) keeps the chosen mode.
+      const modeRouteKey = JSON.stringify(currentRoute);
+      if (modeRouteKey !== lastModeRouteKey) {
+        lastModeRouteKey = modeRouteKey;
+        workspaceMode = 'chat';
+      }
       const shown = workspaceVisibility(workspaceMode, inChat);
       const activityElapsed = syncBusy();
       if (root.classList) {
@@ -5178,7 +5373,7 @@
           <div id="v6ShellWizard"${shown.wizard ? '' : ' hidden'}>${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation"${shown.attestation ? '' : ' hidden'}>${modelAttestationMarkup(attestation)}</div>
           <section id="v6WorkspacePanel" class="v6-workspace-panel" role="tabpanel"
-            aria-labelledby="v6WorkspaceMode-${shown.panel ? workspaceMode : 'sprint'}"${shown.panel ? '' : ' hidden'}>${shown.panel ? workspacePanelMarkup(workspaceMode) : ''}</section>
+            aria-labelledby="v6WorkspaceMode-${shown.panel ? workspaceMode : 'sprint'}"${shown.panel ? '' : ' hidden'}>${shown.panel ? workspacePanelMarkup(workspaceMode, workspacePanels.get(workspaceMode)) : ''}</section>
         </main>
         ${watermarkFooterMarkup(showWatermark, telemetry, usageMarkupNow())}
       `;
@@ -5188,6 +5383,7 @@
       wireControls();
       restoreViewState(saved);
       if (typeof options.onRender === 'function') options.onRender(currentRoute);
+      syncDockedHeader();
     }
 
     function toggleDrawer(force) {
@@ -5488,6 +5684,29 @@
       getWorkspaceMode() { return workspaceMode; },
       /** @param {string} mode - Switch the workspace mode in place (#3086). */
       setWorkspaceMode(mode) { setWorkspaceMode(mode); },
+      /**
+       * Register the controller's panel loader (#3086), called with a data
+       * mode and `{version}` whenever that mode is shown; asked at once when
+       * the shell already shows one.
+       * @param {function(string, {version: string|null}): void} loader
+       */
+      setWorkspaceLoader(loader) {
+        workspaceLoader = typeof loader === 'function' ? loader : null;
+        if (workspaceVisibility(workspaceMode, Boolean(detail && detail.kind === 'conversation')).panel) loadWorkspacePanel(workspaceMode);
+      },
+      /**
+       * Keep a data mode's panel content (#3086), and paint it when that mode
+       * is the one shown; a mode the operator has left keeps it for next time.
+       * @param {string} mode
+       * @param {string} html - From {@link workspacePanelContent}.
+       */
+      setWorkspacePanel(mode, html) {
+        if (!isWorkspaceMode(mode) || typeof html !== 'string') return;
+        workspacePanels.set(mode, html);
+        const panel = doc.getElementById('v6WorkspacePanel');
+        const shownNow = workspaceVisibility(workspaceMode, Boolean(detail && detail.kind === 'conversation')).panel;
+        if (panel && shownNow && workspaceMode === mode) panel.innerHTML = workspacePanelMarkup(mode, html);
+      },
       destroy() {
         destroyHooks.splice(0).forEach((fn) => fn());
         if (tickerId != null) { stopTicker(tickerId); tickerId = null; }
@@ -5537,6 +5756,7 @@
   global.tcV6MemberIndicatorsMarkup = memberIndicatorsMarkup;
   global.tcV6WorkspaceVisibility = workspaceVisibility;
   global.tcV6WorkspaceModeBarMarkup = workspaceModeBarMarkup;
+  global.tcV6WorkspacePanelContent = workspacePanelContent;
   global.tcV6CreateLiveController = createLiveController;
   global.tcCreateV6Shell = tcCreateV6Shell;
 })(typeof window !== 'undefined' ? window : globalThis);

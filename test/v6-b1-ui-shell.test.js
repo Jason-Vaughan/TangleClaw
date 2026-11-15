@@ -5917,7 +5917,7 @@ describe('the workspace mode bar and wizard launcher (#3086)', () => {
     assert.match(G.tcV6WorkspaceModeBarMarkup('bogus'), /id="v6WorkspaceMode-chat" class="v6-workspace-mode is-active"/);
   });
 
-  /** A shell in a conversation, its keydown listeners caught, with a viewer storage. */
+  /** A shell in a conversation (unless `noChat`), its keydown listeners caught, with a viewer storage and its window. */
   function mount(seed, extra) {
     const { doc } = makeDocument([]);
     const keydowns = new Map();
@@ -5935,15 +5935,17 @@ describe('the workspace mode bar and wizard launcher (#3086)', () => {
     doc.body.appendChild(root);
     const storage = makeStorage(seed);
     const modes = [];
-    const shell = G.tcCreateV6Shell(doc, Object.assign({ root, window: makeFakeWindow('#/projects/tc-lane'), storage,
+    const win = makeFakeWindow('#/projects/tc-lane');
+    const shell = G.tcCreateV6Shell(doc, Object.assign({ root, window: win, storage,
       onWorkspaceMode: (m) => modes.push(m) }, extra || {}));
-    shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [], chat: { status: 'active', members: [] } } });
+    const chatOf = (id) => ({ kind: 'conversation', view: { project: { id, name: `P${id}` }, sessionId: 2, events: [], chat: { status: 'active', members: [] } } });
+    if (!(extra && extra.noChat)) shell.setDetail(chatOf(1));
     const key = (id, k) => keydowns.get(id)({ key: k, preventDefault() {} });
     const selected = () => MODES.filter((m) => doc.getElementById(`v6WorkspaceMode-${m}`).getAttribute('aria-selected') === 'true');
-    return { doc, root, shell, storage, modes, key, selected };
+    return { doc, root, shell, storage, modes, key, selected, chatOf, win };
   }
 
-  it('opens the wizard from the sidebar launcher inside a chat, keeping the chat in the page, and remembers the mode', () => {
+  it('opens the wizard from the sidebar launcher inside a chat, keeping the chat in the page', () => {
     const m = mount();
     assert.match(m.root.innerHTML, /<button type="button" id="v6ShellWizardOpenBtn" class="btn btn-secondary v6-wizard-open" data-workspace-mode="wizard"><span aria-hidden="true">＋<\/span> New Project \/ Fleet Wizard<\/button>/);
     // The test DOM keeps ids, not attributes, so the first drawing is read from its markup.
@@ -5963,7 +5965,7 @@ describe('the workspace mode bar and wizard launcher (#3086)', () => {
     assert.equal(m.doc.getElementById('v6WorkspaceMode-wizard').getAttribute('tabindex'), '0');
     assert.equal(m.doc.getElementById('v6WorkspaceMode-chat').getAttribute('tabindex'), '-1');
     assert.equal(m.doc.activeElement, m.doc.getElementById('v6WorkspaceMode-wizard'));
-    assert.equal(JSON.parse(m.storage.data.tc_v6_workspace_mode), 'wizard');
+    assert.equal(m.storage.data.tc_v6_workspace_mode, undefined, 'the mode is not stored');
     assert.deepEqual(m.modes, ['wizard']);
     assert.equal(m.shell.getWorkspaceMode(), 'wizard');
     // Back to Chat: the same chat, and the wizard is out of sight again.
@@ -5978,6 +5980,9 @@ describe('the workspace mode bar and wizard launcher (#3086)', () => {
     m.doc.getElementById('v6ShellWizardOpenTop').dispatch('click');
     assert.deepEqual(m.selected(), ['wizard']);
     assert.equal(m.doc.getElementById('v6ShellWizard').hidden, false);
+    m.shell.setWorkspaceMode('admin');
+    assert.equal(m.shell.getWorkspaceMode(), 'wizard', 'a name that is not a mode is ignored');
+    assert.deepEqual(m.modes, ['wizard']);
   });
 
   it('moves between tabs with the arrow keys, Home and End, choosing as it goes and wrapping at the ends', () => {
@@ -6006,6 +6011,43 @@ describe('the workspace mode bar and wizard launcher (#3086)', () => {
     assert.equal(m.modes.length, before, 'another key does nothing');
   });
 
+  it('every route opens in Chat, a reload included; a redraw on the same route keeps the chosen mode (chunk review W-1)', () => {
+    const m = mount({ tc_v6_workspace_mode: JSON.stringify('wizard') });
+    assert.match(m.root.innerHTML, /id="v6WorkspaceMode-chat" class="v6-workspace-mode is-active"/, 'a stored mode is not used');
+    assert.equal(m.shell.getWorkspaceMode(), 'chat');
+    m.doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+    // The chat arriving, or a poll, on the same route keeps Wizard.
+    m.shell.setDetail(m.chatOf(1));
+    m.shell.setDetail(m.chatOf(3));
+    assert.equal(m.shell.getWorkspaceMode(), 'wizard');
+    assert.match(m.root.innerHTML, /<div id="v6ShellDetail" hidden>/);
+    // Going to another member shows its chat.
+    m.win.location.hash = '#/resources/3/conversation';
+    assert.equal(m.shell.getWorkspaceMode(), 'chat');
+    assert.match(m.root.innerHTML, /<div id="v6ShellDetail">/);
+    assert.match(m.root.innerHTML, /id="v6WorkspaceMode-chat" class="v6-workspace-mode is-active"/);
+  });
+
+  it('hides the chat header docked in the top bar while the mode hides the chat (chunk review W-2)', () => {
+    // render() takes the docked header out before each redraw and ui.js docks a fresh, visible one; this stand-in
+    // plays both, so a redraw that forgets to hide the new header shows.
+    const header = { hidden: false, remove() { this.hidden = false; } };
+    const bar = { querySelector: (sel) => (sel === '.v6-chat-header' ? header : null) };
+    const m = mount(undefined, { noChat: true });
+    const realQuery = m.doc.querySelector;
+    m.doc.querySelector = (sel) => (sel === '.dash-bar' ? bar : (realQuery ? realQuery.call(m.doc, sel) : null));
+    m.shell.setDetail(m.chatOf(1));
+    assert.equal(header.hidden, false, 'shown in Chat');
+    m.doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+    assert.equal(header.hidden, true, 'hidden in Wizard');
+    m.shell.setDetail(m.chatOf(1));
+    assert.equal(header.hidden, true, 'still hidden after a redraw of the same chat');
+    m.doc.getElementById('v6WorkspaceMode-sprint').dispatch('click');
+    assert.equal(header.hidden, true, 'hidden in a data mode');
+    m.doc.getElementById('v6WorkspaceMode-chat').dispatch('click');
+    assert.equal(header.hidden, false, 'shown again on Chat');
+  });
+
   it('styles the tabs as 44px targets that scroll sideways on a narrow screen and mark the chosen one', () => {
     const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
     const rule = (sel) => (css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.#>-]/g, '\\$&')}\\s*\\{([^}]*)\\}`)) || [])[1] || '';
@@ -6016,18 +6058,207 @@ describe('the workspace mode bar and wizard launcher (#3086)', () => {
     assert.match(rule('.v6-wizard-open'), /min-height: 44px;/);
   });
 
-  it('opens on the remembered mode, and on Chat when the remembered one is not a mode', () => {
-    // The test DOM keeps ids, not attributes, so the drawing is read from its markup.
-    const html = mount({ tc_v6_workspace_mode: JSON.stringify('charter') }).root.innerHTML;
-    assert.match(html, /id="v6WorkspaceMode-charter" class="v6-workspace-mode is-active"/);
-    assert.match(html, /<div id="v6ShellDetail" hidden>/);
-    assert.match(html, /<section id="v6WorkspacePanel" class="v6-workspace-panel" role="tabpanel"\s+aria-labelledby="v6WorkspaceMode-charter"><h2 class="v6-workspace-panel-title">Charter &amp; Roadmap<\/h2>/);
-    const badShell = mount({ tc_v6_workspace_mode: JSON.stringify('admin') });
-    assert.equal(badShell.shell.getWorkspaceMode(), 'chat', 'a remembered value that is not a mode is not kept');
-    const bad = badShell.root.innerHTML;
-    assert.match(bad, /id="v6WorkspaceMode-chat" class="v6-workspace-mode is-active"/);
-    assert.match(bad, /<div id="v6ShellDetail">/);
-    assert.match(bad, /aria-labelledby="v6WorkspaceMode-sprint" hidden><\/section>/);
+});
+
+describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
+  const G = loadV6Shell();
+  const content = (mode, result, ui) => G.tcV6WorkspacePanelContent(mode, result, ui);
+  const waves = { waves: [{ id: 1, cars: ['a', 'b'] }, { id: '2<i>', cars: [] }],
+    dispatch: { 'V630-W1-A': { stage: 'in-review', laneName: 'TC-Lane-A', openPrNumber: 3096 }, '<b>x': { stage: 'constructor', laneName: null, openPrNumber: null } } };
+  const report = { report: { version: '6.3.0<', heroKpis: { issuesClosed: 3, builderPRs: 2, waves: 1, fileCollisions: 0, reviewRounds: null, cycleTimeHours: 4.5, netLOC: -10, releaseCommit: '<abc>' },
+    guardrailLedger: [{ guardrail: 'G1', triggered: true, count: 2 }, { guardrail: 'G2', triggered: false, count: 0 }] } };
+
+  it('says a missing route is not available yet, and names any other failure, escaped', () => {
+    assert.equal(content('sprint', { ok: false, notFound: true }), '<p class="v6-workspace-empty">Not available on this server yet.</p>');
+    assert.equal(content('kaizen', { ok: false, error: 'boom <script>' }), '<p class="v6-workspace-empty is-error">Could not load this: boom &lt;script&gt;.</p>');
+    assert.match(content('charter', { ok: false }), /Could not load this: the server did not answer\./);
+  });
+
+  it('draws through the sprint UI when it is loaded, the board container-first and the two new panels data-first', () => {
+    const calls = [];
+    const ui = {
+      renderSprintWaveBoard: (...a) => { calls.push(['board', ...a]); return '<div>board</div>'; },
+      renderCharterReadinessPanel: (...a) => { calls.push(['charter', ...a]); return '<div>charter</div>'; },
+      renderKaizenLedgerPanel: (...a) => { calls.push(['kaizen', ...a]); return '<div>kaizen</div>'; }
+    };
+    assert.equal(content('sprint', { ok: true, data: waves }, ui), '<div>board</div>');
+    assert.equal(content('charter', { ok: true, data: waves }, ui), '<div>charter</div>');
+    assert.equal(content('kaizen', { ok: true, data: report }, ui), '<div>kaizen</div>');
+    assert.deepEqual(calls, [['board', null, waves], ['charter', waves], ['kaizen', report.report]]);
+  });
+
+  it('falls back to its own escaped drawing when a builder is missing, throws or returns nothing', () => {
+    const throwing = { renderSprintWaveBoard: () => { throw new Error('bad'); } };
+    const blank = { renderSprintWaveBoard: () => undefined };
+    for (const ui of [null, {}, throwing, blank]) {
+      const html = content('sprint', { ok: true, data: waves }, ui);
+      assert.match(html, /<li class="v6-workspace-item"><span class="v6-workspace-item-id">V630-W1-A<\/span> <span class="v6-workspace-item-stage">In Review<\/span> <span class="v6-workspace-item-lane">TC-Lane-A<\/span> <span class="v6-workspace-item-pr">#3096<\/span><\/li>/);
+      // A stage that names a prototype property is shown as written, and the id is escaped.
+      assert.match(html, /<span class="v6-workspace-item-id">&lt;b&gt;x<\/span> <span class="v6-workspace-item-stage">constructor<\/span><\/li>/);
+    }
+    assert.equal(content('sprint', { ok: true, data: { dispatch: {} } }, null), '<p class="v6-workspace-empty">No cars are on the board yet.</p>');
+    const charter = content('charter', { ok: true, data: waves }, null);
+    assert.match(charter, /<span class="v6-workspace-item-id">Wave 1<\/span> <span class="v6-workspace-item-stage">2 cars<\/span>/);
+    assert.match(charter, /<span class="v6-workspace-item-id">Wave 2&lt;i&gt;<\/span> <span class="v6-workspace-item-stage">0 cars<\/span>/);
+    assert.match(content('charter', { ok: true, data: { waves: [{ id: 7, cars: ['x'] }] } }, null), /1 car<\/span>/);
+    assert.equal(content('charter', { ok: true, data: {} }, null), '<p class="v6-workspace-empty">No waves are planned yet.</p>');
+  });
+
+  it('draws the report\'s version, hero figures and triggered guardrails itself when the sprint UI is not there', () => {
+    const html = content('kaizen', { ok: true, data: report }, null);
+    assert.match(html, /Version 6\.3\.0&lt;/);
+    assert.match(html, /<div><dt>Issues closed<\/dt><dd>3<\/dd><\/div><div><dt>Builder PRs<\/dt><dd>2<\/dd><\/div>/);
+    assert.match(html, /<dt>Review rounds<\/dt><dd>—<\/dd>/);
+    assert.match(html, /<dt>Release commit<\/dt><dd>&lt;abc&gt;<\/dd>/);
+    assert.match(html, /<li class="v6-workspace-item">Guardrail G1: 2<\/li>/);
+    assert.doesNotMatch(html, /Guardrail G2/);
+    assert.equal(content('kaizen', { ok: true, data: {} }, null), '<p class="v6-workspace-empty">No report for this version yet.</p>');
+  });
+
+  /**
+   * A live controller over a fake page: a shell stand-in, a script-tag recorder and a stubbed api.
+   * `handleRoute(null)` registers the panel loader and stops there, so no route load runs.
+   */
+  function controller(o) {
+    const opts = o || {};
+    const scripts = [];
+    const timers = [];
+    const page = {
+      head: { appendChild: (el) => { scripts.push(el); } },
+      createElement: (tag) => {
+        const listeners = {};
+        return { tag, id: '', src: '', listeners, addEventListener: (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); }, fire: (t) => (listeners[t] || []).forEach((fn) => fn()) };
+      },
+      getElementById: (id) => scripts.find((x) => x.id === id) || (opts.byId && id === 'tcSprintWaveUiScript' ? opts.byId : null),
+      querySelector: (sel) => (opts.existing && sel === 'script[src="/sprint-wave-ui.js"]' ? opts.existing : null)
+    };
+    const win = {};
+    const urls = [];
+    const api = async (url) => {
+      urls.push(url);
+      if (opts.notFound) { api.lastError = 'GET /api/x not found'; api.lastErrorCode = 'NOT_FOUND'; return null; }
+      if (url === '/api/sprint-waves') return { ok: true, waves: [], dispatch: { C1: { stage: 'claimed' } } };
+      return { ok: true, report: { version: '6.3.0', heroKpis: {}, guardrailLedger: [] } };
+    };
+    const panels = [];
+    let loader = null;
+    const shell = { setWorkspaceLoader: (fn) => { loader = fn; }, setWorkspacePanel: (mode, html) => panels.push([mode, html]) };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null,
+      window: win, document: page, setTimeout: (fn) => { timers.push(fn); },
+      setInterval: () => 0, clearInterval: () => {} });
+    return { live, scripts, timers, win, urls, panels, page, load: (mode, version) => loader(mode, { version }) };
+  }
+
+  it('adds the sprint UI script once, draws with it when it loads, and never adds it twice', async () => {
+    const c = controller();
+    await c.live.handleRoute(null);
+    c.load('sprint', '6.3.0');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(c.scripts.length, 1);
+    assert.equal(c.scripts[0].id, 'tcSprintWaveUiScript');
+    assert.equal(c.scripts[0].src, '/sprint-wave-ui.js');
+    c.load('charter', '6.3.0');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(c.scripts.length, 1, 'a second panel waits on the same script');
+    assert.equal(c.scripts[0].listeners.load.length, 1, 'through the one wait already running');
+    c.win.TangleClawSprintWaveUi = { renderSprintWaveBoard: (container, data) => `<div>board ${Object.keys(data.dispatch).join()}</div>` };
+    c.scripts[0].fire('load');
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(c.panels[0], ['sprint', '<div>board C1</div>']);
+    assert.match(c.panels[1][1], /No waves are planned yet\./, 'a builder the loaded UI lacks falls back');
+    assert.deepEqual(c.urls, ['/api/sprint-waves', '/api/sprint-waves']);
+    // Loaded: later panels use it straight away.
+    c.load('sprint', '6.3.0');
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.equal(c.scripts.length, 1);
+    assert.deepEqual(c.panels[2], ['sprint', '<div>board C1</div>']);
+  });
+
+  it('waits on a script already in the page rather than adding another, and tries again after a failed load', async () => {
+    const existing = { id: '', src: '/sprint-wave-ui.js', listeners: {}, addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); } };
+    const c = controller({ existing });
+    await c.live.handleRoute(null);
+    c.load('sprint', '6.3.0');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(c.scripts.length, 0);
+    existing.listeners.error.forEach((fn) => fn());
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.match(c.panels[0][1], /<span class="v6-workspace-item-id">C1<\/span> <span class="v6-workspace-item-stage">Claimed<\/span>/, 'built-in drawing after a failed load');
+    c.load('sprint', '6.3.0');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(existing.listeners.load.length, 2, 'a later panel waits on the page\'s script again');
+    assert.equal(c.scripts.length, 0, 'still never adds its own');
+    // A script that never answers gives up at the timer.
+    c.timers.forEach((fn) => fn());
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.equal(c.panels.length, 2);
+  });
+
+  it('finds a script the page already has by its id too', async () => {
+    const byId = { id: 'tcSprintWaveUiScript', src: '/other.js', listeners: {}, addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); } };
+    const c = controller({ byId });
+    await c.live.handleRoute(null);
+    c.load('sprint', '6.3.0');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(c.scripts.length, 0);
+    assert.equal(byId.listeners.load.length, 1);
+  });
+
+  it('reads the running version\'s report, says when no version is known, and says when the route is missing', async () => {
+    const c = controller();
+    await c.live.handleRoute(null);
+    c.win.TangleClawSprintWaveUi = {};
+    c.load('kaizen', '6.3.0 rc/1');
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(c.urls, ['/api/sprint-reports/6.3.0%20rc%2F1']);
+    assert.match(c.panels[0][1], /Version 6\.3\.0/);
+    c.load('kaizen', null);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(c.urls.length, 1, 'no version, no request');
+    assert.match(c.panels[1][1], /Could not load this: the running version is not known yet\./);
+    const missing = controller({ notFound: true });
+    await missing.live.handleRoute(null);
+    missing.load('sprint', '6.3.0');
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(missing.panels[0], ['sprint', '<p class="v6-workspace-empty">Not available on this server yet.</p>']);
+    assert.equal(missing.scripts.length, 0, 'a failed read loads no script');
+  });
+
+  it('the shell asks for a panel with the running version when its mode is shown, and paints only the mode on screen', () => {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    root.id = 'v6ShellRoot';
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/tc-lane'), storage: makeStorage() });
+    shell.setTelemetry({ versionDrift: { value: '6.3.0' } });
+    const asked = [];
+    shell.setWorkspaceLoader((mode, context) => asked.push([mode, plain(context)]));
+    assert.deepEqual(asked, [], 'Chat needs no panel');
+    doc.getElementById('v6WorkspaceMode-sprint').dispatch('click');
+    assert.deepEqual(asked, [['sprint', { version: '6.3.0' }]]);
+    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<p class="v6-workspace-empty" role="status">Loading…<\/p>/);
+    shell.setWorkspacePanel('sprint', '<div>board</div>');
+    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<h2 class="v6-workspace-panel-title">Sprint &amp; Cars<\/h2>\s*<div>board<\/div>/);
+    shell.setWorkspacePanel('kaizen', '<div>report</div>');
+    assert.doesNotMatch(doc.getElementById('v6WorkspacePanel').innerHTML, /report/, 'a mode not on screen is kept, not painted');
+    doc.getElementById('v6WorkspaceMode-kaizen').dispatch('click');
+    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<div>report<\/div>/, 'kept content shows at once');
+    assert.deepEqual(asked[1], ['kaizen', { version: '6.3.0' }], 'and is refreshed');
+    shell.setWorkspacePanel('bogus', '<div>x</div>');
+    shell.setWorkspacePanel('kaizen', 42);
+    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<div>report<\/div>/);
+    // A loader registered while a data mode is shown is asked at once; without telemetry the version is null.
+    const again = [];
+    shell.setTelemetry(null);
+    shell.setWorkspaceLoader((mode, context) => again.push([mode, plain(context)]));
+    assert.deepEqual(again, [['kaizen', { version: null }]]);
   });
 });
 

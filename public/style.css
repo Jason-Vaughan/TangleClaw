@@ -5233,3 +5233,43 @@ p.v6-history-secret {
   margin: 0;
   opacity: 0.75;
 }
+.v6-workspace-empty.is-error {
+  color: #f85149;
+  opacity: 1;
+}
+.v6-workspace-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.v6-workspace-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--v6-outline, #3d444d);
+}
+.v6-workspace-item-id {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.v6-workspace-item-stage,
+.v6-workspace-item-lane,
+.v6-workspace-item-pr {
+  opacity: 0.8;
+}
+.v6-workspace-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 8px 0;
+}
+.v6-workspace-kpis dt {
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+.v6-workspace-kpis dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
