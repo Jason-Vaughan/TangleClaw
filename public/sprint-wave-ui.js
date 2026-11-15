@@ -280,7 +280,10 @@
 
   const sprintWaveUi = {
     STAGE_ORDER, STAGE_LABELS, renderSprintKpiCards, renderSprintWaveBoard, filterSprintWaveRows,
-    renderCharterReadinessPanel, renderKaizenLedgerPanel
+    renderCharterReadinessPanel, renderKaizenLedgerPanel,
+    // The same two builders under the names the v6 workspace modes use (Ruling A774).
+    renderSprintCharterRoadmapPanel: renderCharterReadinessPanel,
+    renderSprintKaizenReportsPanel: renderKaizenLedgerPanel
   };
 
   if (typeof module !== 'undefined' && module.exports) {

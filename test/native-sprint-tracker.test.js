@@ -497,12 +497,25 @@ describe('sprint-wave-routes: createSprintWaveRouter', () => {
   });
 
   it('GET /api/sprint-reports/:version 404s an unknown version', async () => {
+    // A well-formed version nothing knows. A malformed one ('vNope', a path)
+    // is refused 400 before the lookup since #3087 (Ruling A774), pinned below.
     const router = createSprintWaveRouter({ getSprintDataForVersion: async () => null });
-    const { req } = fakeReq('GET', '/api/sprint-reports/vNope');
+    const { req } = fakeReq('GET', '/api/sprint-reports/v9.9.9');
     const { res, status, json } = fakeRes();
     await router.handle(req, res);
     assert.equal(status(), 404);
     assert.equal(json().code, 'NOT_FOUND');
+  });
+
+  it('GET /api/sprint-reports/:version refuses a malformed version 400 without calling the lookup (#3087)', async () => {
+    let asked = 0;
+    const router = createSprintWaveRouter({ getSprintDataForVersion: async () => { asked++; return null; } });
+    const { req } = fakeReq('GET', '/api/sprint-reports/vNope');
+    const { res, status, json } = fakeRes();
+    await router.handle(req, res);
+    assert.equal(status(), 400);
+    assert.equal(json().code, 'BAD_REQUEST');
+    assert.equal(asked, 0);
   });
 
   it('POST /api/sprint-waves/sync runs the backoff helper and saves the snapshot', async () => {
@@ -640,6 +653,11 @@ describe('public/sprint-wave-ui: Charter & Kaizen panels (#3087, Rulings A760/A7
     assert.match(charter, /sponsor: op \(revoked\)/);
   });
 
+  it('exports the A774 alias names for the same two builders', () => {
+    assert.equal(sprintWaveUi.renderSprintCharterRoadmapPanel, sprintWaveUi.renderCharterReadinessPanel);
+    assert.equal(sprintWaveUi.renderSprintKaizenReportsPanel, sprintWaveUi.renderKaizenLedgerPanel);
+  });
+
   it('every field is optional: an empty call renders a calm empty panel', () => {
     assert.match(sprintWaveUi.renderCharterReadinessPanel(), /No active charter/);
     assert.match(sprintWaveUi.renderKaizenLedgerPanel(), /No Kaizen items/);
@@ -648,5 +666,160 @@ describe('public/sprint-wave-ui: Charter & Kaizen panels (#3087, Rulings A760/A7
   it('refuses a container passed first, so a swapped call fails loudly instead of rendering an empty panel', () => {
     assert.throws(() => sprintWaveUi.renderCharterReadinessPanel({ innerHTML: '' }), /data comes first/);
     assert.throws(() => sprintWaveUi.renderKaizenLedgerPanel({ innerHTML: '' }, {}), /data comes first/);
+  });
+});
+
+describe('native-sprint-tracker: sprintDataFromWaveRuns (#3087, Ruling A774)', () => {
+  const run = (id, createdAt, status, cars, metadata = {}) => ({
+    id, fleetId: 'f', status, createdAt, metadata, waves: [Object.keys(cars)],
+    cars: Object.fromEntries(Object.entries(cars).map(([cid, c]) => [cid, { id: cid, status: 'pending', payload: {}, startedAt: null, completedAt: null, ...c }]))
+  });
+
+  it('answers an empty sprint for "current" when no run is persisted, and null for an unknown version', () => {
+    assert.deepEqual(tracker.sprintDataFromWaveRuns({}, 'current'),
+      { cars: [], lanes: [], pullRequests: [], waves: [], learnings: [], releaseCommit: null });
+    assert.equal(tracker.sprintDataFromWaveRuns({}, '9.9.9'), null);
+  });
+
+  it('reads the newest ACTIVE run as current, and a version by metadata.version or id', () => {
+    const runs = {
+      old: run('old', 1, 'active', { a: {} }, { version: '6.3.0' }),
+      newer: run('newer', 3, 'complete', { b: {} }),
+      mid: run('mid', 2, 'active', { c: {} }),
+      v640: run('v6.4.0', 4, 'complete', { d: {} })
+    };
+    assert.deepEqual(tracker.sprintDataFromWaveRuns(runs, 'current').cars.map((c) => c.id), ['c'], 'newest active, not newest overall');
+    assert.deepEqual(tracker.sprintDataFromWaveRuns(runs, 'v6.3.0').cars.map((c) => c.id), ['a']);
+    assert.deepEqual(tracker.sprintDataFromWaveRuns(runs, '6.4.0').cars.map((c) => c.id), ['d'], 'by run id, v-prefix ignored');
+    assert.deepEqual(tracker.sprintDataFromWaveRuns({ x: run('x', 1, 'complete', { e: {} }) }, 'current').cars.map((c) => c.id), ['e'],
+      'with no active run, the newest run');
+  });
+
+  it('maps assignees to lanes, running work to committed, held or stalled work to a hold, and finished cars to closed', () => {
+    const data = tracker.sprintDataFromWaveRuns({
+      r: run('r', 1, 'active', {
+        idle: {},
+        run: { status: 'running', payload: { lane: 'TC-Lane-B' }, startedAt: Date.UTC(2026, 10, 15) },
+        gate: { status: 'awaiting-gate', payload: { assignee: 'TC-Lane-A' } },
+        held: { status: 'gate-held', payload: { laneName: 'TC-Lane-C' } },
+        done: { status: 'complete', payload: { lane: 'TC-Lane-B' }, completedAt: Date.UTC(2026, 10, 16) },
+        issues: { status: 'complete', payload: { issues: [{ id: '#1', state: 'open' }] } }
+      })
+    }, 'current');
+    const dispatch = tracker.syncWaveDispatchState({ cars: data.cars, lanes: data.lanes, pullRequests: data.pullRequests });
+    assert.equal(dispatch.idle.stage, 'unassigned');
+    assert.equal(dispatch.run.stage, 'in-progress');
+    assert.equal(dispatch.run.laneName, 'TC-Lane-B');
+    assert.equal(dispatch.gate.stage, 'in-progress');
+    assert.equal(dispatch.held.stage, 'blocked');
+    assert.equal(dispatch.done.stage, 'closed');
+    assert.equal(dispatch.issues.stage, 'unassigned', 'real payload issues win over the closed marker');
+    assert.equal(data.cars.find((c) => c.id === 'run').dispatchedAt, '2026-11-15T00:00:00.000Z');
+    assert.deepEqual(data.pullRequests, []);
+    assert.equal(data.releaseCommit, null);
+  });
+
+  it('SPRINT_VERSION_RE admits current and X.Y.Z only', () => {
+    for (const ok of ['current', '6.3.0', 'v6.2.10']) assert.ok(tracker.SPRINT_VERSION_RE.test(ok), ok);
+    for (const bad of ['..', '../etc', '6.3', 'v6.3.0/x', 'latest', '6.3.0 ', '']) assert.ok(!tracker.SPRINT_VERSION_RE.test(bad), JSON.stringify(bad));
+  });
+});
+
+describe('the live server mounts the sprint wave routes (#3087, Ruling A774)', () => {
+  const http = require('node:http');
+  let tmpDir;
+  let store;
+  let server;
+  let operatorHeaders;
+  let openInstallToken;
+
+  /**
+   * @param {string} method
+   * @param {string} urlPath
+   * @param {object} [body]
+   * @param {Record<string, string>} [headers]
+   * @returns {Promise<{status: number, data: *}>}
+   */
+  function request(method, urlPath, body, headers = {}) {
+    return new Promise((resolve, reject) => {
+      const payload = body !== undefined ? JSON.stringify(body) : null;
+      const h = { 'Content-Type': 'application/json', ...headers };
+      if (payload) h['Content-Length'] = Buffer.byteLength(payload);
+      const req = http.request({ hostname: '127.0.0.1', port: server.address().port, path: urlPath, method, headers: h }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let data;
+          try { data = JSON.parse(raw); } catch { data = raw; }
+          resolve({ status: res.statusCode, data });
+        });
+      });
+      req.on('error', reject);
+      if (payload) req.write(payload);
+      req.end();
+    });
+  }
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-sprint-mount-'));
+    store = require('../lib/store');
+    store._setBasePath(tmpDir);
+    store.init();
+    ({ operatorHeaders } = require('./_shared-docs-callers'));
+    openInstallToken = require('../lib/open-install-token');
+    server = require('../server').createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  afterEach(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('GET /api/sprint-waves answers an empty board with no run, and the scheduler\'s run once one exists', async () => {
+    const empty = await request('GET', '/api/sprint-waves');
+    assert.equal(empty.status, 200, JSON.stringify(empty.data));
+    assert.deepEqual(empty.data, { ok: true, waves: [], dispatch: {} });
+    const c3 = require('../lib/v6/c3-wave-scheduler');
+    new c3.WaveScheduler({ store: new c3.SqliteSchedulerStore(store.getDb()) }).createRun({
+      id: 'run1', fleetId: 'f', cars: [{ id: 'car-a', fileScope: ['lib/a.js'], payload: { lane: 'TC-Lane-B' } }, { id: 'car-b', fileScope: ['lib/b.js'] }]
+    });
+    const live = await request('GET', '/api/sprint-waves');
+    assert.equal(live.status, 200);
+    assert.deepEqual(live.data.waves, [['car-a', 'car-b']]);
+    assert.equal(live.data.dispatch['car-a'].stage, 'claimed');
+    assert.equal(live.data.dispatch['car-a'].laneName, 'TC-Lane-B');
+    assert.equal(live.data.dispatch['car-b'].stage, 'unassigned');
+  });
+
+  it('GET /api/sprint-reports/:version: current answers, an unknown version 404s, anything else 400s before any lookup', async () => {
+    const current = await request('GET', '/api/sprint-reports/current');
+    assert.equal(current.status, 200, JSON.stringify(current.data));
+    assert.equal(current.data.ok, true);
+    assert.equal((await request('GET', '/api/sprint-reports/9.9.9')).status, 404);
+    for (const bad of ['..%2F..%2Fetc', 'latest', '6.3']) {
+      const r = await request('GET', `/api/sprint-reports/${bad}`);
+      assert.equal(r.status, 400, `${bad}: ${JSON.stringify(r.data)}`);
+      assert.equal(r.data.code, 'BAD_REQUEST');
+    }
+  });
+
+  it('POST /api/sprint-waves/sync is the operator\'s only: refused without the proof, admitted with it (then NOT_CONFIGURED)', async () => {
+    const noToken = await request('POST', '/api/sprint-waves/sync', {}, operatorHeaders(server));
+    assert.equal(noToken.status, 403, JSON.stringify(noToken.data));
+    assert.equal(noToken.data.code, 'OPEN_INSTALL_TOKEN_INVALID');
+    const admitted = await request('POST', '/api/sprint-waves/sync', {}, { ...operatorHeaders(server), 'X-TC-Open-Token': openInstallToken.mint() });
+    assert.equal(admitted.status, 503);
+    assert.equal(admitted.data.code, 'NOT_CONFIGURED');
+  });
+
+  it('POST /api/sprint-waves/validate-disjointness computes over the posted cars', async () => {
+    const r = await request('POST', '/api/sprint-waves/validate-disjointness',
+      { cars: [{ id: 'a', files: ['x.js'] }, { id: 'b', files: ['x.js'] }] }, { ...operatorHeaders(server), 'X-TC-Open-Token': openInstallToken.mint() });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal(r.data.ok, true);
+    assert.equal(r.data.result.ok, false, 'two cars sharing x.js are not disjoint');
   });
 });
