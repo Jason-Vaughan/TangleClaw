@@ -41,7 +41,11 @@ jobs:
     # A fork PR's run is approved by a maintainer, not trusted by default
     # (#1550): bounding the job keeps a wedged or deliberately-stalling test
     # from occupying a runner indefinitely once that approval is given.
-    timeout-minutes: 20
+    # 35, not 20 (#3075): the suite (about 30,900 tests) now runs 16-20
+    # minutes, and the 20-minute cap was cancelling healthy runs mid-suite,
+    # PR checks and the release.yml call of this workflow alike. 35 leaves
+    # room to grow and still bounds a wedged run.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

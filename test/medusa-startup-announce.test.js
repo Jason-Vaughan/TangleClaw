@@ -89,7 +89,9 @@ describe('medusa-startup-announce: resolveProjectRecipients (cross-project, #579
     listProjects: () => PROJECTS,
     getActiveRoleForProject: (pid) => ROLE_BY_PROJECT[pid] || null,
     getActiveSessionForProject: (pid) => SESSION_BY_PROJECT[pid] || null,
-    getWorkspaceId: (_path, sessionId) => WORKSPACE_BY_SESSION[sessionId] || null
+    getWorkspaceId: (_path, sessionId) => WORKSPACE_BY_SESSION[sessionId] || null,
+    // One fleet holding all four (#3077); the fleet tests below narrow it.
+    isSameFleet: () => true
   });
 
   it('resolves every OTHER project holding an active coordinator grant, never the announcing project or a non-coordinator', () => {
@@ -146,10 +148,56 @@ describe('medusa-startup-announce: resolveProjectRecipients (cross-project, #579
       listProjects: () => manyProjects,
       getActiveRoleForProject: (pid) => manyRoles[pid] || null,
       getActiveSessionForProject: (pid) => manySessions[pid] || null,
-      getWorkspaceId: (_path, sessionId) => manyWorkspaces[sessionId] || null
+      getWorkspaceId: (_path, sessionId) => manyWorkspaces[sessionId] || null,
+      isSameFleet: () => true
     };
     const recipients = announce.resolveProjectRecipients(0, 10, d);
     assert.deepEqual(recipients, ['ws-pm-101']);
+  });
+
+  it('tells only the coordinators in the announcing project\'s fleet (#3077)', () => {
+    // The PM (2) is in the builder's (1) fleet; the architect (3) is a
+    // coordinator in another fleet, and must not be woken by this launch.
+    const d = deps();
+    const asked = [];
+    d.isSameFleet = (a, b) => { asked.push(a); return b === 2; };
+    assert.deepEqual(announce.resolveProjectRecipients(1, 10, d), ['ws-pm']);
+    assert.ok(asked.length > 0 && asked.every((a) => a === 1), 'every check is against the ANNOUNCING project');
+  });
+
+  it('reads the fleet from real project groups and tags by default (#3077, A738)', () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const store = require('../lib/store');
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-announce-fleet-'));
+    store._setBasePath(tempDir);
+    store.init();
+    try {
+      const mk = (name, tags) => store.projects.create({ name, path: fs.mkdtempSync(path.join(tempDir, `${name}-`)), engine: 'claude', tags });
+      const builder = mk('builder');
+      const mate = mk('mate');
+      const tagged = mk('tagged', ['Fleet-A']);
+      const taggedMate = mk('tagged-mate', [' fleet-a ']);
+      const loner = mk('loner');
+      const loneMate = mk('lone-mate');
+      const group = store.projectGroups.create({ name: 'fleet-a' });
+      store.projectGroups.addMember(group.id, builder.id);
+      store.projectGroups.addMember(group.id, mate.id);
+      const d = deps();
+      delete d.isSameFleet;
+      d.listProjects = () => [builder, mate, tagged, taggedMate, loner, loneMate];
+      d.getActiveRoleForProject = () => ({ role: 'project-manager' });
+      d.getActiveSessionForProject = (pid) => ({ id: pid * 100 });
+      d.getWorkspaceId = (_p, sid) => `ws-${sid / 100}`;
+      const to = (p) => announce.resolveProjectRecipients(p.id, 1, d);
+      assert.deepEqual(to(builder), [`ws-${mate.id}`], 'a group: never a tagged or an ungrouped project');
+      assert.deepEqual(to(tagged), [`ws-${taggedMate.id}`], 'a tag, compared trimmed and lowercased');
+      assert.deepEqual(to(loner), [`ws-${loneMate.id}`], 'two ungrouped, untagged projects share the default pool');
+    } finally {
+      store.close();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

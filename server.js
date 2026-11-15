@@ -5882,13 +5882,20 @@ function registerMedusaRoutes(prefix, resolve) {
   // GET <prefix>/roster — the live roster of other registered workspaces this
   // participant can message (MED-2K9P Chunk 03), proxied from the Bridge
   // (`GET /workspaces`) with the caller's own workspace excluded. Requires a
-  // live participant (409).
-  route('GET', `${prefix}/roster`, async (_req, res, params) => {
+  // live participant (409). A project's roster is its own fleet plus the
+  // Master (#3077) unless it asks for `?scope=all`; the Master's own roster,
+  // and any roster the Operator or the Master reads, is unfiltered.
+  route('GET', `${prefix}/roster`, async (req, res, params) => {
     const target = peerReadTarget(params, res, 'list a roster for');
     if (!target) return;
     try {
-      const workspaces = await medusa.getRoster({ sessionId: target.sessionId });
-      jsonResponse(res, 200, { workspaces });
+      const all = await medusa.getRoster({ sessionId: target.sessionId });
+      const projectId = targetProjectId(target);
+      const callerKind = resolveControlCaller(req).kind;
+      const wantsAll = parseQuery(reqUrl(req).search).scope === 'all';
+      const scoped = projectId != null && !wantsAll && callerKind !== 'operator' && callerKind !== 'master';
+      const workspaces = scoped ? medusa.filterRosterToFleet(all, projectId) : all;
+      jsonResponse(res, 200, { workspaces, scope: scoped ? 'fleet' : 'all' });
     } catch (err) {
       errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_ROSTER_FAILED');
     }
@@ -5993,7 +6000,17 @@ function registerMedusaRoutes(prefix, resolve) {
       senderId = access.sessionId != null ? medusa.getStatus(access.sessionId).workspaceId : null;
     }
     try {
-      const result = await medusa.broadcastAll({ senderId, callerKind, message: body && body.message });
+      // #3077: the Operator and the Master are exempt from fleet scoping; a
+      // coordinator project broadcasts to its own fleet unless it confirms
+      // every fleet. Scope, targets and the confirmation come from the body;
+      // who is calling never does.
+      const b = body && typeof body === 'object' ? body : {};
+      const result = await medusa.broadcastAll({
+        senderId, callerKind, message: b.message,
+        exempt: caller.kind === 'operator' || caller.kind === 'master',
+        senderProjectId: caller.kind === 'project' ? caller.projectId : null,
+        scope: b.scope, emergency: b.emergency, confirmAllFleets: b.confirmAllFleets, targets: b.targets
+      });
       jsonResponse(res, 200, result);
     } catch (err) {
       errorResponse(res, err.httpStatus || 500, err.message, err.code || 'BROADCAST_FAILED');
