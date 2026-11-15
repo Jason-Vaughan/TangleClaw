@@ -41,6 +41,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-15 — v6.3.0 release cut (Milestone #78)
+
+<!-- prawduct: type=internal | scope=v630-release -->
+
+- Compiled 4 accepted `changelog.d/` fragments (#3086 from PR #3097; #3084, #3087 and #3094 from PR #3098) into `CHANGELOG.md` section `[6.3.0]` using the wrap's own compile/splice/promote functions. The three `.added` fragments make this a minor release (Ruling A756), so 6.2.10 -> 6.3.0 via `_decideBumpLevel(_parseUnreleased(...))`. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap state. Folded in both PRs' change-log entries below, verbatim.
+- PR #3097's entry carries no `<!-- prawduct: ... -->` tag line; it is folded in verbatim as written.
+- The #3084 fragment says a refused send names the registries that could not be read; after the O-Gate H1 fix (Rulings A781/A782) it names only those in the sender's own fleet, so another fleet's projects are never disclosed. The release notes say so.
+
+## 2026-11-15 — v6 workspace mode bar, always-available wizard launcher, sprint/charter/kaizen panels; member engine badge follows the session engine (#3086, #3094 shell half)
+
+**Why:** #3086: the template wizard was hidden whenever a chat was open and the v6 shell had no way to view sprint, charter or kaizen state. #3094: the sidebar badge showed only the configured engine, so a lane relaunched on another engine kept a stale code.
+**What:** public/v6-shell.js (5-tab workspace mode bar switched in place, reset to Chat on navigation; sidebar and top wizard launchers; three data panels over /api/sprint-waves and /api/sprint-reports/:version drawn through window.TangleClawSprintWaveUi with escaped fallbacks, the script added once; badge engine priority and model tooltip), public/style.css, test/v6-b1-ui-shell.test.js, test/v6-browser-shell-and-conversation-e2e.test.js, changelog.d/3086 fragment.
+**Verified:** shell suite 483/483, E2E against the real server, adjacent sweep, stage 1, tiers, cache guard, large tier, mutation checks, chunk + cumulative Critic and verify-resolutions clean.
+
+## 2026-11-15 — Car V630-W1-B: sprint wave routes mounted (#3087) + Medusa registry cache/diagnostics (#3084) + member engine badge backend (#3094)
+
+<!-- prawduct: type=feature | scope=v630-w1-b -->
+
+- #3087 (A760/A761/A774/A775): /api/sprint-waves*, /api/sprint-reports/:version mounted through the route table, fed by the c3 scheduler's runs (sprintDataFromWaveRuns); malformed version 400, unknown 404; sync operator/Master-only (NOT_CONFIGURED, no roadmap source). Charter readiness + Kaizen ledger panels, escaped, http(s) links only, plus aliases. sprint-wave-ui.js network-first.
+- #3084 (A772): per-registry cache keyed by (mtimeMs, size), dropped on write/forget; unreadable registries reported, never read as empty, with details on broadcast and send refusals (REGISTRY_UNREADABLE).
+- #3094 backend (A767/A768): engineId on live/unknown sessions; lastSessionEngineId on enriched projects.
+- Envelope: 14 files (A772 + A775 added medusa-send.js and sw.js). #3092 deferred to v6.4.0 (A771).
+
 ## 2026-11-14 — v6.2.10 release cut (Milestone #77)
 
 <!-- prawduct: type=internal | scope=v6210-release -->
