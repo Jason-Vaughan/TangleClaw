@@ -2080,7 +2080,9 @@ describe('tcV6ExtractLiveTurns (#3052)', () => {
 
   it('a prompt already recorded as a user event is not repeated', () => {
     const out = run('claude', ['ship the release']);
-    assert.deepEqual(out.turns.map((t) => t.role), ['assistant']);
+    // Restated by #3079 item 6: it keeps its place among the replies, once, marked recorded.
+    assert.deepEqual(out.turns, [{ role: 'user', text: 'ship the release', recorded: true },
+      { role: 'assistant', text: 'I\'ll check the branch first.\nThe branch is clean.\nShould I push it?' }]);
   });
 
   it('a question the operator has already answered is no longer pinned', () => {
@@ -2097,7 +2099,8 @@ describe('tcV6ExtractLiveTurns (#3052)', () => {
 
   it('an unknown engine uses every engine\'s markers; empty or malformed input yields nothing', () => {
     assert.deepEqual(run('antigravity').turns, plain(G.tcV6ExtractLiveTurns(PANES.antigravity, 'mystery', [])).turns);
-    assert.deepEqual(plain(G.tcV6ExtractLiveTurns(null, 'claude', [])), { turns: [], question: null, activity: null });
+    // Restated by #3076/#3079: the result also carries the question queue and the switchboard's traffic.
+    assert.deepEqual(plain(G.tcV6ExtractLiveTurns(null, 'claude', [])), { turns: [], question: null, questions: [], activity: null, switchboard: [] });
     assert.deepEqual(plain(G.tcV6ExtractLiveTurns([null, 7, '   '], 'claude', [])).turns, []);
   });
 
@@ -2142,7 +2145,8 @@ describe('Above-the-Hood chat view (#3052)', () => {
 
   it('puts the raw output in a collapsed Under the Hood drawer, open only when asked', () => {
     const closed = G.tcV6ConversationViewMarkup(view({ peek: { lines: ['$ ok'] } }));
-    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\)<\/summary>\s*<pre id="v6ChatPeek"/);
+    // Restated by #3076: the switchboard's traffic list sits above the raw output, inside the drawer.
+    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\)<\/summary>\s*<section class="v6-chat-switchboard"[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
     assert.match(G.tcV6ConversationViewMarkup(view({ peek: { lines: [] }, hoodOpen: true })), /<details id="v6ChatUnderHood" class="v6-chat-under-hood" open>/);
   });
 
@@ -2797,13 +2801,15 @@ describe('tcV6ExtractLiveTurns does not repeat a multi-line or wrapped message (
   it('a message sent with attachments is recognised by its lines, including its Attached lines', () => {
     const sent = 'look at these\n\nAttached: .tangleclaw/secrets/a.png';
     const out = plain(G.tcV6ExtractLiveTurns(['> look at these', 'Attached: .tangleclaw/secrets/a.png', '⏺ Got it.'], 'claude', [sent]));
-    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Got it.' }]);
+    // Restated by #3079 item 6: one user turn carrying the recorded message, then the reply.
+    assert.deepEqual(out.turns, [{ role: 'user', text: sent, recorded: true }, { role: 'assistant', text: 'Got it.' }]);
   });
 
   it('a long prompt the terminal wrapped is recognised by its first line', () => {
     const sent = 'please review the release notes for v6.2.3 and tell me whether the delegate order reads correctly';
     const out = plain(G.tcV6ExtractLiveTurns(['> please review the release notes for v6.2.3 and tell', '⏺ It reads correctly.'], 'claude', [sent]));
-    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'It reads correctly.' }]);
+    // Restated by #3079 item 6: one user turn carrying the whole recorded message, then the reply.
+    assert.deepEqual(out.turns, [{ role: 'user', text: sent, recorded: true }, { role: 'assistant', text: 'It reads correctly.' }]);
   });
 });
 
@@ -3419,7 +3425,8 @@ describe('the chat header is one compact row of identity and icons (#3059)', () 
   it('the delegate select keeps its accessible name, gains a tooltip, and its visible label text is gone', () => {
     const h = header(G.tcV6ConversationViewMarkup(view()));
     // Restated by #3063: the tooltip now leads with what the select does, then the #3059 wording.
-    assert.match(h, /<label class="v6-chat-delegate-label"><span class="sr-only">Delegate<\/span>\s*<select id="v6ChatDelegate"[^>]*aria-label="Choose who this project's chat talks to" title="Choose who this project's chat talks to — Switch Designated Project Delegate">/);
+    // Restated by #3079: the label is hidden (the Fleet sidebar switches members); the node stays.
+    assert.match(h, /<label class="v6-chat-delegate-label" hidden><span class="sr-only">Delegate<\/span>\s*<select id="v6ChatDelegate"[^>]*aria-label="Choose who this project's chat talks to" title="Choose who this project's chat talks to — Switch Designated Project Delegate">/);
   });
 
   it('in a chat the route heading and the group heading are hidden from sight but kept for screen readers', () => {
@@ -3461,14 +3468,18 @@ describe('telemetry chips say what they measure (#3063)', () => {
   } };
   const titles = (html) => [...html.matchAll(/<span class="v6-telemetry-chip[^"]*" title="([^"]*)">/g)].map((m) => m[1]);
 
+  // Restated by #3079: Active sessions, Health and Version are drawn in the footer status bar,
+  // so the header and the footer together carry every chip.
+  const both = (b) => G.tcV6TelemetryHeaderMarkup(b) + G.tcV6WatermarkFooterMarkup(true, b);
+
   it('every chip has a tip with its value, its meaning and how sure the reading is', () => {
-    assert.deepEqual(titles(G.tcV6TelemetryHeaderMarkup(bar)), [
+    assert.deepEqual(titles(both(bar)), [
       'Tokens: no reading yet — model tokens used (unavailable)',
       'Quota window: no reading yet — engine usage-quota window (unavailable)',
       'Context: no reading yet — how full a session&#39;s context window is (unavailable)',
+      'Medusa: no reading yet — Medusa messages waiting to be read (unavailable)',
       'Active sessions: 23 — live sessions on this TangleClaw server (observed)',
       'Health: healthy — server health (estimated)',
-      'Medusa: no reading yet — Medusa messages waiting to be read (unavailable)',
       'Version: 6.2.5 — the TangleClaw version this server runs (observed)'
     ]);
   });
@@ -3480,13 +3491,13 @@ describe('telemetry chips say what they measure (#3063)', () => {
   });
 
   it('a hostile metric value is escaped in the tip and in the chip', () => {
-    const html = G.tcV6TelemetryHeaderMarkup({ scope: 'global', metrics: { versionDrift: { value: '"><img src=x onerror=alert(1)>', confidence: 'observed' } } });
+    const html = both({ scope: 'global', metrics: { versionDrift: { value: '"><img src=x onerror=alert(1)>', confidence: 'observed' } } });
     assert.match(html, /title="Version: &quot;&gt;&lt;img src=x onerror=alert\(1\)&gt; — the TangleClaw version this server runs \(observed\)"/);
     assert.doesNotMatch(html, /<img/);
   });
 
   it('a chip with no reading stays in the page (B4 keeps every metric)', () => {
-    const html = G.tcV6TelemetryHeaderMarkup(bar);
+    const html = both(bar);
     assert.equal((html.match(/class="v6-telemetry-chip /g) || []).length, 7);
     assert.equal((html.match(/v6-telemetry-chip is-unavailable/g) || []).length, 4);
   });
@@ -4258,5 +4269,978 @@ describe('the chat\'s own history button and the Open Hood path (#3066, #3073)',
     doc.getElementById('v6SidebarFutureSlot').dispatch('click');
     await live.openHistorySession({ member: 'A', sid: 'old-1', q: '' });
     assert.match(root.innerHTML, /<p class="v6-history-secret" role="note">⚠ This transcript was flagged for possible secrets/);
+  });
+});
+
+// ── #3076 / #3079 (Car V629-W1-A): switchboard Under the Hood, Medusa indicator, chat polish ──
+
+describe('switchboard traffic leaves the conversation (#3076)', () => {
+  const G = loadV6Shell();
+  const run = (lines, known) => plain(G.tcV6ExtractLiveTurns(lines, 'claude', known || []));
+
+  it('a wake typed into the pane is switchboard traffic, not the operator, with its wrapped lines joined', () => {
+    // The real wake's words (lib/medusa-wake.js), wrapped as the pane shows them.
+    const out = run(['> fix it', '⏺ Fixed. Shall I push?', '> [TangleClaw Switchboard] You have 2 unread Medusa message(s): tc message read.',
+      '  Reply where an answer is needed, BEFORE marking it handled: tc message send']);
+    assert.deepEqual(out.turns.map((t) => t.role), ['user', 'assistant']);
+    assert.deepEqual(out.switchboard, [{ dir: 'in', text: '[TangleClaw Switchboard] You have 2 unread Medusa message(s): tc message read. Reply where an answer is needed, BEFORE marking it handled: tc message send' }]);
+    assert.deepEqual(out.questions, ['Fixed. Shall I push?'], 'a wake does not answer the question');
+  });
+
+  it('a bare wake or TangleClaw notice line is traffic too (the fixture pane)', () => {
+    assert.deepEqual(run(PANES.claude).switchboard, [{ dir: 'in', text: '[TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.' }]);
+    assert.deepEqual(run(['[TangleClaw] Your workload report has expired']).switchboard, [{ dir: 'in', text: '[TangleClaw] Your workload report has expired' }]);
+  });
+
+  it('a tc message send in a tool line or a shell line is outbound traffic; prose that mentions it is a reply', () => {
+    const out = run(['> reply to PM', '⏺ Bash(tc message send --in-reply-to m1 tc-lane-pm "done")', '  ⎿  received',
+      '$ tc message send tc-lane-int "ready"', '⏺ I used tc message send to tell them.']);
+    assert.deepEqual(out.switchboard.map((x) => x.dir), ['out', 'out']);
+    assert.match(out.switchboard[0].text, /^⏺ Bash\(tc message send --in-reply-to m1/);
+    assert.deepEqual(out.turns[1], { role: 'assistant', text: 'I used tc message send to tell them.' });
+  });
+
+  it('a recorded wake leaves the stream and is listed Under the Hood, escaped; a pane copy of it is not listed twice', () => {
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2,
+      events: [{ seq: 1, role: 'user', content: 'real ask' }, { seq: 2, role: 'user', content: '[TangleClaw Switchboard] <b>1</b> unread' }],
+      chat: { status: 'active', members: [], live: { turns: [], switchboard: [
+        { dir: 'in', text: '[TangleClaw Switchboard] <b>1</b> unread' }, { dir: 'out', text: 'tc message send x "<i>hi</i>"' }] } } });
+    const stream = html.slice(html.indexOf('id="v6ChatStream"'), html.indexOf('id="v6ChatUnderHood"'));
+    assert.match(stream, /real ask/);
+    assert.doesNotMatch(stream, /TangleClaw Switchboard/);
+    const hood = html.slice(html.indexOf('id="v6ChatSwitchboard"'), html.indexOf('id="v6ChatPeek"'));
+    assert.equal((hood.match(/is-in/g) || []).length, 1, 'the pane copy of a recorded wake is not repeated');
+    assert.match(hood, /<li class="v6-chat-switchboard-item is-in"><span class="v6-chat-switchboard-dir">← in<\/span> <span class="v6-chat-switchboard-text">\[TangleClaw Switchboard\] &lt;b&gt;1&lt;\/b&gt; unread<\/span><\/li>/);
+    assert.match(hood, /is-out[\s\S]*tc message send x &quot;&lt;i&gt;hi&lt;\/i&gt;&quot;/);
+    assert.doesNotMatch(hood, /<b>|<i>/);
+  });
+
+  it('with no traffic the list says so', () => {
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [], chat: { status: 'active', members: [] } });
+    assert.match(html, /<ol id="v6ChatSwitchboard"[^>]*><li class="v6-chat-switchboard-empty">No switchboard traffic on screen\.<\/li><\/ol>/);
+  });
+});
+
+describe('the Medusa indicator in the chat header (#3076)', () => {
+  const G = loadV6Shell();
+
+  it('draws nothing before a status answers or where Medusa is not turned on', () => {
+    assert.equal(G.tcV6MedusaIndicatorMarkup(null), '');
+    assert.equal(G.tcV6MedusaIndicatorMarkup(undefined), '');
+    assert.equal(G.tcV6MedusaIndicatorMarkup({ state: 'listening', unread: 2, enabled: false }), '');
+  });
+
+  it('shows both heads around an @ badge, which becomes the unread count', () => {
+    const idle = G.tcV6MedusaIndicatorMarkup({ state: 'listening', unread: 0, enabled: true, inbound: 1, outbound: 0 });
+    assert.match(idle, /<button type="button" id="v6ChatMedusa" class="v6-chat-medusa is-listening" aria-controls="v6ChatUnderHood"/);
+    assert.match(idle, /<img class="v6-medusa-head v6-medusa-head--in" src="\/medusa-head-left\.webp" alt=""[\s\S]*<span id="v6ChatMedusaBadge" class="v6-chat-medusa-badge" aria-hidden="true">@<\/span>[\s\S]*<img class="v6-medusa-head v6-medusa-head--out" src="\/medusa-head-right\.webp" alt=""/);
+    assert.match(idle, /title="Medusa: listening · 0 unread · on screen: 1 in, 0 out — open Under the Hood for the traffic"/);
+    const mail = G.tcV6MedusaIndicatorMarkup({ state: 'listening', unread: 3 });
+    assert.match(mail, /<span id="v6ChatMedusaBadge" class="v6-chat-medusa-badge has-unread" aria-hidden="true">3<\/span>/);
+  });
+
+  it('blinks the head for the direction traffic moved, and an unknown state reads as off', () => {
+    assert.match(G.tcV6MedusaIndicatorMarkup({ state: 'listening', flowIn: true }), /class="v6-chat-medusa is-listening is-flow-in"/);
+    assert.match(G.tcV6MedusaIndicatorMarkup({ state: 'listening', flowOut: true }), /class="v6-chat-medusa is-listening is-flow-out"/);
+    assert.match(G.tcV6MedusaIndicatorMarkup({ state: '"><x' }), /class="v6-chat-medusa is-off"/);
+  });
+
+  it('escapes the listener error in its tip and label', () => {
+    const html = G.tcV6MedusaIndicatorMarkup({ state: 'error', lastError: '"><img src=x onerror=alert(1)>', unread: '<b>' });
+    assert.match(html, /title="Medusa: error \(&quot;&gt;&lt;img src=x onerror=alert\(1\)&gt;\) · 0 unread/);
+    assert.doesNotMatch(html, /<img src=x|<b>/);
+    // The count is read as a number before it is drawn, so a non-number reads as no mail.
+    assert.match(html, /<span id="v6ChatMedusaBadge" class="v6-chat-medusa-badge" aria-hidden="true">@<\/span>/);
+  });
+
+  it('sits in the chat actions only while the session is live', () => {
+    const view = (status) => G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: status === 'offline' ? null : 2, events: [],
+      chat: { status, members: [], medusa: { state: 'listening', unread: 1 } } });
+    assert.match(view('active'), /<div class="v6-chat-actions">\s*<span id="v6ChatMedusaSlot" class="v6-chat-medusa-slot"><button type="button" id="v6ChatMedusa"/);
+    assert.doesNotMatch(view('offline'), /v6ChatMedusa/);
+  });
+});
+
+describe('the Waiting on you queue (#3079)', () => {
+  const G = loadV6Shell();
+  const run = (lines, known) => plain(G.tcV6ExtractLiveTurns(lines, 'claude', known || []));
+
+  it('collects every question in the newest reply, list markers stripped, not only the last line', () => {
+    const out = run(['> plan it', '⏺ Three things first:', '  1. Should I branch from main?', '  2) Is the 7-file scope final?',
+      '  - Do you want a PR now?', '  Then I start.']);
+    assert.deepEqual(out.questions, ['Should I branch from main?', 'Is the 7-file scope final?', 'Do you want a PR now?']);
+    assert.equal(out.question, null, 'the single-question field still reads the last line only');
+  });
+
+  it('an answer clears the queue even when the pane echoes a prompt that is already recorded', () => {
+    const lines = ['⏺ Ready?', '> yes go'];
+    assert.deepEqual(run(lines, ['yes go']).questions, []);
+    assert.deepEqual(run(lines, []).questions, []);
+  });
+
+  it('numbers several questions, escapes each, and gives each a dismiss button', () => {
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'x' }], questions: ['A <b>?', 'B?'] } } });
+    assert.match(html, /<div id="v6ChatQuestion" class="v6-chat-question is-asking"/);
+    assert.match(html, /<span class="v6-chat-question-badge" aria-hidden="true">\(1\)<\/span> <span class="v6-chat-question-text">A &lt;b&gt;\?<\/span>/);
+    assert.match(html, /<span class="v6-chat-question-badge" aria-hidden="true">\(2\)<\/span> <span class="v6-chat-question-text">B\?<\/span>/);
+    assert.match(html, /id="v6ChatQuestionDismiss0" data-index="0" title="Dismiss this question" aria-label="Dismiss question 1"/);
+    assert.match(html, /id="v6ChatQuestionDismiss1"/);
+    assert.doesNotMatch(html, /<b>/);
+  });
+
+  it('one question carries no badge', () => {
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns: [], questions: ['Only?'] } } });
+    assert.doesNotMatch(html, /v6-chat-question-badge/);
+    assert.match(html, /<span class="v6-chat-question-text">Only\?<\/span>/);
+  });
+
+  /** A shell showing a chat whose newest reply asks two questions. */
+  function mountQuestions(onSendChat) {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null, onSendChat });
+    const live = { turns: [{ role: 'assistant', text: 'One?\nTwo?' }], questions: ['One?', 'Two?'] };
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'P' }, sessionId: 1, events: [], chat: { status: 'active', members: [], live } } });
+    return { shell, doc, root, live };
+  }
+
+  it('✕ dismisses one question, and a poll reading the same reply does not bring it back', () => {
+    const m = mountQuestions();
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    const q = m.doc.getElementById('v6ChatQuestion');
+    assert.doesNotMatch(q.innerHTML, /One\?/);
+    assert.match(q.innerHTML, /Two\?/);
+    m.shell.setLive({ peek: null, live: m.live });
+    assert.doesNotMatch(m.doc.getElementById('v6ChatQuestion').innerHTML, /One\?/);
+  });
+
+  it('the same words asked in a later reply show again, once the first was answered', () => {
+    const m = mountQuestions();
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'ok' }], questions: [] } });
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'assistant', text: 'New reply. One?' }], questions: ['One?'] } });
+    assert.match(m.doc.getElementById('v6ChatQuestion').innerHTML, /One\?/);
+  });
+
+  it('the same words asked in the very next reply show, with no empty poll between (PRR-B R1)', () => {
+    const m = mountQuestions();
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'u1' }, { role: 'assistant', text: 'One?' }], questions: ['One?'] } });
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    assert.doesNotMatch(m.doc.getElementById('v6ChatQuestion').innerHTML, /One\?/);
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'u1' }, { role: 'assistant', text: 'One?' },
+      { role: 'user', text: 'u2' }, { role: 'assistant', text: 'Still: One?' }], questions: ['One?'] } });
+    assert.match(m.doc.getElementById('v6ChatQuestion').innerHTML, /One\?/);
+  });
+
+  it('a dismissal holds while the same reply grows, by a wake or by more text (Critic W2)', () => {
+    const m = mountQuestions();
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'assistant', text: 'One?\nTwo?\nAnd a reply to the wake.' }], questions: ['One?', 'Two?'] } });
+    const html = m.doc.getElementById('v6ChatQuestion').innerHTML;
+    assert.doesNotMatch(html, /One\?/);
+    assert.match(html, /Two\?/);
+  });
+
+  it('a failed read of the pane does not spend a dismissal (second review, W1)', () => {
+    const m = mountQuestions();
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    m.shell.setLive({ peek: { error: 'x' }, live: null });
+    m.shell.setLive({ peek: { error: 'x' }, live: { turns: [], question: null, activity: 'Working' } });
+    m.shell.setLive({ peek: null, live: m.live });
+    assert.doesNotMatch(m.doc.getElementById('v6ChatQuestion').innerHTML, /One\?/);
+  });
+
+  it('a poll that changes nothing leaves the question slot, and the ✕ that has focus, alone (Critic W1)', () => {
+    const m = mountQuestions();
+    const q = m.doc.getElementById('v6ChatQuestion');
+    let writes = 0;
+    let html = q.innerHTML;
+    Object.defineProperty(q, 'innerHTML', { configurable: true, get: () => html, set: (v) => { writes++; html = v; } });
+    m.shell.setLive({ peek: null, live: m.live });
+    m.shell.setLive({ peek: null, live: m.live });
+    assert.equal(writes, 0);
+  });
+
+  it('dismissing a question moves focus to the ✕ now in its place, then to the message box', () => {
+    const m = mountQuestions();
+    m.doc.getElementById('v6ChatQuestionDismiss1').dispatch('click');
+    assert.equal(m.doc.activeElement, m.doc.getElementById('v6ChatQuestionDismiss0'));
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    assert.equal(m.doc.activeElement, m.doc.getElementById('v6ChatInput'));
+  });
+
+  it('sending a reply clears the queue', () => {
+    const sent = [];
+    const m = mountQuestions((t) => sent.push(t));
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'both yes';
+    input.dispatch('input');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    assert.deepEqual(sent, ['both yes']);
+    const q = m.doc.getElementById('v6ChatQuestion');
+    assert.equal(q.innerHTML, '');
+    assert.equal(q.className, 'v6-chat-question');
+  });
+});
+
+describe('the Medusa indicator, live through the controller (#3076)', () => {
+  /** A live chat whose peek and Medusa status answer in sequence, one entry per read. */
+  function mountMedusa(peeks, statuses) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    let p = 0;
+    let s = 0;
+    const calls = [];
+    const api = async (url) => {
+      calls.push(url);
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
+      if (url === '/api/v6/projects/12/sessions/1592/conversation/events') return { events: [] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: peeks[Math.min(p++, peeks.length - 1)] };
+      if (url === '/api/sessions/TC-Lane-PM/medusa/status') return statuses[Math.min(s++, statuses.length - 1)];
+      return null;
+    };
+    const timers = [];
+    const storage = makeStorage();
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => ({ ok: true }), storage,
+      setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage, onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    return { shell, root, doc, timers, settle, calls, storage };
+  }
+
+  it('reads the status with the peek; the first reading never blinks, even with mail waiting', async () => {
+    const m = mountMedusa([['> go']], [{ state: 'listening', unread: 2, enabled: true }]);
+    await m.settle();
+    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/medusa/status'));
+    assert.match(m.root.innerHTML, /class="v6-chat-medusa is-listening"/);
+    assert.match(m.root.innerHTML, /<span id="v6ChatMedusaBadge" class="v6-chat-medusa-badge has-unread" aria-hidden="true">2<\/span>/);
+  });
+
+  it('more unread blinks the inbound head; a new send blinks the outbound head; a quiet poll stops both', async () => {
+    const m = mountMedusa(
+      [['> go'], ['> go'], ['> go', '⏺ Bash(tc message send peer "hi")'], ['> go', '⏺ Bash(tc message send peer "hi")']],
+      [{ state: 'listening', unread: 0 }, { state: 'listening', unread: 1 }, { state: 'listening', unread: 1 }, { state: 'listening', unread: 1 }]);
+    await m.settle();
+    // Updated in place, so the button the operator may be on is never replaced (Critic W1).
+    const btn = m.doc.getElementById('v6ChatMedusa');
+    await m.timers[0]();
+    assert.equal(btn.className, 'v6-chat-medusa is-listening is-flow-in');
+    assert.equal(m.doc.getElementById('v6ChatMedusaBadge').textContent, '1');
+    assert.equal(m.doc.getElementById('v6ChatMedusaBadge').className, 'v6-chat-medusa-badge has-unread');
+    assert.equal(btn.getAttribute('aria-label'), 'Medusa: listening · 1 unread · on screen: 0 in, 0 out — open Under the Hood for the traffic');
+    await m.timers[0]();
+    assert.equal(btn.className, 'v6-chat-medusa is-listening is-flow-out');
+    assert.match(m.doc.getElementById('v6ChatSwitchboard').innerHTML, /is-out[\s\S]*tc message send peer/);
+    await m.timers[0]();
+    assert.equal(btn.className, 'v6-chat-medusa is-listening');
+    assert.equal(m.doc.getElementById('v6ChatMedusa'), btn);
+  });
+
+  it('a quiet poll does not touch the indicator at all, and one that hides it removes it', async () => {
+    const m = mountMedusa([['> go']], [{ state: 'listening', unread: 0 }, { state: 'listening', unread: 0 }, { state: 'listening', enabled: false }]);
+    await m.settle();
+    const slot = m.doc.getElementById('v6ChatMedusaSlot');
+    let writes = 0;
+    let html = slot.innerHTML;
+    Object.defineProperty(slot, 'innerHTML', { configurable: true, get: () => html, set: (v) => { writes++; html = v; } });
+    await m.timers[0]();
+    assert.equal(writes, 0);
+    await m.timers[0]();
+    assert.equal(writes, 1);
+    assert.equal(html, '');
+  });
+
+  it('a new wake on screen blinks the inbound head even before unread moves', async () => {
+    const m = mountMedusa([['> go'], ['> go', '> [TangleClaw Switchboard] You have 1 unread']], [{ state: 'listening', unread: 1 }]);
+    await m.settle();
+    await m.timers[0]();
+    assert.equal(m.doc.getElementById('v6ChatMedusa').className, 'v6-chat-medusa is-listening is-flow-in');
+  });
+
+  it('a failed status read keeps the last reading without blinking', async () => {
+    const m = mountMedusa([['> go']], [{ state: 'listening', unread: 1 }, null]);
+    await m.settle();
+    const slot = m.doc.getElementById('v6ChatMedusaSlot');
+    let writes = 0;
+    Object.defineProperty(slot, 'innerHTML', { configurable: true, get: () => '', set: () => { writes++; } });
+    await m.timers[0]();
+    assert.equal(writes, 0, 'the indicator was neither emptied nor redrawn');
+    // Nothing changed, so nothing was redrawn: the first render's markup stands.
+    assert.match(m.root.innerHTML, /<button type="button" id="v6ChatMedusa" class="v6-chat-medusa is-listening" /);
+    assert.match(m.root.innerHTML, /<span id="v6ChatMedusaBadge" class="v6-chat-medusa-badge has-unread" aria-hidden="true">1<\/span>/);
+  });
+
+  it('clicking it opens Under the Hood at the switchboard traffic, and remembers the drawer open', async () => {
+    const m = mountMedusa([['> go']], [{ state: 'listening', unread: 0 }]);
+    await m.settle();
+    m.doc.getElementById('v6ChatMedusa').dispatch('click');
+    assert.equal(m.doc.getElementById('v6ChatUnderHood').open, true);
+    assert.equal(m.doc.activeElement, m.doc.getElementById('v6ChatSwitchboard'));
+    m.shell.setTelemetry(null);
+    assert.match(m.root.innerHTML, /<details id="v6ChatUnderHood" class="v6-chat-under-hood" open>/);
+  });
+});
+
+describe('the footer status bar (#3079)', () => {
+  const G = loadV6Shell();
+  const bar = { scope: 'global', metrics: { activeSessions: { value: 4, confidence: 'observed' }, health: { value: 'ok', confidence: 'estimated' } } };
+
+  it('carries Active sessions, Health and Version, announced, beside the hidden watermark word', () => {
+    const html = G.tcV6WatermarkFooterMarkup(true, bar);
+    assert.match(html, /^<footer class="v6-shell-watermark has-status"><div id="v6ShellStatusBar" class="v6-shell-status-bar" role="status" aria-label="Server status">/);
+    assert.deepEqual([...html.matchAll(/title="([A-Za-z ]+):/g)].map((x) => x[1]), ['Active sessions', 'Health', 'Version']);
+    assert.match(html, /<span class="v6-shell-watermark-mark" aria-hidden="true">TangleClaw<\/span><\/footer>$/);
+    assert.doesNotMatch(html, /<footer[^>]*aria-hidden/);
+  });
+
+  it('with the watermark off it is the status bar alone; with no readings it is the old watermark or nothing', () => {
+    assert.doesNotMatch(G.tcV6WatermarkFooterMarkup(false, bar), /v6-shell-watermark-mark|>TangleClaw</);
+    assert.match(G.tcV6WatermarkFooterMarkup(false, bar), /id="v6ShellStatusBar"/);
+    assert.equal(G.tcV6WatermarkFooterMarkup(true, null), '<footer class="v6-shell-watermark" aria-hidden="true">TangleClaw</footer>');
+    assert.equal(G.tcV6WatermarkFooterMarkup(false, null), '');
+  });
+
+  it('the header bar no longer carries them, in a chat or outside one', () => {
+    const header = G.tcV6TelemetryHeaderMarkup(bar);
+    assert.doesNotMatch(header, /Active sessions|Health|Version/);
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+    shell.setTelemetry(bar);
+    const html = root.innerHTML;
+    assert.equal((html.match(/title="Active sessions:/g) || []).length, 1);
+    assert.ok(html.indexOf('title="Active sessions:') > html.indexOf('<footer class="v6-shell-watermark has-status">'));
+  });
+});
+
+describe('a slim top bar in the v6 shell (#3079)', () => {
+  const G = loadV6Shell();
+  /**
+   * A small tree with real sibling order — what the tuck needs that the
+   * shared mini-DOM does not model (insertBefore and nextSibling).
+   */
+  function makeHeader() {
+    const byId = {};
+    const node = (tag, id, className) => {
+      const classes = new Set(String(className || '').split(/\s+/).filter(Boolean));
+      const el = {
+        tagName: tag.toUpperCase(), id: id || '', childNodes: [], parentNode: null, attrs: {}, listeners: {}, open: false, textContent: '', title: '',
+        get className() { return [...classes].join(' '); }, set className(v) { classes.clear(); String(v).split(/\s+/).filter(Boolean).forEach((c) => classes.add(c)); },
+        classList: { contains: (c) => classes.has(c), toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)) },
+        get nextSibling() { const p = el.parentNode; return p ? p.childNodes[p.childNodes.indexOf(el) + 1] || null : null; },
+        setAttribute(k, v) { el.attrs[k] = String(v); },
+        addEventListener(t, fn) { (el.listeners[t] = el.listeners[t] || []).push(fn); },
+        appendChild(c) { if (c.parentNode) c.remove(); c.parentNode = el; el.childNodes.push(c); return c; },
+        insertBefore(c, ref) { if (c.parentNode) c.remove(); c.parentNode = el; el.childNodes.splice(el.childNodes.indexOf(ref), 0, c); return c; },
+        remove() { const p = el.parentNode; if (p) p.childNodes.splice(p.childNodes.indexOf(el), 1); el.parentNode = null; if (el.id && byId[el.id] === el && !isAttached(el)) { /* kept findable, as getElementById is only asked of attached ids below */ } },
+        querySelector(sel) { for (const c of el.childNodes) { if (sel === '.dash-actions' && c.classList.contains('dash-actions')) return c; const d = c.querySelector(sel); if (d) return d; } return null; }
+      };
+      if (id) byId[id] = el;
+      return el;
+    };
+    const body = node('body');
+    const isAttached = (el) => { let p = el; while (p) { if (p === body) return true; p = p.parentNode; } return false; };
+    const left = body.appendChild(node('div', '', 'dash-auth'));
+    ['signOutBtn', 'ttydNotice'].forEach((id) => left.appendChild(node('button', id)));
+    const actions = body.appendChild(node('div', '', 'dash-actions'));
+    ['v6ViewToggleBtn', 'masterToggle', 'advisorToggle', 'portsToggle', 'usageToggle', 'groupsToggle', 'openclawToggle',
+      'auditToggle', 'fleetRecoveryToggle', 'rulesToggle', 'gearBtn'].forEach((id) => actions.appendChild(node('button', id)));
+    const doc = {
+      body,
+      createElement: (tag) => node(tag),
+      getElementById: (id) => (byId[id] && isAttached(byId[id]) ? byId[id] : null),
+      querySelector: (sel) => body.querySelector(sel),
+      _register: (el) => { if (el.id) byId[el.id] = el; }
+    };
+    const ids = (el) => el.childNodes.map((c) => c.id);
+    return { doc, body, left, actions, ids };
+  }
+
+  it('tucks the admin controls into a More menu, keeping Classic View, Master and Advisor in the bar', () => {
+    const h = makeHeader();
+    G.tcV6TuckAdminControls(h.doc, true);
+    assert.ok(h.body.classList.contains('v6-shell-active'));
+    assert.deepEqual(h.ids(h.actions), ['v6ViewToggleBtn', 'masterToggle', 'advisorToggle', 'gearBtn', 'v6AdminMenu']);
+    const panel = h.doc.getElementById('v6AdminMenuPanel');
+    assert.deepEqual(h.ids(panel), ['portsToggle', 'usageToggle', 'groupsToggle', 'openclawToggle', 'auditToggle', 'fleetRecoveryToggle', 'rulesToggle', 'signOutBtn']);
+    const summary = h.doc.getElementById('v6AdminMenu').childNodes[0];
+    assert.equal(summary.tagName, 'SUMMARY');
+    assert.equal(summary.attrs['aria-label'], 'More dashboard controls');
+    assert.deepEqual(h.ids(h.left), ['ttydNotice']);
+  });
+
+  it('is safe to repeat on every render, and choosing a control closes the menu', () => {
+    const h = makeHeader();
+    G.tcV6TuckAdminControls(h.doc, true);
+    G.tcV6TuckAdminControls(h.doc, true);
+    assert.equal(h.ids(h.actions).filter((id) => id === 'v6AdminMenu').length, 1);
+    assert.equal(h.ids(h.doc.getElementById('v6AdminMenuPanel')).length, 8);
+    const menu = h.doc.getElementById('v6AdminMenu');
+    menu.open = true;
+    h.doc.getElementById('v6AdminMenuPanel').listeners.click.forEach((fn) => fn());
+    assert.equal(menu.open, false);
+  });
+
+  it('leaving the shell puts every control back exactly where it was and removes the menu, after any number of renders', () => {
+    const h = makeHeader();
+    const before = { actions: h.ids(h.actions), left: h.ids(h.left) };
+    G.tcV6TuckAdminControls(h.doc, true);
+    G.tcV6TuckAdminControls(h.doc, true);
+    G.tcV6TuckAdminControls(h.doc, false);
+    assert.ok(!h.body.classList.contains('v6-shell-active'));
+    assert.deepEqual(h.ids(h.actions), before.actions);
+    assert.deepEqual(h.ids(h.left), before.left);
+    assert.equal(h.doc.getElementById('v6AdminMenu'), null);
+  });
+
+  it('ui.js runs it from the shell\'s render hook with whether the shell shows', () => {
+    const UI = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+    assert.match(UI, /if \(typeof window\.tcV6TuckAdminControls === 'function'\) window\.tcV6TuckAdminControls\(document, active\);/);
+  });
+});
+
+describe('V629 styles (#3076, #3079)', () => {
+  const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+
+  it('tints each turn in its accent colour, in both themes, under a 1.5px dashed divider in that colour', () => {
+    assert.match(CSS, /\.v6-conversation-event\.is-user \{\s*background: rgba\(56, 139, 253, 0\.07\);\s*\}/);
+    assert.match(CSS, /\.v6-conversation-event\.is-assistant \{\s*background: rgba\(46, 160, 67, 0\.06\);\s*\}/);
+    assert.match(CSS, /\[data-theme="light"\] \.v6-conversation-event\.is-user \{\s*background: rgba\(9, 105, 218, 0\.07\);\s*\}/);
+    assert.match(CSS, /\[data-theme="light"\] \.v6-conversation-event\.is-assistant \{\s*background: rgba\(26, 127, 55, 0\.07\);\s*\}/);
+    assert.match(CSS, /\.v6-conversation-event > \.v6-conversation-content \{[^}]*border-top: 1\.5px dashed/);
+    assert.match(CSS, /\.v6-conversation-event\.is-user > \.v6-conversation-content \{\s*border-top-color: #58a6ff;\s*\}/);
+    assert.match(CSS, /\.v6-conversation-event\.is-assistant > \.v6-conversation-content \{\s*border-top-color: #56d364;\s*\}/);
+  });
+
+  it('keeps the hidden delegate picker out of sight, and gives each dismiss button a 44px target', () => {
+    assert.match(CSS, /\.v6-chat-delegate-label\[hidden\] \{\s*display: none;\s*\}/);
+    assert.match(CSS, /\.v6-chat-question-dismiss \{[^}]*min-width: 44px;\s*min-height: 44px;/);
+  });
+
+  it('blinks the Medusa heads only for traffic, and not at all under reduced motion', () => {
+    assert.match(CSS, /\.v6-chat-medusa\.is-flow-in \.v6-medusa-head--in,\s*\.v6-chat-medusa\.is-flow-out \.v6-medusa-head--out \{[^}]*animation: v6-medusa-blink/);
+    assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{\s*\.v6-chat-medusa \.v6-medusa-head \{\s*animation: none;/);
+  });
+
+  it('lays the footer out as a status bar and floats the More menu over the page', () => {
+    assert.match(CSS, /\.v6-shell-watermark\.has-status \{[^}]*display: flex;[^}]*opacity: 1;/);
+    assert.match(CSS, /\.v6-admin-menu-panel \{[^}]*position: absolute;[^}]*z-index: 30;/);
+  });
+});
+
+describe('a message longer than the command route takes (#3079 item 5)', () => {
+  /**
+   * A live chat that records what it uploads and sends. `upload` answers the
+   * secure-clipboard POST (null = refused).
+   */
+  function mountLong(opts) {
+    const o = opts || {};
+    const G = loadV6Shell();
+    G.TextEncoder = TextEncoder;
+    G.btoa = btoa;
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const uploads = [];
+    const listings = [];
+    const sends = [];
+    const events = [];
+    const api = async (url, init) => {
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
+      if (/conversation\/events/.test(url)) return { events: events.map((e, i) => ({ seq: i + 1, role: e.role, content: e.content })) };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80' && o.peek) return { lines: o.peek() };
+      if (url === '/api/sessions/TC-Lane-PM/secure-clipboard' && init && init.method === 'GET') {
+        listings.push(init.headers);
+        api.lastError = o.listing === null ? 'listing refused' : null;
+        return o.listing === undefined ? { files: [] } : o.listing;
+      }
+      if (url === '/api/sessions/TC-Lane-PM/secure-clipboard' && init && init.method === 'POST') {
+        uploads.push({ headers: init.headers, body: JSON.parse(init.body) });
+        api.lastError = o.upload === null ? 'Secure clipboard is locked' : null;
+        return o.upload === null ? null : { relPath: `secrets/${JSON.parse(init.body).filename}` };
+      }
+      return null;
+    };
+    api.lastError = null;
+    api.lastErrorCode = null;
+    const apiMutate = async (url, method, body) => {
+      if (/\/command$/.test(url)) sends.push(plain(body));
+      if (/conversation\/events$/.test(url)) events.push(plain(body));
+      return { ok: true };
+    };
+    let shell = null;
+    const pending = [];
+    const timers = [];
+    const deps = { getShell: () => shell, api, apiMutate, storage: null,
+      setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {},
+      now: () => 1700000000000, operatorHeaders: async () => ({ 'Content-Type': 'application/json', 'X-TC-Open-Token': 'tok' }) };
+    if (o.textToBase64) deps.textToBase64 = o.textToBase64;
+    const live = G.tcV6CreateLiveController(deps);
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
+      setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)), onSendChat: (t) => pending.push(live.sendChat(t)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    const send = async (text) => {
+      await settle();
+      const input = doc.getElementById('v6ChatInput');
+      input.value = text;
+      input.dispatch('input');
+      doc.getElementById('v6ChatForm').dispatch('submit');
+      await settle();
+    };
+    return { G, doc, root, uploads, listings, sends, events, send, shell, timers };
+  }
+
+  it('a message within the limit is sent as it is, with nothing saved', async () => {
+    const m = mountLong();
+    const text = 'x'.repeat(4096);
+    await m.send(text);
+    assert.equal(m.uploads.length, 0);
+    assert.deepEqual(m.sends, [{ command: text, enter: true }]);
+  });
+
+  it('a longer one is saved whole as a file, the session is sent its start and where the rest is, and the chat records what fits', async () => {
+    const m = mountLong();
+    const text = `Plan ✓ ${'é'.repeat(3000)} 🙂 ${'line\n'.repeat(400)}end`;
+    assert.ok(text.length > 4096);
+    await m.send(text);
+    assert.equal(m.uploads.length, 1);
+    const up = m.uploads[0];
+    assert.deepEqual({ mode: up.body.mode, filename: up.body.filename, encoding: up.body.encoding },
+      { mode: 'file', filename: 'prompt-1700000000000.md', encoding: 'base64' });
+    assert.equal(Buffer.from(up.body.text, 'base64').toString('utf8'), text, 'the file holds the whole message, as UTF-8');
+    assert.equal(up.headers['X-TC-Open-Token'], 'tok', 'with the page\'s operator proof');
+    assert.equal(m.sends.length, 1);
+    const cmd = m.sends[0].command;
+    assert.ok(cmd.length <= 4096, `command is ${cmd.length} chars`);
+    assert.ok(cmd.startsWith(text.slice(0, 3000)));
+    assert.ok(cmd.endsWith(`\n\n[Full prompt (${text.length} chars) saved to: .tangleclaw/secrets/prompt-1700000000000.md — read that file in full]`), cmd.slice(-160));
+    assert.equal(m.events.length, 1);
+    // Ruling A739/A740: over 8,000 bytes of JSON-encoded event body, the record keeps its start and the path.
+    const recorded = m.events[0].content;
+    assert.ok(Buffer.byteLength(JSON.stringify(m.events[0])) <= 8000, `${Buffer.byteLength(JSON.stringify(m.events[0]))} bytes`);
+    assert.ok(text.startsWith(recorded.split('\n\n[Full prompt')[0]));
+    assert.ok(recorded.endsWith(`\n\n[Full prompt (${text.length} chars) saved to: .tangleclaw/secrets/prompt-1700000000000.md — read that file in full]`));
+  });
+
+  it('one that is long but light records whole', async () => {
+    const m = mountLong();
+    const text = 'w'.repeat(5000);
+    await m.send(text);
+    assert.equal(m.uploads.length, 1);
+    assert.equal(m.events[0].content, text, 'the conversation shows the whole message');
+  });
+
+  it('a quote-heavy message over 10 KB records within the route cap, and so does a short one full of control characters', async () => {
+    for (const text of ['"'.repeat(11000), '\u0001'.repeat(2000)]) {
+      const m = mountLong();
+      await m.send(text);
+      assert.equal(m.uploads.length, 1, 'saved, so the record can point at it');
+      const body = JSON.stringify(m.events[0]);
+      assert.ok(Buffer.byteLength(body) <= 8000, `${Buffer.byteLength(body)} bytes`);
+      assert.ok(Buffer.byteLength(body) < 10 * 1024);
+      assert.match(m.events[0].content, /\[Full prompt \(\d+ chars\) saved to: \.tangleclaw\/secrets\/prompt-1700000000000\.md — read that file in full\]$/);
+      assert.equal(m.sends[0].command.length <= 4096, true);
+    }
+  });
+
+  it('checks the project\'s saved files first: an unreadable listing saves and sends nothing, and a taken name gets a new one', async () => {
+    const refused = mountLong({ listing: null });
+    await refused.send('q'.repeat(5000));
+    assert.equal(refused.uploads.length, 0);
+    assert.equal(refused.sends.length, 0);
+    assert.match(refused.root.innerHTML, /Not sent: the long message was not saved: the project&#39;s saved files could not be checked \(listing refused\)/);
+    const taken = mountLong({ listing: { files: [{ filename: 'prompt-1700000000000.md' }] } });
+    await taken.send('q'.repeat(5000));
+    assert.equal(taken.listings[0]['X-TC-Open-Token'], 'tok');
+    assert.equal(taken.uploads[0].body.filename, 'prompt-1700000000000-2.md');
+    assert.match(taken.sends[0].command, /saved to: \.tangleclaw\/secrets\/prompt-1700000000000-2\.md/);
+  });
+
+  it('the recorded text is cut between characters and weighs what the route will see', () => {
+    const G = loadV6Shell();
+    const path = '.tangleclaw/secrets/p.md';
+    const out = G.tcV6RecordedText('🙂'.repeat(5000), path, 'v6-chat-ui');
+    assert.doesNotMatch(out.split('\n\n[Full prompt')[0], /[\uD800-\uDBFF]$/);
+    assert.ok(G.tcV6EventBodyBytes(out, 'v6-chat-ui') <= 8000);
+    // As much as fits: one more character would not.
+    const head = Array.from(out.split('\n\n[Full prompt')[0]);
+    const note = out.slice(out.indexOf('\n\n[Full prompt'));
+    assert.ok(G.tcV6EventBodyBytes(head.concat('🙂').join('') + note, 'v6-chat-ui') > 8000);
+    const body = JSON.stringify({ launchId: 'v6-chat-ui', seq: Number.MAX_SAFE_INTEGER, tier: 'A', adapter: 'v6-chat-ui', role: 'user', content: '"é🙂\u0001' });
+    assert.equal(G.tcV6EventBodyBytes('"é🙂\u0001', 'v6-chat-ui'), new TextEncoder().encode(body).length);
+    assert.equal(G.tcV6RecordedText('short', path, 'v6-chat-ui'), 'short');
+  });
+
+  it('when the file cannot be saved, nothing is sent and the text is kept', async () => {
+    const m = mountLong({ upload: null });
+    const text = 'y'.repeat(5000);
+    await m.send(text);
+    assert.equal(m.sends.length, 0);
+    assert.equal(m.events.length, 0);
+    assert.match(m.root.innerHTML, /Not sent: the long message could not be saved for the session: Secure clipboard is locked/);
+    assert.match(m.root.innerHTML, new RegExp(`<textarea id="v6ChatInput"[^>]*>${'y'.repeat(5000)}</textarea>`));
+  });
+
+  it('over the 5 MB limit for a saved file it is refused before anything is uploaded', async () => {
+    // Restated by PRR-B R1: the limit counts the message's UTF-8 bytes, so exactly 5 MiB is allowed.
+    const m = mountLong();
+    await m.send('z'.repeat(5 * 1024 * 1024 + 1));
+    assert.equal(m.uploads.length, 0);
+    assert.equal(m.sends.length, 0);
+    assert.match(m.root.innerHTML, /Not sent: the message is over the 5 MB limit for a saved prompt\./);
+  });
+
+  it('a message of exactly 5 MiB of UTF-8 is saved, base64 padding notwithstanding (PRR-B R1)', async () => {
+    const m = mountLong();
+    const text = 'é'.repeat(5 * 1024 * 1024 / 2);
+    assert.equal(Buffer.byteLength(text), 5242880);
+    await m.send(text);
+    assert.equal(m.uploads.length, 1);
+    assert.equal(Buffer.from(m.uploads[0].body.text, 'base64').length, 5242880);
+  });
+
+  it('the stand-in command fills the limit exactly and never splits a surrogate pair', () => {
+    const G = loadV6Shell();
+    const path = '.tangleclaw/secrets/prompt-1.md';
+    const flat = G.tcV6LongPromptCommand('a'.repeat(9000), path);
+    assert.equal(flat.length, 4096);
+    const note = `\n\n[Full prompt (9000 chars) saved to: ${path} — read that file in full]`;
+    const cut = 4096 - note.length;
+    const pairs = 'a'.repeat(cut - 1) + '🙂'.repeat(2000);
+    const out = G.tcV6LongPromptCommand(pairs, path);
+    assert.ok(out.length <= 4096);
+    assert.doesNotMatch(out.split('\n\n[Full prompt')[0], /[\uD800-\uDBFF]$/);
+  });
+});
+
+describe('turns in the order they happened, and a composer that empties on Enter (#3079 item 6)', () => {
+  const G = loadV6Shell();
+  const view = (events, turns, chat) => ({ project: { id: 12, name: 'P' }, sessionId: 2, events,
+    chat: Object.assign({ status: 'active', members: [], live: { turns, questions: [] } }, chat || {}) });
+  const order = (html) => [...html.matchAll(/<span class="v6-conversation-content">([^<]*)<\/span>/g)].map((m) => m[1]);
+  const ev = (seq, content) => ({ seq, role: 'user', content });
+
+  it('interleaves each user message with the replies around it, each drawn once, a sent one not yet on screen last', () => {
+    const html = G.tcV6ConversationViewMarkup(view([ev(1, 'User1'), ev(2, 'User2'), ev(3, 'User3')], [
+      { role: 'user', text: 'User1', recorded: true }, { role: 'assistant', text: 'Asst1' },
+      { role: 'user', text: 'User2', recorded: true }, { role: 'assistant', text: 'Asst2' }]));
+    assert.deepEqual(order(html), ['User1', 'Asst1', 'User2', 'Asst2', 'User3']);
+  });
+
+  it('messages from before the pane come first, and a message sent twice pairs with its newest copy', () => {
+    const html = G.tcV6ConversationViewMarkup(view([ev(1, 'Old'), ev(2, 'again'), ev(3, 'again')], [
+      { role: 'user', text: 'again', recorded: true }, { role: 'assistant', text: 'Reply' }]));
+    assert.deepEqual(order(html), ['Old', 'again', 'again', 'Reply']);
+  });
+
+  it('pairs keep the pane\'s order when a message repeats', () => {
+    const html = G.tcV6ConversationViewMarkup(view([ev(1, 'a'), ev(2, 'b'), ev(3, 'a')], [
+      { role: 'user', text: 'a', recorded: true }, { role: 'assistant', text: 'A1' },
+      { role: 'user', text: 'b', recorded: true }, { role: 'assistant', text: 'A2' }]));
+    assert.deepEqual(order(html), ['a', 'A1', 'b', 'A2', 'a']);
+  });
+
+  it('with nothing of it on screen, only the message this chat just sent goes last', () => {
+    const turns = [{ role: 'assistant', text: 'Asst' }];
+    assert.deepEqual(order(G.tcV6ConversationViewMarkup(view([ev(1, 'Earlier'), ev(2, 'Mine')], turns))), ['Earlier', 'Mine', 'Asst']);
+    assert.deepEqual(order(G.tcV6ConversationViewMarkup(view([ev(1, 'Earlier'), ev(2, 'Mine')], turns, { lastSent: { id: 1, text: 'Mine' } }))),
+      ['Earlier', 'Asst', 'Mine']);
+  });
+
+  it('a long message recorded in part is still drawn once, where the pane shows it', () => {
+    const full = `${'Long message line. '.repeat(400)}end`;
+    const recorded = `${full.slice(0, 3000)}\n\n[Full prompt (${full.length} chars) saved to: .tangleclaw/secrets/p.md — read that file in full]`;
+    const html = G.tcV6ConversationViewMarkup(view([ev(1, recorded)], [
+      { role: 'user', text: full, recorded: true }, { role: 'assistant', text: 'Read it.' }]));
+    assert.equal(order(html).length, 2);
+    assert.equal(order(html)[1], 'Read it.');
+  });
+
+  it('the pane\'s saved-path line under a long prompt is not taken for a reply', () => {
+    const full = `please read the whole plan before you start ${'x'.repeat(5000)}`;
+    const out = plain(G.tcV6ExtractLiveTurns([`> ${full.slice(0, 60)}`,
+      `[Full prompt (${full.length} chars) saved to: .tangleclaw/secrets/prompt-1.md — read that file in full]`, '⏺ Reading it now.'], 'claude', [full]));
+    assert.deepEqual(out.turns.map((t) => t.role), ['user', 'assistant']);
+    assert.equal(out.turns[1].text, 'Reading it now.');
+  });
+
+  it('a pending message is escaped, and is not drawn once its recorded copy is', () => {
+    const pending = { id: 7, text: '<b>hi</b>' };
+    const html = G.tcV6ConversationViewMarkup(view([], [], { pending }));
+    assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*&lt;b&gt;hi&lt;\/b&gt;[\s\S]*Sending…/);
+    assert.doesNotMatch(html, /<b>hi/);
+    assert.doesNotMatch(G.tcV6ConversationViewMarkup(view([ev(1, '<b>hi</b>')], [], { pending, lastSent: { id: 7, text: '<b>hi</b>' } })), /is-pending/);
+  });
+});
+
+describe('sending, through the controller (#3079 item 6)', () => {
+  /** A live chat whose command route answers `sendOk`, recording what it is sent. */
+  function mountSend(sendOk) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const events = [];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
+      if (/conversation\/events/.test(url)) return { events: events.map((e, i) => ({ seq: i + 1, role: e.role, content: e.content })) };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: ['⏺ Earlier reply.'] };
+      return null;
+    };
+    api.lastError = null;
+    const apiMutate = async (url, method, body) => {
+      if (/\/command$/.test(url)) { api.lastError = sendOk ? null : 'the lane is held'; return sendOk ? { ok: true } : null; }
+      if (/conversation\/events$/.test(url)) { events.push(plain(body)); return { ok: true }; }
+      return { ok: true };
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
+      setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)), onSendChat: (t) => pending.push(live.sendChat(t)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    const type = (text) => {
+      const input = doc.getElementById('v6ChatInput');
+      input.value = text;
+      input.dispatch('input');
+      doc.getElementById('v6ChatForm').dispatch('submit');
+    };
+    return { doc, root, settle, type, events };
+  }
+  const textarea = (html) => /<textarea id="v6ChatInput"[^>]*>([^<]*)<\/textarea>/.exec(html)[1];
+
+  it('Enter empties the composer at once and shows the message, escaped, at the bottom', async () => {
+    const m = mountSend(true);
+    await m.settle();
+    m.type('<i>next</i> step');
+    // Before anything is awaited: the page as drawn the moment Enter is handled.
+    assert.equal(textarea(m.root.innerHTML), '');
+    const html = m.root.innerHTML;
+    assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*&lt;i&gt;next&lt;\/i&gt; step/);
+    assert.ok(html.indexOf('Earlier reply.') < html.indexOf('is-pending'), 'below the replies before it');
+    await m.settle();
+  });
+
+  it('once sent, the pending message gives way to its recorded copy, drawn once, after the replies', async () => {
+    const m = mountSend(true);
+    await m.settle();
+    m.type('next step');
+    await m.settle();
+    const html = m.root.innerHTML;
+    assert.doesNotMatch(html, /is-pending/);
+    assert.equal((html.match(/>next step</g) || []).length, 1);
+    assert.ok(html.indexOf('Earlier reply.') < html.indexOf('>next step<'));
+    assert.match(html, /<ol id="v6ChatRecordedTail"[^>]*><li class="v6-conversation-event is-user">/);
+  });
+
+  it('a refused send puts the text back and removes the pending message', async () => {
+    const m = mountSend(false);
+    await m.settle();
+    m.type('keep me');
+    await m.settle();
+    assert.equal(textarea(m.root.innerHTML), 'keep me');
+    assert.doesNotMatch(m.root.innerHTML, /is-pending/);
+    assert.match(m.root.innerHTML, /Not sent: the lane is held/);
+    assert.equal(m.events.length, 0);
+  });
+});
+
+describe('a long message recorded only in part is not read back as a reply (third review, R-4)', () => {
+  // CJK text that never repeats, so no later line is already part of the recorded start.
+  const zh = Array.from({ length: 6000 }, (_, i) => String.fromCodePoint(0x4e00 + ((i * 7919) % 20000))).join('');
+
+  it('after a reload, with only the cut record known, its indented continuation is still the prompt', () => {
+    const G = loadV6Shell();
+    const recorded = G.tcV6RecordedText(zh, '.tangleclaw/secrets/p.md', 'v6-chat-ui');
+    assert.ok(recorded.length < 3990, 'the record is shorter than the command');
+    const lines = [`> ${zh.slice(0, 40)}`, `  ${zh.slice(3000, 3060)}`, `  ${zh.slice(3900, 3960)}`,
+      `[Full prompt (${zh.length} chars) saved to: .tangleclaw/secrets/p.md — read that file in full]`, '⏺ 收到。'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', [recorded]));
+    assert.deepEqual(out.turns.map((t) => t.role), ['user', 'assistant']);
+    assert.equal(out.turns[1].text, '收到。');
+  });
+
+  it('through the controller, every later poll still knows the whole message it sent', async () => {
+    let pane = ['⏺ Ready.'];
+    const H = loadV6Shell();
+    H.TextEncoder = TextEncoder;
+    H.btoa = btoa;
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const events = [];
+    const api = async (url, init) => {
+      if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
+      if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
+      if (/conversation\/events/.test(url)) return { events: events.map((e, i) => ({ seq: i + 1, role: e.role, content: e.content })) };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: pane };
+      if (/secure-clipboard$/.test(url) && init && init.method === 'GET') return { files: [] };
+      if (/secure-clipboard$/.test(url)) return { relPath: `secrets/${JSON.parse(init.body).filename}` };
+      return null;
+    };
+    api.lastError = null;
+    const apiMutate = async (url, method, body) => {
+      if (/conversation\/events$/.test(url)) events.push(plain(body));
+      return { ok: true };
+    };
+    const timers = [];
+    let shell = null;
+    const pending = [];
+    const live = H.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null, now: () => 1,
+      operatorHeaders: async () => ({}), setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
+    shell = H.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null,
+      setInterval: () => 0, clearInterval: () => {},
+      onRender: (r) => pending.push(live.handleRoute(r)), onSendChat: (t) => pending.push(live.sendChat(t)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    await settle();
+    const input = doc.getElementById('v6ChatInput');
+    input.value = zh;
+    input.dispatch('input');
+    doc.getElementById('v6ChatForm').dispatch('submit');
+    await settle();
+    // The pane echoes the command, wrapped flush left, past what the record holds.
+    pane = [`> ${zh.slice(0, 40)}`, zh.slice(3000, 3060), zh.slice(3900, 3960), '⏺ 收到。'];
+    const tick = timers[timers.length - 1];
+    await tick();
+    await tick();
+    const liveHtml = doc.getElementById('v6ChatLive').innerHTML;
+    assert.equal((liveHtml.match(/is-assistant/g) || []).length, 1, liveHtml.slice(0, 400));
+    const replies = [...liveHtml.matchAll(/<li class="v6-conversation-event is-assistant is-live">[\s\S]*?<\/li>/g)].map((x) => x[0]).join('');
+    assert.ok(!replies.includes(zh.slice(3000, 3060)) && !replies.includes(zh.slice(3900, 3960)), 'no line of the message reads as a reply');
+    assert.match(liveHtml, /is-assistant is-live">[\s\S]*收到。/);
+  });
+});
+
+describe('a short prompt is never taken for a longer one that contains its words (fourth review, O-1)', () => {
+  it('"ok" stays "ok" beside a recorded "look at the logs", and a line of a longer message still finds it', () => {
+    const G = loadV6Shell();
+    const out = plain(G.tcV6ExtractLiveTurns(['> look at the logs', '⏺ Looking.', '> ok', '⏺ Done.'], 'claude', ['look at the logs', 'ok']));
+    assert.deepEqual(out.turns.filter((t) => t.role === 'user').map((t) => t.text), ['look at the logs', 'ok']);
+    const multi = plain(G.tcV6ExtractLiveTurns(['> check this', 'Attached: a.png', '⏺ Seen.'], 'claude', ['check this\n\nAttached: a.png', 'look']));
+    assert.equal(multi.turns[0].text, 'check this\n\nAttached: a.png');
+  });
+});
+
+describe('a wrapped wake never swallows the session\'s reply (Lane-B O-Gate and PRR-B R2)', () => {
+  const G = loadV6Shell();
+  const run = (lines, engine) => plain(G.tcV6ExtractLiveTurns(lines, engine || 'claude', []));
+  const wake = '[TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read. Reply where an answer is needed, BEFORE marking it handled: tc message send --in-reply-to <message-id> <sender-workspace-id> "<reply>"; then tc message ack <message-id>. The initiator closes the exchange, so no answer leaves them blocked; tc message owed lists what you owe. Never use /clear as an acknowledgement. Without tc: API at http://localhost:3102/api/sessions/P/medusa: GET /messages; POST /send (inReplyTo) and /read need launch headers. (wake ref 2c463327fbfc)';
+
+  it('Antigravity\'s indented reply after a typed wake is a reply, questions and all', () => {
+    const out = run(['❯ [TangleClaw Switchboard] You have 1 unread', '  I read the message from PM.', '  Shall I proceed?'], 'antigravity');
+    assert.equal(out.switchboard.length, 1);
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'I read the message from PM.\nShall I proceed?' }]);
+    assert.deepEqual(out.questions, ['Shall I proceed?']);
+  });
+
+  it('a whole wake wrapped across lines is joined, and the reply after its wake ref is not', () => {
+    const words = wake.split(' ');
+    const lines = [`> ${words.slice(0, 12).join(' ')}`];
+    for (let i = 12; i < words.length; i += 10) lines.push(`  ${words.slice(i, i + 10).join(' ')}`);
+    lines.push('  Reading them now.');
+    const out = run(lines, 'antigravity');
+    assert.deepEqual(out.switchboard, [{ dir: 'in', text: wake }]);
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Reading them now.' }]);
+  });
+
+  it('a wake with a project\'s own reply guidance, wrapped mid-word, is joined whole; the reply after it is not (third review, blocking)', () => {
+    // lib/medusa-wake.js#_nudgeText puts replyGuidance where the default reply step goes.
+    const custom = '[TangleClaw Switchboard] You have 12 unread Medusa message(s): tc message read. Reply where an answer is needed, BEFORE marking it handled: answer in the PR thread first, then ack. The initiator closes the exchange, so no answer leaves them blocked; tc message owed lists what you owe. Never use /clear as an acknowledgement. Without tc: API at https://host.example:8443/api/sessions/P/medusa: GET /messages; POST /send (inReplyTo) and /read need launch headers. (wake ref 0123456789ab)';
+    // Cut every 37 characters, through words, as a narrow pane would.
+    const chunks = [];
+    for (let i = 0; i < custom.length; i += 37) chunks.push(custom.slice(i, i + 37));
+    const lines = [`> ${chunks[0]}`].concat(chunks.slice(1).map((c) => `  ${c.trim()}`), ['  Fixed. Shall I push?']);
+    const out = run(lines, 'antigravity');
+    assert.equal(out.switchboard.length, 1);
+    assert.equal(out.switchboard[0].text.replace(/\s+/g, ''), custom.replace(/\s+/g, ''));
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Fixed. Shall I push?' }]);
+    assert.deepEqual(out.questions, ['Fixed. Shall I push?']);
+  });
+
+  it('reply guidance as long as a project may set (2000 characters) still joins, and so does an address keeping \'()!*\' (fifth review)', () => {
+    const guidance = 'Answer in the PR thread first, then ack it here. '.repeat(40).slice(0, 2000);
+    const wakeText = `[TangleClaw Switchboard] You have 3 unread Medusa message(s): tc message read. Reply where an answer is needed, BEFORE marking it handled: ${guidance}. The initiator closes the exchange, so no answer leaves them blocked; tc message owed lists what you owe. Never use /clear as an acknowledgement. Without tc: API at http://localhost:3102/api/sessions/it's(new)!*/medusa: GET /messages; POST /send (inReplyTo) and /read need launch headers. (wake ref 0123456789ab)`;
+    const chunks = [];
+    for (let i = 0; i < wakeText.length; i += 61) chunks.push(wakeText.slice(i, i + 61));
+    const out = run([`> ${chunks[0]}`].concat(chunks.slice(1).map((c) => `  ${c.trim()}`), ['  Shall I merge?']), 'antigravity');
+    assert.equal(out.switchboard.length, 1);
+    assert.equal(out.switchboard[0].text.replace(/\s+/g, ''), wakeText.replace(/\s+/g, ''));
+    assert.deepEqual(out.turns, [{ role: 'assistant', text: 'Shall I merge?' }]);
+  });
+
+  it('a blank line ends a wake, even mid-sentence', () => {
+    const out = run(['> [TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.', '', '  Reply where an answer is needed, BEFORE'], 'antigravity');
+    assert.equal(out.switchboard[0].text, '[TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.');
+    assert.deepEqual(out.turns.map((t) => t.role), ['assistant']);
+  });
+
+  it('the workload reminder wraps and joins too', () => {
+    const out = run(['> [TangleClaw] Your workload report has expired, so coordinators', '  now read this lane as UNKNOWN. Report what you are doing with', '⏺ Reporting.']);
+    assert.equal(out.switchboard[0].text, '[TangleClaw] Your workload report has expired, so coordinators now read this lane as UNKNOWN. Report what you are doing with');
+    assert.equal(out.turns[0].text, 'Reporting.');
+  });
+});
+
+describe('a dismissal belongs to the reply that asked it (PRR-B R2)', () => {
+  const G = loadV6Shell();
+  function mount() {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'P' }, sessionId: 1, events: [],
+      chat: { status: 'active', members: [], live: { turns: [{ role: 'user', text: 'ok' }, { role: 'assistant', text: 'One?' }], questions: ['One?'] } } } });
+    return { shell, doc };
+  }
+  const shows = (m) => /One\?/.test(m.doc.getElementById('v6ChatQuestion').innerHTML);
+
+  it('the same answer, then the same question again, with no empty poll between: it shows', () => {
+    const m = mount();
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    assert.equal(shows(m), false);
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'ok' }, { role: 'assistant', text: 'One?' },
+      { role: 'user', text: 'ok' }, { role: 'assistant', text: 'One?' }], questions: ['One?'] } });
+    assert.equal(shows(m), true);
+  });
+
+  it('a different exchange of the same length asking the same words shows', () => {
+    const m = mount();
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'yes' }, { role: 'assistant', text: 'One?' }], questions: ['One?'] } });
+    assert.equal(shows(m), true);
+  });
+
+  it('the same reply growing, or its earlier turns scrolling off the top, keeps it dismissed', () => {
+    const m = mount();
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'assistant', text: 'Earlier.' }, { role: 'user', text: 'ok' }, { role: 'assistant', text: 'One?' }], questions: ['One?'] } });
+    m.doc.getElementById('v6ChatQuestionDismiss0').dispatch('click');
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'assistant', text: 'Earlier.' }, { role: 'user', text: 'ok' }, { role: 'assistant', text: 'One?\nAnd more.' }], questions: ['One?'] } });
+    assert.equal(shows(m), false, 'grown');
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'ok' }, { role: 'assistant', text: 'One?\nAnd more.' }], questions: ['One?'] } });
+    assert.equal(shows(m), false, 'scrolled');
   });
 });

@@ -523,8 +523,13 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.ok(header.indexOf('class="v6-chat-identity"') < header.indexOf('class="v6-telemetry-header"'));
       assert.ok(header.indexOf('class="v6-telemetry-header"') < header.indexOf('class="v6-chat-actions"'));
       const version = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'version.json'), 'utf8')).version;
-      assert.match(header, /<span class="v6-telemetry-chip is-observed" title="Active sessions: \d+ — live sessions on this TangleClaw server \(observed\)">/);
-      assert.match(header, new RegExp(`<span class="v6-telemetry-chip is-observed" title="Version: ${version.replace(/\./g, '\\.')} — the TangleClaw version this server runs \\(observed\\)">`));
+      // Restated by #3079: Active sessions, Health and Version left the header for the footer status bar.
+      const footer = html.slice(html.indexOf('<footer class="v6-shell-watermark has-status">'));
+      assert.ok(footer.length > 0 && footer.includes('id="v6ShellStatusBar"'), 'the footer is the status bar');
+      assert.match(footer, /<span class="v6-telemetry-chip is-observed" title="Active sessions: \d+ — live sessions on this TangleClaw server \(observed\)">/);
+      assert.match(footer, new RegExp(`<span class="v6-telemetry-chip is-observed" title="Version: ${version.replace(/\./g, '\\.')} — the TangleClaw version this server runs \\(observed\\)">`));
+      assert.match(footer, /<span class="v6-telemetry-chip is-estimated" title="Health: [^"]+ — server health \(estimated\)">/);
+      assert.doesNotMatch(header, /title="(Active sessions|Health|Version):/);
       assert.match(header, /<span class="v6-telemetry-chip is-unavailable" title="Tokens: no reading yet — model tokens used \(unavailable\)">/);
       assert.ok(root.classList.contains('v6-shell-root--chat'), 'so the unavailable chips are hidden by the chat-scoped rule');
     });
@@ -659,6 +664,46 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.ok(!stored.content.includes(secret), 'the stored conversation never holds the credential');
       assert.equal((await send('DELETE', `${base}/${created.id}`)).statusCode, 200);
       assert.deepEqual(json(await send('GET', base)).events, []);
+    });
+
+    it('a recorded switchboard wake is shown Under the Hood, not as the operator, and the Medusa indicator reads the real status (#3076)', async () => {
+      const projectId = seedProject('e2e-medusa-on');
+      fs.mkdirSync(path.join(tempDir, 'e2e-medusa-on', '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(tempDir, 'e2e-medusa-on', '.tangleclaw', 'project.json'), JSON.stringify({ medusaEnabled: true }));
+      const sessionId = store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(projectId).lastInsertRowid;
+      const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
+      assert.equal((await send('POST', base, { body: event(1, 'what is next?', 'user') })).statusCode, 201);
+      assert.equal((await send('POST', base, { body: event(2, '[TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.', 'user') })).statusCode, 201);
+      const status = json(await send('GET', '/api/sessions/e2e-medusa-on/medusa/status'));
+      assert.equal(status.enabled, true, 'the real route reports the opt-in');
+
+      const { root, calls, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      assert.ok(calls.includes('GET /api/sessions/e2e-medusa-on/medusa/status'), JSON.stringify(calls));
+      const html = root.innerHTML;
+      const stream = html.slice(html.indexOf('id="v6ChatStream"'), html.indexOf('id="v6ChatUnderHood"'));
+      assert.match(stream, /what is next\?/);
+      assert.doesNotMatch(stream, /TangleClaw Switchboard/);
+      const hood = html.slice(html.indexOf('id="v6ChatSwitchboard"'), html.indexOf('id="v6ChatPeek"'));
+      assert.match(hood, /<li class="v6-chat-switchboard-item is-in">[\s\S]*\[TangleClaw Switchboard\] You have 1 unread Medusa message\(s\)/);
+      // No listener runs in the test server: the real status is off with nothing unread, so the badge is @.
+      assert.match(html, new RegExp(`<button type="button" id="v6ChatMedusa" class="v6-chat-medusa is-${status.state}"`));
+      assert.match(html, /<span id="v6ChatMedusaBadge" class="v6-chat-medusa-badge" aria-hidden="true">@<\/span>/);
+    });
+
+    it('a project that has not turned Medusa on shows no indicator (#3076)', async () => {
+      const projectId = seedProject('e2e-medusa-off');
+      store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(projectId);
+      const { root, calls, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      assert.ok(calls.includes('GET /api/sessions/e2e-medusa-off/medusa/status'));
+      assert.equal(json(await send('GET', '/api/sessions/e2e-medusa-off/medusa/status')).enabled, false);
+      assert.match(root.innerHTML, /<span id="v6ChatMedusaSlot" class="v6-chat-medusa-slot"><\/span>/);
+      assert.doesNotMatch(root.innerHTML, /id="v6ChatMedusa"/);
     });
 
     it('refuses a non-operator caller and a session that belongs to another project', async () => {

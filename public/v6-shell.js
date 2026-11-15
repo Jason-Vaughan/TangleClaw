@@ -670,9 +670,36 @@
   });
 
   /**
+   * The server-wide readings shown in the footer status bar, not the header
+   * (#3079): they say nothing about the chat on screen.
+   */
+  const TELEMETRY_FOOTER_KEYS = Object.freeze(['activeSessions', 'health', 'versionDrift']);
+
+  /**
+   * One telemetry chip, the same markup wherever it is drawn, header or
+   * footer (#3079).
+   * @param {{metrics: Record<string, {value: *, confidence: string}>}} bar
+   * @param {string} key - A {@link TELEMETRY_METRIC_LABELS} key.
+   * @returns {string} HTML.
+   */
+  function telemetryChipMarkup(bar, key) {
+    const metric = bar.metrics[key] || { value: null, confidence: 'unavailable' };
+    const label = TELEMETRY_METRIC_LABELS[key];
+    const valueText = metric.value == null ? '—' : escapeHtml(String(metric.value));
+    // #3063: the tip says what the metric is and how sure the reading is.
+    const tip = `${label}: ${metric.value == null ? 'no reading yet' : String(metric.value)} — ${TELEMETRY_METRIC_HELP[key]} (${metric.confidence})`;
+    return `<span class="v6-telemetry-chip is-${escapeHtml(metric.confidence)}" title="${escapeHtml(tip)}">
+        <span class="v6-telemetry-label">${escapeHtml(label)}</span>
+        <span class="v6-telemetry-value">${valueText}</span>
+      </span>`;
+  }
+
+  /**
    * Render a B4 telemetry bar snapshot (#2981 B4 render hook) — the exact
    * shape `lib/v6/b4-telemetry-header.js#assembleTelemetryBar` returns, so
    * a future BRIDGE-2b route can feed this directly with no reshaping.
+   * The server-wide chips ({@link TELEMETRY_FOOTER_KEYS}) are drawn by the
+   * footer instead (#3079), so between them every metric is still on the page.
    * @param {{scope?: string, metrics?: Record<string, {value: *, confidence: string}>}|null} bar
    * @returns {string} HTML.
    */
@@ -680,17 +707,8 @@
     if (!bar || !bar.metrics) {
       return '<div class="v6-telemetry-header is-unavailable" role="status" aria-label="Telemetry unavailable"></div>';
     }
-    const chips = Object.keys(TELEMETRY_METRIC_LABELS).map((key) => {
-      const metric = bar.metrics[key] || { value: null, confidence: 'unavailable' };
-      const label = TELEMETRY_METRIC_LABELS[key];
-      const valueText = metric.value == null ? '—' : escapeHtml(String(metric.value));
-      // #3063: the tip says what the metric is and how sure the reading is.
-      const tip = `${label}: ${metric.value == null ? 'no reading yet' : String(metric.value)} — ${TELEMETRY_METRIC_HELP[key]} (${metric.confidence})`;
-      return `<span class="v6-telemetry-chip is-${escapeHtml(metric.confidence)}" title="${escapeHtml(tip)}">
-        <span class="v6-telemetry-label">${escapeHtml(label)}</span>
-        <span class="v6-telemetry-value">${valueText}</span>
-      </span>`;
-    }).join('');
+    const chips = Object.keys(TELEMETRY_METRIC_LABELS).filter((key) => !TELEMETRY_FOOTER_KEYS.includes(key))
+      .map((key) => telemetryChipMarkup(bar, key)).join('');
     return `<div class="v6-telemetry-header" role="status" aria-label="Telemetry — ${escapeHtml(bar.scope || '')}">${chips}</div>`;
   }
 
@@ -745,12 +763,21 @@
    * pure function of the effective `branding.uiWatermark` boolean
    * (`lib/v6/h1-branding-policy.js#effectiveUiWatermark`'s output), never
    * reading or deciding the policy itself.
+   *
+   * Given a telemetry bar, the footer is also the shell's status bar
+   * (#3079): Active sessions, Health and Version sit here, announced, while
+   * the watermark word stays hidden from assistive tech. The status bar
+   * shows whatever the branding policy says about the word.
    * @param {boolean} showWatermark
-   * @returns {string} HTML, or `''` when the watermark is off.
+   * @param {{metrics?: object}|null} [bar] - The telemetry bar, if loaded.
+   * @returns {string} HTML, or `''` with neither a watermark nor readings.
    */
-  function watermarkFooterMarkup(showWatermark) {
-    if (!showWatermark) return '';
-    return '<footer class="v6-shell-watermark" aria-hidden="true">TangleClaw</footer>';
+  function watermarkFooterMarkup(showWatermark, bar) {
+    const status = bar && bar.metrics
+      ? `<div id="v6ShellStatusBar" class="v6-shell-status-bar" role="status" aria-label="Server status">${TELEMETRY_FOOTER_KEYS.map((key) => telemetryChipMarkup(bar, key)).join('')}</div>`
+      : '';
+    if (!status) return showWatermark ? '<footer class="v6-shell-watermark" aria-hidden="true">TangleClaw</footer>' : '';
+    return `<footer class="v6-shell-watermark has-status">${status}${showWatermark ? '<span class="v6-shell-watermark-mark" aria-hidden="true">TangleClaw</span>' : ''}</footer>`;
   }
 
   /**
@@ -845,25 +872,30 @@
     const live = chat.live || null;
     const liveTurns = live && Array.isArray(live.turns) ? live.turns : [];
     let stream;
+    let tail = '';
     if (v.error) {
       stream = `<p class="v6-conversation-empty">${escapeHtml(v.error)}</p>`;
     } else if (v.sessionId == null) {
       stream = '<p class="v6-conversation-empty">No live session — nothing to replay.</p>';
     } else {
-      const events = Array.isArray(v.events) ? v.events : [];
-      stream = events.length
-        ? `<ol class="v6-conversation-stream">${events.map((e) => (
-          `<li class="v6-conversation-event is-${escapeHtml(e && e.role)}">
-            ${chatRoleMarkup(e && e.role, name)}
-            <span class="v6-conversation-content">${escapeHtml(e && e.content)}</span>
-          </li>`
-        )).join('')}</ol>`
-        : (liveTurns.length ? '' : '<p class="v6-conversation-empty">No conversation events recorded for this session yet.</p>');
+      // #3076: a recorded switchboard wake is not the operator speaking; it
+      // is shown Under the Hood with the rest of the switchboard's traffic.
+      // #3079 item 6: what the pane shows is drawn once, in its place
+      // among the replies; what was recorded before it comes above, and
+      // what was recorded after it (sent, not yet on screen) below.
+      const parts = arrangeRecorded(v.events, liveTurns, chat.lastSent);
+      stream = parts.head.length
+        ? `<ol class="v6-conversation-stream" id="v6ChatRecorded">${recordedEventsMarkup(parts.head, name)}</ol>`
+        : (liveTurns.length || parts.tail.length ? '<ol class="v6-conversation-stream" id="v6ChatRecorded"></ol>'
+          : '<p class="v6-conversation-empty">No conversation events recorded for this session yet.</p>');
+      tail = recordedEventsMarkup(parts.tail, name);
     }
     // #3052: the replies the session's live output shows, after what is
     // recorded; its own list so a poll can replace it without a re-render.
     stream = `<div id="v6ChatStream" class="v6-chat-stream" tabindex="0">${stream}
       <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name)}</ol>
+      <ol id="v6ChatRecordedTail" class="v6-conversation-stream v6-chat-recorded-tail">${tail}</ol>
+      <ol id="v6ChatPending" class="v6-conversation-stream v6-chat-pending">${pendingMarkup(chat.pending, chat.lastSent)}</ol>
     </div>`;
     // A member reached directly is still the project's delegate when it is
     // the one the delegate resolution picks (#3053).
@@ -872,8 +904,10 @@
     const title = delegateMode && chat.nodeName ? chat.nodeName : name;
     const session = v.sessionId != null ? ` (#${escapeHtml(v.sessionId)})` : '';
     const members = Array.isArray(chat.members) ? chat.members : [];
+    // #3079: the Fleet sidebar already switches members, so the picker is
+    // hidden; it stays in the page for whatever reads it.
     const delegatePicker = delegateMode && members.length
-      ? `<label class="v6-chat-delegate-label"><span class="sr-only">Delegate</span>
+      ? `<label class="v6-chat-delegate-label" hidden><span class="sr-only">Delegate</span>
           <select id="v6ChatDelegate" class="filter-input v6-chat-delegate" data-action="change-project-delegate"
             aria-label="Choose who this project's chat talks to" title="Choose who this project's chat talks to — Switch Designated Project Delegate">${members.map((m) => (
               `<option value="${escapeHtml(m.id)}"${String(m.id) === String(v.project.id) ? ' selected' : ''}>${escapeHtml(m.name)}</option>`
@@ -923,6 +957,7 @@
         </div>
         ${chat.telemetry !== undefined ? telemetryHeaderMarkup(chat.telemetry) : ''}
         <div class="v6-chat-actions">
+          ${liveSession ? `<span id="v6ChatMedusaSlot" class="v6-chat-medusa-slot">${medusaIndicatorMarkup(chat.medusa)}</span>` : ''}
           ${startButton}${startFleetButton}${delegatePicker}${toDelegate}
           <a class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood" href="${escapeHtml(hoodHref)}" title="Open Hood (Live Terminal)" aria-label="Open Hood (Live Terminal)"><span aria-hidden="true">&gt;_</span></a>
           ${iconButton('v6ChatHistory', escapeHtml(`History and recents for ${name}`), '🕓')}
@@ -933,11 +968,15 @@
       ${stream}
       ${liveSession ? `<details id="v6ChatUnderHood" class="v6-chat-under-hood"${chat.hoodOpen ? ' open' : ''}>
         <summary>🔧 Under the Hood (Raw CLI &amp; Tool Activity)</summary>
+        <section class="v6-chat-switchboard" aria-label="Switchboard and Medusa traffic">
+          <h3 class="v6-chat-switchboard-title">Switchboard &amp; Medusa traffic</h3>
+          <ol id="v6ChatSwitchboard" class="v6-chat-switchboard-list" tabindex="-1">${switchboardMarkup(switchboardItems(v.events, live))}</ol>
+        </section>
         <pre id="v6ChatPeek" class="v6-chat-peek" tabindex="0">${chatPeekMarkup(chat.peek)}</pre>
       </details>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session.
         <button type="button" id="v6ChatStartBanner" class="btn btn-primary btn-small" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>
         <a class="v6-chat-classic-launch" href="#/">Open Classic View to launch ${escapeHtml(name)}</a></p>`}
-      ${chatQuestionMarkup(live && live.question)}
+      ${chatQuestionMarkup(openQuestions(live, chat.dismissedQuestions))}
       ${chatActivityMarkup(chatBusyLabel(chat), chat.activityElapsed)}
       <form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form" aria-label="Message ${escapeHtml(name)}">
         <div id="v6ChatAttachments" class="v6-chat-attachments" aria-live="polite">${attachmentChipsMarkup(chat.attachments)}</div>
@@ -1007,6 +1046,105 @@
   const LIVE_BULLET = /^(?:⏺|•)\s+/;
 
   /**
+   * A switchboard wake or TangleClaw notice (#3076). It reaches the pane as
+   * a typed prompt, so without this it read as the operator speaking; it
+   * belongs Under the Hood, never in the conversation.
+   */
+  const SWITCHBOARD_TEXT = /^\[TangleClaw( Switchboard)?\]/;
+
+  /**
+   * The notices TangleClaw types into a pane (#3076), each slot it fills in
+   * marked by the kind of text it takes: `#` a count, `@` an address (an
+   * origin, a switchboard path), `%` a wake-ref id, `~` a project's own reply
+   * guidance (`replyGuidance`, #2402), which replaces the default reply step.
+   * The switchboard wake in its project and Master forms
+   * (`lib/medusa-wake.js#_nudgeText`) and the workload reminder
+   * (`lib/workload-nudge.js`), each optionally ending in the wake ref the
+   * transport adds (`lib/wake-transports.js`). Compared with all whitespace
+   * removed, as `lib/medusa-wake.js#isOwnNudge` compares, because the pane
+   * wraps wherever its width falls, words included.
+   */
+  const NOTICE_TEMPLATES = Object.freeze([
+    '[TangleClaw Switchboard] You have # unread Medusa message(s): tc message read. Reply where an answer is needed, BEFORE marking it handled: ~. The initiator closes the exchange, so no answer leaves them blocked; tc message owed lists what you owe. Never use /clear as an acknowledgement. Without tc: API at @ GET /messages; POST /send (inReplyTo) and /read need launch headers.',
+    '[TangleClaw Switchboard] You have # unread Medusa message(s). Fetch them from the TangleClaw API at @ GET @ — act on them as appropriate. Reply to each one that needs an answer BEFORE marking it handled: POST @ {"to":"<sender-workspace-id>","message":"<reply>","inReplyTo":"<message-id>"}; then mark it handled: POST @ {"ids":[...]}. Both POSTs need the headers x-tangleclaw-role: master and x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID. The initiator closes the exchange, so a message you do not answer leaves them blocked. Never use /clear as an acknowledgement.',
+    '[TangleClaw Switchboard] You have # unread Medusa message(s). Fetch them from the TangleClaw API at @ GET @ — act on them as appropriate. Sending is disabled at your current access level: for one that needs an answer, describe the exact reply for the operator to send, rather than attempting to send it yourself. Mark it handled once dealt with: POST @ {"ids":[...]}, which needs the headers x-tangleclaw-role: master and x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID. Never use /clear as an acknowledgement.',
+    '[TangleClaw] Your workload report has expired, so coordinators now read this lane as UNKNOWN. Report what you are doing with `tc workload set <working|waiting-external|blocked|complete> --clearance <safe-to-clear|do-not-clear|unknown> --summary "<one line>"`. This is a reminder, sent once for this report; it changes nothing about your task.'
+  ].flatMap((t) => [`${t} (wake ref %)`, t]).map(compileNotice));
+
+  /**
+   * What each slot kind in {@link NOTICE_TEMPLATES} takes, and how much of it
+   * at most, whitespace removed — each as the producer can emit it: a count
+   * (`\d+` in `lib/medusa-wake.js#_ownNudgePattern`); an address, any text
+   * (that pattern takes `[^/\s]+` for an encoded project name, which may
+   * keep `'()!*`) as long as an origin plus a switchboard path; a 12-hex
+   * wake ref (`lib/wake-transports.js`); and reply guidance up to
+   * `lib/project-config.js` REPLY_GUIDANCE_TEXT_MAX (2000 characters).
+   */
+  const NOTICE_SLOTS = Object.freeze({
+    '#': { re: /[0-9]/, max: 12 },
+    '@': { re: /./, max: 1000 },
+    '%': { re: /[0-9a-f]/, max: 32 },
+    '~': { re: /./, max: 2000 }
+  });
+
+  /**
+   * A notice template as alternating literal parts and slot kinds, whitespace removed.
+   * @param {string} template
+   * @returns {{parts: string[], slots: string[]}}
+   */
+  function compileNotice(template) {
+    const flat = template.replace(/\s+/g, '');
+    const parts = flat.split(/[#@%~]/);
+    const slots = (flat.match(/[#@%~]/g) || []);
+    return { parts, slots };
+  }
+
+  /**
+   * Whether some text is the start of one of {@link NOTICE_TEMPLATES}, all
+   * whitespace removed, each slot taking only its own kind of text. A small
+   * automaton walks the text: a state is a position in a literal part, or a
+   * count of characters taken by the slot after it.
+   * @param {string} text
+   * @returns {boolean}
+   */
+  function fitsNotice(text) {
+    const flat = String(text).replace(/\s+/g, '');
+    return NOTICE_TEMPLATES.some(({ parts, slots }) => {
+      // [part, offset in it, characters taken by the slot after it]
+      let states = [[0, 0, 0]];
+      for (const ch of flat) {
+        const next = new Map();
+        const add = (st) => next.set(st.join(','), st);
+        for (const [part, off, taken] of states) {
+          const lit = parts[part];
+          if (off < lit.length) {
+            if (lit[off] === ch) add([part, off + 1, 0]);
+            continue;
+          }
+          if (part === parts.length - 1) continue; // the notice is over
+          const slot = NOTICE_SLOTS[slots[part]];
+          if (taken < slot.max && slot.re.test(ch)) add([part, off, taken + 1]);
+          if (parts[part + 1][0] === ch) add([part + 1, 1, 0]);
+        }
+        states = [...next.values()];
+        if (!states.length) return false;
+        // Once the text is well into what follows a slot, the slot is over:
+        // a free slot must not swallow the rest of the notice, and what
+        // comes after it, by also matching it as slot text.
+        const settled = states.reduce((most, [part, off]) => Math.max(most, off >= 10 || off === parts[part].length ? part : part - 1), -1);
+        states = states.filter(([part, off]) => !(off === parts[part].length && part < settled));
+      }
+      return true;
+    });
+  }
+
+  /** A pane line that sends a Medusa message: outbound traffic (#3076). */
+  const MEDUSA_SEND = /\btc\s+message\s+send\b/;
+
+  /** A markdown list marker in front of a question (#3079): `1.`, `2)`, `-`, `*`, `•`. */
+  const QUESTION_PREFIX = /^(?:\d+[.)]|[-*•])\s+/;
+
+  /**
    * The conversation a session's live output shows (#3052): its assistant
    * replies, any operator prompt not already recorded, the question the
    * assistant is waiting on, and what it is busy doing. Display only — the
@@ -1014,7 +1152,12 @@
    * @param {Array<string>|null} lines - The pane's lines (`GET .../peek`).
    * @param {string} engine - `claude`, `codex`, `antigravity` or `aider`; anything else uses every engine's markers.
    * @param {Array<string>} knownUserTexts - User messages already recorded, not to repeat.
-   * @returns {{turns: Array<{role: 'user'|'assistant', text: string}>, question: string|null, activity: string|null}}
+   * The switchboard's own traffic is kept apart (#3076): its wakes and every
+   * `tc message send` the pane shows, in order, for Under the Hood. The
+   * questions are every line of the newest assistant turn that ends in `?`,
+   * list markers stripped, and none once the operator has answered (#3079).
+   * @returns {{turns: Array<{role: 'user'|'assistant', text: string}>, question: string|null,
+   *   questions: string[], activity: string|null, switchboard: Array<{dir: 'in'|'out', text: string}>}}
    */
   function extractLiveTurns(lines, engine, knownUserTexts) {
     const engineRules = LIVE_ENGINE_NOISE[engine]
@@ -1024,23 +1167,41 @@
     // A recorded message can span lines (text, then its Attached lines) and
     // a long prompt wraps in the pane, so an echo is matched by line, by
     // prefix, or as a fragment of the message it continues.
-    const sent = (Array.isArray(knownUserTexts) ? knownUserTexts : []).map(squash).filter(Boolean);
+    const known = (Array.isArray(knownUserTexts) ? knownUserTexts : []).filter((t) => typeof t === 'string' && squash(t));
+    const sent = known.map(squash);
+    // The recorded text as it was written, newlines kept, for the turn (#3079 item 6).
+    const original = (m) => known[sent.indexOf(m)] || m;
     const knownLines = new Set((Array.isArray(knownUserTexts) ? knownUserTexts : [])
       .flatMap((t) => String(t).split('\n')).map((t) => t.trim()).filter(Boolean));
+    // The longest known text that fits, so a long message's whole text wins
+    // over its record cut short (#3079).
+    const longest = (list) => list.reduce((best, m) => (best && best.length >= m.length ? best : m), null);
     const recordedAs = (said) => {
       const one = squash(said);
-      if (knownLines.has(said)) return sent.find((m) => m.includes(one)) || one;
-      return one.length >= 20 ? sent.find((m) => m.startsWith(one)) || null : null;
+      // A line of a recorded message: the longest message holding it as a
+      // whole line — never one that merely contains the words ("ok" in "look").
+      if (knownLines.has(said)) return longest(sent.filter((m, i) => String(known[i]).split('\n').some((l) => l.trim() === said))) || one;
+      return one.length >= 20 ? longest(sent.filter((m) => m.startsWith(one))) : null;
     };
     let echo = null;
+    // Whether the echoed prompt was recorded only in part (#3079): the pane
+    // then shows more of it than the record holds.
+    let echoCut = false;
     const turns = [];
     let reply = [];
     let activity = null;
+    const switchboard = [];
+    // Whether the operator has spoken since the newest reply (#3079): their
+    // answer clears the questions, recorded or not.
+    let answered = false;
     // An indented line belongs to whatever started the block above it: a tool
     // line's output is noise, an assistant line's continuation is reply.
     let block = null;
     const flush = () => {
-      if (reply.length) turns.push({ role: 'assistant', text: reply.join('\n') });
+      if (reply.length) {
+        turns.push({ role: 'assistant', text: reply.join('\n') });
+        answered = false;
+      }
       reply = [];
     };
     (Array.isArray(lines) ? lines : []).forEach((raw) => {
@@ -1050,9 +1211,36 @@
       const text = line.trim();
       // A blank line decides nothing: tool output can hold blank lines, and
       // the next line's indent says whether it is still output (#3057).
-      if (!text) return;
+      if (!text) {
+        // A blank line ends a wrapped notice (Lane-B O-Gate HOLD).
+        if (block === 'wake') block = null;
+        return;
+      }
       const indented = /^\s/.test(line);
+      // The rest of a wrapped wake: indented under it (#3076).
+      // An indented line carries on a typed notice only while the words so
+      // far still read as one of TangleClaw's own notices; anything else —
+      // Antigravity's indented reply prose, say — is the session's.
+      if (indented && block === 'wake') {
+        const last = switchboard[switchboard.length - 1];
+        const joined = `${last.text} ${text}`;
+        if (fitsNotice(joined)) {
+          last.text = joined;
+          return;
+        }
+        block = null;
+      }
       const prompt = LIVE_PROMPT.exec(text);
+      const promptText = prompt && !indented ? prompt[1].trim() : '';
+      if (SWITCHBOARD_TEXT.test(promptText) || SWITCHBOARD_TEXT.test(text)) {
+        // A wake is the switchboard speaking, not the operator: it neither
+        // answers a question nor ends the reply it interrupts.
+        switchboard.push({ dir: 'in', text: promptText || text });
+        // Only a typed wake wraps like a prompt; what is indented under a
+        // bare notice line is still the reply's (cumulative review, #3052).
+        block = promptText ? 'wake' : null;
+        return;
+      }
       if (prompt && !indented) {
         flush();
         block = null;
@@ -1061,13 +1249,19 @@
         // operator speaking: it neither ends nor starts anything.
         if (said) {
           activity = null;
+          answered = true;
           echo = recordedAs(said);
-          if (!echo) turns.push({ role: 'user', text: said });
+          echoCut = Boolean(echo) && /\[Full prompt \(\d+ chars\) saved to: /.test(original(echo));
+          // #3079 item 6: a recorded prompt keeps its place among the
+          // replies, marked so the recorded copy is not drawn again.
+          turns.push(echo ? { role: 'user', text: original(echo), recorded: true } : { role: 'user', text: said });
         }
         return;
       }
       // The rest of a recorded message the pane is still echoing.
-      if (echo && (knownLines.has(text) || echo.includes(squash(text)))) return;
+      // A prompt recorded only in part goes on, indented, past what the
+      // record holds; those lines are still the prompt, not a reply.
+      if (echo && (knownLines.has(text) || echo.includes(squash(text)) || LONG_PROMPT_NOTE.test(text) || (echoCut && indented))) return;
       echo = null;
       if (LIVE_BUSY.test(text) && !/Thought for/i.test(text)) {
         activity = text.replace(/^[✶✻✽✢⠀-⣿\s]+/, '').replace(/\s*\(?esc to interrupt\)?/i, '').trim() || 'Working…';
@@ -1077,11 +1271,13 @@
       // output; Antigravity indents its reply prose by two spaces (#3057).
       if (indented && block === 'tool' && (/^[⎿└]/.test(text) || /^\s{4,}/.test(line))) return;
       if (tools.some((re) => re.test(text))) {
+        if (MEDUSA_SEND.test(text)) switchboard.push({ dir: 'out', text });
         block = 'tool';
         return;
       }
       // Chrome and boilerplate are dropped, but do not swallow what follows.
       if (LIVE_NOISE.some((re) => re.test(text))) {
+        if (MEDUSA_SEND.test(text)) switchboard.push({ dir: 'out', text });
         block = null;
         return;
       }
@@ -1095,8 +1291,11 @@
     });
     flush();
     const last = turns[turns.length - 1];
-    const tail = last && last.role === 'assistant' ? last.text.split('\n').pop() : '';
-    return { turns, question: /\?\s*$/.test(tail) ? tail : null, activity };
+    const open = last && last.role === 'assistant' && !answered ? last.text : '';
+    const tail = open ? open.split('\n').pop() : '';
+    const questions = open.split('\n').map((l) => l.trim().replace(QUESTION_PREFIX, '').trim())
+      .filter((l) => /\?\s*$/.test(l));
+    return { turns, question: /\?\s*$/.test(tail) ? tail : null, questions, activity, switchboard };
   }
 
   /**
@@ -1112,6 +1311,86 @@
   }
 
   /**
+   * Whether a recorded user message is the one a turn shows (#3079): the
+   * same words, or — for a long message recorded only in part — the turn
+   * starts with what was recorded before the saved-path line.
+   * @param {string} content - The recorded event's text.
+   * @param {string} text - The turn's text.
+   * @returns {boolean}
+   */
+  function sameMessage(content, text) {
+    const squash = (t) => String(t).replace(/\s+/g, ' ').trim();
+    const recorded = squash(content);
+    const shown = squash(text);
+    if (recorded === shown) return true;
+    const cut = recorded.indexOf('[Full prompt (');
+    const head = cut > 0 ? recorded.slice(0, cut).trim() : '';
+    return head.length >= 20 && (shown.startsWith(head) || head.startsWith(shown));
+  }
+
+  /**
+   * Place the recorded events around the live turns (#3079 item 6). Each
+   * recorded user message the pane also shows is drawn once, as its live
+   * turn. Recorded events up to the last such one come before the live
+   * turns; those after it were sent but are not on screen yet, so they
+   * come after. When the pane shows none of them, only the message just
+   * sent from this chat counts as after.
+   * @param {Array<object>|null} events - The recorded conversation events.
+   * @param {Array<{role: string, text: string, recorded?: boolean}>} liveTurns
+   * @param {{text: string}|null} [lastSent] - What this chat last recorded, until the pane shows it.
+   * @returns {{head: Array<object>, tail: Array<object>}}
+   */
+  function arrangeRecorded(events, liveTurns, lastSent) {
+    const list = (Array.isArray(events) ? events : []).filter((e) => !isRecordedWake(e));
+    const matched = new Set();
+    // Newest first, each pairing with the latest event before the one the
+    // turn after it took, so the pairs keep the order the pane shows.
+    let below = list.length;
+    (Array.isArray(liveTurns) ? liveTurns : []).filter((t) => t && t.role === 'user' && t.recorded).reverse().forEach((t) => {
+      for (let i = below - 1; i >= 0; i--) {
+        const e = list[i];
+        if (e && e.role === 'user' && sameMessage(e.content, t.text)) { matched.add(i); below = i; return; }
+      }
+    });
+    const last = matched.size ? Math.max(...matched) : -1;
+    if (last < 0) {
+      const end = list.length - 1;
+      const sentLast = end >= 0 && lastSent && list[end] && list[end].role === 'user' && sameMessage(list[end].content, lastSent.text);
+      return sentLast ? { head: list.slice(0, end), tail: [list[end]] } : { head: list, tail: [] };
+    }
+    return {
+      head: list.filter((e, i) => i <= last && !matched.has(i)),
+      tail: list.filter((e, i) => i > last && !matched.has(i))
+    };
+  }
+
+  /**
+   * @param {Array<object>} events
+   * @param {string} name - The project's name.
+   * @returns {string} The recorded events as conversation bubbles.
+   */
+  function recordedEventsMarkup(events, name) {
+    return events.map((e) => (
+      `<li class="v6-conversation-event is-${escapeHtml(e && e.role)}">
+            ${chatRoleMarkup(e && e.role, name)}
+            <span class="v6-conversation-content">${escapeHtml(e && e.content)}</span>
+          </li>`
+    )).join('');
+  }
+
+  /**
+   * The message being sent, at the bottom of the chat until it settles
+   * (#3079 item 6), unless the chat already shows it as recorded.
+   * @param {{id: *, text: string}|null|undefined} pending
+   * @param {{id: *}|null|undefined} lastSent
+   * @returns {string} HTML list item, or ''.
+   */
+  function pendingMarkup(pending, lastSent) {
+    if (!pending || typeof pending.text !== 'string' || (lastSent && lastSent.id === pending.id)) return '';
+    return `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${escapeHtml(pending.text)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`;
+  }
+
+  /**
    * The live replies (#3052) as conversation bubbles, marked `is-live` because
    * they come from the pane, not the record.
    * @param {Array<{role: string, text: string}>} turns
@@ -1124,14 +1403,178 @@
     )).join('');
   }
 
-  /** @param {string|null} question - The question the assistant is waiting on. @returns {string} HTML. */
-  function chatQuestionMarkup(question) {
-    return `<div id="v6ChatQuestion" class="v6-chat-question${question ? ' is-asking' : ''}" role="status" aria-live="polite">${chatQuestionInner(question)}</div>`;
+  /**
+   * The turns before the reply that asks the questions (#3079), each as
+   * `role:text`: what identifies that reply among the session's.
+   * @param {{turns?: Array<{role: string, text: string}>}|null} live
+   * @returns {string[]}
+   */
+  function askingPrefix(live) {
+    const turns = live && Array.isArray(live.turns) ? live.turns : [];
+    let i = turns.length - 1;
+    while (i >= 0 && !(turns[i] && turns[i].role === 'assistant')) i--;
+    return turns.slice(0, Math.max(0, i)).map((t) => `${t && t.role}:${String(t && t.text).replace(/\s+/g, ' ').trim()}`);
   }
 
-  /** @param {string|null} question @returns {string} HTML for inside the question slot. */
-  function chatQuestionInner(question) {
-    return question ? `<span class="v6-chat-question-label">Waiting on you:</span> ${escapeHtml(question)}` : '';
+  /**
+   * How a dismissed question is remembered (#3079): its words and the turns
+   * before the reply that asked it. A dismissal holds for that same reply as
+   * it grows (more text, a wake) or as older turns scroll off the top of the
+   * pane; a later exchange has more turns before its reply, so the same
+   * words asked again show — even after the very same answer (PRR-B R2).
+   * @param {{turns?: Array}|null} live
+   * @param {string} question
+   * @returns {{q: string, prefix: string[]}}
+   */
+  function questionKey(live, question) {
+    return { q: question, prefix: askingPrefix(live) };
+  }
+
+  /**
+   * The questions still waiting on the operator (#3079): the live view's
+   * queue (or its one question, from a caller that predates the queue),
+   * less any the operator dismissed.
+   * @param {{question?: string|null, questions?: string[], turns?: Array}|null} live
+   * @param {Array<{q: string, prefix: string[]}>} [dismissed] - {@link questionKey}s dismissed in this chat.
+   * @returns {string[]}
+   */
+  function openQuestions(live, dismissed) {
+    const gone = Array.isArray(dismissed) ? dismissed : [];
+    const now = askingPrefix(live);
+    // The same reply: the turns before it unchanged, or with older ones gone off the top.
+    const sameReply = (saved) => now.length <= saved.length
+      && now.every((t, i) => t === saved[saved.length - now.length + i]);
+    return askedQuestions(live).filter((q) => !gone.some((d) => d && d.q === q && Array.isArray(d.prefix) && sameReply(d.prefix)));
+  }
+
+  /**
+   * @param {{question?: string|null, questions?: string[]}|null} live
+   * @returns {string[]} Every question the live view asks, dismissed or not.
+   */
+  function askedQuestions(live) {
+    if (!live) return [];
+    const all = Array.isArray(live.questions) ? live.questions : (live.question ? [live.question] : []);
+    return all.filter((q) => typeof q === 'string' && q);
+  }
+
+  /**
+   * @param {string[]|string|null} questions - What the assistant is waiting on.
+   * @returns {string} HTML.
+   */
+  function chatQuestionMarkup(questions) {
+    const list = questionList(questions);
+    return `<div id="v6ChatQuestion" class="v6-chat-question${list.length ? ' is-asking' : ''}" role="status" aria-live="polite">${chatQuestionInner(list)}</div>`;
+  }
+
+  /** @param {string[]|string|null} questions @returns {string[]} */
+  function questionList(questions) {
+    if (Array.isArray(questions)) return questions.filter((q) => typeof q === 'string' && q);
+    return questions ? [String(questions)] : [];
+  }
+
+  /**
+   * The question slot's contents (#3079): each question numbered `(1)`,
+   * `(2)` when there are several, each with a ✕ that dismisses it.
+   * @param {string[]|string|null} questions
+   * @returns {string} HTML for inside the question slot.
+   */
+  function chatQuestionInner(questions) {
+    const list = questionList(questions);
+    if (!list.length) return '';
+    const many = list.length > 1;
+    return `<span class="v6-chat-question-label">Waiting on you:</span>
+      <ol class="v6-chat-question-list">${list.map((q, i) => (
+        `<li class="v6-chat-question-item">${many ? `<span class="v6-chat-question-badge" aria-hidden="true">(${i + 1})</span> ` : ''}<span class="v6-chat-question-text">${escapeHtml(q)}</span>
+          <button type="button" class="v6-chat-question-dismiss" id="v6ChatQuestionDismiss${i}" data-index="${i}" title="Dismiss this question" aria-label="Dismiss question ${i + 1}"><span aria-hidden="true">✕</span></button></li>`
+      )).join('')}</ol>`;
+  }
+
+  /**
+   * @param {{role?: string, content?: string}|null} e - A recorded conversation event.
+   * @returns {boolean} Whether it is a switchboard wake the session recorded as a user turn (#3076).
+   */
+  function isRecordedWake(e) {
+    return Boolean(e && e.role === 'user' && SWITCHBOARD_TEXT.test(String(e.content || '').trim()));
+  }
+
+  /**
+   * The switchboard's traffic for Under the Hood (#3076): wakes the session
+   * recorded, then what the pane shows — wakes in, `tc message send` out —
+   * leaving out a pane wake that only repeats a recorded one.
+   * @param {Array<object>|null} events - The recorded conversation events.
+   * @param {{switchboard?: Array<{dir: string, text: string}>}|null} live
+   * @returns {Array<{dir: 'in'|'out', text: string}>}
+   */
+  function switchboardItems(events, live) {
+    const squash = (t) => String(t).replace(/\s+/g, ' ').trim();
+    const recorded = (Array.isArray(events) ? events : []).filter(isRecordedWake)
+      .map((e) => ({ dir: 'in', text: squash(e.content) }));
+    const seen = new Set(recorded.map((r) => r.text));
+    const shown = (live && Array.isArray(live.switchboard) ? live.switchboard : [])
+      .filter((x) => x && typeof x.text === 'string')
+      .map((x) => ({ dir: x.dir === 'out' ? 'out' : 'in', text: squash(x.text) }))
+      .filter((x) => !(x.dir === 'in' && seen.has(x.text)));
+    return recorded.concat(shown);
+  }
+
+  /**
+   * @param {Array<{dir: string, text: string}>} items
+   * @returns {string} HTML list items, or the empty note.
+   */
+  function switchboardMarkup(items) {
+    if (!items.length) return '<li class="v6-chat-switchboard-empty">No switchboard traffic on screen.</li>';
+    return items.map((x) => (
+      `<li class="v6-chat-switchboard-item is-${x.dir}"><span class="v6-chat-switchboard-dir">${x.dir === 'out' ? '→ out' : '← in'}</span> <span class="v6-chat-switchboard-text">${escapeHtml(x.text)}</span></li>`
+    )).join('');
+  }
+
+  /** What each Medusa listener state reads as in the indicator's tip (#3076). */
+  const MEDUSA_STATE_LABELS = Object.freeze({
+    off: 'off', connecting: 'connecting', listening: 'listening', error: 'error'
+  });
+
+  /**
+   * What the Medusa indicator says (#3076), as plain text and class names
+   * — the markup escapes them, and an in-place update sets them as
+   * properties.
+   * @param {object} medusa
+   * @returns {{className: string, tip: string, badge: string, badgeClass: string}}
+   */
+  function medusaIndicatorParts(medusa) {
+    const state = MEDUSA_STATE_LABELS[medusa.state] ? medusa.state : 'off';
+    const unread = Math.max(0, Number(medusa.unread) || 0);
+    const inbound = Math.max(0, Number(medusa.inbound) || 0);
+    const outbound = Math.max(0, Number(medusa.outbound) || 0);
+    const tip = `Medusa: ${MEDUSA_STATE_LABELS[state]}${state === 'error' && medusa.lastError ? ` (${medusa.lastError})` : ''}`
+      + ` · ${unread} unread · on screen: ${inbound} in, ${outbound} out — open Under the Hood for the traffic`;
+    const flow = (medusa.flowIn ? ' is-flow-in' : '') + (medusa.flowOut ? ' is-flow-out' : '');
+    return {
+      className: `v6-chat-medusa is-${state}${flow}`,
+      tip,
+      badge: unread ? String(unread) : '@',
+      badgeClass: `v6-chat-medusa-badge${unread ? ' has-unread' : ''}`
+    };
+  }
+
+  /**
+   * The chat's Medusa traffic indicator (#3076): the inbound (left) and
+   * outbound (right) heads, which blink when traffic moves, around an `@`
+   * badge that becomes the unread count. Nothing until the status answers,
+   * and nothing when the project has not turned Medusa on (`enabled ===
+   * false`, the #820 rule the session banner follows).
+   * @param {{state?: string, unread?: number, enabled?: boolean, inbound?: number, outbound?: number,
+   *   flowIn?: boolean, flowOut?: boolean, lastError?: string|null}|null|undefined} medusa
+   * @returns {string} HTML.
+   */
+  function medusaIndicatorMarkup(medusa) {
+    if (!medusa || medusa.enabled === false) return '';
+    const parts = medusaIndicatorParts(medusa);
+    return `<button type="button" id="v6ChatMedusa" class="${parts.className}" aria-controls="v6ChatUnderHood"
+        title="${escapeHtml(parts.tip)}" aria-label="${escapeHtml(parts.tip)}">
+        <img class="v6-medusa-head v6-medusa-head--in" src="/medusa-head-left.webp" alt="" width="16" height="19">
+        <span id="v6ChatMedusaBadge" class="${parts.badgeClass}" aria-hidden="true">${escapeHtml(parts.badge)}</span>
+        <img class="v6-medusa-head v6-medusa-head--out" src="/medusa-head-right.webp" alt="" width="16" height="19">
+      </button>`;
   }
 
   /**
@@ -1205,6 +1648,116 @@
 
   /** The secure-clipboard route's limit on one decoded file (`lib/secure-clipboard.js` MAX_FILE_BYTES). */
   const MAX_ATTACH_BYTES = 5 * 1024 * 1024;
+
+  /** The session command route's limit on one command, in characters (`lib/routes/sessions.js`). */
+  const MAX_COMMAND_CHARS = 4096;
+
+  /**
+   * Text as base64 of its UTF-8 bytes, what the secure-clipboard route's
+   * `encoding: 'base64'` decodes (#3079).
+   * @param {string} text
+   * @returns {string}
+   */
+  function defaultTextToBase64(text) {
+    const bytes = new global.TextEncoder().encode(String(text));
+    let binary = '';
+    // In slices, so a long message never overflows the argument list.
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return global.btoa(binary);
+  }
+
+  /**
+   * The command that stands in for a message too long for the command route
+   * (#3079): as much of its start as fits, then where the whole of it was
+   * saved. Never longer than {@link MAX_COMMAND_CHARS}, and never cut
+   * between the two halves of a surrogate pair.
+   * @param {string} message - The whole message.
+   * @param {string} relPath - Where it was saved, relative to the project.
+   * @returns {string}
+   */
+  function longPromptCommand(message, relPath) {
+    const note = longPromptNote(message, relPath);
+    let head = message.slice(0, Math.max(0, MAX_COMMAND_CHARS - note.length));
+    if (/[\uD800-\uDBFF]$/.test(head)) head = head.slice(0, -1);
+    return `${head}${note}`;
+  }
+
+  /**
+   * The line that says where a long message was saved (#3079). The command
+   * and the recorded event end with the same words, so the chat can tell
+   * the line apart from a reply when the pane echoes it.
+   * @param {string} message
+   * @param {string} relPath
+   * @returns {string}
+   */
+  function longPromptNote(message, relPath) {
+    return `\n\n[Full prompt (${message.length} chars) saved to: ${relPath} — read that file in full]`;
+  }
+
+  /** The {@link longPromptNote} line, as the pane shows it. */
+  const LONG_PROMPT_NOTE = /^\[Full prompt \(\d+ chars\) saved to: .+ — read that file in full\]$/;
+
+  /**
+   * The most a recorded user event's JSON body may weigh, in UTF-8 bytes
+   * (#3079, Rulings A739/A740): the events route takes the default 10 KB
+   * (`lib/routes/_kernel.js` MAX_BODY_SIZE), and this leaves room to spare.
+   */
+  const MAX_EVENT_BODY_BYTES = 8000;
+
+  /**
+   * @param {string} text
+   * @returns {number} Its length in UTF-8 bytes (what `TextEncoder` would give).
+   */
+  function utf8Length(text) {
+    let n = 0;
+    for (const ch of String(text)) {
+      const cp = ch.codePointAt(0);
+      n += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    }
+    return n;
+  }
+
+  /**
+   * What a recorded user event's request body weighs (#3079): the body
+   * `recordUserEvent` sends, JSON-encoded, in UTF-8 bytes — quotes,
+   * backslashes and control characters grow when encoded, so the raw
+   * message's length is not the measure. The sequence number is taken at
+   * its largest.
+   * @param {string} content
+   * @param {string} launchId
+   * @returns {number}
+   */
+  function eventBodyBytes(content, launchId) {
+    return utf8Length(JSON.stringify({
+      launchId, seq: Number.MAX_SAFE_INTEGER, tier: 'A', adapter: 'v6-chat-ui', role: 'user', content
+    }));
+  }
+
+  /**
+   * The text to record for a sent message (#3079): the whole message when
+   * its event body fits {@link MAX_EVENT_BODY_BYTES}; otherwise as much of
+   * its start as fits, cut between characters, followed by where the whole
+   * of it was saved.
+   * @param {string} message
+   * @param {string|null} relPath - Where it was saved, when it was.
+   * @param {string} launchId
+   * @returns {string}
+   */
+  function recordedText(message, relPath, launchId) {
+    if (eventBodyBytes(message, launchId) <= MAX_EVENT_BODY_BYTES || !relPath) return message;
+    const chars = Array.from(message);
+    const note = longPromptNote(message, relPath);
+    const fits = (k) => eventBodyBytes(chars.slice(0, k).join('') + note, launchId) <= MAX_EVENT_BODY_BYTES;
+    let lo = 0;
+    let hi = chars.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (fits(mid)) lo = mid; else hi = mid - 1;
+    }
+    return chars.slice(0, lo).join('') + note;
+  }
 
   /**
    * A file name the secure-clipboard route accepts (#3053):
@@ -1619,11 +2172,13 @@
       const rename = (extras && extras.rename) || null;
       const sidebarCollapsed = Boolean(extras && extras.sidebarCollapsed);
       const activityElapsed = (extras && extras.activityElapsed) || '';
+      const dismissedQuestions = (extras && extras.dismissedQuestions) || [];
+      const pending = (extras && extras.pending) || null;
       const v = detail.view || {};
       // #3063: in a chat the telemetry bar shares the chat's header row.
       const telemetry = extras && 'telemetry' in extras ? extras.telemetry : undefined;
       return conversationViewMarkup(Object.assign({}, v, {
-        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename })
+        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename, dismissedQuestions, pending })
       }));
     }
     if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
@@ -1634,6 +2189,77 @@
     if (detail.kind === 'loading') return '<p class="v6-detail-loading" role="status">Loading…</p>';
     if (detail.kind === 'error') return `<p class="v6-detail-error" role="alert">${escapeHtml(detail.message)}</p>`;
     return '';
+  }
+
+  /**
+   * The Classic dashboard's admin controls that the v6 shell tucks into one
+   * menu (#3079). Classic View, Master and Advisor stay in the bar.
+   */
+  const ADMIN_TUCK_IDS = Object.freeze([
+    'portsToggle', 'usageToggle', 'groupsToggle', 'openclawToggle',
+    'auditToggle', 'fleetRecoveryToggle', 'rulesToggle', 'signOutBtn'
+  ]);
+
+  /** Where each tucked control came from — its parent and the node after it — so it goes back exactly there. */
+  const adminHomes = new Map();
+
+  /**
+   * Slim the top bar while the v6 shell shows (#3079): mark the body
+   * `v6-shell-active`, and move the admin controls into an expandable
+   * "More" menu at the end of `.dash-actions`. The controls are moved, not
+   * copied, so each keeps its own listeners, badge and state; leaving the
+   * shell puts each back where it was and removes the menu. Safe to call on
+   * every render.
+   * @param {Document} doc
+   * @param {boolean} active - Whether the v6 shell is showing.
+   * @returns {void}
+   */
+  function tuckAdminControls(doc, active) {
+    if (!doc || typeof doc.getElementById !== 'function') return;
+    if (doc.body && doc.body.classList) doc.body.classList.toggle('v6-shell-active', Boolean(active));
+    let menu = doc.getElementById('v6AdminMenu');
+    if (!active) {
+      // Last first: each control's recorded next node is then back in place.
+      ADMIN_TUCK_IDS.slice().reverse().forEach((id) => {
+        const el = doc.getElementById(id);
+        const home = adminHomes.get(id);
+        if (!el || !home || !home.parent) return;
+        if (home.next && home.next.parentNode === home.parent) home.parent.insertBefore(el, home.next);
+        else home.parent.appendChild(el);
+        adminHomes.delete(id);
+      });
+      if (menu && typeof menu.remove === 'function') menu.remove();
+      return;
+    }
+    const actions = typeof doc.querySelector === 'function' ? doc.querySelector('.dash-actions') : null;
+    if (!actions) return;
+    if (!menu) {
+      menu = doc.createElement('details');
+      menu.id = 'v6AdminMenu';
+      menu.className = 'v6-admin-menu';
+      const summary = doc.createElement('summary');
+      summary.className = 'dash-action v6-admin-menu-toggle';
+      summary.textContent = '⋯ More';
+      summary.title = 'Ports, Usage, Groups, OpenClaw, Audit, Recovery, Global Rules and Sign out';
+      summary.setAttribute('aria-label', 'More dashboard controls');
+      const panel = doc.createElement('div');
+      panel.id = 'v6AdminMenuPanel';
+      panel.className = 'v6-admin-menu-panel';
+      // Choosing a control closes the menu; the control itself does the rest.
+      panel.addEventListener('click', () => { menu.open = false; });
+      menu.appendChild(summary);
+      menu.appendChild(panel);
+      actions.appendChild(menu);
+      if (typeof doc._register === 'function') { doc._register(menu); doc._register(panel); }
+    }
+    const panel = doc.getElementById('v6AdminMenuPanel');
+    if (!panel) return;
+    ADMIN_TUCK_IDS.forEach((id) => {
+      const el = doc.getElementById(id);
+      if (!el || el.parentNode === panel) return;
+      adminHomes.set(id, { parent: el.parentNode, next: el.nextSibling || null });
+      panel.appendChild(el);
+    });
   }
 
   /**
@@ -1805,6 +2431,18 @@
     const uploadedNames = new Map();
     let attachSeq = 0;
     const readFileAsBase64 = deps.readFileAsBase64 || defaultReadFileAsBase64;
+    const textToBase64 = deps.textToBase64 || defaultTextToBase64;
+    // #3079 item 6: per project, the message this chat last sent and
+    // recorded (its send id, recorded text and whole text), until the pane
+    // shows it, so it is drawn after the replies it followed.
+    const lastSentByProject = new Map();
+    // And the whole text of each long message this visit sent, per project
+    // (the last few), so the pane's echo of one is known in full even after
+    // its record, cut short, is all the events hold (#3079).
+    const sentWhole = new Map();
+    const SENT_WHOLE_KEPT = 10;
+    let sendSeq = 0;
+    const clock = typeof deps.now === 'function' ? deps.now : () => Date.now();
     // The secure-clipboard routes gate even their GET listing with operator
     // proof, and api()'s own CSRF header only rides on writes, so the token
     // is added here too, as public/secure-clipboard-ui.js does.
@@ -1846,12 +2484,57 @@
      */
     function liveView(res, project, events) {
       let live = null;
+      const key = project ? String(project.id) : null;
+      const sent = key != null ? lastSentByProject.get(key) : null;
       if (res && Array.isArray(res.lines)) {
         const engine = project && project.engine && project.engine.id ? String(project.engine.id) : '';
         const said = (Array.isArray(events) ? events : []).filter((e) => e && e.role === 'user').map((e) => e.content);
+        // The whole of each long message sent, so its pane echo is known in full.
+        said.push(...(sentWhole.get(key) || []));
         live = extractLiveTurns(res.lines, engine, said);
+        // Once the pane shows it, it is placed by the pane.
+        if (sent && live.turns.some((t) => t.role === 'user' && t.recorded && (sameMessage(sent.text, t.text) || sameMessage(sent.full, t.text)))) {
+          lastSentByProject.delete(key);
+        }
       }
       return awaitReply(live, project);
+    }
+
+    /**
+     * @param {object|null} project
+     * @returns {{id: *, text: string}|null} What the chat last sent and recorded, until the pane shows it (#3079).
+     */
+    function lastSentFor(project) {
+      const sent = project ? lastSentByProject.get(String(project.id)) : null;
+      return sent ? { id: sent.id, text: sent.text } : null;
+    }
+
+    /**
+     * The Medusa indicator's reading (#3076): the listener's status, and the
+     * traffic the pane shows. Traffic blinks a head only against the reading
+     * before it — more unread or more wakes in, more sends out — so the
+     * first reading of a chat, and mail that predates it, never blink.
+     * @param {{state?: string, unread?: number, enabled?: boolean, lastError?: string|null}|null} status
+     * @param {{switchboard?: Array<{dir: string}>}|null} live
+     * @param {object|null} prev - The reading before this one.
+     * @returns {object|null} `null` until a status answers; a failed read keeps the last one, still.
+     */
+    function medusaView(status, live, prev) {
+      if (!status || typeof status !== 'object') return prev ? Object.assign({}, prev, { flowIn: false, flowOut: false }) : null;
+      const traffic = live && Array.isArray(live.switchboard) ? live.switchboard : [];
+      const inbound = traffic.filter((x) => x && x.dir === 'in').length;
+      const outbound = traffic.filter((x) => x && x.dir === 'out').length;
+      const unread = Math.max(0, Number(status.unread) || 0);
+      return {
+        state: typeof status.state === 'string' ? status.state : 'off',
+        unread,
+        enabled: status.enabled,
+        lastError: status.lastError || null,
+        inbound,
+        outbound,
+        flowIn: Boolean(prev) && (unread > prev.unread || inbound > prev.inbound),
+        flowOut: Boolean(prev) && outbound > prev.outbound
+      };
     }
 
     /**
@@ -1974,14 +2657,21 @@
       }
       const base = `/api/v6/projects/${encodeURIComponent(project.id)}/sessions/${encodeURIComponent(sessionId)}`;
       const peekUrl = `/api/sessions/${name}/peek?lines=80`;
-      const [events, attestations, peek] = await Promise.all([
+      // #3076: the listener's state and unread count. Unlike opening the
+      // inbox, this read marks nothing read and leaves the unread count
+      // alone; while listening, the route also asks the Bridge for loops.
+      const medusaUrl = `/api/sessions/${name}/medusa/status`;
+      const [events, attestations, peek, medusaStatus] = await Promise.all([
         api(`${base}/conversation/events`),
         api(`${base}/attestations`),
-        api(peekUrl)
+        api(peekUrl),
+        api(medusaUrl)
       ]);
       if (mine !== seq) return;
       chat.peek = peekView(peek);
       chat.live = liveView(peek, project, events && events.events);
+      chat.lastSent = lastSentFor(project);
+      chat.medusa = medusaView(medusaStatus, chat.live, null);
       current.view = events
         ? { project, sessionId, events: events.events, chat }
         : { project, sessionId, error: 'Could not load this session’s conversation events.', chat };
@@ -1990,13 +2680,15 @@
       if (startTimer) {
         pollId = startTimer(async () => {
           if (mine !== seq) { stopPolling(); return; }
-          const res = await api(peekUrl);
+          const [res, nextStatus] = await Promise.all([api(peekUrl), api(medusaUrl)]);
           if (mine !== seq || !current || !current.view) return;
           const next = peekView(res);
           const nextLive = liveView(res, current.project, current.view.events);
-          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next, live: nextLive }) });
+          const nextMedusa = medusaView(nextStatus, nextLive, current.view.chat && current.view.chat.medusa);
+          const lastSent = lastSentFor(current.project);
+          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next, live: nextLive, medusa: nextMedusa, lastSent }) });
           const sh = getShell();
-          if (sh && typeof sh.setLive === 'function') sh.setLive({ peek: next, live: nextLive });
+          if (sh && typeof sh.setLive === 'function') sh.setLive({ peek: next, live: nextLive, medusa: nextMedusa, lastSent });
           else if (sh && typeof sh.setPeek === 'function') sh.setPeek(next);
         }, CHAT_POLL_MS);
       }
@@ -2079,7 +2771,7 @@
       const message = typed && refs ? `${typed}\n\n${refs}` : (typed || refs);
       chat.sending = true;
       try {
-        await deliverChat(chat, message, name);
+        await deliverChat(chat, message, name, String(text || ''));
       } finally {
         chat.sending = false;
       }
@@ -2090,12 +2782,40 @@
      * @param {object} chat - `current` at send time.
      * @param {string} message
      * @param {string} name - The target project's name.
+     * @param {string} draft - The composer's text, put back if the send fails.
      * @returns {Promise<void>}
      */
-    async function deliverChat(chat, message, name) {
+    async function deliverChat(chat, message, name, draft) {
+      // #3079 item 6: the composer empties as Enter is pressed, and the
+      // message waits at the bottom of the chat until the send settles.
+      const sendId = ++sendSeq;
+      const pid = chat.project.id;
+      const begun = getShell();
+      if (begun && typeof begun.beginSend === 'function') begun.beginSend(pid, message, sendId);
+      const settle = (restore) => {
+        const sh = getShell();
+        if (sh && typeof sh.endSend === 'function') sh.endSend(pid, restore);
+      };
       showSend({ kind: 'pending', message: `Sending to ${name}…` });
       const before = chat.view && chat.view.chat ? lastReply(chat.view.chat.live) : null;
-      const sent = await apiMutate(`/api/sessions/${encodeURIComponent(name)}/command`, 'POST', { command: message, enter: true });
+      // #3079: the command route takes at most MAX_COMMAND_CHARS; a longer
+      // message is saved to a file first and the session is pointed at it.
+      // So is a message whose recorded event would be too heavy for the
+      // events route (A739): the record then keeps its start and the path.
+      let command = message;
+      let toRecord = message;
+      const launchId = chat.launchId || 'v6-chat-ui';
+      if (message.length > MAX_COMMAND_CHARS || eventBodyBytes(message, launchId) > MAX_EVENT_BODY_BYTES) {
+        const saved = await saveLongPrompt(chat, message);
+        if (!saved.ok) {
+          settle(draft);
+          if (chat === current) showSend({ kind: 'error', message: `Not sent: ${saved.error}` });
+          return;
+        }
+        if (message.length > MAX_COMMAND_CHARS) command = longPromptCommand(message, saved.relPath);
+        toRecord = recordedText(message, saved.relPath, launchId);
+      }
+      const sent = await apiMutate(`/api/sessions/${encodeURIComponent(name)}/command`, 'POST', { command, enter: true });
       if (sent) awaitingReply = { projectId: String(chat.project.id), reply: before, reads: 0 };
       // Once it is in the session the draft is spent, even if the operator
       // has moved to another chat meanwhile: left saved, it would come back
@@ -2104,6 +2824,7 @@
       if (sent && shellNow && typeof shellNow.clearChatDraft === 'function') shellNow.clearChatDraft(chat.project.id);
       if (sent) attachments.delete(String(chat.project.id));
       if (!sent) {
+        settle(draft);
         if (chat === current) showSend({ kind: 'error', message: `Not sent: ${api.lastError || 'the server refused it'}` });
         return;
       }
@@ -2111,11 +2832,66 @@
       // even if the operator has moved on: the conversation must not lose
       // what the session received. Only the on-screen update waits on the
       // operator still being here.
-      const recorded = await recordUserEvent(chat, message);
-      if (chat !== current) return;
+      const recorded = await recordUserEvent(chat, toRecord);
+      if (recorded === true) lastSentByProject.set(String(pid), { id: sendId, text: toRecord, full: message });
+      if (toRecord !== message) {
+        const whole = (sentWhole.get(String(pid)) || []).concat(message).slice(-SENT_WHOLE_KEPT);
+        sentWhole.set(String(pid), whole);
+      }
+      if (chat !== current) { settle(); return; }
       await loadConversation(chat.project, chat.mine, chat.ctx, recorded === true
         ? { kind: 'ok', message: `Sent to ${name}.` }
         : { kind: 'warning', message: `Sent to ${name}, but it could not be recorded in the conversation: ${recorded}` });
+      settle();
+    }
+
+    /**
+     * Save a message too long for the command route as a file in the target
+     * project's secrets store (#3079), through the same secure-clipboard
+     * route and operator proof attachments use.
+     * @param {object} chat - `current` at send time.
+     * @param {string} message
+     * @returns {Promise<{ok: true, relPath: string}|{ok: false, error: string}>}
+     */
+    async function saveLongPrompt(chat, message) {
+      let text;
+      try {
+        text = textToBase64(message);
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a browser that cannot encode the text refuses the send with its reason, never an unhandled rejection
+        return { ok: false, error: `the long message could not be prepared (${(err && err.message) || 'unknown error'}).` };
+      }
+      // The file is the message's UTF-8 bytes (PRR-B R1: not the base64
+      // length, whose padding over-counts by up to two bytes).
+      if (utf8Length(message) > MAX_ATTACH_BYTES) {
+        return { ok: false, error: `the message is over the 5 MB limit for a saved prompt.` };
+      }
+      // The route overwrites a file of the same name, so the name is chosen
+      // against what the project already holds, and an unreadable listing
+      // saves nothing (#3055), as for attachments.
+      const base = `/api/sessions/${encodeURIComponent(chat.project.name)}/secure-clipboard`;
+      const key = String(chat.project.id);
+      let res;
+      let filename;
+      try {
+        const headers = await operatorHeaders();
+        const listing = await api(base, { method: 'GET', headers });
+        const stored = listing && Array.isArray(listing.files) ? listing.files.map((f) => f && f.filename).filter(Boolean) : null;
+        if (stored === null) {
+          return { ok: false, error: `the long message was not saved: the project's saved files could not be checked (${api.lastError || 'the server did not answer'}), so a file of the same name could be overwritten.` };
+        }
+        const used = uploadedNames.get(key) || new Set();
+        uploadedNames.set(key, used);
+        const taken = new Set([...used, ...stored, ...(attachments.get(key) || []).map((a) => a.name)]);
+        filename = sanitizeUploadName(`prompt-${clock()}.md`, taken);
+        used.add(filename);
+        res = await api(base, {
+          method: 'POST', headers, body: JSON.stringify({ text, mode: 'file', filename, encoding: 'base64' })
+        });
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a refused operator proof or a failed request refuses the send with its reason, never an unhandled rejection
+        return { ok: false, error: `the long message could not be saved for the session: ${(err && err.message) || 'unknown error'}` };
+      }
+      if (!res) return { ok: false, error: `the long message could not be saved for the session: ${api.lastError || 'the server refused it'}` };
+      return { ok: true, relPath: projectRelative(res.relPath, filename) };
     }
 
     /**
@@ -2686,6 +3462,18 @@
     // polls and visits; and which chat was last scrolled to its bottom, so a
     // chat opens at its newest line once and is then left where the operator puts it.
     let chatHoodOpen = prefs.get('tc_v6_chat_under_hood_open', false, isBoolean);
+    // #3079: the questions dismissed in each chat, by {@link questionKey},
+    // until the pane shows no question at all — the operator has answered —
+    // so a poll that reads the same reply again, or the same reply grown by a
+    // wake or more text, does not bring them back, and a later reply's do show.
+    const dismissedQuestions = new Map();
+    // What the question slot and the Medusa slot were last drawn with, so
+    // a poll redraws them only when that changes (Critic W1).
+    let paintedQuestions = null;
+    let paintedMedusa = null;
+    // #3079 item 6: the message being sent — its chat, text and send id —
+    // drawn at the bottom of that chat until the send settles.
+    let pendingSend = null;
     // The chat whose Start fleet button has been clicked once (#3053).
     let fleetArmedKey = null;
     // The chat whose rename form is open (#3071), the name typed into it
@@ -3017,6 +3805,8 @@
           options.onChangeDelegate(String(chat.nodeId), String((evt && evt.target && evt.target.value) || ''));
         });
       }
+      wireQuestions();
+      wireMedusa();
       const refresh = doc.getElementById('v6ChatRefresh');
       if (refresh && typeof options.onRefreshChat === 'function') refresh.addEventListener('click', () => options.onRefreshChat());
       const settings = doc.getElementById('v6ChatSettings');
@@ -3024,6 +3814,146 @@
       if (settings && project && typeof options.onOpenProjectSettings === 'function') {
         settings.addEventListener('click', () => options.onOpenProjectSettings(String(project.name || '')));
       }
+    }
+
+    /**
+     * @param {string|null} key - A chat target.
+     * @returns {string[]} The questions dismissed in that chat (#3079).
+     */
+    function dismissedFor(key) {
+      return key != null && dismissedQuestions.has(key) ? dismissedQuestions.get(key).slice() : [];
+    }
+
+    /**
+     * The questions the chat on screen still shows (#3079). Once the live
+     * view asks nothing, the chat's dismissals are spent and forgotten.
+     * @returns {string[]}
+     */
+    function questionsNow() {
+      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      const key = chatTargetKey();
+      const live = chat && chat.live;
+      // Only a read of the pane that asks nothing spends them; a failed
+      // read says nothing about the question (second review, W1).
+      if (key != null && live && Array.isArray(live.questions) && !live.questions.length) dismissedQuestions.delete(key);
+      return openQuestions(chat && chat.live, dismissedFor(key));
+    }
+
+    /**
+     * Put away questions in the chat on screen (#3079) and redraw the slot.
+     * @param {string[]} texts
+     */
+    function dismissQuestions(texts) {
+      const key = chatTargetKey();
+      if (key == null || !texts.length) return;
+      const chat = detail && detail.view ? detail.view.chat : null;
+      const set = dismissedQuestions.get(key) || [];
+      texts.forEach((t) => set.push(questionKey(chat && chat.live, t)));
+      dismissedQuestions.set(key, set);
+      paintQuestions();
+    }
+
+    /**
+     * Redraw the question slot and wire its ✕ buttons — only when what it
+     * shows changed, so a poll never takes keyboard focus off a ✕ (Critic
+     * W1). The slot as last drawn is {@link paintedQuestions}.
+     * @returns {boolean} Whether it was redrawn.
+     */
+    function paintQuestions() {
+      const q = doc.getElementById('v6ChatQuestion');
+      if (!q) return false;
+      const list = questionsNow();
+      const html = chatQuestionInner(list);
+      if (html === paintedQuestions) return false;
+      paintedQuestions = html;
+      q.innerHTML = html;
+      q.className = `v6-chat-question${list.length ? ' is-asking' : ''}`;
+      wireQuestions();
+      return true;
+    }
+
+    /**
+     * Each question's ✕ dismisses that question (#3079), and focus moves to
+     * the ✕ now in its place, else to the message box.
+     */
+    function wireQuestions() {
+      const list = questionsNow();
+      list.forEach((text, i) => {
+        const btn = doc.getElementById(`v6ChatQuestionDismiss${i}`);
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+          dismissQuestions([text]);
+          const left = questionsNow().length;
+          const next = doc.getElementById(left ? `v6ChatQuestionDismiss${Math.min(i, left - 1)}` : 'v6ChatInput');
+          if (next && typeof next.focus === 'function') next.focus();
+        });
+      });
+    }
+
+    /**
+     * Redraw the recorded events around the live turns, and the pending
+     * bubble (#3079 item 6), as a poll moves what the pane shows.
+     */
+    function paintRecorded() {
+      const view = detail && detail.kind === 'conversation' ? detail.view : null;
+      if (!view) return;
+      const chat = view.chat || {};
+      const name = String((view.project && view.project.name) || '');
+      const parts = arrangeRecorded(view.events, chat.live && Array.isArray(chat.live.turns) ? chat.live.turns : [], chat.lastSent);
+      const head = doc.getElementById('v6ChatRecorded');
+      if (head) head.innerHTML = recordedEventsMarkup(parts.head, name);
+      const tailEl = doc.getElementById('v6ChatRecordedTail');
+      if (tailEl) tailEl.innerHTML = recordedEventsMarkup(parts.tail, name);
+      const pendingEl = doc.getElementById('v6ChatPending');
+      if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSend && pendingSend.key === chatTargetKey() ? pendingSend : null, chat.lastSent);
+    }
+
+    /**
+     * Bring the Medusa indicator up to date (#3076). While it stays on
+     * screen its button is updated in place, never replaced, so a poll
+     * cannot take focus off it or swallow a click (Critic W1); it is drawn
+     * or removed only when it appears or goes.
+     * @param {object|null|undefined} medusa
+     */
+    function paintMedusa(medusa) {
+      const slot = doc.getElementById('v6ChatMedusaSlot');
+      if (!slot) return;
+      const html = medusaIndicatorMarkup(medusa);
+      if (html === paintedMedusa) return;
+      const btn = paintedMedusa ? doc.getElementById('v6ChatMedusa') : null;
+      const badge = paintedMedusa ? doc.getElementById('v6ChatMedusaBadge') : null;
+      paintedMedusa = html;
+      if (html && btn && badge) {
+        const parts = medusaIndicatorParts(medusa);
+        btn.className = parts.className;
+        btn.title = parts.tip;
+        btn.setAttribute('title', parts.tip);
+        btn.setAttribute('aria-label', parts.tip);
+        badge.className = parts.badgeClass;
+        badge.textContent = parts.badge;
+        return;
+      }
+      slot.innerHTML = html;
+      wireMedusa();
+    }
+
+    /**
+     * The Medusa indicator opens Under the Hood at the switchboard's traffic (#3076).
+     */
+    function wireMedusa() {
+      const btn = doc.getElementById('v6ChatMedusa');
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        const hood = doc.getElementById('v6ChatUnderHood');
+        if (hood) {
+          hood.open = true;
+          if (typeof hood.setAttribute === 'function') hood.setAttribute('open', '');
+        }
+        chatHoodOpen = true;
+        prefs.set('tc_v6_chat_under_hood_open', true);
+        const list = doc.getElementById('v6ChatSwitchboard');
+        if (list && typeof list.focus === 'function') list.focus();
+      });
     }
 
     /** @returns {string|null} The project the chat on screen talks to, as a draft key. */
@@ -3119,6 +4049,8 @@
       const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
       const hasFiles = Boolean(chat && Array.isArray(chat.attachments) && chat.attachments.some((a) => a && a.status !== 'error'));
       if ((!text && !hasFiles) || typeof options.onSendChat !== 'function') return;
+      // #3079: sending is the operator answering; the queue clears.
+      dismissQuestions(questionsNow());
       options.onSendChat(text);
     }
 
@@ -3212,13 +4144,17 @@
             fleetArmed: fleetArmedKey != null && fleetArmedKey === chatTargetKey(),
             rename: renameOpenKey != null && renameOpenKey === chatTargetKey()
               ? { open: true, draft: renameDraft, warning: renameWarning } : null,
-            sidebarCollapsed, activityElapsed, telemetry
+            sidebarCollapsed, activityElapsed, telemetry, dismissedQuestions: dismissedFor(chatTargetKey()),
+            pending: pendingSend && pendingSend.key === chatTargetKey() ? pendingSend : null
           })}</div>
           <div id="v6ShellWizard"${inChat ? ' hidden' : ''}>${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation"${inChat ? ' hidden' : ''}>${modelAttestationMarkup(attestation)}</div>
         </main>
-        ${watermarkFooterMarkup(showWatermark)}
+        ${watermarkFooterMarkup(showWatermark, telemetry)}
       `;
+      const shownChat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      paintedQuestions = chatQuestionInner(questionsNow());
+      paintedMedusa = medusaIndicatorMarkup(shownChat && shownChat.medusa);
       wireControls();
       restoreViewState(saved);
       if (typeof options.onRender === 'function') options.onRender(currentRoute);
@@ -3371,16 +4307,24 @@
        * replies extracted from it, the pinned question and the activity
        * line — never the composer, so a poll every few seconds cannot rebuild
        * the page under an operator mid-message.
-       * @param {{peek: object|null, live: {turns: Array, question: string|null, activity: string|null}|null}} update
+       * The switchboard's traffic and the Medusa indicator (#3076) are
+       * replaced too; `medusa`, when the update carries it, is the latest
+       * status.
+       * @param {{peek: object|null, live: {turns: Array, question: string|null, activity: string|null}|null,
+       *   medusa?: object|null}} update
        */
       setLive(update) {
         if (!detail || detail.kind !== 'conversation' || !detail.view) return;
         const peek = update ? update.peek : null;
         const live = update && update.live ? update.live : null;
         const name = String((detail.view.project && detail.view.project.name) || '');
+        const medusa = update && 'medusa' in update ? update.medusa : detail.view.chat && detail.view.chat.medusa;
         detail = Object.assign({}, detail, {
-          view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { peek, live }) })
+          view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { peek, live, medusa }) })
         });
+        const traffic = doc.getElementById('v6ChatSwitchboard');
+        if (traffic) traffic.innerHTML = switchboardMarkup(switchboardItems(detail.view.events, live));
+        paintMedusa(medusa);
         const peekEl = doc.getElementById('v6ChatPeek');
         if (peekEl) {
           const atBottom = isAtBottom(peekEl);
@@ -3391,12 +4335,9 @@
         const streamAtBottom = isAtBottom(stream);
         const liveEl = doc.getElementById('v6ChatLive');
         if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name);
+        paintRecorded();
         if (streamAtBottom) pinToBottom(stream);
-        const q = doc.getElementById('v6ChatQuestion');
-        if (q) {
-          q.innerHTML = chatQuestionInner(live && live.question);
-          q.className = `v6-chat-question${live && live.question ? ' is-asking' : ''}`;
-        }
+        paintQuestions();
         const a = doc.getElementById('v6ChatActivity');
         const elapsed = syncBusy();
         if (a) {
@@ -3432,6 +4373,39 @@
        * @param {*} [projectId] - The project it was sent to; the chat on screen when omitted.
        */
       clearChatDraft(projectId) { chatDrafts.delete(projectId != null ? String(projectId) : chatTargetKey()); },
+      /**
+       * A send has begun (#3079 item 6): the composer empties at once and
+       * the message shows at the bottom of its chat until the send settles.
+       * @param {*} projectId - The chat it was sent from.
+       * @param {string} text - What was sent.
+       * @param {*} id - The send's id, which the recorded copy carries.
+       */
+      beginSend(projectId, text, id) {
+        const key = String(projectId);
+        chatDrafts.delete(key);
+        pendingSend = { key, text: String(text || ''), id };
+        if (key !== chatTargetKey()) return;
+        const input = doc.getElementById('v6ChatInput');
+        if (input) input.value = '';
+        paintRecorded();
+      },
+      /**
+       * A send has settled (#3079 item 6): the pending message goes. Given
+       * the text back, the send failed, and the text returns to the
+       * composer unless something new has been typed there since.
+       * @param {*} projectId
+       * @param {string} [restore]
+       */
+      endSend(projectId, restore) {
+        const key = String(projectId);
+        if (pendingSend && pendingSend.key === key) pendingSend = null;
+        if (typeof restore === 'string' && restore && !chatDrafts.get(key)) {
+          chatDrafts.set(key, restore);
+          const input = key === chatTargetKey() ? doc.getElementById('v6ChatInput') : null;
+          if (input && !input.value) input.value = restore;
+        }
+        if (key === chatTargetKey()) paintRecorded();
+      },
       destroy() {
         if (tickerId != null) { stopTicker(tickerId); tickerId = null; }
         busy = null;
@@ -3460,12 +4434,17 @@
   global.tcV6PlatformViewMarkup = platformViewMarkup;
   global.tcV6WhatIfMarkup = whatIfMarkup;
   global.tcV6ViewToggleLabel = viewToggleLabel;
+  global.tcV6TuckAdminControls = tuckAdminControls;
   global.tcV6PickAttestation = pickAttestation;
   global.tcV6ResolveRouteProject = resolveRouteProject;
   global.tcV6ResolveDelegateProject = resolveDelegateProject;
   global.tcV6ChatKeyAction = chatKeyAction;
   global.tcV6FormatElapsed = formatElapsed;
   global.tcV6ExtractLiveTurns = extractLiveTurns;
+  global.tcV6LongPromptCommand = longPromptCommand;
+  global.tcV6RecordedText = recordedText;
+  global.tcV6EventBodyBytes = eventBodyBytes;
+  global.tcV6MedusaIndicatorMarkup = medusaIndicatorMarkup;
   global.tcV6SanitizeUploadName = sanitizeUploadName;
   global.tcV6FilesFromEvent = filesFromEvent;
   global.tcV6MemberIndicators = memberIndicators;
