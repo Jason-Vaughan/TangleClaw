@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TangleClaw Sprint v6.0.1 — Executive Engineering, Telemetry &amp; Kaizen Retro Report</title>
   <!-- TANGLECLAW_OG_META_START -->
-  <meta name="description" content="TangleClaw Sprint v6.0.1 (Milestone #65, Charter A620 v1.0) — Executed on base v6.0.0 (5d26085c) under Charter A620 v1.0 (Milestone #65) and SPRINT_REPORT_CONTRACT v3.0.0, shipping 2 true-merged repo PRs (#3023, #3024) closing #3022 by wiring the top-bar Fleet Shell (v6) <-> Classic View switcher (#v6ViewToggleBtn), live /api/v6/* telemetry/template/conversation/attestation data feeds, the B2 Conversation View + Open Hood (Live Terminal) link, and logical-project route resolution (tcV6ResolveRouteProject)." />
+  <meta name="description" content="Executed across Wave 1 (`Car V601-UI-WIREUP`) + Release Cut (`Car V601-RELEASE-CUT`) on base 5d26085c ( tag: v6.0.0 ) under Charter A620 v1.0 and SPRINT_REPORT_CONTRACT.md v3.0.0 . Shipped 2 True-Merged Repo PRs (..." />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="TangleClaw Autonomous Sprint Reports" />
   <meta property="og:title" content="TangleClaw Sprint v6.0.1 — Executive Engineering, Telemetry &amp; Kaizen Retro Report" />
-  <meta property="og:description" content="TangleClaw Sprint v6.0.1 (Milestone #65, Charter A620 v1.0) — Executed on base v6.0.0 (5d26085c) under Charter A620 v1.0 (Milestone #65) and SPRINT_REPORT_CONTRACT v3.0.0, shipping 2 true-merged repo PRs (#3023, #3024) closing #3022 by wiring the top-bar Fleet Shell (v6) <-> Classic View switcher (#v6ViewToggleBtn), live /api/v6/* telemetry/template/conversation/attestation data feeds, the B2 Conversation View + Open Hood (Live Terminal) link, and logical-project route resolution (tcV6ResolveRouteProject)." />
+  <meta property="og:description" content="Executed across Wave 1 (`Car V601-UI-WIREUP`) + Release Cut (`Car V601-RELEASE-CUT`) on base 5d26085c ( tag: v6.0.0 ) under Charter A620 v1.0 and SPRINT_REPORT_CONTRACT.md v3.0.0 . Shipped 2 True-Merged Repo PRs (..." />
   <meta property="og:url" content="https://jason-vaughan.github.io/TangleClaw/reports/v6.0.1/" />
   <meta property="og:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
   <meta property="og:image:type" content="image/png" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="TangleClaw Sprint v6.0.1 — Executive Engineering, Telemetry &amp; Kaizen Retro Report" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="TangleClaw Sprint v6.0.1 — Executive Engineering, Telemetry &amp; Kaizen Retro Report" />
-  <meta name="twitter:description" content="TangleClaw Sprint v6.0.1 (Milestone #65, Charter A620 v1.0) — Executed on base v6.0.0 (5d26085c) under Charter A620 v1.0 (Milestone #65) and SPRINT_REPORT_CONTRACT v3.0.0, shipping 2 true-merged repo PRs (#3023, #3024) closing #3022 by wiring the top-bar Fleet Shell (v6) <-> Classic View switcher (#v6ViewToggleBtn), live /api/v6/* telemetry/template/conversation/attestation data feeds, the B2 Conversation View + Open Hood (Live Terminal) link, and logical-project route resolution (tcV6ResolveRouteProject)." />
+  <meta name="twitter:description" content="Executed across Wave 1 (`Car V601-UI-WIREUP`) + Release Cut (`Car V601-RELEASE-CUT`) on base 5d26085c ( tag: v6.0.0 ) under Charter A620 v1.0 and SPRINT_REPORT_CONTRACT.md v3.0.0 . Shipped 2 True-Merged Repo PRs (..." />
   <meta name="twitter:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
   <link rel="icon" type="image/png" href="https://jason-vaughan.github.io/TangleClaw/reports/assets/logo-icon.png" />
   <link rel="apple-touch-icon" href="https://jason-vaughan.github.io/TangleClaw/reports/assets/apple-touch-icon.png" />
@@ -530,6 +530,13 @@
         </div>
 
         <div class="kpi-grid">
+        <!-- TANGLECLAW_ADE_KPI_START -->
+        <div class="kpi-card">
+          <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">0.83/hr · ADE 0.28</div>
+          <div class="kpi-meta kpi-sub">Throughput: <code>0.83 closed/hr</code> (<code>T_eng=1.20h</code>) · Allocated: <code>$2.95/issue</code> (<code>$2.95</code> pool · <code>$2.65/kLOC</code>) · Legacy ADE_v1: <code>0.28</code></div>
+        </div>
+        <!-- TANGLECLAW_ADE_KPI_END -->
           <div class="kpi-card">
             <div class="kpi-label">Sprint Version &amp; Milestone</div>
             <div class="kpi-value cyan">v6.0.1 (#65)</div>
@@ -545,13 +552,6 @@
             <div class="kpi-value green">1h 12m 00s Eng (1.20h)</div>
             <div class="kpi-sub">t2 10:05:00 → t7 11:26:50 PST (T_eng=1.20h; 1h 33m 00s / 1.55h Auth→Deploy · Milestone #65)</div>
           </div>
-        <!-- TANGLECLAW_ADE_KPI_START -->
-        <div class="kpi-card">
-          <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
-          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">0.83/hr · ADE 0.28</div>
-          <div class="kpi-meta kpi-sub">Throughput: <code>0.83 closed/hr</code> (<code>T_eng=1.20h</code>) · Allocated: <code>$2.95/issue</code> (<code>$2.95</code> pool · <code>$2.65/kLOC</code>) · Legacy ADE_v1: <code>0.28</code></div>
-        </div>
-        <!-- TANGLECLAW_ADE_KPI_END -->
           <div class="kpi-card">
             <div class="kpi-label">True Merge Commits (Rule #282)</div>
             <div class="kpi-value green">2 / 2 (100%)</div>

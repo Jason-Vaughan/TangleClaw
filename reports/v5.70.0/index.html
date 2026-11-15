@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TangleClaw Sprint v5.70.0 — Executive Engineering, Telemetry &amp; Kaizen Retro Report</title>
   <!-- TANGLECLAW_OG_META_START -->
-  <meta name="description" content="TangleClaw Sprint v5.70.0 (Milestone #57, Charter A505 v1.0) — Executed 100% unattended across 2 coordinated waves on base v5.69.0 (6c446dac) as Leg 3 of 4 under Charter A505 v1.0 (Milestone #57) and SPRINT_REPORT_CONTRACT v2.0.0, closing all 4 chartered issues (#2626, #1485, #1774, #2127) across 4 true-merged PRs (#2920, #2919, #2922, #2926)." />
+  <meta name="description" content="Executed 100% unattended overnight ( 0 human inputs) across 2 coordinated waves on base 6c446dac ( tag: v5.69.0 ) as Leg 3 of 4 under Charter A505 v1.0 , Architect Rulings A505-R3 / R3.3–R3.10 , and..." />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="TangleClaw Autonomous Sprint Reports" />
   <meta property="og:title" content="TangleClaw Sprint v5.70.0 — Executive Engineering, Telemetry &amp; Kaizen Retro Report" />
-  <meta property="og:description" content="TangleClaw Sprint v5.70.0 (Milestone #57, Charter A505 v1.0) — Executed 100% unattended across 2 coordinated waves on base v5.69.0 (6c446dac) as Leg 3 of 4 under Charter A505 v1.0 (Milestone #57) and SPRINT_REPORT_CONTRACT v2.0.0, closing all 4 chartered issues (#2626, #1485, #1774, #2127) across 4 true-merged PRs (#2920, #2919, #2922, #2926)." />
+  <meta property="og:description" content="Executed 100% unattended overnight ( 0 human inputs) across 2 coordinated waves on base 6c446dac ( tag: v5.69.0 ) as Leg 3 of 4 under Charter A505 v1.0 , Architect Rulings A505-R3 / R3.3–R3.10 , and..." />
   <meta property="og:url" content="https://jason-vaughan.github.io/TangleClaw/reports/v5.70.0/" />
   <meta property="og:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
   <meta property="og:image:type" content="image/png" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="TangleClaw Sprint v5.70.0 — Executive Engineering, Telemetry &amp; Kaizen Retro Report" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="TangleClaw Sprint v5.70.0 — Executive Engineering, Telemetry &amp; Kaizen Retro Report" />
-  <meta name="twitter:description" content="TangleClaw Sprint v5.70.0 (Milestone #57, Charter A505 v1.0) — Executed 100% unattended across 2 coordinated waves on base v5.69.0 (6c446dac) as Leg 3 of 4 under Charter A505 v1.0 (Milestone #57) and SPRINT_REPORT_CONTRACT v2.0.0, closing all 4 chartered issues (#2626, #1485, #1774, #2127) across 4 true-merged PRs (#2920, #2919, #2922, #2926)." />
+  <meta name="twitter:description" content="Executed 100% unattended overnight ( 0 human inputs) across 2 coordinated waves on base 6c446dac ( tag: v5.69.0 ) as Leg 3 of 4 under Charter A505 v1.0 , Architect Rulings A505-R3 / R3.3–R3.10 , and..." />
   <meta name="twitter:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
   <link rel="icon" type="image/png" href="https://jason-vaughan.github.io/TangleClaw/reports/assets/logo-icon.png" />
   <link rel="apple-touch-icon" href="https://jason-vaughan.github.io/TangleClaw/reports/assets/apple-touch-icon.png" />
@@ -529,6 +529,13 @@
         </div>
 
         <div class="kpi-grid">
+        <!-- TANGLECLAW_ADE_KPI_START -->
+        <div class="kpi-card">
+          <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">1.47/hr · ADE 0.22</div>
+          <div class="kpi-meta kpi-sub">Throughput: <code>1.47 closed/hr</code> (<code>T_eng=2.73h</code>) · Allocated: <code>$1.68/issue</code> (<code>$6.72</code> pool · <code>$2.93/kLOC</code>) · Legacy ADE_v1: <code>0.22</code></div>
+        </div>
+        <!-- TANGLECLAW_ADE_KPI_END -->
           <div class="kpi-card">
             <div class="kpi-label">Sprint Version &amp; Milestone</div>
             <div class="kpi-value cyan">v5.70.0 (#57)</div>
@@ -544,13 +551,6 @@
             <div class="kpi-value green">2h 43m 30s Eng (2.73h)</div>
             <div class="kpi-sub">t2 02:31:30 → t7 05:15:00 PST (T_eng=2.73h; 2h 45m 00s / 2.75h Auth→Deploy · Milestone #57)</div>
           </div>
-        <!-- TANGLECLAW_ADE_KPI_START -->
-        <div class="kpi-card">
-          <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
-          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">1.47/hr · ADE 0.22</div>
-          <div class="kpi-meta kpi-sub">Throughput: <code>1.47 closed/hr</code> (<code>T_eng=2.73h</code>) · Allocated: <code>$1.68/issue</code> (<code>$6.72</code> pool · <code>$2.93/kLOC</code>) · Legacy ADE_v1: <code>0.22</code></div>
-        </div>
-        <!-- TANGLECLAW_ADE_KPI_END -->
           <div class="kpi-card">
             <div class="kpi-label">True Merge Commits (Rule #282)</div>
             <div class="kpi-value green">4 / 4 (100%)</div>

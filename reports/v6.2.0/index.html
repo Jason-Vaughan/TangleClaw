@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TangleClaw Sprint v6.2.0 — Executive Engineering, Telemetry &amp; Kaizen Retro Report</title>
   <!-- TANGLECLAW_OG_META_START -->
-  <meta name="description" content="TangleClaw Sprint v6.2.0 (Milestone #64, Charter A625 v1.1) — Executed on base v6.1.0 (1f619ec8) under Charter A625 v1.1 (Milestone #64) and SPRINT_REPORT_CONTRACT v3.0.0, shipping 5 true-merged repo PRs (#3032, #3033, #3034, #3035, #3036) closing all 5 Milestone #64 software issues (#3001..#3005) across 3 waves: Wave 1 core modules (E3b What-If Simulator, G2b Provider Adapters, G4 Sandboxed Project Advisor, R-MED-1 Medusa v2 Compact Wire & Wake Coalescer, A1-Iso Host Sandboxing), Wave 2 10 live /api/v6/* routes & v6-shell.js views, and Wave 3 v6.2.0 release cut." />
+  <meta name="description" content="Executed across 3 coordinated waves (`Wave 1: Car V62-W1-A..C`, `Wave 2: Car V62-W2-ROUTES`, `Wave 3: Car V62-W-REL`) on base 1f619ec8 ( tag: v6.1.0 ) under Charter A625 v1.1 ( Ruling A642 , Ruling A654 ) and..." />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="TangleClaw Autonomous Sprint Reports" />
   <meta property="og:title" content="TangleClaw Sprint v6.2.0 — Executive Engineering, Telemetry &amp; Kaizen Retro Report" />
-  <meta property="og:description" content="TangleClaw Sprint v6.2.0 (Milestone #64, Charter A625 v1.1) — Executed on base v6.1.0 (1f619ec8) under Charter A625 v1.1 (Milestone #64) and SPRINT_REPORT_CONTRACT v3.0.0, shipping 5 true-merged repo PRs (#3032, #3033, #3034, #3035, #3036) closing all 5 Milestone #64 software issues (#3001..#3005) across 3 waves: Wave 1 core modules (E3b What-If Simulator, G2b Provider Adapters, G4 Sandboxed Project Advisor, R-MED-1 Medusa v2 Compact Wire & Wake Coalescer, A1-Iso Host Sandboxing), Wave 2 10 live /api/v6/* routes & v6-shell.js views, and Wave 3 v6.2.0 release cut." />
+  <meta property="og:description" content="Executed across 3 coordinated waves (`Wave 1: Car V62-W1-A..C`, `Wave 2: Car V62-W2-ROUTES`, `Wave 3: Car V62-W-REL`) on base 1f619ec8 ( tag: v6.1.0 ) under Charter A625 v1.1 ( Ruling A642 , Ruling A654 ) and..." />
   <meta property="og:url" content="https://jason-vaughan.github.io/TangleClaw/reports/v6.2.0/" />
   <meta property="og:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
   <meta property="og:image:type" content="image/png" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="TangleClaw Sprint v6.2.0 — Executive Engineering, Telemetry &amp; Kaizen Retro Report" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="TangleClaw Sprint v6.2.0 — Executive Engineering, Telemetry &amp; Kaizen Retro Report" />
-  <meta name="twitter:description" content="TangleClaw Sprint v6.2.0 (Milestone #64, Charter A625 v1.1) — Executed on base v6.1.0 (1f619ec8) under Charter A625 v1.1 (Milestone #64) and SPRINT_REPORT_CONTRACT v3.0.0, shipping 5 true-merged repo PRs (#3032, #3033, #3034, #3035, #3036) closing all 5 Milestone #64 software issues (#3001..#3005) across 3 waves: Wave 1 core modules (E3b What-If Simulator, G2b Provider Adapters, G4 Sandboxed Project Advisor, R-MED-1 Medusa v2 Compact Wire & Wake Coalescer, A1-Iso Host Sandboxing), Wave 2 10 live /api/v6/* routes & v6-shell.js views, and Wave 3 v6.2.0 release cut." />
+  <meta name="twitter:description" content="Executed across 3 coordinated waves (`Wave 1: Car V62-W1-A..C`, `Wave 2: Car V62-W2-ROUTES`, `Wave 3: Car V62-W-REL`) on base 1f619ec8 ( tag: v6.1.0 ) under Charter A625 v1.1 ( Ruling A642 , Ruling A654 ) and..." />
   <meta name="twitter:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
   <link rel="icon" type="image/png" href="https://jason-vaughan.github.io/TangleClaw/reports/assets/logo-icon.png" />
   <link rel="apple-touch-icon" href="https://jason-vaughan.github.io/TangleClaw/reports/assets/apple-touch-icon.png" />
@@ -531,6 +531,13 @@
         </div>
 
         <div class="kpi-grid">
+        <!-- TANGLECLAW_ADE_KPI_START -->
+        <div class="kpi-card">
+          <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">1.30/hr · ADE 0.14</div>
+          <div class="kpi-meta kpi-sub">Throughput: <code>1.30 closed/hr</code> (<code>T_eng=3.86h</code>) · Allocated: <code>$1.90/issue</code> (<code>$9.50</code> pool · <code>$1.71/kLOC</code>) · Legacy ADE_v1: <code>0.14</code></div>
+        </div>
+        <!-- TANGLECLAW_ADE_KPI_END -->
           <div class="kpi-card">
             <div class="kpi-label">Sprint Version &amp; Milestone</div>
             <div class="kpi-value cyan">v6.2.0 (#64)</div>
@@ -546,13 +553,6 @@
             <div class="kpi-value green">3h 51m 26s Eng (3.86h)</div>
             <div class="kpi-sub">t2 16:20:42 → t7 20:12:08 PST (T_eng=3.86h; 4h 04m 08s / 4.07h Auth→Deploy · Milestone #64)</div>
           </div>
-        <!-- TANGLECLAW_ADE_KPI_START -->
-        <div class="kpi-card">
-          <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
-          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">1.30/hr · ADE 0.14</div>
-          <div class="kpi-meta kpi-sub">Throughput: <code>1.30 closed/hr</code> (<code>T_eng=3.86h</code>) · Allocated: <code>$1.90/issue</code> (<code>$9.50</code> pool · <code>$1.71/kLOC</code>) · Legacy ADE_v1: <code>0.14</code></div>
-        </div>
-        <!-- TANGLECLAW_ADE_KPI_END -->
           <div class="kpi-card">
             <div class="kpi-label">True Merge Commits (Rule #282)</div>
             <div class="kpi-value green">5 / 5 (100%)</div>

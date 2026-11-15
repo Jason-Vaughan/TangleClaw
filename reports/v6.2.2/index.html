@@ -4,6 +4,25 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TangleClaw Sprint v6.2.2 — Live Sprint Progress &amp; Telemetry Report</title>
+  <!-- TANGLECLAW_OG_META_START -->
+  <meta name="description" content="Sprint v6.2.2 ( &quot;Sprint v6.2.2&quot; ) is currently in progress (IN PROGRESS). This live interactive sprint report is automatically generated and updated by sync-live-sprint.py on every roadmap sync cycle as waves are..." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="TangleClaw Autonomous Sprint Reports" />
+  <meta property="og:title" content="TangleClaw Sprint v6.2.2 — Live Sprint Progress &amp; Telemetry Report" />
+  <meta property="og:description" content="Sprint v6.2.2 ( &quot;Sprint v6.2.2&quot; ) is currently in progress (IN PROGRESS). This live interactive sprint report is automatically generated and updated by sync-live-sprint.py on every roadmap sync cycle as waves are..." />
+  <meta property="og:url" content="https://jason-vaughan.github.io/TangleClaw/reports/v6.2.2/" />
+  <meta property="og:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="TangleClaw Sprint v6.2.2 — Live Sprint Progress &amp; Telemetry Report" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="TangleClaw Sprint v6.2.2 — Live Sprint Progress &amp; Telemetry Report" />
+  <meta name="twitter:description" content="Sprint v6.2.2 ( &quot;Sprint v6.2.2&quot; ) is currently in progress (IN PROGRESS). This live interactive sprint report is automatically generated and updated by sync-live-sprint.py on every roadmap sync cycle as waves are..." />
+  <meta name="twitter:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
+  <link rel="icon" type="image/png" href="https://jason-vaughan.github.io/TangleClaw/reports/assets/logo-icon.png" />
+  <link rel="apple-touch-icon" href="https://jason-vaughan.github.io/TangleClaw/reports/assets/apple-touch-icon.png" />
+  <!-- TANGLECLAW_OG_META_END -->
   <meta property="og:title" content="TangleClaw Sprint v6.2.2 — Live Sprint Progress" />
   <meta property="og:description" content="Live wave and gate telemetry for TangleClaw v6.2.2." />
   <meta property="og:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
@@ -534,6 +553,13 @@
       </div>
 
       <div class="kpi-grid">
+        <!-- TANGLECLAW_ADE_KPI_START -->
+        <div class="kpi-card">
+          <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">5.33/hr · ADE 1.45</div>
+          <div class="kpi-meta kpi-sub">Throughput: <code>5.33 closed/hr</code> (<code>T_eng=1.50h</code>) · Allocated: <code>$0.46/issue</code> (<code>$3.69</code> pool · <code>$1.03/kLOC</code>) · Legacy ADE_v1: <code>1.45</code></div>
+        </div>
+        <!-- TANGLECLAW_ADE_KPI_END -->
         <div class="kpi-card">
           <div class="kpi-label">Sprint Version</div>
           <div class="kpi-value" style="color:var(--accent2)">v6.2.2</div>
@@ -574,10 +600,6 @@
           <div class="kpi-value" style="color:var(--green)">Enforced</div>
           <div class="kpi-meta"><code>I-Gate</code> · <code>B-Gate</code> · <code>A-Gate</code> · <code>O-Gate</code> active on all waves</div>
         </div>
-      </div>
-      <div id="ade-efficiency-card" class="subcard" style="margin:18px 0;padding:18px 22px;border:1.5px solid rgba(56,189,248,0.45);border-radius:12px;">
-        <h3>Autonomous Delivery Efficiency (ADE) — Live Measurement Pending Gate 4</h3>
-        <p>This live report tracks the inputs continuously. The Observer records the canonical throughput, cost, and ADE formula once the sprint reaches its final Gate 4 evidence boundary.</p>
       </div>
     </section>
 
@@ -637,6 +659,19 @@
     </section>
 
     <section class="section" id="velocity">
+      <!-- TANGLECLAW_ADE_BANNER_START -->
+      <div id="ade-efficiency-card" class="subcard" style="margin:18px 0;padding:18px 22px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.95),rgba(14,116,144,0.16));border-radius:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+          <span style="color:#38bdf8;font-weight:700;font-size:0.82rem;letter-spacing:0.06em;">📐 AUTONOMOUS DELIVERY EFFICIENCY (ADE) · ORTHOGONAL THROUGHPUT, ALLOCATED COST &amp; LEGACY ADE_v1</span>
+          <span class="badge badge-green" style="font-size:0.78rem;">Throughput = 5.33 Issues/Hr · Allocated = $0.46/Issue ($1.03/kLOC) · Legacy ADE_v1 = 1.45</span>
+        </div>
+        <div style="font-size:0.90rem;color:#e2e8f0;line-height:1.56;">
+          <strong>1. Orthogonal Efficiency Metrics (Primary Standard):</strong> <strong>Throughput</strong> = <code>W_closed / T_eng = 8 / 1.50h = <strong>5.33 closed issues/hr</strong></code> · <strong>Unit Allocated Cost</strong> = <code>C_alloc / W_closed = $3.69 / 8 = <strong>$0.46/closed issue</strong></code> (<code>$1.03/kLOC</code> across <code>+3,600</code> insertions) · <strong>Quality</strong> = <code>100% True Merges, 0 Post-Merge Defects</code>.<br/>
+          <strong>2. Disclosed Legacy Composite Index (<code>ADE_v1</code>):</strong> <code>ADE_v1 = W_closed / (T_eng × C_alloc) = 8 / (1.50h × $3.69) = <strong>1.45</strong></code>. <em>Dimensional Note:</em> Because <code>C_alloc = $2.46/hr × T_eng</code>, <code>ADE_v1 = W / (2.46 × T_eng²)</code> scales as <code>1/T²</code> (units: <code>issues · hr⁻² · $⁻¹</code>); therefore <code>ADE_v1</code> is always evaluated on the full engineering window (<code>T_eng = 1.50h</code>, never a pipelined merge tail) alongside scale-invariant Throughput (<code>5.33 issues/hr</code>).<br/>
+          <strong>3. 3-Tier Operating Cost Basis:</strong> <strong>Tier 1 (Measured Marginal Cash):</strong> <code>$0.00</code> per-run API fee + <code>~$0.04</code> M3 Ultra wall power · <strong>Tier 2 (Allocated Subscription Pool):</strong> <code>$3.69</code> pro-rata allocation (<code>$440/mo ÷ 178.8 active hrs = $2.46/hr × 1.50h</code>; calendar-hour reference <code>$0.92</code> @ <code>$0.611/hr</code>) · <strong>Tier 3 (Hypothetical API Shadow Estimate):</strong> <code>~$74</code> (unmetered estimate across <code>~5.1M</code> tokens → <code>20.1×</code> subscription compression).
+        </div>
+      </div>
+      <!-- TANGLECLAW_ADE_BANNER_END -->
       <div class="section-header">
         <div>
           <span class="section-tag">Section 02 · Live Wave Velocity &amp; Execution Timeline</span>

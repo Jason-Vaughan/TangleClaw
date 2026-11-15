@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TangleClaw Sprint v6.0.0-v6.2.1-retrospective — Executive Engineering, Telemetry &amp; Kaizen Retro Report</title>
   <!-- TANGLECLAW_OG_META_START -->
-  <meta name="description" content="TangleClaw Sprint v6.0.0-v6.2.1-retrospective (Milestone #68, Charter A512 / A620 / A624 / A625 / A663 v1.3) — Complete 5-release TangleClaw v6.0.0–v6.2.1 Train Retrospective across Milestones #61, #65, #63, #64, and #68 (Charter A512 / A620 / A624 / A625 / A663 v1.3, Standing Authorization OP-GO-V6-GATE0-20261110), shipping 33 true-merged PRs (#3006–#3021, #3023–#3028, #3030–#3036, #3040, #3042, #3043, #3045) and closing all 42 in-repo v6 software and qualification issues (+36,695 / -22 net LOC across 109 files, 30,642/30,642 tests)." />
+  <meta name="description" content="Executed across 5 consecutive production releases ( v6.0.0 , v6.0.1 , v6.1.0 , v6.2.0 , v6.2.1 ) from base 37c12c79 ( v5.74.0 ) to e14dbb03 ( tag: v6.2.1 ) under Charters A512 / A620 / A624 / A625 / A663 v1.3 and..." />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="TangleClaw Autonomous Sprint Reports" />
   <meta property="og:title" content="TangleClaw Sprint v6.0.0-v6.2.1-retrospective — Executive Engineering, Telemetry &amp; Kaizen Retro Report" />
-  <meta property="og:description" content="TangleClaw Sprint v6.0.0-v6.2.1-retrospective (Milestone #68, Charter A512 / A620 / A624 / A625 / A663 v1.3) — Complete 5-release TangleClaw v6.0.0–v6.2.1 Train Retrospective across Milestones #61, #65, #63, #64, and #68 (Charter A512 / A620 / A624 / A625 / A663 v1.3, Standing Authorization OP-GO-V6-GATE0-20261110), shipping 33 true-merged PRs (#3006–#3021, #3023–#3028, #3030–#3036, #3040, #3042, #3043, #3045) and closing all 42 in-repo v6 software and qualification issues (+36,695 / -22 net LOC across 109 files, 30,642/30,642 tests)." />
+  <meta property="og:description" content="Executed across 5 consecutive production releases ( v6.0.0 , v6.0.1 , v6.1.0 , v6.2.0 , v6.2.1 ) from base 37c12c79 ( v5.74.0 ) to e14dbb03 ( tag: v6.2.1 ) under Charters A512 / A620 / A624 / A625 / A663 v1.3 and..." />
   <meta property="og:url" content="https://jason-vaughan.github.io/TangleClaw/reports/v6.0.0-v6.2.1-retrospective/" />
   <meta property="og:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
   <meta property="og:image:type" content="image/png" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="TangleClaw Sprint v6.0.0-v6.2.1-retrospective — Executive Engineering, Telemetry &amp; Kaizen Retro Report" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="TangleClaw Sprint v6.0.0-v6.2.1-retrospective — Executive Engineering, Telemetry &amp; Kaizen Retro Report" />
-  <meta name="twitter:description" content="TangleClaw Sprint v6.0.0-v6.2.1-retrospective (Milestone #68, Charter A512 / A620 / A624 / A625 / A663 v1.3) — Complete 5-release TangleClaw v6.0.0–v6.2.1 Train Retrospective across Milestones #61, #65, #63, #64, and #68 (Charter A512 / A620 / A624 / A625 / A663 v1.3, Standing Authorization OP-GO-V6-GATE0-20261110), shipping 33 true-merged PRs (#3006–#3021, #3023–#3028, #3030–#3036, #3040, #3042, #3043, #3045) and closing all 42 in-repo v6 software and qualification issues (+36,695 / -22 net LOC across 109 files, 30,642/30,642 tests)." />
+  <meta name="twitter:description" content="Executed across 5 consecutive production releases ( v6.0.0 , v6.0.1 , v6.1.0 , v6.2.0 , v6.2.1 ) from base 37c12c79 ( v5.74.0 ) to e14dbb03 ( tag: v6.2.1 ) under Charters A512 / A620 / A624 / A625 / A663 v1.3 and..." />
   <meta name="twitter:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
   <link rel="icon" type="image/png" href="https://jason-vaughan.github.io/TangleClaw/reports/assets/logo-icon.png" />
   <link rel="apple-touch-icon" href="https://jason-vaughan.github.io/TangleClaw/reports/assets/apple-touch-icon.png" />
@@ -545,6 +545,13 @@
         </div>
 
         <div class="kpi-grid">
+        <!-- TANGLECLAW_ADE_KPI_START -->
+        <div class="kpi-card">
+          <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">1.22/hr · ADE 0.01</div>
+          <div class="kpi-meta kpi-sub">Throughput: <code>1.22 closed/hr</code> (<code>T_eng=34.50h</code>) · Allocated: <code>$2.02/issue</code> (<code>$84.87</code> pool · <code>$2.31/kLOC</code>) · Legacy ADE_v1: <code>0.01</code></div>
+        </div>
+        <!-- TANGLECLAW_ADE_KPI_END -->
           <div class="kpi-card">
             <div class="kpi-label">Sprint Version &amp; Milestone</div>
             <div class="kpi-value cyan">v6.0.0-v6.2.1-retrospective (#68)</div>
@@ -560,13 +567,6 @@
             <div class="kpi-value green">34h 30m 00s active engineering sum Eng (34.50h)</div>
             <div class="kpi-sub">t2 00:40:00 → t7 01:02:28 PST (T_eng=34.50h; 36h 42m 01s active leg sum across v6.0.0 / 36.70h Auth→Deploy · Milestone #68)</div>
           </div>
-        <!-- TANGLECLAW_ADE_KPI_START -->
-        <div class="kpi-card">
-          <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
-          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">1.22/hr · ADE 0.01</div>
-          <div class="kpi-meta kpi-sub">Throughput: <code>1.22 closed/hr</code> (<code>T_eng=34.50h</code>) · Allocated: <code>$2.02/issue</code> (<code>$84.87</code> pool · <code>$2.31/kLOC</code>) · Legacy ADE_v1: <code>0.01</code></div>
-        </div>
-        <!-- TANGLECLAW_ADE_KPI_END -->
           <div class="kpi-card">
             <div class="kpi-label">True Merge Commits (Rule #282)</div>
             <div class="kpi-value green">33 / 33 (100%)</div>
