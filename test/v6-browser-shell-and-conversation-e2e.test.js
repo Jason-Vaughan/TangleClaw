@@ -69,6 +69,7 @@ function makeFakeWindow(initialHash) {
 describe('v6 Stage 2 E2E: browser shell and conversation, against the live server (#3038)', () => {
   let tempDir;
   let prevBase;
+  let prevHome;
 
   before(() => {
     prevBase = store._getBasePath();
@@ -76,9 +77,16 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
     store.close();
     store._setBasePath(tempDir);
     store.init();
+    // #3085: the shell now loads GET /api/usage/windows, which scans each
+    // engine's transcripts under the home directory. Like projectsDir below,
+    // point it at this test's own temp tree, so it never reads (or waits on)
+    // the real ~/.claude, ~/.codex and ~/.gemini of the machine running it.
+    prevHome = process.env.HOME;
+    process.env.HOME = tempDir;
   });
 
   after(() => {
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
     store.close();
     store._setBasePath(prevBase);
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -532,6 +540,20 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.doesNotMatch(header, /title="(Active sessions|Health|Version):/);
       assert.match(header, /<span class="v6-telemetry-chip is-unavailable" title="Tokens: no reading yet — model tokens used \(unavailable\)">/);
       assert.ok(root.classList.contains('v6-shell-root--chat'), 'so the unavailable chips are hidden by the chat-scoped rule');
+    });
+
+    it('the 3-engine usage meter reads the real usage route and always shows Claude, Codex and AGY (#3085)', async () => {
+      seedProject('e2e-usage');
+      const { root, calls, settle } = mountShell('#/projects/1');
+      await settle();
+      // The meter loads beside the route, from a route that scans transcripts: wait for it to land.
+      for (let i = 0; i < 200 && !/id="v6EngineUsageMeter"/.test(root.innerHTML); i++) await new Promise((r) => setTimeout(r, 50));
+      assert.ok(calls.includes('GET /api/usage/windows'), JSON.stringify(calls));
+      assert.ok(calls.includes('GET /api/usage/sessions'));
+      const html = root.innerHTML;
+      assert.match(html, /<div id="v6EngineUsageSlot" class="v6-usage-slot"><button type="button" id="v6EngineUsageMeter"/);
+      for (const engine of ['claude', 'codex', 'antigravity']) assert.match(html, new RegExp(`class="v6-usage-pill [^"]*" data-engine="${engine}"`));
+      assert.match(html, /<span class="v6-usage-label">AGY<\/span>/);
     });
 
     it('the sidebar\'s four icons and fleet picker work over the real project list (#3068)', async () => {

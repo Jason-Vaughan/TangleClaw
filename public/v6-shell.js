@@ -637,6 +637,9 @@
   /** The characters a project name may use, as `lib/projects.js#PROJECT_NAME_REGEX` allows (#3071). */
   const PROJECT_NAME_CHARS = /^[a-zA-Z0-9 _-]+$/;
 
+  /** Chat reads between refreshes of the usage meter (#3085): about a minute at the chat's read rate. */
+  const USAGE_EVERY_POLLS = 15;
+
   /** Reads of a just-sent chat that may show no engine activity before it stops reading as Working (#3057). */
   const AWAIT_REPLY_POLLS = 3;
   const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
@@ -780,12 +783,126 @@
    * @param {{metrics?: object}|null} [bar] - The telemetry bar, if loaded.
    * @returns {string} HTML, or `''` with neither a watermark nor readings.
    */
-  function watermarkFooterMarkup(showWatermark, bar) {
+  function watermarkFooterMarkup(showWatermark, bar, usage) {
     const status = bar && bar.metrics
       ? `<div id="v6ShellStatusBar" class="v6-shell-status-bar" role="status" aria-label="Server status">${TELEMETRY_FOOTER_KEYS.map((key) => telemetryChipMarkup(bar, key)).join('')}</div>`
       : '';
-    if (!status) return showWatermark ? '<footer class="v6-shell-watermark" aria-hidden="true">TangleClaw</footer>' : '';
-    return `<footer class="v6-shell-watermark has-status">${status}${showWatermark ? '<span class="v6-shell-watermark-mark" aria-hidden="true">TangleClaw</span>' : ''}</footer>`;
+    // #3085: the 3-engine usage meter, in its own slot so a refresh can
+    // redraw it alone.
+    const meter = typeof usage === 'string' && usage ? `<div id="v6EngineUsageSlot" class="v6-usage-slot">${usage}</div>` : '';
+    if (!status && !meter) return showWatermark ? '<footer class="v6-shell-watermark" aria-hidden="true">TangleClaw</footer>' : '';
+    return `<footer class="v6-shell-watermark has-status">${status}${meter}${showWatermark ? '<span class="v6-shell-watermark-mark" aria-hidden="true">TangleClaw</span>' : ''}</footer>`;
+  }
+
+  /**
+   * The engines the usage meter always shows (#3085, Contract A753-1), in
+   * order: the key the usage routes use, the meter's short label, the name.
+   */
+  const USAGE_ENGINES = Object.freeze([
+    { key: 'claude', label: 'Claude', name: 'Claude' },
+    { key: 'codex', label: 'Codex', name: 'Codex' },
+    { key: 'antigravity', label: 'AGY', name: 'Antigravity' }
+  ]);
+
+  /** @param {*} v @returns {number|null} A remaining percentage, 0–100, or null. */
+  function pctOrNull(v) {
+    return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100 ? v : null;
+  }
+
+  /**
+   * What the meter shows for each engine (#3085, A753-1): token totals for
+   * the 5-hour, weekly and sprint windows summed across models (a missing
+   * engine counts as none), its live sessions, and how much it has left —
+   * the lowest a live session reports (a Codex footer's "weekly 0% left"),
+   * else the operator's calibration; both are percentages REMAINING. The
+   * state follows: critical at 5% or less, warning at 25% or less, else
+   * healthy (unknown when nothing reports a percentage).
+   * @param {object|null} windows - `GET /api/usage/windows`.
+   * @param {object|null} sessions - `GET /api/usage/sessions`.
+   * @returns {{engines: Array<object>, resetHours: number|null, resetAt: string|null}}
+   */
+  function usageMeterModel(windows, sessions) {
+    const w = windows && typeof windows === 'object' ? windows : {};
+    const live = sessions && Array.isArray(sessions.sessions) ? sessions.sessions : [];
+    const sum = (models, win) => Object.values(models || {}).reduce((n, m) => n + (Number(m && m[win] && m[win].totalTokens) || 0), 0);
+    const engines = USAGE_ENGINES.map(({ key, label, name }) => {
+      const models = w.byProviderModel && w.byProviderModel[key];
+      const mine = live.filter((x) => x && (x.engine === key || x.provider === key));
+      const seen = mine.flatMap((x) => [pctOrNull(x.weeklyRemainingPct), pctOrNull(x.fiveHourRemainingPct)]).filter((v) => v !== null);
+      const cal = w.calibration && w.calibration[key];
+      const calibrated = cal ? [pctOrNull(cal.weeklyPct), pctOrNull(cal.fiveHourPct)].filter((v) => v !== null) : [];
+      const remainingPct = seen.length ? Math.min(...seen) : (calibrated.length ? Math.min(...calibrated) : null);
+      const state = remainingPct === null ? 'unknown' : remainingPct <= 5 ? 'critical' : remainingPct <= 25 ? 'warning' : 'healthy';
+      return {
+        key, label, name, remainingPct, state,
+        source: seen.length ? 'live' : (calibrated.length ? 'calibrated' : 'none'),
+        sessions: mine.length,
+        tokens: { fiveHour: sum(models, 'fiveHour'), weekly: sum(models, 'weekly'), sprint: sum(models, 'sprint') }
+      };
+    });
+    const reset = w.resetSchedule || {};
+    return {
+      engines,
+      resetHours: typeof reset.hoursUntilWeeklyReset === 'number' && Number.isFinite(reset.hoursUntilWeeklyReset) ? reset.hoursUntilWeeklyReset : null,
+      resetAt: typeof reset.nextWeeklyResetAt === 'string' ? reset.nextWeeklyResetAt : null
+    };
+  }
+
+  /** @param {number} n @returns {string} A token count, short: `942M`, `12.4k`, `830`. */
+  function formatTokens(n) {
+    const v = Number(n) || 0;
+    if (v >= 1e9) return `${(v / 1e9).toFixed(v >= 1e10 ? 0 : 1)}B`;
+    if (v >= 1e6) return `${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M`;
+    if (v >= 1e3) return `${(v / 1e3).toFixed(v >= 1e4 ? 0 : 1)}k`;
+    return String(Math.round(v));
+  }
+
+  /** @param {number|null} hours @returns {string} `Resets in 4d 11h`, or ''. */
+  function formatReset(hours) {
+    if (hours === null || hours < 0) return '';
+    const h = Math.floor(hours);
+    return h >= 24 ? `Resets in ${Math.floor(h / 24)}d ${h % 24}h` : `Resets in ${h}h ${Math.floor((hours - h) * 60)}m`;
+  }
+
+  /** The state classes a meter pill carries (#3085, A753-1). */
+  const USAGE_STATE_CLASSES = Object.freeze({
+    healthy: 'is-healthy is-green', unknown: 'is-healthy is-green is-unknown', warning: 'is-warning is-amber', critical: 'is-critical is-red'
+  });
+
+  /**
+   * The usage meter (#3085, A753-1): one pill per engine, coloured by what
+   * it has left, opening a breakdown with one-click calibration.
+   * @param {ReturnType<typeof usageMeterModel>} model
+   * @param {{open?: boolean, status?: {kind: string, message: string}|null}} [ui]
+   * @returns {string} HTML.
+   */
+  function usageMeterMarkup(model, ui) {
+    const open = Boolean(ui && ui.open);
+    const status = ui && ui.status ? ui.status : null;
+    const reset = formatReset(model.resetHours);
+    const pill = (e) => {
+      const left = e.remainingPct === null ? null : Math.round(e.remainingPct);
+      const reading = left === null ? `${formatTokens(e.tokens.weekly)} this week` : `${left}% left`;
+      const tip = `${e.name}: ${left === null ? 'no % left reported' : `${left}% left (${e.source})`} · ${formatTokens(e.tokens.fiveHour)} tokens in 5h, ${formatTokens(e.tokens.weekly)} this week${reset ? ` · ${reset}` : ''}`;
+      return `<span class="v6-usage-pill ${USAGE_STATE_CLASSES[e.state]}" data-engine="${e.key}" title="${escapeHtml(tip)}">`
+        + `<span class="v6-usage-label">${e.label}</span>`
+        + `<span class="v6-usage-bar" aria-hidden="true"><span class="v6-usage-fill" style="width: ${left === null ? 0 : left}%"></span></span>`
+        + `<span class="v6-usage-value">${escapeHtml(reading)}</span></span>`;
+    };
+    const summary = model.engines.map((e) => `${e.name} ${e.remainingPct === null ? 'no reading' : `${Math.round(e.remainingPct)}% left`}`).join(', ');
+    const row = (e) => `<tr data-engine="${e.key}"><th scope="row">${e.name}</th>`
+      + `<td>${formatTokens(e.tokens.fiveHour)}</td><td>${formatTokens(e.tokens.weekly)}</td><td>${formatTokens(e.tokens.sprint)}</td><td>${e.sessions}</td>`
+      + `<td>${e.remainingPct === null ? '—' : `${Math.round(e.remainingPct)}%`}</td>`
+      + `<td><span class="v6-usage-calibrate"><label><span class="sr-only">${e.name} weekly % left</span><input type="number" min="0" max="100" step="1" id="v6UsageWeekly-${e.key}" class="filter-input v6-usage-input" placeholder="wk %"></label>`
+      + `<label><span class="sr-only">${e.name} 5-hour % left</span><input type="number" min="0" max="100" step="1" id="v6UsageFiveHour-${e.key}" class="filter-input v6-usage-input" placeholder="5h %"></label>`
+      + `<button type="button" id="v6UsageSave-${e.key}" class="btn btn-secondary btn-small" data-engine="${e.key}">Set</button></span></td></tr>`;
+    return `<button type="button" id="v6EngineUsageMeter" class="v6-usage-meter" aria-expanded="${open ? 'true' : 'false'}" aria-controls="v6EngineUsagePopover"
+        aria-label="${escapeHtml(`Engine usage: ${summary}. Open the breakdown.`)}">${model.engines.map(pill).join('')}</button>`
+      + `<div id="v6EngineUsagePopover" class="v6-usage-popover" role="dialog" aria-label="Engine usage"${open ? '' : ' hidden'}>`
+      + `<p class="v6-usage-reset">${escapeHtml(reset || 'Weekly reset time unknown')}</p>`
+      + `<table class="v6-usage-table"><thead><tr><th scope="col">Engine</th><th scope="col">5h</th><th scope="col">Week</th><th scope="col">Sprint</th><th scope="col">Sessions</th><th scope="col">Left</th><th scope="col">Set % left</th></tr></thead>`
+      + `<tbody>${model.engines.map(row).join('')}</tbody></table>`
+      + `<p id="v6EngineUsageStatus" class="v6-usage-status${status ? ` is-${escapeHtml(status.kind)}` : ''}" role="status">${status ? escapeHtml(status.message) : ''}</p></div>`;
   }
 
   /**
@@ -2556,7 +2673,13 @@
     // Where it is now is its home unless it is still in a status bar (one a
     // redraw orphaned): never an old home, which may belong to another page.
     const from = stats.parentNode;
-    if (!(from && from.id === 'v6ShellStatusBar')) dashStatsHome = { parent: from, next: stats.nextSibling || null };
+    if (!(from && from.id === 'v6ShellStatusBar')) {
+      const live = typeof stats.getAttribute === 'function' ? stats.getAttribute('aria-live') : null;
+      dashStatsHome = { parent: from, next: stats.nextSibling || null, live };
+    }
+    // The status region announces its changes; the stats refresh every 30 s
+    // and must not be read out each time.
+    if (typeof stats.setAttribute === 'function') stats.setAttribute('aria-live', 'off');
     footer.appendChild(stats);
   }
 
@@ -2572,6 +2695,8 @@
     if (!stats || !home || !home.parent) return;
     if (home.next && home.next.parentNode === home.parent) home.parent.insertBefore(stats, home.next);
     else home.parent.appendChild(stats);
+    if (home.live !== null && home.live !== undefined) stats.setAttribute('aria-live', home.live);
+    else if (typeof stats.removeAttribute === 'function') stats.removeAttribute('aria-live');
     dashStatsHome = null;
   }
 
@@ -2766,6 +2891,43 @@
     const sentWhole = new Map();
     const SENT_WHOLE_KEPT = 10;
     let sendSeq = 0;
+    // #3085: chat reads since the usage meter last refreshed.
+    let usagePolls = 0;
+    let usageActionsGiven = false;
+
+    /**
+     * Load the 3-engine usage meter's data (#3085, A753-1) and hand it, and
+     * once its calibrate action, to the shell.
+     * @returns {Promise<void>}
+     */
+    async function loadUsage() {
+      const [windows, sessions] = await Promise.all([api('/api/usage/windows'), api('/api/usage/sessions')]);
+      const sh = getShell();
+      if (!sh || typeof sh.setUsage !== 'function' || !windows) return;
+      if (!usageActionsGiven && typeof sh.setUsageActions === 'function') {
+        sh.setUsageActions({ calibrate: calibrateUsage });
+        usageActionsGiven = true;
+      }
+      sh.setUsage({ windows, sessions });
+    }
+
+    /**
+     * Record the operator's "% left" for an engine (#3085, A753-1): the
+     * Operator-only calibration route, with the page's write proof.
+     * @param {string} provider - `claude`, `codex` or `antigravity`.
+     * @param {number} [weeklyPct]
+     * @param {number} [fiveHourPct]
+     * @returns {Promise<{ok: boolean, error?: string}>}
+     */
+    async function calibrateUsage(provider, weeklyPct, fiveHourPct) {
+      const body = { provider };
+      if (weeklyPct !== undefined) body.weeklyPct = weeklyPct;
+      if (fiveHourPct !== undefined) body.fiveHourPct = fiveHourPct;
+      const res = await apiMutate('/api/usage/calibrate', 'POST', body);
+      if (!res) return { ok: false, error: api.lastError || 'the server refused it' };
+      await loadUsage();
+      return { ok: true };
+    }
     // Sends on their way, per project (#3082): a plain send waits while any is.
     const sendsInFlight = new Map();
 
@@ -3145,6 +3307,9 @@
       if (startTimer) {
         pollId = startTimer(async () => {
           if (mine !== seq) { stopPolling(); return; }
+          // #3085: the usage meter refreshes every USAGE_EVERY_POLLS reads.
+          usagePolls = (usagePolls + 1) % USAGE_EVERY_POLLS;
+          if (usagePolls === 0) loadUsage();
           const [res, nextStatus] = await Promise.all([api(peekUrl), api(medusaUrl)]);
           if (mine !== seq || !current || !current.view) return;
           const next = peekView(res);
@@ -3440,6 +3605,7 @@
       if (!shell) return;
       const key = route && route.view ? JSON.stringify(route) : null;
       if (key === lastRouteKey) return;
+      if (key !== null) loadUsage();
       const entering = lastRouteKey === null;
       lastRouteKey = key;
       const mine = ++seq;
@@ -3973,6 +4139,12 @@
     const destroyHooks = [];
     // The flags of the send being handed to the page right now (#3082).
     let sendFlags = null;
+    // #3085: the usage routes' last answers, whether the breakdown is open,
+    // the last calibration's outcome, and the page's calibrate action.
+    let usage = null;
+    let usageOpen = false;
+    let usageStatus = null;
+    let usageActions = null;
     // The chat whose Start fleet button has been clicked once (#3053).
     let fleetArmedKey = null;
     // The chat whose rename form is open (#3071), the name typed into it
@@ -4047,6 +4219,7 @@
         });
       }
       wireChat();
+      wireUsage();
       wireStart();
       wireRename();
       wireTreeLinks();
@@ -4393,6 +4566,69 @@
       });
     }
 
+    /** @returns {string} The usage meter as it stands (#3085), or '' before the routes answer. */
+    function usageMarkupNow() {
+      return usage ? usageMeterMarkup(usageMeterModel(usage.windows, usage.sessions), { open: usageOpen, status: usageStatus }) : '';
+    }
+
+    /** Redraw the meter alone (#3085), or the shell if its footer has no slot yet. */
+    function paintUsage() {
+      const slot = doc.getElementById('v6EngineUsageSlot');
+      if (!slot) { render(); return; }
+      slot.innerHTML = usageMarkupNow();
+      wireUsage();
+    }
+
+    /**
+     * The meter opens and closes its breakdown; each engine's Set button
+     * records the operator's "% left" for it (#3085, A753-1).
+     */
+    function wireUsage() {
+      // Once per element: a redraw makes new ones, a repeat call must not double up.
+      const fresh = (el) => {
+        if (!el || (el.dataset && el.dataset.usageWired)) return false;
+        if (el.dataset) el.dataset.usageWired = '1';
+        return true;
+      };
+      const meter = doc.getElementById('v6EngineUsageMeter');
+      if (fresh(meter)) {
+        meter.addEventListener('click', () => {
+          usageOpen = !usageOpen;
+          paintUsage();
+          const again = doc.getElementById('v6EngineUsageMeter');
+          if (again && typeof again.focus === 'function') again.focus();
+        });
+      }
+      USAGE_ENGINES.forEach(({ key, name }) => {
+        const btn = doc.getElementById(`v6UsageSave-${key}`);
+        if (!fresh(btn)) return;
+        btn.addEventListener('click', () => {
+          const read = (id) => {
+            const el = doc.getElementById(id);
+            const raw = el && typeof el.value === 'string' ? el.value.trim() : '';
+            return raw === '' ? undefined : Number(raw);
+          };
+          const weekly = read(`v6UsageWeekly-${key}`);
+          const fiveHour = read(`v6UsageFiveHour-${key}`);
+          const bad = [weekly, fiveHour].some((v) => v !== undefined && !(Number.isFinite(v) && v >= 0 && v <= 100));
+          if (bad || (weekly === undefined && fiveHour === undefined)) {
+            usageStatus = { kind: 'error', message: `${name}: enter a weekly or 5-hour % left between 0 and 100.` };
+            paintUsage();
+            return;
+          }
+          if (!usageActions || typeof usageActions.calibrate !== 'function') return;
+          usageStatus = { kind: 'pending', message: `Setting ${name}…` };
+          paintUsage();
+          Promise.resolve(usageActions.calibrate(key, weekly, fiveHour)).then((result) => {
+            usageStatus = result && result.ok
+              ? { kind: 'ok', message: `${name} set.` }
+              : { kind: 'error', message: `${name} not set: ${(result && result.error) || 'the server refused it'}` };
+            paintUsage();
+          });
+        });
+      });
+    }
+
     /** @returns {Object<string, string>} The chat on screen's thumbnails: file name → `blob:` URL (#3082). */
     function thumbsNow() {
       const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
@@ -4717,7 +4953,7 @@
           <div id="v6ShellWizard"${inChat ? ' hidden' : ''}>${fleetWizardMarkup(templates)}</div>
           <div id="v6ShellAttestation"${inChat ? ' hidden' : ''}>${modelAttestationMarkup(attestation)}</div>
         </main>
-        ${watermarkFooterMarkup(showWatermark, telemetry)}
+        ${watermarkFooterMarkup(showWatermark, telemetry, usageMarkupNow())}
       `;
       const shownChat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
       paintedQuestions = chatQuestionInner(questionsNow());
@@ -5006,6 +5242,21 @@
        * @returns {{priority: boolean, startupIntervention: boolean}|null}
        */
       takeSendFlags() { const f = sendFlags; sendFlags = null; return f; },
+      /**
+       * The usage routes' latest answers (#3085): redraws the meter.
+       * @param {{windows: object|null, sessions: object|null}|null} data
+       */
+      setUsage(data) {
+        usage = data && data.windows ? data : null;
+        paintUsage();
+      },
+      /**
+       * What the meter's Set buttons call (#3085): `calibrate(provider,
+       * weeklyPct, fiveHourPct)` resolving to `{ok, error?}`. Handed over by
+       * the page's controller, since the page wires no option for it.
+       * @param {{calibrate: Function}} actions
+       */
+      setUsageActions(actions) { usageActions = actions || null; },
       destroy() {
         destroyHooks.splice(0).forEach((fn) => fn());
         if (tickerId != null) { stopTicker(tickerId); tickerId = null; }
@@ -5043,6 +5294,8 @@
   global.tcV6FormatElapsed = formatElapsed;
   global.tcV6ExtractLiveTurns = extractLiveTurns;
   global.tcV6MessageMarkup = messageMarkup;
+  global.tcV6UsageMeterModel = usageMeterModel;
+  global.tcV6UsageMeterMarkup = usageMeterMarkup;
   global.tcV6LongPromptCommand = longPromptCommand;
   global.tcV6RecordedText = recordedText;
   global.tcV6EventBodyBytes = eventBodyBytes;

@@ -5810,6 +5810,8 @@ describe('one top bar in the v6 shell (Rulings A764, A765)', () => {
         classList: { contains: (c) => classes.has(c), toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)) },
         get nextSibling() { const p = el.parentNode; return p ? p.childNodes[p.childNodes.indexOf(el) + 1] || null : null; },
         setAttribute(k, v) { el.attrs[k] = String(v); },
+        getAttribute(k) { return Object.prototype.hasOwnProperty.call(el.attrs, k) ? el.attrs[k] : null; },
+        removeAttribute(k) { delete el.attrs[k]; },
         addEventListener(t, fn) { (el.listeners[t] = el.listeners[t] || []).push(fn); },
         appendChild(c) { if (c.parentNode) c.remove(); c.parentNode = el; el.childNodes.push(c); return c; },
         insertBefore(c, ref) { if (c.parentNode) c.remove(); c.parentNode = el; el.childNodes.splice(el.childNodes.indexOf(ref), 0, c); return c; },
@@ -5881,8 +5883,11 @@ describe('one top bar in the v6 shell (Rulings A764, A765)', () => {
     G.tcV6TuckAdminControls(p.doc, true);
     assert.equal(p.stats.parentNode, p.doc.getElementById('v6ShellStatusBar'));
     assert.ok(!kids(p.bar).includes('dashStats'), 'not shown twice');
+    // The footer is a status region; the 30 s refresh must not be announced there.
+    assert.equal(p.stats.getAttribute('aria-live'), 'off');
     G.tcV6TuckAdminControls(p.doc, false);
     assert.deepEqual(kids(p.bar), ['dash-brand', 'dashStats', 'dash-actions']);
+    assert.equal(p.stats.getAttribute('aria-live'), null, 'back home, as it was');
   });
 
   it('a shell redraw sends the live stats home first, so the same node survives and moves into the new footer', () => {
@@ -5917,7 +5922,184 @@ describe('one top bar in the v6 shell (Rulings A764, A765)', () => {
 
   it('styles the docked header as a segment of the one bar, and the moved stats in the footer', () => {
     const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    // The docked header is outside #v6ShellRoot: the #3063 pills and the shell's tokens are restated for it.
+    assert.match(CSS, /\.dash-bar \.v6-chat-header \{\s*--v6-outline: #3d444d;\s*--v6-surface: var\(--card-bg, #0d0d0d\);\s*\}/);
+    assert.match(CSS, /\[data-theme="light"\] \.dash-bar \.v6-chat-header \{\s*--v6-outline: #8c959f;\s*\}/);
+    assert.match(CSS, /\.dash-bar \.v6-chat-header \.v6-telemetry-chip \{\s*flex-direction: row;/);
+    assert.match(CSS, /\.dash-bar \.v6-chat-header \.v6-telemetry-chip\.is-unavailable \{\s*display: none;\s*\}/);
+    assert.match(CSS, /\.dash-bar \.v6-chat-header \.v6-telemetry-header \{\s*margin-bottom: 0;/);
     assert.match(CSS, /\.dash-bar \.v6-chat-header \{[^}]*flex: 1 1 auto;[^}]*min-width: 0;[^}]*margin: 0;[^}]*padding: 0;[^}]*border: 0;[^}]*background: transparent;/);
     assert.match(CSS, /\.v6-shell-status-bar \.dash-stats \{[^}]*display: inline-flex;/);
+  });
+});
+
+// ── #3085 frontend (Car V6210-W1-A): the 3-engine usage meter ──
+
+describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
+  const G = loadV6Shell();
+  const windows = (over) => Object.assign({
+    resetSchedule: { nextWeeklyResetAt: '2026-11-19T14:00:00.000Z', hoursUntilWeeklyReset: 106.5 },
+    byProviderModel: {
+      claude: { opus: { fiveHour: { totalTokens: 1000 }, weekly: { totalTokens: 5000 }, sprint: { totalTokens: 700 } }, sonnet: { fiveHour: { totalTokens: 500 }, weekly: { totalTokens: 2500 } } },
+      codex: { sol: { fiveHour: { totalTokens: 3e8 }, weekly: { totalTokens: 9.42e8 } } }
+    },
+    calibration: { claude: { weeklyPct: 40, fiveHourPct: 60 }, codex: null }
+  }, over || {});
+  const model = (w, sess) => plain(G.tcV6UsageMeterModel(w, sess));
+
+  it('always shows all three engines, summing each one\'s models; a missing engine counts as none', () => {
+    const m = model(windows());
+    assert.deepEqual(m.engines.map((e) => [e.key, e.label]), [['claude', 'Claude'], ['codex', 'Codex'], ['antigravity', 'AGY']]);
+    assert.deepEqual(m.engines[0].tokens, { fiveHour: 1500, weekly: 7500, sprint: 700 });
+    assert.deepEqual(m.engines[2].tokens, { fiveHour: 0, weekly: 0, sprint: 0 });
+    assert.equal(m.resetHours, 106.5);
+    assert.deepEqual(model(null).engines.map((e) => e.state), ['unknown', 'unknown', 'unknown']);
+  });
+
+  it('% left is the lowest a live session reports, else the calibration (both REMAINING), else unknown', () => {
+    const live = { sessions: [{ engine: 'codex', weeklyRemainingPct: 7 }, { engine: 'codex', fiveHourRemainingPct: 0 }, { engine: 'claude', weeklyRemainingPct: null }] };
+    const m = model(windows(), live);
+    assert.deepEqual(m.engines.map((e) => [e.remainingPct, e.source, e.sessions]), [[40, 'calibrated', 1], [0, 'live', 2], [null, 'none', 0]]);
+    // A live reading wins over a calibration on file, even a more hopeful one.
+    const both = model(windows(), { sessions: [{ engine: 'claude', weeklyRemainingPct: 3 }] });
+    assert.deepEqual([both.engines[0].remainingPct, both.engines[0].source, both.engines[0].state], [3, 'live', 'critical']);
+  });
+
+  it('colours by what is left: above 25 healthy, 25 down to 6 warning, 5 or less critical', () => {
+    const at = (pct) => model(windows({ calibration: { claude: { weeklyPct: pct } } })).engines[0].state;
+    assert.deepEqual([26, 25, 6, 5, 0].map(at), ['healthy', 'warning', 'warning', 'critical', 'critical']);
+  });
+
+  it('draws a pill per engine with its state classes, a fill as wide as what is left, and a summary to screen readers', () => {
+    const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows({ calibration: { claude: { weeklyPct: 40 }, codex: { weeklyPct: 20 }, antigravity: { weeklyPct: 3 } } })), { open: false });
+    assert.match(html, /<button type="button" id="v6EngineUsageMeter" class="v6-usage-meter" aria-expanded="false" aria-controls="v6EngineUsagePopover"/);
+    assert.match(html, /aria-label="Engine usage: Claude 40% left, Codex 20% left, Antigravity 3% left\. Open the breakdown\."/);
+    assert.match(html, /<span class="v6-usage-pill is-healthy is-green" data-engine="claude"[^>]*>[\s\S]*?style="width: 40%"[\s\S]*?40% left/);
+    assert.match(html, /<span class="v6-usage-pill is-warning is-amber" data-engine="codex"/);
+    assert.match(html, /<span class="v6-usage-pill is-critical is-red" data-engine="antigravity"/);
+    assert.match(html, /<div id="v6EngineUsagePopover" class="v6-usage-popover" role="dialog" aria-label="Engine usage" hidden>/);
+    const none = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), {});
+    assert.match(none, /data-engine="codex"[^>]*>[\s\S]*?style="width: 0%"[\s\S]*?942M this week/, 'no % reported: the week\'s tokens');
+  });
+
+  it('the breakdown lists 5h, week and sprint tokens, sessions, the reset, and a % left input pair with Set for each engine', () => {
+    const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows(), { sessions: [{ engine: 'claude' }] }), { open: true });
+    assert.doesNotMatch(html, /v6EngineUsagePopover"[^>]*hidden/);
+    assert.match(html, /<p class="v6-usage-reset">Resets in 4d 10h<\/p>/);
+    assert.match(html, /<tr data-engine="claude"><th scope="row">Claude<\/th><td>1\.5k<\/td><td>7\.5k<\/td><td>700<\/td><td>1<\/td><td>40%<\/td>/);
+    for (const key of ['claude', 'codex', 'antigravity']) {
+      assert.match(html, new RegExp(`id="v6UsageWeekly-${key}"`));
+      assert.match(html, new RegExp(`id="v6UsageFiveHour-${key}"`));
+      assert.match(html, new RegExp(`<button type="button" id="v6UsageSave-${key}"`));
+    }
+  });
+
+  it('escapes a calibration message', () => {
+    const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, status: { kind: 'error', message: 'Codex not set: <img src=x onerror=alert(1)>' } });
+    assert.match(html, /<p id="v6EngineUsageStatus" class="v6-usage-status is-error" role="status">Codex not set: &lt;img src=x onerror=alert\(1\)&gt;<\/p>/);
+    assert.doesNotMatch(html, /<img src=x/);
+  });
+
+  /** A shell with the meter, its calibrate action recorded. */
+  function mountMeter(calibrate) {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+    const calls = [];
+    shell.setUsageActions({ calibrate: async (...a) => { calls.push(a); return calibrate ? calibrate(...a) : { ok: true }; } });
+    shell.setUsage({ windows: windows(), sessions: { sessions: [] } });
+    return { shell, doc, root, calls };
+  }
+
+  it('renders in the footer even before telemetry, in chat and outside it, and opens in place', () => {
+    const m = mountMeter();
+    assert.match(m.root.innerHTML, /<footer class="v6-shell-watermark has-status"><div id="v6EngineUsageSlot" class="v6-usage-slot"><button type="button" id="v6EngineUsageMeter"/);
+    m.doc.getElementById('v6EngineUsageMeter').dispatch('click');
+    assert.match(m.doc.getElementById('v6EngineUsageSlot').innerHTML, /aria-expanded="true"/);
+    assert.doesNotMatch(m.doc.getElementById('v6EngineUsageSlot').innerHTML, /v6EngineUsagePopover"[^>]*hidden/);
+  });
+
+  it('Set records a valid % left through the page\'s action; a bad or empty value says why and calls nothing', async () => {
+    const m = mountMeter();
+    m.doc.getElementById('v6EngineUsageMeter').dispatch('click');
+    m.doc.getElementById('v6UsageWeekly-codex').value = '150';
+    m.doc.getElementById('v6UsageSave-codex').dispatch('click');
+    assert.deepEqual(m.calls, []);
+    assert.match(m.doc.getElementById('v6EngineUsageSlot').innerHTML, /Codex: enter a weekly or 5-hour % left between 0 and 100\./);
+    m.doc.getElementById('v6UsageWeekly-codex').value = '';
+    m.doc.getElementById('v6UsageFiveHour-codex').value = '';
+    m.doc.getElementById('v6UsageSave-codex').dispatch('click');
+    assert.deepEqual(m.calls, []);
+    m.doc.getElementById('v6UsageWeekly-antigravity').value = '12';
+    m.doc.getElementById('v6UsageFiveHour-antigravity').value = '';
+    m.doc.getElementById('v6UsageSave-antigravity').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+    // The empty 5-hour field is left out (undefined, which JSON shows as null).
+    assert.deepEqual(plain(m.calls), [['antigravity', 12, null]]);
+    assert.match(m.doc.getElementById('v6EngineUsageSlot').innerHTML, /Antigravity set\./);
+  });
+
+  it('a refused calibration shows the server\'s reason', async () => {
+    const m = mountMeter(() => ({ ok: false, error: 'Only the Operator or the Project Master may calibrate usage windows.' }));
+    m.doc.getElementById('v6EngineUsageMeter').dispatch('click');
+    m.doc.getElementById('v6UsageWeekly-claude').value = '50';
+    m.doc.getElementById('v6UsageSave-claude').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+    assert.match(m.doc.getElementById('v6EngineUsageSlot').innerHTML, /Claude not set: Only the Operator or the Project Master may calibrate usage windows\./);
+  });
+
+  it('the controller loads the meter on a route, posts a calibration with the write proof path, and refreshes every 15 chat reads', async () => {
+    const calls = [];
+    const mutations = [];
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell,
+      api: async (url) => {
+        calls.push(url);
+        if (url === '/api/projects') return { projects: [{ id: 12, name: 'P', engine: { id: 'claude' } }] };
+        if (/\/status$/.test(url)) return { active: true, sessionId: 1 };
+        if (url === '/api/usage/windows') return windows();
+        if (url === '/api/usage/sessions') return { sessions: [] };
+        if (/conversation\/events/.test(url)) return { events: [] };
+        return null;
+      },
+      apiMutate: async (url, method, body) => { mutations.push({ url, method, body: plain(body) }); return { calibration: {} }; },
+      storage: null, setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {} });
+    const timers = [];
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null, onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    for (let i = 0; i < 3; i++) { while (pending.length) await pending.shift(); await new Promise((r) => setImmediate(r)); }
+    assert.ok(calls.includes('/api/usage/windows') && calls.includes('/api/usage/sessions'));
+    assert.match(root.innerHTML, /id="v6EngineUsageMeter"/);
+    doc.getElementById('v6EngineUsageMeter').dispatch('click');
+    doc.getElementById('v6UsageWeekly-codex').value = '0';
+    doc.getElementById('v6UsageFiveHour-codex').value = '5';
+    doc.getElementById('v6UsageSave-codex').dispatch('click');
+    const loadsBefore = calls.filter((c) => c === '/api/usage/windows').length;
+    for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r));
+    assert.deepEqual(mutations, [{ url: '/api/usage/calibrate', method: 'POST', body: { provider: 'codex', weeklyPct: 0, fiveHourPct: 5 } }]);
+    assert.equal(calls.filter((c) => c === '/api/usage/windows').length, loadsBefore + 1, 'the meter reloads after a calibration');
+    const before = calls.filter((c) => c === '/api/usage/windows').length;
+    const poll = timers[timers.length - 1];
+    for (let i = 0; i < 14; i++) await poll();
+    assert.equal(calls.filter((c) => c === '/api/usage/windows').length, before, 'not before the 15th read');
+    await poll();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(calls.filter((c) => c === '/api/usage/windows').length, before + 1);
+  });
+
+  it('styles the thresholds: green, amber, red and pulsing (not under reduced motion)', () => {
+    const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(CSS, /\.v6-usage-pill\.is-green \.v6-usage-fill \{\s*background: #2ea043;/);
+    assert.match(CSS, /\.v6-usage-pill\.is-amber \.v6-usage-fill \{\s*background: #d4a72c;/);
+    assert.match(CSS, /\.v6-usage-pill\.is-red \.v6-usage-fill \{\s*background: #f85149;/);
+    assert.match(CSS, /\.v6-usage-pill\.is-critical \{\s*animation: v6-usage-pulse/);
+    assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{\s*\.v6-usage-pill\.is-critical \{\s*animation: none;/);
   });
 });
