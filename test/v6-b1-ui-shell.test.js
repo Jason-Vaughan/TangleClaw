@@ -5267,7 +5267,8 @@ describe('links in messages open in a new tab, and only http(s) is ever a link (
   });
 
   it('javascript:, data:, vbscript:, file: and protocol-relative targets are never links', () => {
-    for (const t of ['[x](javascript:alert(1))', 'javascript:alert(1)', 'data:text/html,<b>1</b>', '[y](vbscript:msgbox(1))', 'file:///etc/passwd', '[z](//evil.example/x)']) {
+    for (const t of ['[x](javascript:alert(1))', 'javascript:alert(1)', 'data:text/html,<b>1</b>', '[y](vbscript:msgbox(1))', 'file:///etc/passwd', '[z](//evil.example/x)',
+      '[w](/\\evil.example/x)', '[v](/a\\b)']) {
       assert.doesNotMatch(f(t), /<a /, t);
     }
   });
@@ -5459,6 +5460,17 @@ describe('the verbosity filter on Under the Hood (#3082)', () => {
   const G = loadV6Shell();
   const run = (lines) => plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
   const wake = '> [TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.';
+
+  it('a reply already answering the operator stays theirs when a wake lands mid-reply (chunk review, blocking)', () => {
+    const out = run(['> what next?', '⏺ The release is cut tomorrow.', wake, '⏺ Acked INT.']);
+    assert.deepEqual(out.turns, [{ role: 'user', text: 'what next?' }, { role: 'assistant', text: 'The release is cut tomorrow.' },
+      { role: 'assistant', text: 'Acked INT.', trigger: 'switchboard' }]);
+    const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: out } });
+    const live = html.slice(html.indexOf('id="v6ChatLive"'), html.indexOf('id="v6ChatRecordedTail"'));
+    assert.match(live, /The release is cut tomorrow\./, 'the direct answer is not tucked away');
+    assert.doesNotMatch(live, /Acked INT\./);
+  });
 
   it('marks a reply a wake set going, until the operator speaks again', () => {
     const out = run([wake, '⏺ Acked INT.', '> what next?', '⏺ The release.']);

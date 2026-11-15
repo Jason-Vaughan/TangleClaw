@@ -1252,6 +1252,9 @@
         // A wake is the switchboard speaking, not the operator: it neither
         // answers a question nor ends the reply it interrupts.
         switchboard.push({ dir: 'in', text: promptText || text });
+        // What the session had already said before the wake answered the
+        // operator, so it stays their turn; only what follows is the wake's.
+        flush();
         woken = true;
         // Only a typed wake wraps like a prompt; what is indented under a
         // bare notice line is still the reply's (#3052).
@@ -1332,10 +1335,11 @@
    * A link in message text (#3082): a Markdown `[label](url)` or a bare
    * `http(s)://` URL. A Markdown target may also be a same-origin path
    * (`/plans/…`); nothing else — `javascript:`, `data:`, `file:` — is ever a
-   * link. A bare URL stops at whitespace, a quote or an angle bracket, and
+   * link — nor is a path a browser would read as another host (`//host`,
+   * `/\host`). A bare URL stops at whitespace, a quote or an angle bracket, and
    * drops trailing sentence punctuation, keeping a `)` it opened itself.
    */
-  const MESSAGE_LINK = /\[([^\]\n]{1,300})\]\((https?:\/\/[^\s)<>"']+|\/(?!\/)[^\s)<>"']*)\)|https?:\/\/[^\s<>"'`]+/g;
+  const MESSAGE_LINK = /\[([^\]\n]{1,300})\]\((https?:\/\/[^\s)<>"']+|\/(?![\/\\])[^\s)<>"'\\]*)\)|https?:\/\/[^\s<>"'`]+/g;
 
   /** An image a URL names by its extension (#3082). */
   const IMAGE_URL = /\.(?:png|jpe?g|webp|gif)(?:[?#]|$)/i;
@@ -1347,6 +1351,7 @@
    * agent text is untrusted, and an image would be fetched the moment the chat
    * drew it, carrying whatever the URL holds to that host (Ruling A752).
    * @param {*} text
+   * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL, from the thumbnail cache.
    * @returns {string} HTML.
    */
   function messageMarkup(text, thumbs) {
@@ -1494,6 +1499,7 @@
   /**
    * @param {Array<object>} events
    * @param {string} name - The project's name.
+   * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
    * @returns {string} The recorded events as conversation bubbles.
    */
   function recordedEventsMarkup(events, name, thumbs) {
@@ -1510,6 +1516,7 @@
    * (#3079 item 6), unless the chat already shows it as recorded.
    * @param {{id: *, text: string}|null|undefined} pending
    * @param {{id: *}|null|undefined} lastSent
+   * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
    * @returns {string} HTML list item, or ''.
    */
   function pendingMarkup(pending, lastSent, thumbs) {
@@ -1522,6 +1529,8 @@
    * they come from the pane, not the record.
    * @param {Array<{role: string, text: string}>} turns
    * @param {string} name
+   * @param {{blockers: boolean, milestones: boolean, chatter: boolean}} [verbosity] - Which switchboard replies show (#3082).
+   * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
    * @returns {string} HTML list items.
    */
   function liveTurnsMarkup(turns, name, verbosity, thumbs) {
@@ -1584,6 +1593,7 @@
 
   /**
    * @param {Array<object>} tucked
+   * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
    * @returns {string} HTML list items, or the empty note.
    */
   function tuckedMarkup(tucked, thumbs) {
@@ -2759,7 +2769,11 @@
       return thumbs;
     }
 
-    /** @returns {string} The cache key for one project's file. */
+    /**
+     * @param {{id: *}} project
+     * @param {string} filename
+     * @returns {string} The thumbnail cache key for one project's file (#3082).
+     */
     function thumbKey(project, filename) {
       return `${String(project.id)}\u0001${filename}`;
     }
