@@ -2744,6 +2744,37 @@ describe('tcV6MemberIndicators (#3053 item 4, Option A)', () => {
     assert.deepEqual(ind({ engine: { id: 'openclaw' } }, health).engine, { code: 'OP', name: 'openclaw', health: 'unknown' });
     assert.equal(ind({}).engine, null);
   });
+
+  it('shows the engine a member is really on: its live session, else its last session, else the configured one (#3094, A767/A768)', () => {
+    const health = { claude: { status: 'operational' }, codex: { status: 'degraded' }, antigravity: { status: 'outage' } };
+    const configured = { engine: { id: 'claude', name: 'Claude Code' } };
+    assert.deepEqual(ind(configured, health).engine, { code: 'CC', name: 'Claude Code', health: 'operational' });
+    // The last session's engine beats the configured one, in either field the server may send.
+    assert.deepEqual(ind({ ...configured, lastSessionEngineId: 'codex' }, health).engine, { code: 'CX', name: 'codex', health: 'degraded' });
+    assert.equal(ind({ ...configured, sessionHealth: { engineId: 'antigravity' } }, health).engine.code, 'AG');
+    assert.equal(ind({ ...configured, lastSessionEngineId: 'codex', sessionHealth: { engineId: 'antigravity' } }, health).engine.code, 'CX');
+    // A live session's engine beats both, in each shape it can take.
+    const last = { ...configured, lastSessionEngineId: 'codex' };
+    assert.equal(ind({ ...last, session: { active: true, engineId: 'antigravity' } }, health).engine.code, 'AG');
+    assert.equal(ind({ ...last, session: { active: true, engine: { id: 'antigravity' } } }, health).engine.code, 'AG');
+    assert.equal(ind({ ...last, session: { active: true, engine: 'antigravity' } }, health).engine.code, 'AG');
+    // A configured engine given as a bare id still counts.
+    assert.equal(ind({ engine: 'codex' }, health).engine.code, 'CX');
+    // An id that names a prototype property is not a known engine.
+    assert.deepEqual(ind({ lastSessionEngineId: 'constructor' }, { constructor: { status: 'operational' } }).engine,
+      { code: 'CO', name: 'constructor', health: 'operational' });
+    assert.deepEqual(ind({ lastSessionEngineId: 'toString' }, {}).engine, { code: 'TO', name: 'toString', health: 'unknown' });
+  });
+
+  it('adds the model to the engine badge\'s tooltip when one is known (#3094)', () => {
+    assert.equal(ind({ engine: { id: 'claude' }, session: { active: true, launchedModel: 'opus', model: 'sonnet' }, model: 'haiku' }).engine.model, 'opus');
+    assert.equal(ind({ engine: { id: 'claude' }, session: { active: true, model: 'sonnet' }, model: 'haiku' }).engine.model, 'sonnet');
+    assert.equal(ind({ engine: { id: 'claude' }, model: 'haiku' }).engine.model, 'haiku');
+    const html = G.tcV6MemberIndicatorsMarkup(G.tcV6MemberIndicators({ engine: { id: 'codex', name: 'Codex' }, model: 'gpt-5 <b>' }, { codex: { status: 'operational' } }));
+    assert.match(html, /<span class="v6-member-ai-status is-operational" title="Codex \(gpt-5 &lt;b&gt;\): operational">CX<\/span>/);
+    const bare = G.tcV6MemberIndicatorsMarkup(G.tcV6MemberIndicators({ engine: { id: 'codex', name: 'Codex' } }, { codex: { status: 'operational' } }));
+    assert.match(bare, /title="Codex: operational">CX</);
+  });
 });
 
 describe('sidebar member status indicators (#3053 item 4)', () => {
@@ -5853,6 +5884,150 @@ describe('Force Send (#3082 item 3, Ruling A757)', () => {
     await m.settle();
     assert.match(m.root.innerHTML, /Not sent: An engine startup dialog is on the pane/);
     assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*>now!<\/textarea>/);
+  });
+});
+
+describe('the workspace mode bar and wizard launcher (#3086)', () => {
+  const G = loadV6Shell();
+  const MODES = ['chat', 'sprint', 'charter', 'kaizen', 'wizard'];
+
+  it('shows the detail in Chat, the wizard in Wizard even in a chat, and a panel in the data modes', () => {
+    assert.deepEqual(plain(G.tcV6WorkspaceVisibility('chat', false)), { detail: true, wizard: true, attestation: true, panel: false });
+    assert.deepEqual(plain(G.tcV6WorkspaceVisibility('chat', true)), { detail: true, wizard: false, attestation: false, panel: false });
+    assert.deepEqual(plain(G.tcV6WorkspaceVisibility('wizard', true)), { detail: false, wizard: true, attestation: true, panel: false });
+    for (const mode of ['sprint', 'charter', 'kaizen']) {
+      assert.deepEqual(plain(G.tcV6WorkspaceVisibility(mode, true)), { detail: false, wizard: false, attestation: false, panel: true }, mode);
+    }
+    assert.deepEqual(plain(G.tcV6WorkspaceVisibility('nonsense', true)), plain(G.tcV6WorkspaceVisibility('chat', true)));
+  });
+
+  it('draws five tabs in order, one selected and in the tab order, each naming the region it shows, plus the launcher', () => {
+    const html = G.tcV6WorkspaceModeBarMarkup('charter');
+    assert.match(html, /<div id="v6WorkspaceModeBar" class="v6-workspace-mode-bar" role="tablist" aria-label="Workspace">/);
+    const tabs = [...html.matchAll(/<button type="button" role="tab" id="v6WorkspaceMode-(\w+)" class="v6-workspace-mode( is-active)?"\s+data-workspace-mode="\1" aria-selected="(true|false)" aria-controls="(\w+)"\s+tabindex="(-?\d)"><span aria-hidden="true">([^<]+)<\/span> ([^<]+)<\/button>/g)]
+      .map((m) => [m[1], Boolean(m[2]), m[3], m[4], m[5], m[6], m[7]]);
+    assert.deepEqual(tabs, [
+      ['chat', false, 'false', 'v6ShellDetail', '-1', '💬', 'Chat'],
+      ['sprint', false, 'false', 'v6WorkspacePanel', '-1', '📋', 'Sprint &amp; Cars'],
+      ['charter', true, 'true', 'v6WorkspacePanel', '0', '🧭', 'Charter &amp; Roadmap'],
+      ['kaizen', false, 'false', 'v6WorkspacePanel', '-1', '📈', 'Kaizen &amp; Reports'],
+      ['wizard', false, 'false', 'v6ShellWizard', '-1', '🧙', 'Wizard']
+    ]);
+    assert.match(html, /<button type="button" id="v6ShellWizardOpenTop" class="btn btn-secondary btn-small v6-wizard-open v6-wizard-open--top"\s+data-workspace-mode="wizard" title="New project or fleet: open the wizard"\s+aria-label="New project or fleet: open the wizard"><span aria-hidden="true">＋<\/span> New<\/button>/);
+    assert.match(G.tcV6WorkspaceModeBarMarkup('bogus'), /id="v6WorkspaceMode-chat" class="v6-workspace-mode is-active"/);
+  });
+
+  /** A shell in a conversation, its keydown listeners caught, with a viewer storage. */
+  function mount(seed, extra) {
+    const { doc } = makeDocument([]);
+    const keydowns = new Map();
+    const realRegister = doc._register;
+    doc._register = (el) => {
+      if (el && typeof el.id === 'string' && el.id.startsWith('v6WorkspaceMode-')) {
+        const add = el.addEventListener;
+        el.addEventListener = (type, fn) => { if (type === 'keydown') keydowns.set(el.id, fn); return add.call(el, type, fn); };
+      }
+      return realRegister(el);
+    };
+    const root = doc.createElement('div');
+    root.id = 'v6ShellRoot';
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const storage = makeStorage(seed);
+    const modes = [];
+    const shell = G.tcCreateV6Shell(doc, Object.assign({ root, window: makeFakeWindow('#/projects/tc-lane'), storage,
+      onWorkspaceMode: (m) => modes.push(m) }, extra || {}));
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [], chat: { status: 'active', members: [] } } });
+    const key = (id, k) => keydowns.get(id)({ key: k, preventDefault() {} });
+    const selected = () => MODES.filter((m) => doc.getElementById(`v6WorkspaceMode-${m}`).getAttribute('aria-selected') === 'true');
+    return { doc, root, shell, storage, modes, key, selected };
+  }
+
+  it('opens the wizard from the sidebar launcher inside a chat, keeping the chat in the page, and remembers the mode', () => {
+    const m = mount();
+    assert.match(m.root.innerHTML, /<button type="button" id="v6ShellWizardOpenBtn" class="btn btn-secondary v6-wizard-open" data-workspace-mode="wizard"><span aria-hidden="true">＋<\/span> New Project \/ Fleet Wizard<\/button>/);
+    // The test DOM keeps ids, not attributes, so the first drawing is read from its markup.
+    assert.match(m.root.innerHTML, /<div id="v6ShellWizard" hidden>/, 'the wizard is out of sight in a chat');
+    assert.match(m.root.innerHTML, /<div id="v6ShellDetail">/);
+    assert.match(m.root.innerHTML, /<section id="v6WorkspacePanel" class="v6-workspace-panel" role="tabpanel"\s+aria-labelledby="v6WorkspaceMode-sprint" hidden><\/section>/);
+    const input = m.doc.getElementById('v6ChatInput');
+    input.value = 'half a thought';
+    m.doc.getElementById('v6ShellWizardOpenBtn').dispatch('click');
+    assert.equal(m.doc.getElementById('v6ShellWizard').hidden, false);
+    assert.equal(m.doc.getElementById('v6ShellAttestation').hidden, false);
+    assert.equal(m.doc.getElementById('v6ShellDetail').hidden, true);
+    assert.equal(m.doc.getElementById('v6WorkspacePanel').hidden, true);
+    assert.strictEqual(m.doc.getElementById('v6ChatInput'), input, 'the chat was not redrawn');
+    assert.equal(input.value, 'half a thought');
+    assert.deepEqual(m.selected(), ['wizard']);
+    assert.equal(m.doc.getElementById('v6WorkspaceMode-wizard').getAttribute('tabindex'), '0');
+    assert.equal(m.doc.getElementById('v6WorkspaceMode-chat').getAttribute('tabindex'), '-1');
+    assert.equal(m.doc.activeElement, m.doc.getElementById('v6WorkspaceMode-wizard'));
+    assert.equal(JSON.parse(m.storage.data.tc_v6_workspace_mode), 'wizard');
+    assert.deepEqual(m.modes, ['wizard']);
+    assert.equal(m.shell.getWorkspaceMode(), 'wizard');
+    // Back to Chat: the same chat, and the wizard is out of sight again.
+    m.doc.getElementById('v6WorkspaceMode-chat').dispatch('click');
+    assert.equal(m.doc.getElementById('v6ShellDetail').hidden, false);
+    assert.equal(m.doc.getElementById('v6ShellWizard').hidden, true);
+    assert.strictEqual(m.doc.getElementById('v6ChatInput'), input);
+  });
+
+  it('the top launcher opens the wizard too', () => {
+    const m = mount();
+    m.doc.getElementById('v6ShellWizardOpenTop').dispatch('click');
+    assert.deepEqual(m.selected(), ['wizard']);
+    assert.equal(m.doc.getElementById('v6ShellWizard').hidden, false);
+  });
+
+  it('moves between tabs with the arrow keys, Home and End, choosing as it goes and wrapping at the ends', () => {
+    const m = mount();
+    m.key('v6WorkspaceMode-chat', 'ArrowRight');
+    assert.deepEqual(m.selected(), ['sprint']);
+    assert.equal(m.doc.activeElement, m.doc.getElementById('v6WorkspaceMode-sprint'));
+    assert.equal(m.doc.getElementById('v6WorkspacePanel').hidden, false);
+    assert.equal(m.doc.getElementById('v6ShellDetail').hidden, true);
+    assert.match(m.doc.getElementById('v6WorkspacePanel').innerHTML, /<h2 class="v6-workspace-panel-title">Sprint &amp; Cars<\/h2>/);
+    assert.equal(m.doc.getElementById('v6WorkspacePanel').getAttribute('aria-labelledby'), 'v6WorkspaceMode-sprint');
+    m.key('v6WorkspaceMode-sprint', 'End');
+    assert.deepEqual(m.selected(), ['wizard']);
+    m.key('v6WorkspaceMode-wizard', 'ArrowRight');
+    assert.deepEqual(m.selected(), ['chat'], 'wraps to the first');
+    m.key('v6WorkspaceMode-chat', 'ArrowLeft');
+    assert.deepEqual(m.selected(), ['wizard'], 'wraps to the last');
+    m.key('v6WorkspaceMode-wizard', 'Home');
+    assert.deepEqual(m.selected(), ['chat']);
+    m.key('v6WorkspaceMode-chat', 'ArrowLeft');
+    m.key('v6WorkspaceMode-wizard', 'ArrowLeft');
+    assert.deepEqual(m.selected(), ['kaizen']);
+    assert.match(m.doc.getElementById('v6WorkspacePanel').innerHTML, /Kaizen &amp; Reports/);
+    const before = m.modes.length;
+    m.key('v6WorkspaceMode-kaizen', 'a');
+    assert.equal(m.modes.length, before, 'another key does nothing');
+  });
+
+  it('styles the tabs as 44px targets that scroll sideways on a narrow screen and mark the chosen one', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    const rule = (sel) => (css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.#>-]/g, '\\$&')}\\s*\\{([^}]*)\\}`)) || [])[1] || '';
+    assert.match(rule('.v6-workspace-mode-bar'), /overflow-x: auto;/);
+    assert.match(rule('.v6-workspace-mode'), /min-height: 44px;/);
+    assert.match(rule('.v6-workspace-mode.is-active'), /border-bottom-color: #2ea043;/);
+    assert.match(rule('.v6-workspace-mode:focus-visible'), /outline: 2px solid/);
+    assert.match(rule('.v6-wizard-open'), /min-height: 44px;/);
+  });
+
+  it('opens on the remembered mode, and on Chat when the remembered one is not a mode', () => {
+    // The test DOM keeps ids, not attributes, so the drawing is read from its markup.
+    const html = mount({ tc_v6_workspace_mode: JSON.stringify('charter') }).root.innerHTML;
+    assert.match(html, /id="v6WorkspaceMode-charter" class="v6-workspace-mode is-active"/);
+    assert.match(html, /<div id="v6ShellDetail" hidden>/);
+    assert.match(html, /<section id="v6WorkspacePanel" class="v6-workspace-panel" role="tabpanel"\s+aria-labelledby="v6WorkspaceMode-charter"><h2 class="v6-workspace-panel-title">Charter &amp; Roadmap<\/h2>/);
+    const badShell = mount({ tc_v6_workspace_mode: JSON.stringify('admin') });
+    assert.equal(badShell.shell.getWorkspaceMode(), 'chat', 'a remembered value that is not a mode is not kept');
+    const bad = badShell.root.innerHTML;
+    assert.match(bad, /id="v6WorkspaceMode-chat" class="v6-workspace-mode is-active"/);
+    assert.match(bad, /<div id="v6ShellDetail">/);
+    assert.match(bad, /aria-labelledby="v6WorkspaceMode-sprint" hidden><\/section>/);
   });
 });
 
