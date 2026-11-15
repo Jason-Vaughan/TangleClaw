@@ -183,6 +183,22 @@ describe('CI workflow (.github/workflows/test.yml)', () => {
     });
   });
 
+  it('gives the test job room for the whole suite, and still bounds it (#3075)', () => {
+    // At 20 minutes the cap cancelled healthy runs partway through a suite
+    // that now takes 16-20 minutes (#3049, #3069 and two release runs). The
+    // same job runs inside release.yml, so the cap also blocked releases.
+    // Pinned exactly: a raise past the suite's runtime is the point, and a
+    // limit is kept so #1550's "a stalled run cannot hold a runner" holds.
+    const src = workflowSource();
+    const jobsBlock = src.slice(src.indexOf('\njobs:'));
+    const testJob = jobsBlock.split(/^  \w[\w-]*:$/m)[1] || '';
+    const m = testJob.match(/^\s+timeout-minutes: (\d+)$/m);
+    assert.ok(m, 'the test job declares a timeout-minutes');
+    const minutes = Number(m[1]);
+    assert.equal(minutes, 35, 'the test job timeout is 35 minutes');
+    assert.ok(minutes <= 60, 'the test job stays bounded (#1550)');
+  });
+
   it('README badge points at this workflow', () => {
     const readme = fs.readFileSync(README, 'utf8');
     assert.ok(

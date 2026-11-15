@@ -2279,6 +2279,356 @@ describe('lib/medusa — broadcastAll (#1224, explicit system-wide broadcast)', 
   });
 });
 
+describe('lib/medusa — fleet isolation (#3077, Ruling A738)', () => {
+  // Projects 7 and 8 share project group 1. 11 and 12 share only a tag
+  // ('Fleet-B' / ' fleet-b '). 9 and 10 have no group and no tag: the default
+  // pool. 'ws-remote' belongs to no local project.
+  const medusaSend = require('../lib/medusa-send');
+  const realFleetDeps = { ...medusa._fleetDeps };
+  const GROUPS = { 7: [{ id: 1 }], 8: [{ id: 1 }] };
+  const TAGS = { 11: ['Fleet-B'], 12: [' fleet-b '] };
+  const IDS = [7, 8, 9, 10, 11, 12];
+  const ROSTER = [...IDS.map((id) => ({ id: `ws-${id}` })), { id: 'ws-remote' }];
+  let seq = 0;
+
+  beforeEach(() => {
+    Object.assign(medusa._fleetDeps, {
+      groupsForProject: (pid) => GROUPS[pid] || [],
+      tagsForProject: (pid) => TAGS[pid] || [],
+      listProjects: () => IDS.map((id) => ({ id, path: `/p${id}` })),
+      workspaceIdsFor: (p) => ({ s: `ws-${p.slice(2)}` })
+    });
+  });
+
+  afterEach(() => {
+    Object.assign(medusa._fleetDeps, realFleetDeps);
+  });
+
+  /**
+   * A fetch stub answering the roster read and recording every send.
+   * @param {object[]} calls - Receives `{to, message}` per send.
+   * @returns {typeof fetch}
+   */
+  function fleetFetch(calls) {
+    return async (url, opts) => {
+      if (url.endsWith('/workspaces')) return { ok: true, status: 200, json: async () => ({ workspaces: ROSTER }) };
+      const body = JSON.parse(opts.body);
+      calls.push(body);
+      return { ok: true, status: 200, json: async () => ({ success: true, status: 'received', id: `m-${body.to}` }) };
+    };
+  }
+
+  /**
+   * A broadcast from a coordinator project, under a sender id no other test shares.
+   * @param {number} projectId
+   * @param {object} [extra] - More `broadcastAll` params.
+   * @param {object[]} [calls]
+   * @returns {Promise<object>}
+   */
+  function fromProject(projectId, extra = {}, calls = []) {
+    return medusa.broadcastAll({
+      callerKind: 'coordinator', senderId: `sender-${projectId}-${++seq}`, senderProjectId: projectId,
+      message: 'heads up', fetchImpl: fleetFetch(calls), ...extra
+    });
+  }
+
+  it('a fleet set is the project\'s group ids and its tags, trimmed and lowercased', () => {
+    assert.deepEqual([...medusa.fleetSet(7)], ['group:1']);
+    assert.deepEqual([...medusa.fleetSet(12)], ['tag:fleet-b']);
+    assert.deepEqual([...medusa.fleetSet(9)], []);
+  });
+
+  it('sameFleet: a shared group or tag, or two empty sets; never grouped with ungrouped', () => {
+    assert.equal(medusa.sameFleet(7, 8), true, 'a shared group');
+    assert.equal(medusa.sameFleet(11, 12), true, 'a shared tag');
+    assert.equal(medusa.sameFleet(9, 10), true, 'the default pool');
+    assert.equal(medusa.sameFleet(7, 7), true, 'itself');
+    assert.equal(medusa.sameFleet(7, 11), false, 'two different fleets');
+    assert.equal(medusa.sameFleet(7, 9), false, 'a grouped project never leaks to an ungrouped one');
+    assert.equal(medusa.sameFleet(9, 11), false, 'nor an ungrouped one into a tagged fleet');
+  });
+
+  it('a project in several groups is in each group\'s fleet', () => {
+    GROUPS[13] = [{ id: 1 }, { id: 2 }];
+    GROUPS[14] = [{ id: 2 }];
+    try {
+      assert.equal(medusa.sameFleet(13, 7), true);
+      assert.equal(medusa.sameFleet(13, 14), true);
+      assert.equal(medusa.sameFleet(7, 14), false);
+    } finally {
+      delete GROUPS[13];
+      delete GROUPS[14];
+    }
+  });
+
+  it('an unmapped workspace is reachable from the default pool only', () => {
+    assert.equal(medusa.fleetMembership(7)('ws-remote'), false, 'a grouped project never reaches it implicitly');
+    assert.equal(medusa.fleetMembership(11)('ws-remote'), false, 'nor a tagged one');
+    assert.equal(medusa.fleetMembership(9)('ws-remote'), true, 'an ungrouped one keeps reaching it');
+    assert.equal(medusa.fleetMembership(9)(''), false);
+  });
+
+  it('names the Master\'s and the operator bridge\'s own listener keys as system participants', () => {
+    // Pinned against the modules that own the keys: a renamed key would
+    // otherwise leave that participant outside every fleet.
+    assert.deepEqual([...medusa.SYSTEM_LISTENER_KEYS].sort(),
+      [require('../lib/bridge-gateway').GATEWAY_KEY, require('../lib/master').MASTER_MEDUSA_KEY].sort());
+  });
+
+  it('reads registered system ids from the targets the Master and the bridge start their listeners from', () => {
+    assert.deepEqual(realFleetDeps.systemTargets(),
+      [require('../lib/master').masterMedusaTarget(), require('../lib/bridge-gateway').gatewayTarget()]);
+    assert.deepEqual(realFleetDeps.systemTargets().map((t) => t.sessionId).sort(), [...medusa.SYSTEM_LISTENER_KEYS].sort());
+  });
+
+  for (const key of ['operator-bridge', 'master']) {
+    it(`a live "${key}" listener is in every fleet`, () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fleet-system-'));
+      const status = medusa.startSession({ projectPath: dir, sessionId: key, name: key, wsFactory: (u) => new FakeWS(u) });
+      try {
+        assert.ok(status.workspaceId);
+        for (const pid of [7, 9, 11]) assert.equal(medusa.fleetMembership(pid)(status.workspaceId), true);
+      } finally {
+        medusa.stopSession(key);
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it('filterRosterToFleet keeps the fleet and the Master', () => {
+    const roster = [...ROSTER, { id: 'master-ws', isMaster: true }];
+    assert.deepEqual(medusa.filterRosterToFleet(roster, 7).map((w) => w.id), ['ws-7', 'ws-8', 'master-ws']);
+    assert.deepEqual(medusa.filterRosterToFleet(roster, 9).map((w) => w.id), ['ws-9', 'ws-10', 'ws-remote', 'master-ws']);
+  });
+
+  it('a coordinator project broadcasts to its own fleet by default', async () => {
+    const calls = [];
+    const r = await fromProject(7, {}, calls);
+    assert.equal(r.scope, 'fleet');
+    assert.deepEqual(r.sentTo, ['ws-7', 'ws-8']);
+    assert.ok(calls.every((c) => c.message === '[BROADCAST scope=fleet] heads up'));
+    assert.deepEqual((await fromProject(11)).sentTo, ['ws-11', 'ws-12'], 'a tag fleet');
+    assert.deepEqual((await fromProject(9)).sentTo, ['ws-9', 'ws-10', 'ws-remote'], 'the default pool');
+  });
+
+  it('refuses scope "all" from a project without a confirmation, before the roster or the cooldown', async () => {
+    const calls = [];
+    const senderId = `sender-7-${++seq}`;
+    await assert.rejects(fromProject(7, { senderId, scope: 'all' }, calls),
+      (err) => { assert.equal(err.code, 'BROADCAST_ALL_REQUIRES_EMERGENCY'); assert.equal(err.httpStatus, 403); return true; });
+    assert.equal(calls.length, 0);
+    const next = await fromProject(7, { senderId, message: 'a different one' });
+    assert.equal(next.coalesced, false, 'the refusal did not cool the sender down');
+  });
+
+  for (const confirm of ['emergency', 'confirmAllFleets']) {
+    it(`reaches every fleet with scope "all" and ${confirm}: true`, async () => {
+      const calls = [];
+      const r = await fromProject(7, { scope: 'all', [confirm]: true }, calls);
+      assert.equal(r.scope, 'all');
+      assert.deepEqual(r.sentTo, ROSTER.map((w) => w.id));
+      assert.ok(calls.every((c) => c.message === '[BROADCAST scope=all] heads up'));
+    });
+  }
+
+  it('the Master (exempt), the Operator, and a caller naming no project reach every fleet by default', async () => {
+    const master = await medusa.broadcastAll({ callerKind: 'coordinator', exempt: true, senderProjectId: 7, senderId: `m-${++seq}`, message: 'm', fetchImpl: fleetFetch([]) });
+    assert.equal(master.scope, 'all');
+    assert.equal(master.sentTo.length, ROSTER.length);
+    const operator = await medusa.broadcastAll({ callerKind: 'operator', senderId: `o-${++seq}`, message: 'o', fetchImpl: fleetFetch([]) });
+    assert.equal(operator.scope, 'all');
+    assert.equal(operator.sentTo.length, ROSTER.length);
+    const unnamed = await medusa.broadcastAll({ callerKind: 'coordinator', senderId: `u-${++seq}`, message: 'u', fetchImpl: fleetFetch([]) });
+    assert.equal(unnamed.scope, 'all', 'no project, no fleet to stay inside (A738 edge 6)');
+  });
+
+  it('targets narrows a fleet broadcast, and a target outside the fleet is refused 403 CROSS_FLEET_FORBIDDEN', async () => {
+    const one = await fromProject(7, { targets: ['ws-8'] });
+    assert.deepEqual(one.sentTo, ['ws-8']);
+    const calls = [];
+    await assert.rejects(fromProject(7, { targets: ['ws-8', 'ws-9'] }, calls),
+      (err) => { assert.equal(err.code, 'CROSS_FLEET_FORBIDDEN'); assert.equal(err.httpStatus, 403); assert.match(err.message, /ws-9/); return true; });
+    assert.equal(calls.length, 0);
+  });
+
+  it('refuses a malformed scope or targets, and a fleet broadcast with no sending project', async () => {
+    await assert.rejects(fromProject(7, { scope: 'galaxy' }), (err) => err.code === 'BAD_SCOPE');
+    await assert.rejects(fromProject(7, { targets: [] }), (err) => err.code === 'BAD_TARGETS');
+    await assert.rejects(fromProject(7, { targets: ['ws-8', 3] }), (err) => err.code === 'BAD_TARGETS');
+    await assert.rejects(fromProject(7, { senderProjectId: null, scope: 'fleet' }), (err) => err.code === 'BAD_SCOPE');
+  });
+
+  it('never coalesces a fleet broadcast with an every-fleet one of the same words', async () => {
+    const senderId = `sender-7-${++seq}`;
+    await fromProject(7, { senderId });
+    await assert.rejects(fromProject(7, { senderId, scope: 'all', emergency: true }),
+      (err) => err.code === 'BROADCAST_RATE_LIMITED');
+  });
+
+  describe('sendTracked refuses a cross-fleet send before the Hub (#3077)', () => {
+    let realSendMessage;
+    let hubCalls;
+    let tempDir;
+
+    beforeEach(() => {
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-fleet-send-'));
+      store._setBasePath(tempDir);
+      store.init();
+      realSendMessage = medusa.sendMessage;
+      hubCalls = 0;
+      medusa.sendMessage = async () => { hubCalls++; throw Object.assign(new Error('stop here'), { hubOutcome: 'refused', httpStatus: 502 }); };
+    });
+
+    afterEach(() => {
+      medusa.sendMessage = realSendMessage;
+      store.close();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    /**
+     * @param {number} from - The sending project.
+     * @param {object} body
+     * @param {object} [caller]
+     * @returns {Promise<{status: number, body: object}>}
+     */
+    function send(from, body, caller = { kind: 'project', projectId: from }) {
+      return medusaSend.sendTracked({ sessionId: 1, senderProjectId: from, caller, body: { message: 'hi', ...body } });
+    }
+
+    for (const [from, to] of [[7, 'ws-9'], [7, 'ws-11'], [7, 'ws-remote'], [9, 'ws-7'], [11, 'ws-remote']]) {
+      it(`refuses project ${from} -> ${to} with 403 CROSS_FLEET_FORBIDDEN and never reaches the Hub`, async () => {
+        const r = await send(from, { to });
+        assert.equal(r.status, 403);
+        assert.equal(r.body.code, 'CROSS_FLEET_FORBIDDEN');
+        assert.equal(hubCalls, 0);
+      });
+    }
+
+    for (const [from, to] of [[7, 'ws-8'], [11, 'ws-12'], [9, 'ws-10'], [9, 'ws-remote']]) {
+      it(`lets project ${from} -> ${to} through to the Hub`, async () => {
+        await send(from, { to });
+        assert.equal(hubCalls, 1);
+      });
+    }
+
+    it('judges a LIVE local recipient by its session\'s project, following a rotated handle (#2726)', async () => {
+      // Neither handle is in any registry, so only the live-participant path
+      // can place them: project 9's session under a rotated suffix, and
+      // project 8's under its current one.
+      const realListLiveAll = store.sessions.listLiveAll;
+      const realGetStatus = medusa.getStatus;
+      const live = { 91: 'tilt-v2-83811af0', 81: 'mate-live-0000aaaa' };
+      store.sessions.listLiveAll = () => [{ id: 91, projectId: 9 }, { id: 81, projectId: 8 }];
+      medusa.getStatus = (sid) => ({ workspaceId: live[String(sid)] || null });
+      try {
+        const refused = await send(7, { to: 'tilt-v2-ad17fc67' });
+        assert.equal(refused.body.code, 'CROSS_FLEET_FORBIDDEN', 'a rotated handle of another fleet\'s live session');
+        assert.equal(hubCalls, 0);
+        await send(7, { to: 'mate-live-0000aaaa' });
+        assert.equal(hubCalls, 1, 'a live session of the sender\'s own fleet');
+      } finally {
+        store.sessions.listLiveAll = realListLiveAll;
+        medusa.getStatus = realGetStatus;
+      }
+    });
+
+    it('lets allowCrossFleet: true through, and only the literal true', async () => {
+      await send(7, { to: 'ws-9', allowCrossFleet: true });
+      assert.equal(hubCalls, 1);
+      const r = await send(7, { to: 'ws-9', allowCrossFleet: 'true' });
+      assert.equal(r.body.code, 'CROSS_FLEET_FORBIDDEN');
+    });
+
+    it('lets allowCrossFleet: true through in the reverse direction too: ungrouped to grouped (A743 f)', async () => {
+      const refused = await send(9, { to: 'ws-7' });
+      assert.equal(refused.body.code, 'CROSS_FLEET_FORBIDDEN');
+      await send(9, { to: 'ws-7', allowCrossFleet: true });
+      assert.equal(hubCalls, 1);
+    });
+
+    for (const key of ['master', 'operator-bridge']) {
+      it(`lets a grouped and a tagged project send to the live "${key}" listener (A743 f)`, async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fleet-system-send-'));
+        const status = medusa.startSession({ projectPath: dir, sessionId: key, name: key, wsFactory: (u) => new FakeWS(u) });
+        try {
+          assert.ok(status.workspaceId);
+          for (const from of [7, 11]) {
+            const r = await send(from, { to: status.workspaceId });
+            assert.notEqual(r.body.code, 'CROSS_FLEET_FORBIDDEN', `project ${from} -> ${key}`);
+          }
+          assert.equal(hubCalls, 2, 'both sends reached the Hub');
+        } finally {
+          medusa.stopSession(key);
+          fs.rmSync(dir, { recursive: true, force: true });
+        }
+      });
+    }
+
+    it('lets a grouped and a tagged project reach a STOPPED operator bridge by its registered id (PRR-B R1)', async () => {
+      // The listener is off; only the registry, where lib/bridge-gateway.js
+      // starts it from, knows the id. Mail to it must queue, not be refused.
+      const registryMod = require('../lib/medusa-registry');
+      const target = require('../lib/bridge-gateway').gatewayTarget();
+      const id = registryMod.ensureWorkspaceId(target.projectPath, target.sessionId, target.name);
+      assert.equal(medusa.getStatus('operator-bridge').workspaceId || null, null, 'precondition: not listening');
+      for (const from of [7, 11]) {
+        const r = await send(from, { to: id });
+        assert.notEqual(r.body.code, 'CROSS_FLEET_FORBIDDEN', `project ${from}`);
+      }
+      assert.equal(hubCalls, 2);
+    });
+
+    it('lets a grouped project reach a STOPPED Master by its registered id, and only a system key counts', async () => {
+      const registryMod = require('../lib/medusa-registry');
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fleet-master-home-'));
+      const masterId = registryMod.ensureWorkspaceId(home, 'master', 'Project Master');
+      const impostorId = registryMod.ensureWorkspaceId(home, 'impostor', 'Impostor');
+      medusa._fleetDeps.systemTargets = () => [{ projectPath: home, sessionId: 'master', name: 'Project Master' },
+        { projectPath: home, sessionId: 'impostor', name: 'Impostor' }];
+      try {
+        await send(7, { to: masterId });
+        assert.equal(hubCalls, 1);
+        const r = await send(7, { to: impostorId });
+        assert.equal(r.body.code, 'CROSS_FLEET_FORBIDDEN', 'a registered id under a non-system key is not a system participant');
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+    it('remembers where a system listener started, after it stops, until it is forgotten (Arc on PRR-B R1, source 2)', async () => {
+      // A Master started from a non-default home; the canonical directories
+      // are stubbed empty, so only the path startSession remembered can find it.
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fleet-master-moved-'));
+      medusa._fleetDeps.systemTargets = () => [];
+      const status = medusa.startSession({ projectPath: home, sessionId: 'master', name: 'Project Master', wsFactory: (u) => new FakeWS(u) });
+      try {
+        medusa.stopSession('master');
+        assert.equal(medusa.getStatus('master').workspaceId || null, null, 'precondition: stopped');
+        await send(7, { to: status.workspaceId });
+        assert.equal(hubCalls, 1, 'a stopped Master is still reachable');
+        medusa.forgetSession({ projectPath: home, sessionId: 'master' });
+        const r = await send(7, { to: status.workspaceId });
+        assert.equal(r.body.code, 'CROSS_FLEET_FORBIDDEN', 'a forgotten one is not');
+        // The remembered path went with it: a later registration there, with
+        // no listener started, is not a system participant.
+        const later = require('../lib/medusa-registry').ensureWorkspaceId(home, 'master', 'Project Master');
+        const r2 = await send(7, { to: later });
+        assert.equal(r2.body.code, 'CROSS_FLEET_FORBIDDEN', 'forgetSession drops the remembered path');
+      } finally {
+        medusa.stopSession('master');
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+    for (const kind of ['operator', 'operator-ui', 'master']) {
+      it(`exempts a "${kind}" caller`, async () => {
+        await send(7, { to: 'ws-remote' }, { kind });
+        assert.equal(hubCalls, 1);
+      });
+    }
+  });
+});
+
 describe('lib/medusa-send: a stale handle to a LOCAL peer resolves up front (#2726)', () => {
   const medusaSend = require('../lib/medusa-send');
   const exchanges = require('../lib/medusa-exchanges');
@@ -2488,6 +2838,29 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     });
   }
 
+  let fleets = 0;
+  /**
+   * Put the sender in a project group with a project that owns the fake
+   * Bridge's 'live-ws' and 'offline-ws' (#3077). 'stranger-ws' stays
+   * unmapped, so it is outside a grouped sender's fleet.
+   * @returns {function(): void} Undo: both projects leave the group.
+   */
+  function joinFleet() {
+    const mate = store.projects.create({
+      name: `fleetmate-c03-${++fleets}`, path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-c03-mate-')), engine: 'claude'
+    });
+    ['live-ws', 'offline-ws'].forEach((id, i) => {
+      require('../lib/medusa-registry').ensureWorkspaceId(mate.path, `mate-${i}`, 'Mate', id);
+    });
+    const group = store.projectGroups.create({ name: `c03-fleet-${fleets}` });
+    store.projectGroups.addMember(group.id, project.id);
+    store.projectGroups.addMember(group.id, mate.id);
+    return () => {
+      store.projectGroups.removeMember(group.id, project.id);
+      store.projectGroups.removeMember(group.id, mate.id);
+    };
+  }
+
   it('send returns 404 for an unknown project', async () => {
     const { status } = await req('/api/sessions/nope/medusa/send', 'POST', { to: 'live-ws', message: 'hi' }, pane.headers);
     assert.equal(status, 404);
@@ -2621,6 +2994,53 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     assert.ok(ids.includes('live-ws'));
     assert.ok(!ids.includes(workspaceId));
     bridge.setRoster([{ id: 'live-ws', name: 'Live' }, { id: 'offline-ws', name: 'Offline' }]);
+  });
+
+  describe('fleet isolation at the routes (#3077)', () => {
+    // 'stranger-ws' is on the Bridge but belongs to no local project, so a
+    // grouped sender does not reach it implicitly (A738 edge 6).
+    let leaveFleet;
+
+    beforeEach(() => {
+      leaveFleet = joinFleet();
+      bridge.setRoster([{ id: 'live-ws', name: 'Live' }, { id: 'stranger-ws', name: 'Stranger' }]);
+    });
+
+    afterEach(() => {
+      leaveFleet();
+      bridge.setRoster([{ id: 'live-ws', name: 'Live' }, { id: 'offline-ws', name: 'Offline' }]);
+    });
+
+    it('a project\'s roster is its fleet, and says so; ?scope=all lists every fleet', async () => {
+      const fleet = await req('/api/sessions/sender/medusa/roster', 'GET', null, pane.headers);
+      assert.equal(fleet.status, 200);
+      assert.equal(fleet.data.scope, 'fleet');
+      assert.deepEqual(fleet.data.workspaces.map((w) => w.id), ['live-ws']);
+      const all = await req('/api/sessions/sender/medusa/roster?scope=all', 'GET', null, pane.headers);
+      assert.equal(all.data.scope, 'all');
+      assert.deepEqual(all.data.workspaces.map((w) => w.id).sort(), ['live-ws', 'stranger-ws']);
+    });
+
+    it('the Operator reads the whole roster', async () => {
+      const { data } = await req('/api/sessions/sender/medusa/roster', 'GET', null, dashboard());
+      assert.equal(data.scope, 'all');
+      assert.ok(data.workspaces.some((w) => w.id === 'stranger-ws'));
+    });
+
+    it('a cross-fleet send is refused 403 before the Bridge; allowCrossFleet: true sends it', async () => {
+      const refused = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'stranger-ws', message: 'hi' }, pane.headers);
+      assert.equal(refused.status, 403);
+      assert.equal(refused.data.code, 'CROSS_FLEET_FORBIDDEN');
+      assert.equal(bridge.received.length, 0);
+      const allowed = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'stranger-ws', message: 'hi', allowCrossFleet: true }, pane.headers);
+      assert.equal(allowed.status, 200);
+      assert.equal(bridge.received.length, 1);
+    });
+
+    it('the Operator sends across fleets with no override', async () => {
+      const { status } = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'stranger-ws', message: 'hi' }, dashboard());
+      assert.equal(status, 200);
+    });
   });
 
   it('roster returns 409 when the project has no active session', async () => {
@@ -3078,9 +3498,23 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
       + 'message is rate-limited independently of the operator\'s own cooldown above (I-Gate Round 1 C1)', async () => {
       const now = new Date().toISOString();
       store.coordinatorRoles.grant({ roleId: 'role_broadcast_c1', projectId: project.id, role: 'architect', note: null, now });
+      const leaveFleet = joinFleet();
       try {
+        // #3077: the body's scope and targets reach broadcastAll; both
+        // refusals run before the cooldown, so the broadcast below is still
+        // this sender's first.
+        const unconfirmed = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: 'everyone', scope: 'all' }, pane.headers);
+        assert.equal(unconfirmed.status, 403);
+        assert.equal(unconfirmed.data.code, 'BROADCAST_ALL_REQUIRES_EMERGENCY');
+        const outside = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: 'you', targets: ['stranger-ws'] }, pane.headers);
+        assert.equal(outside.status, 403);
+        assert.equal(outside.data.code, 'CROSS_FLEET_FORBIDDEN');
+        assert.equal(bridge.received.length, 0);
+
         const first = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: 'project broadcast' }, pane.headers);
         assert.equal(first.status, 200);
+        assert.equal(first.data.scope, 'fleet', 'a coordinator project reaches its own fleet by default');
+        assert.ok(bridge.received.every((call) => call.message === '[BROADCAST scope=fleet] project broadcast'));
         assert.deepEqual(first.data.sentTo.sort(), ['live-ws', 'offline-ws']);
         assert.ok(bridge.received.every((call) => call.from === workspaceId));
         assert.ok(!first.data.sentTo.includes(workspaceId), 'the sender\'s own live workspace never receives its own broadcast');
@@ -3089,6 +3523,7 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
         assert.equal(different.status, 429);
         assert.equal(different.data.code, 'BROADCAST_RATE_LIMITED');
       } finally {
+        leaveFleet();
         store.coordinatorRoles.revoke(project.id, new Date().toISOString());
       }
     });
