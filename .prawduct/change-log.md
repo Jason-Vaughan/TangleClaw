@@ -41,6 +41,36 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-14 — v6.2.9 release cut (Milestone #76)
+
+<!-- prawduct: type=internal | scope=v629-release -->
+
+- Compiled 4 accepted `changelog.d/` fragments (#3075, #3077 from PR #3080; #3076, #3079 from PR #3081) into `CHANGELOG.md` section `[6.2.9]` (Fixed, patch tier) using the wrap's own compile/splice/promote functions. Bumped `version.json`, updated README pins, banner and released-section lock via `scripts/release-prepare.js`, added release notes, Feature Index and roadmap state. Folded in both PRs' change-log entries below, verbatim. Builder Rule #271 cl.3 kept them out of the feature PRs.
+- Tier disclosure: #3076's Medusa indicator, #3079's question queue and long prompts, and #3077's fleet isolation are new behaviour filed `.fixed` to keep the v6.2.x patch train, so this release is the patch 6.2.9. #3077 changes default messaging between grouped and ungrouped projects; the release notes have a "Changed behaviour" section for it.
+- The W1-A entry below is TC-Lane-A's corrected version from PR #3081's body (replaced after merge to cover #3079 items 5-6 and the review fixes), folded in verbatim.
+- W1-B's envelope: A737's 11 paths (A742/A743), 10 touched; A741 approved but unused. Its O-Gate was reassigned from TC-Lane-A to TC-Lane-C by PM (LANE_QUEUE rev 1991).
+
+## 2026-11-15 — Car V629-W1-B: CI job limit 35 min (#3075) + Medusa fleet isolation (#3077)
+
+<!-- prawduct: type=fix | scope=v629-w1-b -->
+
+- #3075: Tests job timeout-minutes 20 -> 35. The 20-minute cap was cancelling healthy runs and release attempts. Pinned in test/ci-workflow.test.js.
+- #3077 (Rulings A738/A743): a fleet is project group ids + lowercased tags, and two projects share one when the sets intersect. Empty sets share a default pool. Sends refused cross-fleet with 403 CROSS_FLEET_FORBIDDEN (override allowCrossFleet: true). The roster is fleet-scoped (?scope=all). Broadcasts default to scope fleet; scope all needs emergency/confirmAllFleets. Startup announcements are fleet-scoped. The Operator and the Master are exempt; SYSTEM_LISTENER_KEYS (master, operator-bridge) are in every fleet, live or by registered id, which fixes a refused reply to the Operator via the bridge (including a stopped bridge, PRR-B R1).
+- Envelope: A737's 11 paths (A742/A743); 10 touched. A741's 15-path expansion was approved but unused: the 4 test files it would have added pass unchanged under A738.
+
+## 2026-11-15 — v6 chat: switchboard traffic Under the Hood and a Medusa indicator; tints, question queue, footer status bar, slim header, long prompts, turn order (#3076, #3079)
+
+<!-- prawduct: type=fix | scope=v629-w1a -->
+
+Car V629-W1-A, Chunks 01-03 plus review fixes; merged as d78e877e.
+
+- #3076: switchboard wakes (typed into the pane, so read as the operator) and recorded wake events leave the conversation for a "Switchboard & Medusa traffic" list Under the Hood, with every tc message send the pane shows. A wrapped wake joins only while its text, whitespace removed, still fits TangleClaw's own notice templates (typed slots sized from their producers), so a session's indented reply is never swallowed. A read-only #v6ChatMedusa reads GET .../medusa/status (marks nothing read): in and out heads blink against the previous reading (never the first), the @ badge becomes the unread count, hidden when enabled === false; clicking opens Under the Hood. Its button is updated in place, so polls keep keyboard focus.
+- #3079 items 1-4: turns tinted in their accent colour under a matching 1.5px dashed divider; "Waiting on you" lists every question of the newest reply (markers stripped, numbered, each dismissable; a dismissal is tied to the turns before the asking reply, cleared by a reply); Active sessions, Health and Version move to the footer status bar; the delegate picker is hidden; in the v6 shell ui.js moves the Classic admin controls into a More menu and restores them on leaving.
+- #3079 item 5 (A738-A740): over 4,096 characters, deliverChat saves the whole message as prompt-<ts>.md via secure-clipboard (fail-closed listing, collision-free name, 5 MiB counted in UTF-8 bytes) and sends its start plus the path; the recorded event's JSON body is held to 8,000 bytes (start plus path beyond that).
+- #3079 item 6 (A740): echoed prompts keep their place among the replies, each message drawn once; a sent message not yet on screen shows last; Enter clears the composer at once with an escaped pending bubble, and a refused send restores the text.
+- Fragments are .fixed (a 6.2.9 patch). Tests restated with the requirement: the hood drawer pin, the delegate-select pin, three #3063 chip tests and its E2E, the empty extractLiveTurns shape, three recorded-prompt tests.
+- Browser check owed: the connected Chrome cannot reach this host's loopback.
+
 ## 2026-11-14 — v6.2.8 release cut (Milestone #75)
 
 <!-- prawduct: type=internal | scope=v628-release -->
