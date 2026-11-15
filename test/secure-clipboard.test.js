@@ -157,6 +157,104 @@ describe('lib/secure-clipboard', () => {
     });
   });
 
+  describe('readImageFile (#3083, Ruling A751)', () => {
+    // The smallest byte strings that carry each type's signature.
+    const SIGS = {
+      png: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01]),
+      jpg: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]),
+      gif: Buffer.from('GIF89a\x01\x00', 'latin1'),
+      webp: Buffer.concat([Buffer.from('RIFF'), Buffer.from([0x10, 0, 0, 0]), Buffer.from('WEBPVP8 ')])
+    };
+    /** @param {string} name @param {Buffer} buf */
+    const put = (name, buf) => {
+      secureClipboard.writeSecretFile(project, { filename: name, content: buf.toString('base64'), encoding: 'base64' });
+    };
+
+    it('serves each allowed image type with its own content type, extension compared case-insensitively', () => {
+      const cases = [['shot.png', SIGS.png, 'image/png'], ['photo.jpg', SIGS.jpg, 'image/jpeg'], ['photo2.JPEG', SIGS.jpg, 'image/jpeg'],
+        ['anim.gif', SIGS.gif, 'image/gif'], ['pic.webp', SIGS.webp, 'image/webp'], ['UPPER.PNG', SIGS.png, 'image/png']];
+      for (const [name, buf, type] of cases) {
+        put(name, buf);
+        const got = secureClipboard.readImageFile(project, name);
+        assert.equal(got.contentType, type, name);
+        assert.equal(got.bytes, buf.length, name);
+        assert.ok(got.buffer.equals(buf), name);
+      }
+      assert.deepEqual(Object.keys(secureClipboard.IMAGE_TYPES).sort(), ['.gif', '.jpeg', '.jpg', '.png', '.webp']);
+    });
+
+    it('refuses a non-image file with 415, so a key or text secret is never served', () => {
+      for (const name of ['api-key.txt', 'id_rsa', 'cert.pem', 'notes.md', 'page.svg', 'page.html']) {
+        put(name, Buffer.from('-----BEGIN PRIVATE KEY-----'));
+        assert.throws(() => secureClipboard.readImageFile(project, name),
+          (err) => err.status === 415 && err.code === 'UNSUPPORTED_MEDIA_TYPE', name);
+      }
+    });
+
+    it('refuses a non-image name by its extension alone, before opening anything (415 even when no such file exists)', () => {
+      const realOpen = fs.openSync;
+      let opened = 0;
+      fs.openSync = (...args) => { opened += 1; return realOpen(...args); };
+      try {
+        assert.throws(() => secureClipboard.readImageFile(project, 'never-written.txt'),
+          (err) => err.status === 415 && err.code === 'UNSUPPORTED_MEDIA_TYPE');
+        assert.equal(opened, 0, 'a secret is never even opened for a preview');
+      } finally {
+        fs.openSync = realOpen;
+      }
+    });
+
+    it('refuses a secret renamed to an image extension, by its bytes (415)', () => {
+      put('disguised.png', Buffer.from('sk-live-not-an-image'));
+      assert.throws(() => secureClipboard.readImageFile(project, 'disguised.png'),
+        (err) => err.status === 415 && err.code === 'UNSUPPORTED_MEDIA_TYPE');
+      put('wrong-kind.gif', SIGS.png);
+      assert.throws(() => secureClipboard.readImageFile(project, 'wrong-kind.gif'), (err) => err.status === 415);
+    });
+
+    it('refuses a bad filename with 400 before touching the filesystem', () => {
+      for (const name of ['../escape.png', 'a/b.png', '..', '', 'x'.repeat(129) + '.png']) {
+        assert.throws(() => secureClipboard.readImageFile(project, name),
+          (err) => err.status === 400 && err.code === 'BAD_REQUEST', JSON.stringify(name));
+      }
+    });
+
+    it('answers 404 for a missing file, and when the secrets directory does not exist yet', () => {
+      assert.throws(() => secureClipboard.readImageFile(project, 'never-written.png'),
+        (err) => err.status === 404 && err.code === 'NOT_FOUND');
+      const fresh = { name: 'sc-lib-nodir', path: fs.mkdtempSync(path.join(tmpDir, 'nodir-')) };
+      assert.throws(() => secureClipboard.readImageFile(fresh, 'a.png'), (err) => err.status === 404);
+    });
+
+    it('never follows a symlinked file, even to a real image (404)', () => {
+      const outside = path.join(tmpDir, 'outside.png');
+      fs.writeFileSync(outside, SIGS.png);
+      fs.symlinkSync(outside, path.join(secureClipboard.secretsDir(project), 'link.png'));
+      assert.throws(() => secureClipboard.readImageFile(project, 'link.png'),
+        (err) => err.status === 404 && err.code === 'NOT_FOUND');
+    });
+
+    it('refuses a secrets directory that is a symlink (404)', () => {
+      const root = fs.mkdtempSync(path.join(tmpDir, 'dirlink-'));
+      const elsewhere = fs.mkdtempSync(path.join(tmpDir, 'elsewhere-'));
+      fs.writeFileSync(path.join(elsewhere, 'a.png'), SIGS.png);
+      fs.mkdirSync(path.join(root, '.tangleclaw'));
+      fs.symlinkSync(elsewhere, path.join(root, '.tangleclaw', 'secrets'));
+      assert.throws(() => secureClipboard.readImageFile({ name: 'sc-dirlink', path: root }, 'a.png'),
+        (err) => err.status === 404);
+    });
+
+    it('refuses a non-regular file and an oversized one', () => {
+      fs.mkdirSync(path.join(secureClipboard.secretsDir(project), 'dir.png'));
+      assert.throws(() => secureClipboard.readImageFile(project, 'dir.png'), (err) => err.status === 404);
+      const big = Buffer.alloc(secureClipboard.MAX_FILE_BYTES + 1);
+      SIGS.png.copy(big);
+      fs.writeFileSync(path.join(secureClipboard.secretsDir(project), 'big.png'), big);
+      assert.throws(() => secureClipboard.readImageFile(project, 'big.png'),
+        (err) => err.status === 413 && err.code === 'TOO_LARGE');
+    });
+  });
+
   describe('scanForAudit', () => {
     it('reports byte count and no types for ordinary text', () => {
       assert.deepEqual(secureClipboard.scanForAudit('just some notes'), { bytes: 15, secretTypesDetected: [] });
@@ -206,6 +304,24 @@ describe('secure-clipboard-routes — HTTP surface (#1032)', () => {
     const projPath = path.join(tmpDir, name);
     fs.mkdirSync(projPath, { recursive: true });
     return store.projects.create({ name, path: projPath, engine: 'claude' });
+  }
+
+  /**
+   * A GET whose body is kept as bytes, with the response headers.
+   * @param {string} urlPath
+   * @param {Record<string, string>} [headers]
+   * @returns {Promise<{status: number, headers: object, body: Buffer}>}
+   */
+  function rawGet(urlPath, headers = {}) {
+    return new Promise((resolve, reject) => {
+      const req = http.request({ hostname: '127.0.0.1', port: server.address().port, path: urlPath, method: 'GET', headers }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
   }
 
   before(async () => {
@@ -325,6 +441,57 @@ describe('secure-clipboard-routes — HTTP surface (#1032)', () => {
 
       const delAgain = await request('DELETE', '/api/sessions/sc-list-del/secure-clipboard/listed.txt', undefined, opHeaders);
       assert.equal(delAgain.status, 404);
+    });
+  });
+
+  describe('GET /api/sessions/:project/secure-clipboard/:filename — image preview (#3083, Ruling A751)', () => {
+    const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
+    /** @param {string} project @param {string} filename @param {Buffer} buf */
+    const upload = (project, filename, buf) => request('POST', `/api/sessions/${project}/secure-clipboard`,
+      { text: buf.toString('base64'), encoding: 'base64', mode: 'file', filename }, opHeaders);
+
+    it('serves an uploaded image to the operator, byte for byte, with no-sniff, a locked-down CSP and no caching', async () => {
+      makeProject('sc-img-ok');
+      assert.equal((await upload('sc-img-ok', 'shot.png', PNG)).status, 200);
+      const r = await rawGet('/api/sessions/sc-img-ok/secure-clipboard/shot.png', opHeaders);
+      assert.equal(r.status, 200);
+      assert.ok(r.body.equals(PNG));
+      assert.equal(r.headers['content-type'], 'image/png');
+      assert.equal(r.headers['content-length'], String(PNG.length));
+      assert.equal(r.headers['x-content-type-options'], 'nosniff');
+      assert.equal(r.headers['content-security-policy'], "default-src 'none'; img-src 'self'");
+      assert.equal(r.headers['cache-control'], 'private, no-store');
+    });
+
+    it('refuses a request that carries launch-binding headers, even alongside a signed-in operator\'s (403 OPERATOR_ONLY)', async () => {
+      makeProject('sc-img-forged');
+      await upload('sc-img-forged', 'shot.png', PNG);
+      for (const header of ['x-tangleclaw-project-id', 'x-tangleclaw-launch-id', 'x-tangleclaw-role']) {
+        const r = await rawGet('/api/sessions/sc-img-forged/secure-clipboard/shot.png', { ...opHeaders, [header]: '' });
+        assert.equal(r.status, 403, header);
+        assert.equal(JSON.parse(r.body.toString('utf8')).code, 'OPERATOR_ONLY', header);
+        assert.ok(!r.body.includes(PNG), header);
+      }
+    });
+
+    it('refuses a reader with no operator session (401)', async () => {
+      makeProject('sc-img-noauth');
+      await upload('sc-img-noauth', 'shot.png', PNG);
+      const r = await rawGet('/api/sessions/sc-img-noauth/secure-clipboard/shot.png');
+      assert.equal(r.status, 401);
+    });
+
+    it('answers 415 for a non-image secret, 404 for a missing file or project, 400 for a bad name', async () => {
+      makeProject('sc-img-refuse');
+      await request('POST', '/api/sessions/sc-img-refuse/secure-clipboard', { text: 'sk-secret', mode: 'file', filename: 'key.txt' }, opHeaders);
+      const secret = await rawGet('/api/sessions/sc-img-refuse/secure-clipboard/key.txt', opHeaders);
+      assert.equal(secret.status, 415);
+      assert.equal(JSON.parse(secret.body.toString('utf8')).code, 'UNSUPPORTED_MEDIA_TYPE');
+      assert.ok(!secret.body.toString('utf8').includes('sk-secret'), 'the secret never leaves in the refusal');
+      assert.equal((await rawGet('/api/sessions/sc-img-refuse/secure-clipboard/none.png', opHeaders)).status, 404);
+      assert.equal((await rawGet('/api/sessions/no-such-project/secure-clipboard/a.png', opHeaders)).status, 404);
+      const bad = await rawGet('/api/sessions/sc-img-refuse/secure-clipboard/a%2F..%2Fb.png', opHeaders);
+      assert.ok(bad.status === 400 || bad.status === 404, `a traversal-shaped name is refused (got ${bad.status})`);
     });
   });
 
@@ -472,6 +639,19 @@ describe('secure-clipboard-routes — open-install (no-login) gate (PRR-B R-Gate
       { text: 'x', mode: 'file', filename: 'b.txt' }, operatorHeaders(server));
     assert.equal(withoutToken.status, 403);
     assert.equal(withoutToken.data.code, 'OPEN_INSTALL_TOKEN_INVALID');
+  });
+
+  it('the image preview GET succeeds with the open-install token and is refused without it (#3083)', async () => {
+    makeProject('sc-open-img');
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01]);
+    const up = await request('POST', '/api/sessions/sc-open-img/secure-clipboard',
+      { text: png.toString('base64'), encoding: 'base64', mode: 'file', filename: 'p.png' }, openHeaders());
+    assert.equal(up.status, 200, JSON.stringify(up.data));
+    const ok = await request('GET', '/api/sessions/sc-open-img/secure-clipboard/p.png', undefined, openHeaders());
+    assert.equal(ok.status, 200);
+    const refused = await request('GET', '/api/sessions/sc-open-img/secure-clipboard/p.png', undefined, operatorHeaders(server));
+    assert.equal(refused.status, 403);
+    assert.equal(refused.data.code, 'OPEN_INSTALL_TOKEN_INVALID');
   });
 
   it('GET succeeds with the open-install token — the exact case the old _requireOperatorRead-based route could never answer', async () => {
