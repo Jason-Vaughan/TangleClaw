@@ -2,6 +2,9 @@
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -53,7 +56,7 @@ const SETTINGS_HAND_EDITED = JSON.stringify({
 
 describe('update-applier (UB #228/#229)', () => {
   let origGit, origCheck, origRead, origGetDbPath, origVacuumDb, origIntegrityCheck, origReadBackupFile, origChmodBackupFile;
-  let origReadRepoFileBytes, origSecureBackup, origRemoveRepoFile;
+  let origReadRepoFileBytes, origSecureBackup, origRemoveRepoFile, origListRepoDirFiles, origRemoveRepoDir;
 
   beforeEach(() => {
     origGit = applier._internal.git;
@@ -67,6 +70,8 @@ describe('update-applier (UB #228/#229)', () => {
     origReadRepoFileBytes = applier._internal.readRepoFileBytes;
     origSecureBackup = applier._internal.secureBackup;
     origRemoveRepoFile = applier._internal.removeRepoFile;
+    origListRepoDirFiles = applier._internal.listRepoDirFiles;
+    origRemoveRepoDir = applier._internal.removeRepoDir;
     applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.9' });
     // Happy-path SQLite backup stubs: vacuumDb is a noop (no file created), so
     // readBackupFile returns a fake buffer for SHA-256 computation and chmod is
@@ -90,6 +95,8 @@ describe('update-applier (UB #228/#229)', () => {
     applier._internal.readRepoFileBytes = origReadRepoFileBytes;
     applier._internal.secureBackup = origSecureBackup;
     applier._internal.removeRepoFile = origRemoveRepoFile;
+    applier._internal.listRepoDirFiles = origListRepoDirFiles;
+    applier._internal.removeRepoDir = origRemoveRepoDir;
   });
 
   describe('applyUpdate guards', () => {
@@ -251,7 +258,7 @@ describe('update-applier (UB #228/#229)', () => {
           statusIdx++;
           return v;
         }
-        if (key.startsWith('checkout HEAD -- ') || key.startsWith('clean -fd -- ')) return '';
+        if (key.startsWith('checkout HEAD -- ') || key.startsWith('clean -fd -- ') || key.startsWith('rm -f -- ')) return '';
         if (!(key in table)) throw new Error(`unexpected git call: ${key}`);
         const v = table[key];
         if (v instanceof Error) throw v;
@@ -490,6 +497,111 @@ describe('update-applier (UB #228/#229)', () => {
       assert.equal(r.ok, false);
       assert.equal(r.code, 'dirty-tree');
       assert.match(r.error, /did not produce a clean tree/);
+    });
+
+    // PRR-B R1 Finding 1 (PR #3127): `git status --porcelain` collapses a
+    // wholly untracked directory into one `?? dir/` line, hiding every file
+    // inside it from `_classifyDirty` — the original fix tried to
+    // `fs.readFileSync`/`fs.unlinkSync` the directory itself (EISDIR/EPERM).
+    it('an untracked directory backs up every file inside it, then removes the whole directory', () => {
+      const { fn, calls } = statefulStub({ statuses: ['?? .tangleclaw/plans/\n', ''] });
+      applier._internal.git = fn;
+      applier._internal.listRepoDirFiles = (relDir) => {
+        assert.equal(relDir, '.tangleclaw/plans/');
+        return ['.tangleclaw/plans/x.md', '.tangleclaw/plans/archive/y.md'];
+      };
+      const backedUp = [];
+      applier._internal.readRepoFileBytes = (p) => { backedUp.push(p); return Buffer.from(`bytes:${p}`); };
+      applier._internal.secureBackup = (relPath, bytes) => `/backups/${relPath.replace(/\//g, '_')}`;
+      let removedDir = null;
+      applier._internal.removeRepoFile = () => assert.fail('a directory entry must never reach removeRepoFile (EPERM/EISDIR)');
+      applier._internal.removeRepoDir = (p) => { removedDir = p; };
+      const r = applier.applyUpdate({ discardDirty: true });
+      assert.equal(r.ok, true);
+      assert.deepEqual(backedUp, ['.tangleclaw/plans/x.md', '.tangleclaw/plans/archive/y.md'],
+        'every file inside is backed up individually, before the directory is ever touched');
+      assert.equal(removedDir, '.tangleclaw/plans/', 'the whole directory is removed once, not file by file');
+      assert.deepEqual(r.backedUpRealWork, [
+        { path: '.tangleclaw/plans/x.md', backup: '/backups/.tangleclaw_plans_x.md' },
+        { path: '.tangleclaw/plans/archive/y.md', backup: '/backups/.tangleclaw_plans_archive_y.md' }
+      ]);
+      assert.equal(calls.some((c) => c.startsWith('checkout HEAD -- .tangleclaw')), false,
+        'untracked — nothing for git to restore it from');
+    });
+
+    it('a backup failure for a file inside an untracked directory refuses before the directory is removed', () => {
+      const { fn, calls } = statefulStub({ statuses: ['?? .tangleclaw/plans/\n'] });
+      applier._internal.git = fn;
+      applier._internal.listRepoDirFiles = () => ['.tangleclaw/plans/x.md'];
+      applier._internal.readRepoFileBytes = () => Buffer.from('my plan');
+      applier._internal.secureBackup = () => { throw new Error('disk full'); };
+      applier._internal.removeRepoDir = () => assert.fail('must not remove the directory when a backup inside it failed');
+      const r = applier.applyUpdate({ discardDirty: true });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'reconcile-required');
+      assert.equal(calls.some((c) => c.startsWith('checkout --no-overwrite-ignore')), false, 'nothing moved');
+    });
+
+    // PRR-B R1 Finding 2a (PR #3127): a STAGED new file (`A  foo.js`) has no
+    // committed copy in HEAD — `git checkout HEAD -- foo.js` refuses with
+    // "pathspec did not match any file(s) known to git". It must be
+    // unstaged-and-removed (`git rm -f --`) instead, never checked out.
+    it('a staged-added real-work file is backed up, then unstaged and removed — never "checkout HEAD --"', () => {
+      const { fn, calls } = statefulStub({ statuses: ['A  newfile.js\n', ''] });
+      applier._internal.git = fn;
+      applier._internal.readRepoFileBytes = () => Buffer.from('new content');
+      applier._internal.secureBackup = () => '/backups/newfile.js';
+      const r = applier.applyUpdate({ discardDirty: true });
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.backedUpRealWork, [{ path: 'newfile.js', backup: '/backups/newfile.js' }]);
+      assert.ok(calls.includes('rm -f -- newfile.js'), 'unstaged and removed in one step');
+      assert.equal(calls.some((c) => c === 'checkout HEAD -- newfile.js'), false,
+        'HEAD has never heard of this path — checkout HEAD would refuse it');
+    });
+  });
+
+  // PRR-B R1 Finding 2b (PR #3127): `_preflight`'s own untracked-collision
+  // check runs at Step 7, before Step 9 ever clears a real-work blocker —
+  // so a path `discardDirty: true` already confirmed backing up and
+  // removing was refused anyway, based on disk state that had not been
+  // cleared yet. `clearing` lets `applyUpdate` tell `_preflight` which
+  // blockers it is about to resolve itself.
+  describe('_preflight clearing (#3126 PRR-B R1 Finding 2b)', () => {
+    let tmp, origRepoDir, origGit;
+
+    beforeEach(() => {
+      tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-preflight-clearing-'));
+      fs.writeFileSync(path.join(tmp, 'collide.js'), 'untracked real work, on real disk');
+      origRepoDir = applier._internal.repoDir;
+      origGit = applier._internal.git;
+      applier._internal.repoDir = tmp;
+      applier._internal.git = (args) => {
+        const key = args.join(' ');
+        if (key === 'diff --name-status -z --no-renames HEAD v9.9.9') return 'A\0collide.js\0';
+        if (key === 'ls-files -v -z') return '';
+        throw new Error(`unexpected git call: ${key}`);
+      };
+    });
+
+    afterEach(() => {
+      applier._internal.repoDir = origRepoDir;
+      applier._internal.git = origGit;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    });
+
+    it('refuses untracked-collision with no clearing set', () => {
+      const r = applier._preflight('v9.9.9');
+      assert.deepEqual(r.reconcile.map((x) => [x.path, x.reason]), [['collide.js', 'untracked-collision']]);
+    });
+
+    it('exempts a blocker already in the clearing set', () => {
+      const r = applier._preflight('v9.9.9', new Set(['collide.js']));
+      assert.deepEqual(r.reconcile, []);
+    });
+
+    it('still refuses a DIFFERENT blocker not in the clearing set', () => {
+      const r = applier._preflight('v9.9.9', new Set(['some-other-path.js']));
+      assert.deepEqual(r.reconcile.map((x) => x.path), ['collide.js']);
     });
   });
 
