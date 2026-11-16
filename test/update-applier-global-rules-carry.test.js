@@ -621,23 +621,53 @@ describe('operator-edited global rules across an update (#1730)', () => {
   });
 
   describe('the dirty guard and the carried file (D3a, D9)', () => {
-    it('an edited rules file is reported as carried: neither discardable nor blocking', () => {
+    // #3126 (Rulings A819/A820): `server.js`'s edit no longer keeps the hard
+    // refusal once `discardDirty: true` is confirmed — it is backed up via
+    // `_secureBackup` and restored to the committed copy, same as any other
+    // real-work path, while the carried rules file still merges as before.
+    // The UNCONFIRMED call's refusal (and the carry's own untouched byte
+    // guarantee) is unchanged and still pinned first.
+    it('an edited rules file is reported as carried: neither discardable nor blocking, unconfirmed; server.js is backed up and restored once confirmed', () => {
       fs.writeFileSync(path.join(work, RULES), EDIT_TOP);
-      fs.writeFileSync(path.join(work, 'server.js'), '// my edit\n');
-      const r = applier.applyUpdate({ discardDirty: true });
-      assert.equal(r.code, 'dirty-tree', JSON.stringify(r));
-      assert.deepEqual(r.dirty, { discardable: [], realWork: ['server.js'], carried: [RULES] });
+      const myEdit = '// my edit\n';
+      fs.writeFileSync(path.join(work, 'server.js'), myEdit);
+
+      const refused = applier.applyUpdate();
+      assert.equal(refused.code, 'dirty-tree', JSON.stringify(refused));
+      assert.deepEqual(refused.dirty, { discardable: [], realWork: ['server.js'], carried: [RULES] });
       assert.equal(rulesBytes().toString('utf8'), EDIT_TOP);
+      assert.equal(fs.readFileSync(path.join(work, 'server.js'), 'utf8'), myEdit);
+
+      const r = applier.applyUpdate({ discardDirty: true });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      const backed = r.backedUpRealWork.find((b) => b.path === 'server.js');
+      assert.ok(backed, JSON.stringify(r.backedUpRealWork));
+      assert.equal(fs.readFileSync(backed.backup, 'utf8'), myEdit, 'the hand edit to server.js is recoverable from the backup');
+      assert.equal(fs.readFileSync(path.join(work, 'server.js'), 'utf8'), '// v9\n', 'restored to the NEW release\'s committed copy');
+      assert.ok(r.carried.some((c) => c.path === RULES), 'the rules file is still carried, unaffected by the real-work fix');
     });
 
-    it('a staged edit to the rules file is real work, not a carry', () => {
+    it('a staged edit to the rules file is real work, not a carry, unconfirmed; backed up and restored once confirmed', () => {
       fs.writeFileSync(path.join(work, RULES), EDIT_TOP);
       git(work, ['add', RULES]);
-      const r = applier.applyUpdate({ discardDirty: true });
-      assert.equal(r.code, 'dirty-tree', JSON.stringify(r));
-      assert.deepEqual(r.dirty.realWork, [RULES]);
-      assert.deepEqual(r.dirty.carried, [], 'an ambiguous state is never carried');
+
+      const refused = applier.applyUpdate();
+      assert.equal(refused.code, 'dirty-tree', JSON.stringify(refused));
+      assert.deepEqual(refused.dirty.realWork, [RULES]);
+      assert.deepEqual(refused.dirty.carried, [], 'an ambiguous state is never carried');
       assert.equal(head(), v1Sha);
+      assert.equal(rulesBytes().toString('utf8'), EDIT_TOP);
+
+      const r = applier.applyUpdate({ discardDirty: true });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      // A path `_preflight` is already carrying (RULES is
+      // OPERATOR_AUTHORED_TRACKED) is excluded from the generic real-work
+      // backup-and-restore (#3126 PRR-B R2) — it gets the carry mechanism's
+      // own 3-way merge instead, which already preserves and backs it up.
+      assert.deepEqual(r.backedUpRealWork, [], 'a staged edit to a carried path is carried, not generically discarded');
+      const carried = r.carried.find((c) => c.path === RULES);
+      assert.ok(carried, JSON.stringify(r.carried));
+      assert.equal(fs.readFileSync(carried.backup, 'utf8'), EDIT_TOP, 'the staged edit is recoverable from the carry\'s own backup');
     });
   });
 });

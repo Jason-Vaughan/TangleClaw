@@ -339,37 +339,80 @@ describe('applyUpdate wires the containment test in (#1241)', () => {
       'the carrier is restored from HEAD, and TC rewrites its own region on next boot');
   });
 
-  it('still refuses hard when the operator edited outside the block', () => {
-    const { result, calls } = run(EDITED_WORK, { discardDirty: true });
-    assert.equal(result.ok, false);
-    assert.deepEqual(result.dirty, { discardable: [], realWork: ['CLAUDE.md'], carried: [] });
-    assert.equal(calls.some((c) => c.startsWith('checkout HEAD -- ')), false,
-      'a hand edit outside the markers must never be discarded');
+  // #3126 (Rulings A819/A820): a hand edit outside the block, or ANY staged
+  // edit regardless of containment, no longer keeps the HARD refusal once
+  // `discardDirty: true` is confirmed — it is backed up via `_secureBackup`
+  // (stubbed below so nothing writes to a real backup directory) and
+  // restored to HEAD, same as any other real-work path. The UNCONFIRMED
+  // call's refusal — #1241/#1246's actual guarantee, that nothing happens
+  // without the operator's explicit say — is unchanged and pinned first in
+  // each test below.
+  it('refuses unconfirmed when the operator edited outside the block; backed up and restored once confirmed', () => {
+    const unconfirmed = run(EDITED_WORK, {});
+    assert.equal(unconfirmed.result.ok, false);
+    assert.deepEqual(unconfirmed.result.dirty, { discardable: [], realWork: ['CLAUDE.md'], carried: [] });
+    assert.equal(unconfirmed.calls.some((c) => c.startsWith('checkout HEAD -- ')), false,
+      'unconfirmed: nothing is discarded without the operator\'s explicit say');
+
+    const real = { ...applier._internal };
+    applier._internal.readRepoFileBytes = () => Buffer.from(EDITED_WORK);
+    applier._internal.secureBackup = () => '/backups/CLAUDE.md';
+    try {
+      const { result, calls } = run(EDITED_WORK, { discardDirty: true });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.deepEqual(result.backedUpRealWork, [{ path: 'CLAUDE.md', backup: '/backups/CLAUDE.md' }]);
+      assert.ok(calls.includes('checkout HEAD -- CLAUDE.md'), 'confirmed: backed up, then restored from HEAD');
+    } finally {
+      Object.assign(applier._internal, real);
+    }
   });
 
-  it('refuses a carrier with a staged edit confined to the block, even though containment says true (#1246)', () => {
+  it('refuses unconfirmed a staged edit confined to the block, even though containment says true (#1246); backed up and restored once confirmed', () => {
     // Index status 'M', worktree status ' ': staged, nothing further on top.
     // _managedRegionOnlyDiff only ever compares worktree-vs-HEAD, so a staged
     // edit that landed entirely inside the block would still prove contained
     // — this is the gap #1246 closes: a staged change is real/authored work
     // regardless of what containment says.
-    const { result, calls } = run(CONTAINED_WORK, { discardDirty: true },
-      'M  CLAUDE.md\n');
-    assert.equal(result.ok, false);
-    assert.deepEqual(result.dirty, { discardable: [], realWork: ['CLAUDE.md'], carried: [] });
-    assert.equal(calls.some((c) => c.startsWith('checkout HEAD -- ')), false,
-      'a staged edit must never be discarded, even one containment alone would pass');
+    const unconfirmed = run(CONTAINED_WORK, {}, 'M  CLAUDE.md\n');
+    assert.equal(unconfirmed.result.ok, false);
+    assert.deepEqual(unconfirmed.result.dirty, { discardable: [], realWork: ['CLAUDE.md'], carried: [] });
+    assert.equal(unconfirmed.calls.some((c) => c.startsWith('checkout HEAD -- ')), false,
+      'unconfirmed: a staged edit is never discarded without the operator\'s explicit say, even one containment alone would pass');
+
+    const real = { ...applier._internal };
+    applier._internal.readRepoFileBytes = () => Buffer.from(CONTAINED_WORK);
+    applier._internal.secureBackup = () => '/backups/CLAUDE.md';
+    try {
+      const { result, calls } = run(CONTAINED_WORK, { discardDirty: true }, 'M  CLAUDE.md\n');
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.deepEqual(result.backedUpRealWork, [{ path: 'CLAUDE.md', backup: '/backups/CLAUDE.md' }]);
+      assert.ok(calls.includes('checkout HEAD -- CLAUDE.md'));
+    } finally {
+      Object.assign(applier._internal, real);
+    }
   });
 
-  it('refuses a carrier with a staged edit outside the block (#1246)', () => {
+  it('refuses unconfirmed a staged edit outside the block (#1246); backed up and restored once confirmed', () => {
     // Index status 'M', worktree status ' ': staged, and the staged content
     // itself (mirrored into the working tree by the stub) differs outside
-    // the markers — refused on both grounds.
-    const { result, calls } = run(EDITED_WORK, { discardDirty: true }, 'M  CLAUDE.md\n');
-    assert.equal(result.ok, false);
-    assert.deepEqual(result.dirty, { discardable: [], realWork: ['CLAUDE.md'], carried: [] });
-    assert.equal(calls.some((c) => c.startsWith('checkout HEAD -- ')), false,
-      'a staged edit outside the markers must never be discarded');
+    // the markers — refused unconfirmed on both grounds.
+    const unconfirmed = run(EDITED_WORK, {}, 'M  CLAUDE.md\n');
+    assert.equal(unconfirmed.result.ok, false);
+    assert.deepEqual(unconfirmed.result.dirty, { discardable: [], realWork: ['CLAUDE.md'], carried: [] });
+    assert.equal(unconfirmed.calls.some((c) => c.startsWith('checkout HEAD -- ')), false,
+      'unconfirmed: a staged edit outside the markers is never discarded without the operator\'s explicit say');
+
+    const real = { ...applier._internal };
+    applier._internal.readRepoFileBytes = () => Buffer.from(EDITED_WORK);
+    applier._internal.secureBackup = () => '/backups/CLAUDE.md';
+    try {
+      const { result, calls } = run(EDITED_WORK, { discardDirty: true }, 'M  CLAUDE.md\n');
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.deepEqual(result.backedUpRealWork, [{ path: 'CLAUDE.md', backup: '/backups/CLAUDE.md' }]);
+      assert.ok(calls.includes('checkout HEAD -- CLAUDE.md'));
+    } finally {
+      Object.assign(applier._internal, real);
+    }
   });
 
   it('still discards an UNSTAGED managed-region-only edit, restored against HEAD (#1246)', () => {

@@ -708,6 +708,62 @@ describe('api-sessions', () => {
       }
     });
 
+    // #3126: a governed /clear runs as a slash command in the recipient's
+    // own pane — a prepended sender stamp would be typed as part of it,
+    // which is exactly what `governedClear ? null : _verifiedSenderStamp(...)`
+    // exists to prevent. `governedClear` used to be declared INSIDE the
+    // slash-command gate's own `if` block, so it was never actually in scope
+    // at the stamp line below — this pins the fix, not just the refusal.
+    it('a governed /clear carries no sender stamp — it would run as part of the command', async () => {
+      const pm = newProject('pm-3126a');
+      const target = newProject('target-3126a');
+      const pmBound = bindProject(pm);
+      const targetBound = bindProject(target);
+      await grantLifecycleAuthority(target, pm);
+      const restore = await makeSafeToClear(targetBound);
+      const sessionsMod = require('../lib/sessions');
+      const realInject = sessionsMod.injectCommand;
+      const injected = [];
+      sessionsMod.injectCommand = (name, command, options) => { injected.push({ name, command, options }); return { ok: true, error: null }; };
+      try {
+        const res = await request(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/command`,
+          { command: '/clear', startupIntervention: true }, pmBound.headers);
+        assert.notEqual(res.status, 403, JSON.stringify(res.body));
+        assert.equal(injected.length, 1);
+        assert.equal(injected[0].command, '/clear');
+        assert.equal(injected[0].options.serverPrefix, null, 'no stamp — it would be typed as part of the slash command');
+      } finally {
+        sessionsMod.injectCommand = realInject;
+        restore();
+        store.sessions.kill(pmBound.sessionId, 'test cleanup');
+        store.sessions.kill(targetBound.sessionId, 'test cleanup');
+      }
+    });
+
+    it('an ordinary (non-/clear) delegated send still carries its sender stamp', async () => {
+      const pm = newProject('pm-3126b');
+      const target = newProject('target-3126b');
+      const pmBound = bindProject(pm);
+      const targetBound = bindProject(target);
+      await grantLifecycleAuthority(target, pm);
+      const sessionsMod = require('../lib/sessions');
+      const realInject = sessionsMod.injectCommand;
+      const injected = [];
+      sessionsMod.injectCommand = (name, command, options) => { injected.push({ name, command, options }); return { ok: true, error: null }; };
+      try {
+        const res = await request(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/command`,
+          { command: 'ls -la', startupIntervention: true }, pmBound.headers);
+        assert.notEqual(res.status, 403, JSON.stringify(res.body));
+        assert.equal(injected.length, 1);
+        assert.ok(injected[0].options.serverPrefix, 'an ordinary send is never mistaken for the operator\'s own typing');
+        assert.match(injected[0].options.serverPrefix, new RegExp(`project "${pm.name}"`));
+      } finally {
+        sessionsMod.injectCommand = realInject;
+        store.sessions.kill(pmBound.sessionId, 'test cleanup');
+        store.sessions.kill(targetBound.sessionId, 'test cleanup');
+      }
+    });
+
     it('a delegated coordinator is still refused a /clear while the target lane is NOT safe-to-clear (busy)', async () => {
       const pm = newProject('pm-2824b');
       const target = newProject('target-2824b');
