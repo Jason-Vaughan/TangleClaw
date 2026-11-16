@@ -18,7 +18,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
 
-**Latest release:** `v6.4.1` — “A unified Waiting-On panel, composer polish, the v6 PM Workspace's native Release-First Roadmap and 6-stage pills, an interactive onboarding wizard, mobile/foldable responsive polish, and persistent macOS Full Disk Access” ([release status](docs/releases/v6.4.1.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.4.1` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.4.1/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
+**Latest release:** `v6.5.0` — “Rich link unfurling and inline media/artifact previews in v6 chat, a Portable Fleet Template JSON Spec for exporting and importing whole fleets, and a dashboard Update button that backs up local changes instead of refusing to update” ([release status](docs/releases/v6.5.0.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.5.0` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.5.0/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
 
 One AI coding agent is easy. Five are not. They forget what the last session decided, edit the same files, fight over the same ports, and wait silently for an answer you did not know they needed. You end up watching terminals.
 
@@ -52,7 +52,7 @@ TangleClaw is developed with TangleClaw. Its own Builder, Project Manager and re
 
 ```bash
 # macOS. What the installer does, and what you need first: Quick Start, below
-git clone --branch v6.4.1 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.5.0 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw && ./deploy/install.sh
 ```
 
@@ -186,7 +186,7 @@ Most importantly, TangleClaw enforces strict safety boundaries, ensuring that wh
 ## Quick Start
 
 ```bash
-git clone --branch v6.4.1 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.5.0 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw
 ./deploy/install.sh
 ```

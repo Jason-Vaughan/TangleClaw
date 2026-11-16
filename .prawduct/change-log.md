@@ -41,6 +41,45 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-16 — v6.5.0 release cut (Milestone #82)
+
+<!-- prawduct: type=internal | scope=v650-release -->
+
+- Compiled 5 accepted `changelog.d/` fragments (#3107 engine + #3107 UI from PRs #3123/#3128; #3115 engine + #3115 UI from PRs #3124/#3128; #3126 from PR #3127) into `CHANGELOG.md` section `[6.5.0]` via `compileFragments`/`spliceIntoUnreleased`/`_promoteUnreleased`, target version `6.5.0` (minor, matching the `.added.md` majority — no override needed this cut, unlike v6.4.1). Bumped `version.json`, updated README pins/banner and the released-section lock via `scripts/release-prepare.js`, updated `FEATURES.md`, `ROADMAP.md`, `docs/releases/index.md` and `docs/releases/v6.5.0.md`.
+- None of the 4 Wave PRs' bodies carried a ready-to-paste change-log entry, so all 4 entries below are written here, from each PR's own merged diff and changelog.d fragment text.
+- Status corrections the release notes carry: #3112 (flagged open in v6.4.1's notes) is now fully resolved — PR #3128 wired `buildSprintWaveSnapshot` into `GET /api/sprint-waves`'s `snapshot` field, which `public/v6-shell.js` (PR #3122) was already reading, closing the gap. Verified by reading the real diff before writing this, not assumed from the PR title.
+- Gate 0 for this car: Ruling A818 (`ARC-RGATE-V650-WREL-PRECHARTER-PASS`), unlocked by Ruling A823 (`ARC-MERGE-V650-W2-EXIT-9FBA988E-PASS`) after Wave 2 (PRs #3127, #3128) true-merged and Milestone #82 closed 3/3.
+
+## 2026-11-16 — Car V650-W1-A: rich link unfurling & inline media preview engine (#3107)
+
+<!-- prawduct: type=feature | scope=v650-w1-a -->
+
+- #3107: `lib/v6/b2-conversation-layer.js` gains the classification/parsing core for rich link unfurling and inline media/artifact previews — local image/video/artifact card models (including `#L<n>-L<n>` code line-range), GitHub PR/Issue/Release URL parsing (`parseGitHubEntityUrl`), Open Graph HTML parsing (`parseOpenGraphHtml`), an SSRF guard for external unfurl targets (`evaluateUnfurlTargetSafety`), and `extractRichPreviewsFromMessage`. Not wired to a server route or rendered in the chat UI yet at this car — that landed in Wave 2 (PR #3128).
+- Gates: O-Gate PASS, PRR-B R-Gate ACCEPT, Tests CI green. PR #3123.
+
+## 2026-11-16 — Car V650-W1-B: Portable Fleet Template JSON Spec engine (#3115)
+
+<!-- prawduct: type=feature | scope=v650-w1-b -->
+
+- #3115: `lib/v6/fleet-template-spec.js` adds the `.fleet.json` (`schemaVersion` `"1.0"`) validator (`validateFleetSpec`), sanitized export engine (`exportFleetSpec`, strips local filesystem paths/secrets/session tokens), dry-run import preview (`previewFleetSpecImport`), and provisioning-plan builder (`applyFleetSpecImport`), plus two bundled reference specs (`software-factory-10-role`, `ai-design-agency`) and `tangleclaw.com` ecosystem directory metadata (`getEcosystemDirectoryInfo`). Not wired to a server route or the Wizard UI yet at this car — that landed in Wave 2 (PR #3128).
+- Gates: O-Gate PASS, PRR-A R-Gate ACCEPT, Tests CI green. PR #3124.
+
+## 2026-11-16 — Car V650-W2-A: rich link/media UI + Fleet Spec wizard tab + routes (#3107, #3115), closing the #3112 live-wiring gap
+
+<!-- prawduct: type=feature | scope=v650-w2-a -->
+
+- #3107: `public/v6-shell.js` renders the Wave 1 engine's output — a GitHub PR/Issue/Release URL as a structured chip, any other external link as a click-to-reveal preview (title/description, never auto-fetched), a `file://`/workspace-rooted path as a metadata/artifact card. `server.js` adds the SSRF-guarded unfurl endpoint, with no new local-file-serving route.
+- #3115: the v6 Wizard's 4th "Fleet Spec" tab (browse bundled templates + marketplace, paste/validate/import, export). `server.js` adds `GET /api/v6/fleet-templates/bundled-specs`, `GET /api/v6/projects/:id/fleet-spec`, `POST /api/v6/fleet-templates/validate-spec`, `POST /api/v6/fleet-templates/apply-spec`.
+- #3112 follow-up (not a chartered issue for this car, but an in-scope fix within `lib/routes/sprint-wave-routes.js`'s Gate 0 allowlist): `GET /api/sprint-waves` now calls `buildSprintWaveSnapshot({cars, lanes, pullRequests})` and returns it as `snapshot`, closing the gap v6.4.1's release notes flagged — `public/v6-shell.js`'s `roadmapSnapshot` passthrough (PR #3122) was already reading this field, so Charter & Roadmap now renders the Release-First Roadmap live, same as Sprint & Cars and Kaizen & Reports.
+- Gates: A-Gate APPROVE (Ruling A809 Gate 0; final A-Gate per fleet record), O-Gate PASS, PRR-A R-Gate ACCEPT, Tests CI green. PR #3128.
+
+## 2026-11-16 — Car V650-W2-B: dashboard Update button backs up local changes (#3126)
+
+<!-- prawduct: type=fix | scope=v650-w2-b -->
+
+- #3126: `lib/update-applier.js` no longer refuses to update a checkout with local real-work changes — confirming now backs up each conflicting file to `~/.tangleclaw/backups/` and restores or removes it so the update can proceed. `public/update-beacon.js`: a delegated coordinator's governed `/clear` no longer carries a sender stamp that would otherwise be typed as part of the slash command.
+- Gates: O-Gate PASS, PRR-B R-Gate ACCEPT, Tests CI green. PR #3127.
+
 ## 2026-11-16 — v6.4.1 release cut (Milestone #80)
 
 <!-- prawduct: type=internal | scope=v641-release -->

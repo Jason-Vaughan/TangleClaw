@@ -4,6 +4,24 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.5.0] - 2026-11-16
+
+### Added
+- v6 chat gains the classification/parsing core for rich link unfurling and inline media/artifact previews: local image/video/artifact (including `#L<n>-L<n>` code line-range) card models, GitHub PR/Issue/Release URL parsing, Open Graph HTML parsing, and an SSRF guard for external unfurl targets, in `lib/v6/b2-conversation-layer.js` (#3107). Not yet wired to a server route or rendered in the chat UI.
+- v6 chat renders rich link previews and reference cards: a GitHub PR/Issue/Release URL becomes a structured chip; any other external link gets a click-to-reveal preview (title/description, never auto-fetched) backed by a new SSRF-guarded unfurl endpoint; a `file://` URL or workspace-rooted path renders as a metadata/artifact card (title, path, extension badge, optional `#L<n>-L<n>` line-range pill) with no byte-fetching and no new local-file-serving route (#3107).
+- The v6 Wizard gains a 4th "Fleet Spec" tab: browse the 2 bundled `.fleet.json` reference templates and the `tangleclaw.com` marketplace, paste/validate/import a spec to provision a real fleet, or export an existing workspace as a portable spec — backed by new `GET /api/v6/fleet-templates/bundled-specs`, `GET /api/v6/projects/:id/fleet-spec`, `POST /api/v6/fleet-templates/validate-spec`, and `POST /api/v6/fleet-templates/apply-spec` routes (#3115).
+- Add the Portable Fleet Template JSON Spec (`.fleet.json`, `schemaVersion`
+  `"1.0"`): a validator (`validateFleetSpec`), a sanitized export engine
+  (`exportFleetSpec`, stripping local filesystem paths, secrets, and
+  session tokens), a dry-run import preview (`previewFleetSpecImport`),
+  and a provisioning-plan builder (`applyFleetSpecImport`), plus two
+  bundled flagship reference specs — `software-factory-10-role` and
+  `ai-design-agency` — and `tangleclaw.com` ecosystem directory metadata
+  (#3115).
+
+### Fixed
+- The dashboard's Update button no longer dead-ends when the checkout has local real-work changes: confirming now backs up each file to `~/.tangleclaw/backups/` and restores or removes it so the update can proceed, instead of refusing outright. A delegated coordinator's governed `/clear` no longer carries a sender stamp, which would otherwise be typed as part of the slash command (#3126).
+
 ## [6.4.1] - 2026-11-16
 
 ### Added
