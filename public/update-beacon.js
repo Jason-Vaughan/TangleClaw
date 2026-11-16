@@ -550,6 +550,26 @@
         return false;
       };
 
+      /**
+       * Re-apply with `discardDirty: true` once the operator has confirmed
+       * it — shared by the all-TC (#711) and real-work (#3126) discard
+       * paths, which differ only in what they confirmed, never in how the
+       * retry itself is sent or a refused retry is shown.
+       * @returns {Promise<boolean>} True when the caller should stop (an
+       *   error was alerted, or a refusal was already shown in full).
+       */
+      const retryWithDiscard = async () => {
+        try {
+          applyResp = await apiMutate('/api/update/apply', 'POST', { discardDirty: true });
+        } catch (err) {
+          setInFlight(false);
+          setApplyLabel('Update now', false);
+          global.alert(`Update failed: ${err && err.message ? err.message : 'request did not complete'}`);
+          return true;
+        }
+        return showStructured(applyResp || (STRUCTURED_REFUSALS.has(api.lastErrorCode) ? api.lastBody : null));
+      };
+
       if (showStructured(refusal)) return;
 
       if (refusal && !refusal.ok && refusal.code === 'dirty-tree' && refusal.dirty) {
@@ -570,27 +590,19 @@
             + 'hooks in .claude/settings.json. Discarding restores the committed copy and '
             + 'changes nothing you wrote.'
           );
-          if (proceedDiscard) {
-            try {
-              applyResp = await apiMutate('/api/update/apply', 'POST', { discardDirty: true });
-            } catch (err) {
-              setInFlight(false);
-              setApplyLabel('Update now', false);
-              global.alert(`Update failed: ${err && err.message ? err.message : 'request did not complete'}`);
-              return;
-            }
-            if (showStructured(applyResp || (STRUCTURED_REFUSALS.has(api.lastErrorCode) ? api.lastBody : null))) return;
-          }
+          if (proceedDiscard && await retryWithDiscard()) return;
         } else if (d.realWork.length > 0) {
-          setInFlight(false);
-          setApplyLabel('Update now', false);
-          global.alert(
-            'Update not applied: the checkout has local changes that might be someone\'s work, '
-            + 'so nothing was touched.\n\nIn the way:\n'
+          // #3126: a real-work path is no longer a dead end — confirming
+          // backs up each file (to ~/.tangleclaw/backups/) and restores or
+          // removes it so the update can proceed. The operator sees exactly
+          // what that costs before agreeing to it: these files are NOT kept
+          // in place, only recoverable from the backup copy afterward.
+          const proceedDiscard = global.confirm(
+            'Update not yet applied: the checkout has local changes that might be someone\'s work.\n\n'
+            + 'In the way:\n'
             + d.realWork.map((f) => `  ${f}`).join('\n')
             + (d.discardable.length
-              ? '\n\nAlso present (shared files TangleClaw proved it changed on its own — '
-                + 'restorable once the above are resolved):\n'
+              ? '\n\nAlso present (shared files TangleClaw proved it changed on its own):\n'
                 + d.discardable.map((f) => `  ${f}`).join('\n')
               : '')
             + ((d.carried && d.carried.length)
@@ -598,13 +610,22 @@
                 + 'or the update stops without changing anything if they cannot be):\n'
                 + d.carried.map((f) => `  ${f}`).join('\n')
               : '')
+            + '\n\nConfirming will save a backup copy of each file listed above under '
+            + '~/.tangleclaw/backups/, then restore the committed copy (or remove it, if it is '
+            + 'untracked) so the update can proceed now. The files are NOT kept in place — only '
+            + 'recoverable afterward from their backup copy.'
             + (d.realWork.some((f) => f.startsWith('.tangleclaw/'))
-              ? '\n\nFiles under .tangleclaw/ are plans, priming prompts and memories someone '
-                + 'wrote. TangleClaw never discards them.'
+              ? '\n\nThis includes files under .tangleclaw/ — plans, priming prompts or memories '
+                + 'someone wrote there.'
               : '')
-            + '\n\nCommit or stash them in the install directory, then update again.'
+            + '\n\nBack up and update now?'
           );
-          return;
+          if (!proceedDiscard) {
+            setInFlight(false);
+            setApplyLabel('Update now', false);
+            return;
+          }
+          if (await retryWithDiscard()) return;
         }
       }
 
@@ -623,6 +644,16 @@
         global.alert('Your edits were kept and merged into the new release:\n\n'
           + applyResp.carried.map((c) => `  ${c.path}\n  (copy from before the update: ${c.backup})`).join('\n')
           + '\n\nOpen them after the restart to check the result.');
+      }
+
+      // #3126: a real-work path the operator confirmed discarding — NOT
+      // merged, unlike `carried` above. Said separately so it is never
+      // mistaken for "kept": the committed copy replaced it (or it was
+      // removed, if untracked), and the backup is the only way back.
+      if (Array.isArray(applyResp.backedUpRealWork) && applyResp.backedUpRealWork.length > 0) {
+        global.alert('These files were backed up and then replaced by the update (not kept in place):\n\n'
+          + applyResp.backedUpRealWork.map((c) => `  ${c.path}\n  (backup copy: ${c.backup})`).join('\n')
+          + '\n\nRestore from the backup copy above if you need them back.');
       }
 
       // Provisioning this update cannot do for you (#711): deploy assets are

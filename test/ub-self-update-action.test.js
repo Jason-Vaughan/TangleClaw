@@ -43,7 +43,7 @@ describe('UB self-update action (#228/#229)', () => {
       // answers to the same question in the first place — and a copy would
       // silently miss the next fix to the #711 dirty-tree handling.
       assert.equal((beacon.match(/'\/api\/update\/apply'/g) || []).length, 2,
-        'exactly the first apply and the #711 discard-and-retry');
+        'exactly the first apply and the one shared discard-and-retry (#711, #3126)');
       for (const [name, src] of [['landing.js', landing], ['session.js', session]]) {
         assert.doesNotMatch(src, /\/api\/update\/apply/,
           `${name} must reach the applier through the beacon, not directly`);

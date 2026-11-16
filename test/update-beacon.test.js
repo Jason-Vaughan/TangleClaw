@@ -673,26 +673,56 @@ describe('#931 the dirty-tree escape survived the move (#711 / #928 R-1)', () =>
     // code that a source-pin test cannot tell from a live one (#928 R-1).
   });
 
-  it('a mixed 409 names the blocking files and never offers the discard', async () => {
-    const ctx = loadBeacon({ fetchImpl: () => jsonRes(409, DIRTY_MIXED) });
+  // #3126: a real-work path no longer ends the flow — confirming backs it up
+  // and restores/removes it so the update can proceed.
+  it('a mixed 409 now offers the discard too, naming the real-work file and what it costs', async () => {
+    const ctx = loadBeacon({
+      confirmAnswers: [true, false],
+      fetchImpl: () => jsonRes(409, DIRTY_MIXED)
+    });
     await ctx.beacon.apply(AVAILABLE);
 
-    assert.equal(ctx.calls.confirms.length, 1, 'no discard offer when real work is in the way');
-    assert.equal(ctx.calls.fetches.length, 1, 'and no second apply');
-    const refusal = ctx.calls.alerts.join('\n');
-    assert.match(refusal, /lib\/projects\.js/, 'the blocking file is named');
-    assert.match(refusal, /\.claude\/settings\.json/, 'and the TC files waiting behind it are shown');
-    assert.doesNotMatch(refusal, /never discards them/, 'the authored-content note is for .tangleclaw/ only');
+    assert.equal(ctx.calls.confirms.length, 2, 'the update confirm, then the new discard-and-backup confirm');
+    const offer = ctx.calls.confirms[1];
+    assert.match(offer, /lib\/projects\.js/, 'the blocking file is named');
+    assert.match(offer, /\.claude\/settings\.json/, 'and the TC files waiting behind it are shown');
+    assert.match(offer, /NOT kept in place/, 'the operator is told these files are NOT kept, only backed up');
+    assert.equal(ctx.calls.fetches.length, 1, 'declining the offer must not re-apply');
   });
 
-  it('an authored plan in the way is named as authored, with no discard offer (#1537)', async () => {
-    const ctx = loadBeacon({ fetchImpl: () => jsonRes(409, DIRTY_PLAN) });
+  it('accepting the offer backs up and restores the real-work file (#3126)', async () => {
+    const ctx = loadBeacon({
+      fetchImpl: (n) => (n === 1
+        ? jsonRes(409, DIRTY_MIXED)
+        : jsonRes(200, {
+          ok: true, code: null, error: null, fromSha: 'a', toRef: 'v9.9.9', toSha: 'b',
+          provisioning: { manifestChanged: false, assetsChanged: [], action: null },
+          carried: [], backedUpRealWork: [{ path: 'lib/projects.js', backup: '/b/lib_projects.js' }]
+        }))
+    });
     await ctx.beacon.apply(AVAILABLE);
 
-    assert.equal(ctx.calls.confirms.length, 1, 'no discard offer for authored content');
-    const refusal = ctx.calls.alerts.join('\n');
-    assert.match(refusal, /\.tangleclaw\/plans\/x\.md/);
-    assert.match(refusal, /TangleClaw never discards them/);
+    assert.deepEqual(ctx.calls.fetches[1].body, { discardDirty: true });
+    const shown = ctx.calls.alerts.join('\n');
+    assert.match(shown, /backed up and then replaced/);
+    assert.match(shown, /lib\/projects\.js/);
+    assert.match(shown, /lib_projects\.js/, 'with its backup path');
+    assert.doesNotMatch(shown, /kept and merged/, 'a replaced real-work file is never described as merged/kept');
+  });
+
+  it('an authored plan in the way now offers the backup-and-discard too, naming the .tangleclaw/ risk (#1537, #3126)', async () => {
+    const ctx = loadBeacon({
+      confirmAnswers: [true, false],
+      fetchImpl: () => jsonRes(409, DIRTY_PLAN)
+    });
+    await ctx.beacon.apply(AVAILABLE);
+
+    assert.equal(ctx.calls.confirms.length, 2);
+    const offer = ctx.calls.confirms[1];
+    assert.match(offer, /\.tangleclaw\/plans\/x\.md/);
+    assert.match(offer, /plans, priming prompts or memories/, 'the .tangleclaw/ note still appears');
+    assert.match(offer, /NOT kept in place/);
+    assert.equal(ctx.calls.fetches.length, 1, 'declining must not touch the plan');
   });
 
   it('declining the discard applies nothing further and releases the latch', async () => {
@@ -805,16 +835,19 @@ describe('#1730 files to reconcile, a failed recovery, and carried edits', () =>
     assert.equal(ctx.inFlight, false);
   });
 
-  it('a dirty-tree refusal says the edited rules were detected and will be kept', async () => {
+  it('a dirty-tree refusal\'s discard offer says the edited rules were detected and will be kept', async () => {
+    // #3126: realWork present now means an OFFER (a confirm), not a dead-end
+    // alert — declined here so the test stays about the message's content.
     const ctx = loadBeacon({
+      confirmAnswers: [true, false],
       fetchImpl: () => jsonRes(409, {
-        ok: false, code: 'dirty-tree', error: 'local changes present — commit or stash before updating',
+        ok: false, code: 'dirty-tree', error: 'local changes present — retry with the discard option to back up each file and restore the committed copies, then update',
         dirty: { discardable: [], realWork: ['lib/projects.js'], carried: ['data/global-rules.md'] }
       })
     });
     await ctx.beacon.apply(AVAILABLE);
 
-    const shown = ctx.calls.alerts.join('\n');
+    const shown = ctx.calls.confirms[1];
     assert.match(shown, /lib\/projects\.js/);
     assert.match(shown, /Detected and kept[\s\S]*data\/global-rules\.md/);
   });

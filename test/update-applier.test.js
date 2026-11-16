@@ -53,6 +53,7 @@ const SETTINGS_HAND_EDITED = JSON.stringify({
 
 describe('update-applier (UB #228/#229)', () => {
   let origGit, origCheck, origRead, origGetDbPath, origVacuumDb, origIntegrityCheck, origReadBackupFile, origChmodBackupFile;
+  let origReadRepoFileBytes, origSecureBackup, origRemoveRepoFile;
 
   beforeEach(() => {
     origGit = applier._internal.git;
@@ -63,6 +64,9 @@ describe('update-applier (UB #228/#229)', () => {
     origIntegrityCheck = applier._internal.integrityCheck;
     origReadBackupFile = applier._internal.readBackupFile;
     origChmodBackupFile = applier._internal.chmodBackupFile;
+    origReadRepoFileBytes = applier._internal.readRepoFileBytes;
+    origSecureBackup = applier._internal.secureBackup;
+    origRemoveRepoFile = applier._internal.removeRepoFile;
     applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.9' });
     // Happy-path SQLite backup stubs: vacuumDb is a noop (no file created), so
     // readBackupFile returns a fake buffer for SHA-256 computation and chmod is
@@ -83,6 +87,9 @@ describe('update-applier (UB #228/#229)', () => {
     applier._internal.integrityCheck = origIntegrityCheck;
     applier._internal.readBackupFile = origReadBackupFile;
     applier._internal.chmodBackupFile = origChmodBackupFile;
+    applier._internal.readRepoFileBytes = origReadRepoFileBytes;
+    applier._internal.secureBackup = origSecureBackup;
+    applier._internal.removeRepoFile = origRemoveRepoFile;
   });
 
   describe('applyUpdate guards', () => {
@@ -108,7 +115,7 @@ describe('update-applier (UB #228/#229)', () => {
       const r = applier.applyUpdate();
       assert.equal(r.ok, false);
       assert.equal(r.code, 'dirty-tree');
-      assert.match(r.error, /commit or stash/);
+      assert.match(r.error, /discard option/);
     });
 
     it('refuses with wrong-ref on a feature branch (never moves a dev branch)', () => {
@@ -253,18 +260,66 @@ describe('update-applier (UB #228/#229)', () => {
       return { fn, calls };
     }
 
-    it('a mixed dirty tree refuses with both lists and touches nothing', () => {
+    // #3126: a real-work path no longer keeps the hard refusal — it is backed
+    // up first, then restored/removed, same as a provably-TC path always was.
+    it('discardDirty on a mixed dirty tree backs up the real-work file, restores both, and proceeds', () => {
       const { fn, calls } = statefulStub({
-        statuses: [' M lib/projects.js\n M .claude/settings.json\n'] });
+        statuses: [' M lib/projects.js\n M .claude/settings.json\n', ''] });
       applier._internal.git = fn;
       applier._internal.readFile = () => SETTINGS_RETIRED;
+      const backedUp = [];
+      applier._internal.readRepoFileBytes = (p) => { backedUp.push(p); return Buffer.from(`original:${p}`); };
+      applier._internal.secureBackup = (relPath, bytes) => `/backups/${relPath.replace(/\//g, '_')}.${bytes.toString()}`;
+      applier._internal.removeRepoFile = () => assert.fail('lib/projects.js is TRACKED — it must be restored, never removed');
+      const r = applier.applyUpdate({ discardDirty: true });
+      assert.equal(r.ok, true, 'the update must proceed once the real-work file is backed up');
+      assert.deepEqual(backedUp, ['lib/projects.js'], 'only the real-work path is backed up — the discardable one is just restored');
+      assert.ok(calls.includes('checkout HEAD -- lib/projects.js'), 'the backed-up real-work file is restored from HEAD');
+      assert.ok(calls.includes('checkout HEAD -- .claude/settings.json'), 'the provably-TC file is still restored the old way');
+      assert.deepEqual(r.carried, [], 'nothing was MERGED — a backed-up real-work file is never reported as "carried"');
+      assert.deepEqual(r.backedUpRealWork, [{ path: 'lib/projects.js', backup: '/backups/lib_projects.js.original:lib/projects.js' }]);
+    });
+
+    it('a real-work file missing from disk (already deleted) proceeds with no backup to make', () => {
+      const { fn, calls } = statefulStub({
+        statuses: [' D lib/projects.js\n', ''] });
+      applier._internal.git = fn;
+      applier._internal.readRepoFileBytes = () => null;
+      applier._internal.secureBackup = () => assert.fail('nothing to back up for a file already gone from disk');
+      const r = applier.applyUpdate({ discardDirty: true });
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.backedUpRealWork, []);
+      assert.ok(calls.includes('checkout HEAD -- lib/projects.js'), 'still restored from HEAD so the tree is provably clean');
+    });
+
+    it('an untracked real-work file is backed up, then removed (never left for git to trip over)', () => {
+      const { fn, calls } = statefulStub({ statuses: ['?? scratch-notes.txt\n', ''] });
+      applier._internal.git = fn;
+      applier._internal.readRepoFileBytes = () => Buffer.from('my scratch notes');
+      applier._internal.secureBackup = (relPath, bytes) => { assert.equal(bytes.toString(), 'my scratch notes'); return '/backups/scratch-notes.txt'; };
+      let removed = null;
+      applier._internal.removeRepoFile = (p) => { removed = p; };
+      const r = applier.applyUpdate({ discardDirty: true });
+      assert.equal(r.ok, true);
+      assert.equal(removed, 'scratch-notes.txt', 'removed only AFTER its bytes were secured');
+      assert.deepEqual(r.backedUpRealWork, [{ path: 'scratch-notes.txt', backup: '/backups/scratch-notes.txt' }]);
+      assert.equal(calls.some((c) => c.startsWith('checkout HEAD -- scratch-notes.txt')), false,
+        'an untracked path is never "restored" — git has nothing of its own to restore it from');
+    });
+
+    it('refuses an unparseable path (a rename) even with discardDirty, and backs up nothing', () => {
+      const { fn, calls } = statefulStub({ statuses: ['R  old.js -> new.js\n M .claude/settings.json\n'] });
+      applier._internal.git = fn;
+      applier._internal.readFile = () => SETTINGS_RETIRED;
+      applier._internal.readRepoFileBytes = () => assert.fail('an exotic entry must refuse before any backup is attempted');
       const r = applier.applyUpdate({ discardDirty: true });
       assert.equal(r.ok, false);
       assert.equal(r.code, 'dirty-tree');
+      assert.match(r.error, /unparseable path/);
       assert.deepEqual(r.dirty, {
-        discardable: ['.claude/settings.json'], realWork: ['lib/projects.js'], carried: [] });
+        discardable: ['.claude/settings.json'], realWork: ['R  old.js -> new.js'], carried: [] });
       assert.equal(calls.some((c) => c.startsWith('checkout') || c.startsWith('clean')), false,
-        'one real-work path anywhere means NOTHING is discarded, flag or no flag');
+        'an unparseable path anywhere refuses everything, flag or no flag');
     });
 
     it('the settings hook file is discardable when TangleClaw only retired its hooks, and the refusal says how', () => {
@@ -344,33 +399,53 @@ describe('update-applier (UB #228/#229)', () => {
         '.tangleclaw/priming/', '.tangleclaw/memories/MEMORY.md', '.tangleclaw/']);
     });
 
-    it('a dirty plan refuses the update even with the discard opt-in, and nothing is touched', () => {
-      const { fn, calls } = statefulStub({ statuses: ['?? .tangleclaw/plans/x.md\n'] });
+    // #1537/#3126: a plan is authored content and used to be silently lost
+    // (the historical incident #1537 records). It is no longer a blanket
+    // refusal — it is backed up BEFORE it is removed, same as any other
+    // untracked real-work file (#3126), so nothing is lost even though the
+    // tree is no longer left untouched.
+    it('a dirty plan is backed up and removed with the discard opt-in — never silently lost (#1537)', () => {
+      const { fn, calls } = statefulStub({ statuses: ['?? .tangleclaw/plans/x.md\n', ''] });
       applier._internal.git = fn;
+      let backedUpBytes = null;
+      applier._internal.readRepoFileBytes = () => { backedUpBytes = 'read-before-remove'; return Buffer.from('my plan'); };
+      applier._internal.secureBackup = (relPath, bytes) => { assert.equal(bytes.toString(), 'my plan'); return '/backups/x.md'; };
+      let removed = null;
+      applier._internal.removeRepoFile = (p) => { removed = p; };
       const r = applier.applyUpdate({ discardDirty: true });
-      assert.equal(r.ok, false);
-      assert.equal(r.code, 'dirty-tree');
-      assert.deepEqual(r.dirty, { discardable: [], realWork: ['.tangleclaw/plans/x.md'], carried: [] });
-      assert.match(r.error, /commit or stash/);
-      assert.equal(calls.some((c) => c.startsWith('checkout') || c.startsWith('clean')), false);
+      assert.equal(r.ok, true);
+      assert.equal(backedUpBytes, 'read-before-remove', 'the plan\'s bytes were read (for backup) before anything removed it');
+      assert.equal(removed, '.tangleclaw/plans/x.md');
+      assert.deepEqual(r.carried, [], 'the plan was never MERGED — it was backed up, then removed');
+      assert.deepEqual(r.backedUpRealWork, [{ path: '.tangleclaw/plans/x.md', backup: '/backups/x.md' }]);
+      assert.equal(calls.some((c) => c.startsWith('checkout HEAD -- .tangleclaw')), false,
+        'untracked — nothing for git to restore it from');
     });
 
-    it('a hand edit to .claude/settings.json is real work, not a discardable TangleClaw write', () => {
-      const { fn, calls } = statefulStub({ statuses: [' M .claude/settings.json\n'] });
+    it('a hand edit to .claude/settings.json is backed up before it is restored, not silently discarded', () => {
+      const { fn, calls } = statefulStub({ statuses: [' M .claude/settings.json\n', ''] });
       applier._internal.git = fn;
       applier._internal.readFile = () => SETTINGS_HAND_EDITED;
+      let backedUpContent = null;
+      applier._internal.readRepoFileBytes = () => { backedUpContent = SETTINGS_HAND_EDITED; return Buffer.from(SETTINGS_HAND_EDITED); };
+      applier._internal.secureBackup = () => '/backups/settings.json';
       const r = applier.applyUpdate({ discardDirty: true });
-      assert.equal(r.ok, false);
-      assert.deepEqual(r.dirty, { discardable: [], realWork: ['.claude/settings.json'], carried: [] });
-      assert.equal(calls.some((c) => c.startsWith('checkout')), false,
-        'an operator permission must never be discarded under "nothing of yours"');
+      assert.equal(r.ok, true);
+      assert.equal(backedUpContent, SETTINGS_HAND_EDITED, 'the operator\'s own permission edit is read and backed up before being restored');
+      assert.ok(calls.includes('checkout HEAD -- .claude/settings.json'));
+      assert.deepEqual(r.carried, [], 'the hand edit was never MERGED — it was backed up, then restored to the committed copy');
+      assert.deepEqual(r.backedUpRealWork, [{ path: '.claude/settings.json', backup: '/backups/settings.json' }]);
     });
 
+    // These two exercise `.claude/settings.json`'s content-based real-work
+    // classification specifically — discardDirty is left unset so the
+    // refusal (and its `dirty` field) is still the one this asserts against,
+    // independent of #3126's separate backup-and-restore behavior.
     it('an unparseable .claude/settings.json is real work', () => {
       const { fn } = statefulStub({ statuses: [' M .claude/settings.json\n'] });
       applier._internal.git = fn;
       applier._internal.readFile = () => '{ not json';
-      const r = applier.applyUpdate({ discardDirty: true });
+      const r = applier.applyUpdate();
       assert.deepEqual(r.dirty, { discardable: [], realWork: ['.claude/settings.json'], carried: [] });
     });
 
@@ -379,7 +454,7 @@ describe('update-applier (UB #228/#229)', () => {
         extra: { 'show HEAD:.claude/settings.json': new Error('fatal: path not in HEAD') } });
       applier._internal.git = fn;
       applier._internal.readFile = () => SETTINGS_RETIRED;
-      const r = applier.applyUpdate({ discardDirty: true });
+      const r = applier.applyUpdate();
       assert.deepEqual(r.dirty, { discardable: [], realWork: ['.claude/settings.json'], carried: [] });
     });
 
