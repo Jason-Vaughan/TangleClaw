@@ -41,6 +41,59 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-16 — v6.4.1 release cut (Milestone #80)
+
+<!-- prawduct: type=internal | scope=v641-release -->
+
+- Compiled 13 accepted `changelog.d/` fragments (#3092, #3103, #3116 from PR #3119; #3108, #3111 from PR #3120; #3105, #3106, #3113 from PR #3121; #3109, #3110, #3112 from PR #3118; #3114, #3117 from PR #3122) into `CHANGELOG.md` section `[6.4.1]` via `compileFragments`/`spliceIntoUnreleased`/`_promoteUnreleased`, with the target version pinned explicitly to `6.4.1` (Ruling A795) rather than the `minor` bump `_decideBumpLevel` would otherwise have picked off #3112's lone `.added.md` fragment, which would have landed `6.5.0` instead — `v6.5.0` is already pipelined separately under Milestone #82. Bumped `version.json`, updated README pins/banner and the released-section lock via `scripts/release-prepare.js` (the banner's own prose is hand-written here, not generated), and updated `FEATURES.md`, `ROADMAP.md`, `docs/releases/index.md` and `docs/releases/v6.4.1.md`.
+- None of the 5 Wave PRs' bodies carried a ready-to-paste change-log entry, so all 5 entries below are written here, from each PR's own merged diff and changelog.d fragment text, rather than folded in verbatim.
+- Status corrections the release notes carry: #3112's Charter & Roadmap tab needed a third wiring piece beyond what PR #3118 shipped — PR #3122 added the `v6-shell.js` half (passing `roadmapSnapshot` into `renderCharterReadinessPanel`), but `GET /api/sprint-waves` still has no `snapshot` field to pass, so that composition is a forward-compatible no-op until `lib/routes/sprint-wave-routes.js` is wired to call `buildSprintWaveSnapshot`. Sprint & Cars and Kaizen & Reports are already live.
+- Gate 0 for this car: Ruling A795, dispatched by `TC-Lane-PM` after all 5 Wave PRs true-merged and all 13 Milestone #80 issues closed.
+
+## 2026-11-16 — Car V641-W1-B: usage windows stack overflow (#3109), multi-fleet merge guard (#3110), native roadmap snapshot (#3112)
+
+<!-- prawduct: type=feature | scope=v641-w1-b -->
+
+- #3109: `lib/usage-windows.js` overflowed V8's call-stack argument limit spreading a scanned batch into `.push(...)` in two places (`_computeUsageWindows`'s cross-provider accumulation, the one the dispatch named, and `_scanFiles`'s per-file accumulation, found by grepping the file for the same pattern). Both now push one record at a time in a plain loop. Regression test with 120,000 synthetic records, verified to reproduce the exact `RangeError` without the fix and pass with it.
+- #3110: `lib/merge-role-guard.js#_resolveRoleCategory` generalized the integrator/reviewer/architect/pm/builder lane regexes across fleets (`<fleet>-INT`/`-Lane-INT`, `-PRR`/`-Obsr`, `-Arc`, `-PM`, `-Lane-<letter>`), matched `TiLT v2` (the real `store.projects` name, with a space — the hyphen is only the tmux session name) alongside `TiLT-v2`, and let `Monad-1` merge `--squash` via a new `allowedMergeMethods` option while every other fleet stays `--merge`-only. PRR-B I-Gate R1 found both the generalization gap (a real caller, `lib/routes/sessions.js#_mayOverrideMergeGateHold`, needed it) and the `TiLT v2` space bug; fixed in R2.
+- #3112: new `lib/native-sprint-tracker.js#buildSprintWaveSnapshot` (verified via repo-wide grep that it did not exist before this PR, despite the dispatch and issue text saying "enrich" it) classifies roadmap releases active/planned/shipped and maps dispatch stage onto a canonical 6-stage pill. `sprintDataFromWaveRuns`/`syncWaveDispatchState` enriched to carry forward version/lane/files/reviewers/headSha instead of dropping them — PRR-B I-Gate R1's BLOCKING finding was that this is what actually wires the roadmap/pills live into Sprint & Cars and Kaizen & Reports through their EXISTING passthrough endpoints, no route/shell change needed. `public/sprint-wave-ui.js` gains `renderReleaseRoadmap`/`renderSprintCarCards`/`renderSprintReportsCatalog`, composed into the existing `renderSprintWaveBoard`/`renderKaizenLedgerPanel`/`renderCharterReadinessPanel`. Charter & Roadmap's own live wiring needed a `v6-shell.js` change outside this car's scope — flagged, picked up by Car V641-W2-A (#3122) for the shell half; the route half is still open.
+- Gates: O-Gate PASS ×2 (pre- and post-REVISE head), PRR-B R-Gate REVISE then ACCEPT, Tests CI green. PR #3118.
+
+## 2026-11-16 — Car V641-W1-D: usage nothing-parsed + v84 migration verify (#3092), Medusa cross-fleet diagnostic (#3103), Vercel gh-pages guard (#3116)
+
+<!-- prawduct: type=feature | scope=v641-w1-d -->
+
+- #3092: `tc usage windows` / the Classic Usage panel now say "No usage parsed from any local transcript log." when nothing was parsed (every provider key always present in the response, so the old zero-providers check could never fire). The v83→v84 `usage_calibration` migration (`lib/store/_schema.js`) now verifies its rebuilt table before committing, rolling back cleanly on a failed postcondition instead of leaving a broken table already committed.
+- #3103: a Medusa send refused as cross-fleet (`lib/medusa-send.js`) because an outside-fleet registry could not be read now says why (matching the wording broadcasts already had under #3099), without naming the other fleet.
+- #3116: `lib/roadmap-vercel-guard.js` stages a deterministic skip-build `vercel.json` into a `gh-pages` checkout and marks its commits `[skip ci] [vercel skip]`, so the roadmap publisher's pushes stop triggering Vercel's "Root Directory 'website' does not exist" failed-deploy emails.
+- Gates: O-Gate PASS, PRR-B R-Gate ACCEPT, Tests CI green. PR #3119.
+
+## 2026-11-16 — Car V641-W1-C: persistent macOS Full Disk Access tmux routing (#3108), Antigravity survey auto-skip (#3111)
+
+<!-- prawduct: type=feature | scope=v641-w1-c -->
+
+- #3108: `lib/tmux.js` routes a protected `~/Documents` session unconditionally to the TCC-authorized server, never the default server, even when the default server transiently passes a readability probe (macOS can revoke its access 20–30 minutes later while the TCC-authorized server's own grant never lapses). The session's PATH-wrapper directory also stages `merge-role-guard.js`/`tmux-guard.js`, so the generated `gh`/`curl`/`tmux` wrappers never `require()` a path under `~/Documents`.
+- #3111: the Antigravity CLI's inline feedback-survey prompt is auto-dismissed with the Skip keystroke and a pane re-capture, so it no longer wedges Medusa wake delivery with `pane-no-prompt`.
+- Gates: O-Gate PASS, PRR-A R-Gate ACCEPT, Tests CI green. PR #3120.
+
+## 2026-11-16 — Car V641-W1-A: unified Waiting-On panel (#3105), composer polish + two-way resize (#3106), scroll-to-latest + usage fallback (#3113)
+
+<!-- prawduct: type=feature | scope=v641-w1-a -->
+
+- #3105: `public/v6-shell.js` unifies "Waiting on you" into a 3-category panel — YOU (CLI trust/permission/selector prompts and multi-choice questions merged with the direct-question list), Your ToDo (handoff items extracted from the latest reply), AI (queued follow-ups, Force/dismiss per item) — each numbered, dismissible, with a Clear button past one item.
+- #3106: the idle Waiting-on panel/activity line no longer reserves a flex gap it doesn't occupy; the attach control is a compact chip pinned over the message box's corner; the message box and conversation stream resize against each other, down to a readable floor.
+- #3113: a refresh or still-loading conversation reliably jumps to the latest line; the Usage Meter falls back to a live session's own context-remaining reading when no weekly/5-hour percentage is available.
+- Gates: O-Gate PASS, PRR-A R-Gate ACCEPT, Tests CI green. PR #3121.
+
+## 2026-11-16 — Car V641-W2-A: interactive onboarding wizard (#3114), mobile/foldable responsive polish (#3117)
+
+<!-- prawduct: type=feature | scope=v641-w2-a -->
+
+- #3114: the 🧙 Wizard tab runs 3 real end-to-end workflows — create a standalone workspace, convert a standalone project into a multi-seat fleet, or provision a new fleet from a template with a live plan preview — none of which clobber the active chat.
+- #3117: the mobile `☰` menu is a proper slide-over drawer with a backdrop; the top bar no longer wraps into multiple rows on Galaxy Fold/iPhone widths; the "Workspace Projects" sidebar entry no longer repeats itself as its own child.
+- PRR-A R1 REVISE also caught and fixed, in the same PR: a stale docked `.v6-shell-drawer-toggle` not removed from `.dash-bar` before render; the Wizard loading `/api/v6/fleet-templates` only when entering with empty templates; Workflow B's `convertToFleet` requiring `seatTotal >= 1`; and the #3112 `roadmapSnapshot` passthrough into `renderCharterReadinessPanel` (forward-compatible only — `GET /api/sprint-waves` has no `snapshot` field yet).
+- Gates: A-Gate APPROVE ×2 (pre- and post-REVISE head, Rulings A797/A799), O-Gate PASS, PRR-A R-Gate ACCEPT, Tests CI green. PR #3122.
+
 ## 2026-11-15 — v6.4.0 release cut (Milestone #79)
 
 <!-- prawduct: type=internal | scope=v640-release -->

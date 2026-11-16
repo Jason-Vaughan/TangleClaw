@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.4.0 — A car gate matrix and train launch, consolidated train reports, a sprint setup gate, and fail-closed fleet isolation](v6.4.0.md)
+- [v6.4.1 — A unified Waiting-On panel, composer polish, the native Release-First Roadmap, an onboarding wizard, mobile/foldable polish, and persistent macOS Full Disk Access](v6.4.1.md)
 
 ## Recent releases
+
+- [v6.4.0 — A car gate matrix and train launch, consolidated train reports, a sprint setup gate, and fail-closed fleet isolation](v6.4.0.md)
 
 - [v6.3.0 — A workspace mode bar and wizard launcher, live sprint routes, the running engine on member badges, and a Medusa registry cache](v6.3.0.md)
 
