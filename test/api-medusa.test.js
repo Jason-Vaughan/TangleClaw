@@ -2642,6 +2642,36 @@ describe('lib/medusa — fleet isolation (#3077, Ruling A738)', () => {
         }
       });
 
+      it('says why on a send refusal, with its own reason code, without naming the other fleet\'s registry (#3103)', async () => {
+        const medusaSendMod = require('../lib/medusa-send');
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-3103-send-'));
+        store._setBasePath(tmp);
+        store.init();
+        const realSend = medusa.sendMessage;
+        let hub = 0;
+        medusa.sendMessage = async ({ beforeHub }) => { hub++; beforeHub({ from: 'sender-ws' }); return { status: 'received', id: `hub-${hub}` }; };
+        try {
+          // 'ws-remote' belongs to no local project, so it is unmapped — the
+          // same case #3099 already covers for broadcasts, previously missing
+          // from the send refusal's own wording and reason code.
+          const r = await medusaSendMod.sendTracked({ sessionId: 1, senderProjectId: 9, caller: { kind: 'project', projectId: 9 }, body: { to: 'ws-remote', message: 'hi' } });
+          assert.equal(r.status, 403);
+          assert.equal(r.body.code, 'CROSS_FLEET_FORBIDDEN');
+          assert.deepEqual(r.body.details, { reason: 'REGISTRY_UNREADABLE_OUTSIDE_FLEET' });
+          assert.match(r.body.error, /registry outside your fleet could not be read/);
+          assert.match(r.body.error, /allowCrossFleet: true/);
+          assert.ok(!JSON.stringify(r.body).includes('p8'), 'the other fleet\'s project is never named');
+          assert.equal(hub, 0, 'refused before the Hub');
+          const forced = await medusaSendMod.sendTracked({ sessionId: 1, senderProjectId: 9, caller: { kind: 'project', projectId: 9 }, body: { to: 'ws-remote', message: 'hi', allowCrossFleet: true } });
+          assert.notEqual(forced.status, 403);
+          assert.equal(hub, 1, 'allowCrossFleet still sends');
+        } finally {
+          medusa.sendMessage = realSend;
+          store.close();
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
+      });
+
       it('says why on a broadcast refusal, without naming the other fleet\'s registry', async () => {
         await assert.rejects(medusa.broadcastAll({
           callerKind: 'coordinator', senderId: `b-3099-${Date.now()}`, senderProjectId: 9, message: 'm',

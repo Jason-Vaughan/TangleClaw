@@ -92,6 +92,82 @@ describe('decide (#2258)', () => {
   it('skips when VERCEL_GIT_COMMIT_REF is unset and the checkout has no website', () => {
     assert.equal(guard.decide({}, tempRoot(false)), true);
   });
+
+  // #3116: a `website/` directory alone is not buildable — the orphan
+  // `gh-pages` branch can carry one with nothing in it but the staged guard
+  // config, which still has no application to build.
+  it('skips a non-gh-pages ref whose website directory has no package.json', () => {
+    assert.equal(guard.decide({ VERCEL_GIT_COMMIT_REF: 'feat/x' }, tempRoot(true)), true);
+  });
+});
+
+describe('hasWebsitePackageJson (#3116)', () => {
+  it('is true for a checkout whose website directory has a package.json', () => {
+    const dir = tempRoot(true);
+    fs.writeFileSync(path.join(dir, 'website', 'package.json'), '{}');
+    assert.equal(guard.hasWebsitePackageJson(dir), true);
+  });
+
+  it('is false for a website directory with no package.json', () => {
+    assert.equal(guard.hasWebsitePackageJson(tempRoot(true)), false);
+  });
+
+  it('is false when there is no website directory at all', () => {
+    assert.equal(guard.hasWebsitePackageJson(tempRoot(false)), false);
+  });
+
+  it('reads the real repository root when no root is given', () => {
+    assert.equal(guard.hasWebsitePackageJson(), fs.existsSync(path.join(REPO_ROOT, 'website', 'package.json')));
+  });
+});
+
+describe('stageGhPagesVercelGuard (#3116)', () => {
+  it('creates both website/vercel.json and vercel.json with valid JSON and deploymentEnabled.gh-pages === false', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadmap-vercel-guard-stage-'));
+    try {
+      guard.stageGhPagesVercelGuard(dir);
+      for (const relative of ['vercel.json', path.join('website', 'vercel.json')]) {
+        const config = JSON.parse(fs.readFileSync(path.join(dir, relative), 'utf8'));
+        assert.equal(config.git.deploymentEnabled['gh-pages'], false, relative);
+        assert.equal(config.ignoreCommand, 'exit 0', relative);
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('creates the website directory itself when the checkout has none yet', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadmap-vercel-guard-stage-nodir-'));
+    try {
+      assert.equal(fs.existsSync(path.join(dir, 'website')), false, 'precondition');
+      guard.stageGhPagesVercelGuard(dir);
+      assert.equal(fs.statSync(path.join(dir, 'website')).isDirectory(), true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is deterministic: staging twice overwrites identically rather than failing', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadmap-vercel-guard-stage-twice-'));
+    try {
+      guard.stageGhPagesVercelGuard(dir);
+      const first = fs.readFileSync(path.join(dir, 'vercel.json'), 'utf8');
+      guard.stageGhPagesVercelGuard(dir);
+      const second = fs.readFileSync(path.join(dir, 'vercel.json'), 'utf8');
+      assert.equal(second, first);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('formatGhPagesCommitMessage (#3116)', () => {
+  it('always includes [skip ci] and [vercel skip]', () => {
+    const message = guard.formatGhPagesCommitMessage('publish roadmap');
+    assert.match(message, /\[skip ci\]/);
+    assert.match(message, /\[vercel skip\]/);
+    assert.match(message, /^publish roadmap/);
+  });
 });
 
 describe('Vercel repository wiring (#2258)', () => {

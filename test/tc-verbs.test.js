@@ -1490,4 +1490,25 @@ describe('tc usage windows — surfaces a partial scan honestly (#2766 BLOCKING 
     assert.doesNotMatch(res.stdout, /scan still warming/);
     assert.match(res.stdout, /^Weekly reset:/, 'renders exactly as it did before #2766 for a server that predates the field');
   });
+
+  // #3092: every known provider key is always present in byProviderModel
+  // (#3085, A753), so `{}` never happens in real responses — the fixture
+  // above was reachable only in tests. These exercise the real shape.
+  it('prints "No usage parsed" when every provider key is present but every one\'s model map is empty', async () => {
+    const ctx = { argv: ['windows'], getJson: async () => fakeBody({ byProviderModel: { claude: {}, codex: {}, antigravity: {} } }) };
+    const res = await usageVerb.run(ctx);
+    assert.match(res.stdout, /No usage parsed from any local transcript log\./);
+    assert.doesNotMatch(res.stdout, /^claude:/m, 'no empty per-provider header alongside the nothing-parsed message');
+  });
+
+  it('suppresses the "No usage parsed" message when at least one provider has a model entry', async () => {
+    const windows = { fiveHour: { totalTokens: 10 }, weekly: { totalTokens: 10 }, monthly: { totalTokens: 10 }, sprint: null };
+    const ctx = {
+      argv: ['windows'],
+      getJson: async () => fakeBody({ byProviderModel: { claude: { 'claude-sonnet-5': windows }, codex: {}, antigravity: {} } })
+    };
+    const res = await usageVerb.run(ctx);
+    assert.doesNotMatch(res.stdout, /No usage parsed/);
+    assert.match(res.stdout, /claude-sonnet-5/);
+  });
 });

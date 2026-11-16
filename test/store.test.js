@@ -1046,4 +1046,115 @@ describe('the schema module and the facade seam (#2248)', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  // #3092: the v84 and v79 table-rebuild migrations now run their postcondition
+  // verify INSIDE the same `_startupControlTransaction` as the rebuild, so a
+  // verification failure throws before COMMIT and rolls back cleanly, instead
+  // of a failure surfacing only after the rebuilt table was already committed.
+  describe('rebuild migrations verify before commit, not after (#3092)', () => {
+    it('_startupControlTransaction rolls back a write made before the callback throws', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-store-rollback-3092-'));
+      try {
+        store._setBasePath(tmpDir);
+        store.init();
+        const db = store.getDb();
+        const { _startupControlTransaction } = require('../lib/store/_db');
+        db.exec('CREATE TABLE _rollback_probe_3092 (id INTEGER PRIMARY KEY)');
+        assert.throws(() => _startupControlTransaction(() => {
+          db.prepare('INSERT INTO _rollback_probe_3092 (id) VALUES (1)').run();
+          throw new Error('forced failure for test');
+        }), /forced failure for test/);
+        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM _rollback_probe_3092').get().n, 0,
+          'the insert made before the throw must not survive the rollback — this is the exact mechanism ' +
+          'the moved-inside verify calls now rely on to roll back a failed rebuild cleanly');
+      } finally {
+        try { store.close(); } catch { /* already closed */ }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('_migrateUsageCalibrationAntigravityV84 rebuilds a pre-v84 table in place, preserving every row', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-store-v84-3092-'));
+      try {
+        store._setBasePath(tmpDir);
+        store.init();
+        const db = store.getDb();
+        const schema = require('../lib/store/_schema');
+        // Downgrade to the pre-v84 shape (no 'antigravity' in the CHECK) in place.
+        db.exec(`
+          DROP TABLE usage_calibration;
+          CREATE TABLE usage_calibration (
+            provider      TEXT    PRIMARY KEY CHECK (provider IN ('claude','codex')),
+            weekly_pct    REAL    CHECK (weekly_pct IS NULL OR (weekly_pct >= 0 AND weekly_pct <= 100)),
+            five_hour_pct REAL    CHECK (five_hour_pct IS NULL OR (five_hour_pct >= 0 AND five_hour_pct <= 100)),
+            calibrated_at INTEGER NOT NULL
+          );
+          INSERT INTO usage_calibration (provider, weekly_pct, five_hour_pct, calibrated_at)
+            VALUES ('claude', 40, 12.5, 1111), ('codex', NULL, 77, 2222);
+        `);
+        schema._migrateUsageCalibrationAntigravityV84();
+        const rows = db.prepare('SELECT provider, weekly_pct, five_hour_pct, calibrated_at FROM usage_calibration ORDER BY provider').all();
+        assert.deepEqual(rows.map((r) => ({ ...r })), [
+          { provider: 'claude', weekly_pct: 40, five_hour_pct: 12.5, calibrated_at: 1111 },
+          { provider: 'codex', weekly_pct: null, five_hour_pct: 77, calibrated_at: 2222 }
+        ]);
+        assert.doesNotThrow(() => db.prepare('INSERT INTO usage_calibration (provider, weekly_pct, five_hour_pct, calibrated_at) VALUES (?, ?, ?, ?)')
+          .run('antigravity', 5, 5, 3333), 'antigravity is now admitted by the rebuilt CHECK');
+      } finally {
+        try { store.close(); } catch { /* already closed */ }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('_migrateLaunchRecoveryPeerClearanceV79 rebuilds a pre-v79 table in place, preserving every row', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-store-v79-3092-'));
+      try {
+        store._setBasePath(tmpDir);
+        store.init();
+        const db = store.getDb();
+        const schema = require('../lib/store/_schema');
+        // Downgrade to the pre-v79 shape (no peer-clearance columns, no
+        // 'peer-cleared' in the CHECK) in place.
+        db.exec(`
+          DROP TABLE launch_recovery_clearances;
+          CREATE TABLE launch_recovery_clearances (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id          TEXT    CHECK (batch_id IS NULL OR length(batch_id) BETWEEN 1 AND 64),
+            project_id        INTEGER NOT NULL,
+            session_id        INTEGER NOT NULL,
+            sequence_id       INTEGER NOT NULL,
+            recovery_revision INTEGER NOT NULL,
+            clearance         TEXT    NOT NULL CHECK (clearance IN ('operator-verified','open-install-unverified')),
+            cleared_by        TEXT,
+            preflight         TEXT    NOT NULL,
+            cleared_at        TEXT    NOT NULL,
+            CHECK (batch_id IS NULL OR clearance = 'operator-verified')
+          );
+          CREATE UNIQUE INDEX idx_launch_recovery_clearances_sequence
+            ON launch_recovery_clearances(sequence_id);
+          CREATE INDEX idx_launch_recovery_clearances_batch
+            ON launch_recovery_clearances(batch_id) WHERE batch_id IS NOT NULL;
+          INSERT INTO launch_recovery_clearances
+            (project_id, session_id, sequence_id, recovery_revision, clearance, cleared_by, preflight, cleared_at)
+            VALUES (1, 2, 3, 1, 'operator-verified', 'the-operator', '{}', '2026-01-01T00:00:00.000Z');
+        `);
+        schema._migrateLaunchRecoveryPeerClearanceV79();
+        const rows = db.prepare('SELECT id, project_id, session_id, sequence_id, clearance, cleared_by, cleared_by_session_id FROM launch_recovery_clearances').all();
+        assert.deepEqual(rows.map((r) => ({ ...r })), [
+          { id: 1, project_id: 1, session_id: 2, sequence_id: 3, clearance: 'operator-verified', cleared_by: 'the-operator', cleared_by_session_id: null }
+        ]);
+        const cols = new Set(db.prepare('PRAGMA table_info(launch_recovery_clearances)').all().map((c) => c.name));
+        for (const col of ['cleared_by_session_id', 'cleared_by_project_id', 'cleared_by_role', 'cleared_by_launch_id', 'reason']) {
+          assert.ok(cols.has(col), `rebuilt table must have ${col}`);
+        }
+        assert.doesNotThrow(() => db.prepare(`INSERT INTO launch_recovery_clearances
+            (project_id, session_id, sequence_id, recovery_revision, clearance, cleared_by_session_id, cleared_by_project_id, preflight, cleared_at)
+            VALUES (1, 9, 10, 1, 'peer-cleared', 99, 100, '{}', '2026-01-01T00:00:00.000Z')`).run(),
+          '\'peer-cleared\' is now admitted by the rebuilt CHECK');
+      } finally {
+        try { store.close(); } catch { /* already closed */ }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+  });
 });
