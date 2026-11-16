@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.4.1 — A unified Waiting-On panel, composer polish, the native Release-First Roadmap, an onboarding wizard, mobile/foldable polish, and persistent macOS Full Disk Access](v6.4.1.md)
+- [v6.5.0 — Rich link unfurling and inline media previews, a Portable Fleet Template JSON Spec, and an Update button that backs up local changes](v6.5.0.md)
 
 ## Recent releases
+
+- [v6.4.1 — A unified Waiting-On panel, composer polish, the native Release-First Roadmap, an onboarding wizard, mobile/foldable polish, and persistent macOS Full Disk Access](v6.4.1.md)
 
 - [v6.4.0 — A car gate matrix and train launch, consolidated train reports, a sprint setup gate, and fail-closed fleet isolation](v6.4.0.md)
 
