@@ -1077,6 +1077,25 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
       assert.match(root.innerHTML, /Monad-PM|Monad/);
     });
 
+    it('Workflow B refuses 0 additional seats — that would rename the source but never group it as a fleet (PRR-A R1 C2b, #3114)', async () => {
+      const { win, doc, root, mutateCalls, settle } = mountWizard();
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-convert').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardConvertSource').value = '30';
+      doc.getElementById('v6WizardConvertSource').dispatch('change');
+      doc.getElementById('v6WizardConvertFleetName').value = 'Monad';
+      doc.getElementById('v6WizardConvertFleetName').dispatch('input');
+      // Every role count stays at its default (0) — no additional seats requested.
+      doc.getElementById('v6WizardConvertForm').dispatch('submit');
+      await settle();
+      assert.deepEqual(mutateCalls, [], 'nothing was renamed or created without at least one more seat');
+      assert.match(root.innerHTML, /a fleet needs 2 or more members/);
+    });
+
     it('Workflow C provisions one project per seat in the fetched plan, immediate and deferred alike', async () => {
       const plan = {
         templateId: 'small-4-seat',
@@ -6427,6 +6446,19 @@ describe('the workspace mode bar and wizard launcher (#3086)', () => {
     assert.deepEqual(m.selected(), ['wizard']);
   });
 
+  it('asks the workspace loader for the Wizard specifically when templates are still empty on entry (PRR-A R1 C2a, #3114)', () => {
+    const m = mount();
+    const calls = [];
+    m.shell.setWorkspaceLoader((mode) => calls.push(mode));
+    m.shell.setWorkspaceMode('wizard');
+    assert.deepEqual(calls, ['wizard'], 'templates started empty, so entering Wizard asked the loader for it');
+    m.shell.setWorkspaceMode('chat');
+    calls.length = 0;
+    m.shell.setTemplates([{ id: 't1', name: 'Fleet A' }]);
+    m.shell.setWorkspaceMode('wizard');
+    assert.deepEqual(calls, [], 'templates already arrived — no redundant fetch on re-entry');
+  });
+
   it('moves between tabs with the arrow keys, Home and End, choosing as it goes and wrapping at the ends', () => {
     const m = mount();
     m.key('v6WorkspaceMode-chat', 'ArrowRight');
@@ -6762,6 +6794,8 @@ describe('one top bar in the v6 shell (Rulings A764, A765)', () => {
         addEventListener(t, fn) { (el.listeners[t] = el.listeners[t] || []).push(fn); },
         appendChild(c) { if (c.parentNode) c.remove(); c.parentNode = el; el.childNodes.push(c); return c; },
         insertBefore(c, ref) { if (c.parentNode) c.remove(); c.parentNode = el; el.childNodes.splice(el.childNodes.indexOf(ref), 0, c); return c; },
+        prepend(c) { if (c.parentNode) c.remove(); c.parentNode = el; el.childNodes.unshift(c); return c; },
+        get firstElementChild() { return el.childNodes[0] || null; },
         // As a browser does, moving a node that holds focus blurs it.
         remove() { const p = el.parentNode; if (p) p.childNodes.splice(p.childNodes.indexOf(el), 1); el.parentNode = null; if (doc.activeElement && el.contains(doc.activeElement)) doc.activeElement = body; },
         contains(other) { for (let n = other; n; n = n.parentNode) if (n === el) return true; return false; },
@@ -6822,6 +6856,29 @@ describe('one top bar in the v6 shell (Rulings A764, A765)', () => {
     assert.equal(p.bar.querySelector('.v6-chat-header'), second);
     G.tcV6TuckAdminControls(p.doc, false);
     assert.equal(p.bar.querySelector('.v6-chat-header'), null);
+  });
+
+  it('docks the drawer toggle at the leading edge of the dashboard bar, and a later drawing replaces it rather than doubling it (#3117)', () => {
+    const p = makePage();
+    const shellRoot = p.doc.getElementById('v6ShellRoot');
+    // v6ShellRoot's own markup draws a fresh #v6ShellDrawerToggle each render.
+    const drawToggle = () => {
+      const t = shellRoot.appendChild(p.doc.createElement('button'));
+      t.id = 'v6ShellDrawerToggle';
+      t.className = 'btn btn-secondary btn-small v6-shell-drawer-toggle';
+      p.doc._register(t);
+      return t;
+    };
+    const first = drawToggle();
+    G.tcV6TuckAdminControls(p.doc, true);
+    assert.equal(kids(p.bar)[0], 'v6ShellDrawerToggle', 'docked at the leading edge, before .dash-brand');
+    assert.equal(first.parentNode, p.bar);
+    const second = drawToggle();
+    G.tcV6TuckAdminControls(p.doc, true);
+    assert.equal(kids(p.bar).filter((k) => k === 'v6ShellDrawerToggle').length, 1, 'never two in .dash-bar at once');
+    assert.equal(p.bar.childNodes.find((c) => c.id === 'v6ShellDrawerToggle'), second, 'the stale one was replaced by the freshly drawn one');
+    G.tcV6TuckAdminControls(p.doc, false);
+    assert.equal(kids(p.bar).filter((k) => k === 'v6ShellDrawerToggle').length, 0, 'leaving the shell takes it out entirely');
   });
 
   it('moves the CPU/MEM/DISK/UP stats into the footer status bar, and back to their exact place in Classic', () => {
@@ -7253,7 +7310,12 @@ describe('the charter panel and train launch controls (#3088, Rulings A782 and P
     const summary = { title: 'Ship v6.4', mission: 'm', versionNumber: 2 };
     const html = G.tcV6CharterPanelContent(charter, { ok: true, data: { waves: [['a']] } }, ui, { startupSummary: summary, approvedRoles: ['sponsor', 'pm', 7] });
     assert.deepEqual(plain(calls), [[{ charter: { id: 9, status: 'active', active_version_id: 12 }, activeVersion: { id: 12, version_number: 2 },
-      startupSummary: summary, approvals: [{ approver_role: 'sponsor' }, { approver_role: 'pm' }] }]]);
+      startupSummary: summary, approvals: [{ approver_role: 'sponsor' }, { approver_role: 'pm' }], roadmapSnapshot: null }]]);
+    // #3112 (PRR-A R1 NOTE): once a caller's /api/sprint-waves answer starts
+    // carrying a snapshot, it passes straight through — no new call site needed.
+    calls.length = 0;
+    G.tcV6CharterPanelContent(charter, { ok: true, data: { waves: [['a']], snapshot: { done: 1 } } }, ui, { startupSummary: summary });
+    assert.deepEqual(plain(calls[0][0].roadmapSnapshot), { done: 1 });
     assert.match(html, /<section class="v6-charter-section" aria-label="Charter"><div>readiness<\/div><ul class="v6-workspace-list v6-charter-versions">/);
     assert.match(html, /<section class="v6-charter-section" aria-label="Planned waves"><h3 class="v6-workspace-panel-subtitle">Planned waves<\/h3>/);
     // The real builder draws the summary's title, not "No active charter".

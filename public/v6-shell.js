@@ -582,7 +582,15 @@
       let drawn = null;
       if (ui && typeof ui.renderCharterReadinessPanel === 'function') {
         try {
-          const html = ui.renderCharterReadinessPanel({ charter: c, activeVersion, startupSummary, approvals });
+          // #3112 (PRR-A R1 NOTE): sprint-wave-ui.js's own doc comment names
+          // this exact passthrough as the one piece missing to compose the
+          // Release-First Roadmap into this panel. getSprintData() has no
+          // `snapshot` field yet (that's the real #3112 gap, out of this
+          // car's scope), so this is a forward-compatible no-op today —
+          // null until something upstream starts sending one.
+          const roadmapSnapshot = waves && waves.ok && waves.data && waves.data.snapshot && typeof waves.data.snapshot === 'object'
+            ? waves.data.snapshot : null;
+          const html = ui.renderCharterReadinessPanel({ charter: c, activeVersion, startupSummary, approvals, roadmapSnapshot });
           if (typeof html === 'string') drawn = html;
         } catch (err) { // prawduct:allow prawduct/broad-except -- a builder from another car that throws must not blank the panel; the built-in summary stands in
           drawn = null;
@@ -4590,6 +4598,19 @@
      * @returns {Promise<void>}
      */
     async function loadWorkspacePanel(mode) {
+      // #3114 (PRR-A R1 C2a): the Wizard has no /api/v6/fleet-templates read
+      // of its own anywhere else except handleRoute's startup waterfall —
+      // this is the one other place that's allowed to retry it, when the
+      // shell asks on Wizard entry because `templates` is still empty.
+      if (mode === 'wizard') {
+        const res = await api('/api/v6/fleet-templates');
+        if (res && Array.isArray(res.templates)) {
+          templatesLoaded = true;
+          const sh = getShell();
+          if (sh && typeof sh.setTemplates === 'function') sh.setTemplates(res.templates);
+        }
+        return;
+      }
       const read = async (url) => {
         const data = await api(url);
         return data ? { ok: true, data } : { ok: false, notFound: api.lastErrorCode === 'NOT_FOUND', error: api.lastError };
@@ -5505,6 +5526,14 @@
         wireWorkspacePanel(mode);
         loadWorkspacePanel(mode);
       }
+      // #3114 (PRR-A R1 C2a): the Wizard has no #v6WorkspacePanel of its own
+      // (shown.panel is false for it), so the generic load-above never runs
+      // for it — but its template list still depends on the same one-time
+      // /api/v6/fleet-templates fetch handleRoute's startup waterfall makes.
+      // If that fetch never landed (an aborted overlapping navigation, or a
+      // transient failure before the operator ever opened the Wizard tab),
+      // ask the loader again on entry rather than leaving templates empty.
+      if (mode === 'wizard' && !templates.length) loadWorkspacePanel('wizard');
       syncDockedHeader();
       const target = opts && opts.focus ? doc.getElementById(opts.focus) : null;
       if (target && typeof target.focus === 'function') target.focus();
@@ -5955,6 +5984,16 @@
           const fleetName = String(f.fleetName || '').trim();
           if (!f.sourceId || !fleetName || !PROJECT_NAME_CHARS.test(fleetName)) {
             wizardStatus = { kind: 'error', message: 'Choose a source workspace and give the fleet a valid name.' };
+            render();
+            return;
+          }
+          // #3114 AC #3 (PRR-A R1 C2b): synthesizeTreeFromProjects needs 2+
+          // members sharing a dash prefix to group as a fleet — 0 additional
+          // seats would just rename the source and leave it standalone,
+          // satisfying the letter of "convert" while missing the point.
+          const seatTotal = Object.values(f.roles || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
+          if (seatTotal < 1) {
+            wizardStatus = { kind: 'error', message: 'Add at least one more seat — a fleet needs 2 or more members.' };
             render();
             return;
           }
@@ -6720,6 +6759,13 @@
       const bar = typeof doc.querySelector === 'function' ? doc.querySelector('.dash-bar') : null;
       const oldHeader = bar && typeof bar.querySelector === 'function' ? bar.querySelector('.v6-chat-header') : null;
       if (oldHeader) oldHeader.remove();
+      // #3117 (PRR-A R1 C1): the drawer toggle is docked into .dash-bar the
+      // same way the chat header is — it needs the same "take it out before
+      // the redraw" step, or the fresh one `root.innerHTML` is about to draw
+      // becomes a SECOND #v6ShellDrawerToggle, and getElementById keeps
+      // returning the stale docked one (first in document order) forever.
+      const oldDrawerToggle = bar && typeof bar.querySelector === 'function' ? bar.querySelector('.v6-shell-drawer-toggle') : null;
+      if (oldDrawerToggle) oldDrawerToggle.remove();
       const title = routeTitle(currentRoute);
       shownTree = filterTree(tree, { text: filterText, engine: filterEngine, groups: selectedGroups }, projectRows);
       // #3053: the template wizard and attestation pills are not chat
