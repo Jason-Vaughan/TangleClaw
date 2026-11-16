@@ -1,15 +1,24 @@
 'use strict';
 
 /*
- * #1537 — the self-updater must never delete or revert authored content.
+ * #1537 — the self-updater must never delete or revert authored content
+ * WITHOUT the operator's explicit, informed confirmation.
  *
  * On 2026-09-16 an update deleted an uncommitted plan under
  * `.tangleclaw/plans/`, because every `.tangleclaw/` path was classed as
  * TangleClaw-written, and the confirm dialog said nothing of the operator's was
  * in the list. The unit suites stub git; this one drives `applyUpdate` against a
  * REAL repository with a real origin, so the claim under test is the one the
- * operator cares about: after the update path runs, is the file still there,
- * byte for byte?
+ * operator cares about.
+ *
+ * #3126 changed what that claim IS, deliberately: the unconfirmed call
+ * (`applyUpdate()`, no `discardDirty`) still refuses outright and leaves every
+ * byte exactly where it was — that half of #1537's guarantee is unchanged and
+ * still pinned here. The confirmed call (`applyUpdate({ discardDirty: true })`)
+ * now backs up the file via `_secureBackup` and then restores/removes it, so
+ * it is no longer "byte for byte in the working tree" afterward — it is byte
+ * for byte in the reported backup copy instead. Both halves are pinned below,
+ * reflecting Rulings A819/A820.
  */
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
@@ -91,6 +100,18 @@ describe('the self-updater preserves authored content in a real repository (#153
       return fs.readFileSync(abs, 'utf8');
     };
     applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.9' });
+    // Real-repo tests never need the real SQLite backup step — it runs only
+    // after the dirty-tree check below has already passed, which half of
+    // these tests reach now that #3126 lets a confirmed discard proceed.
+    orig.backupSqlite = applier._internal.backupSqlite;
+    applier._internal.backupSqlite = () => ({ path: '/dev/null/stub.db', sha256: '0'.repeat(64) });
+    // The real-work backup (#3126) genuinely exercises `_secureBackup` — the
+    // thing these tests now verify recovers the operator's bytes — so it is
+    // NOT stubbed, only redirected to a scratch directory under `root`, never
+    // this machine's own real ~/.tangleclaw/backups/ (the default `backupDir`
+    // when `store._setBasePath` is never called, which this file never does).
+    orig.backupDir = applier._internal.backupDir;
+    applier._internal.backupDir = () => path.join(root, 'backups');
   });
 
   afterEach(() => {
@@ -98,28 +119,53 @@ describe('the self-updater preserves authored content in a real repository (#153
     applier._internal.readFile = orig.readFile;
     applier._internal.checkForUpdate = orig.check;
     applier._internal.repoDir = orig.repoDir;
+    applier._internal.backupSqlite = orig.backupSqlite;
+    applier._internal.backupDir = orig.backupDir;
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('an uncommitted plan survives an update with the discard opt-in, byte for byte', () => {
+  it('an uncommitted plan survives UNCONFIRMED, byte for byte, then is backed up and removed once confirmed', () => {
     const plan = path.join(work, '.tangleclaw', 'plans', 'inbox-triage.md');
-    fs.writeFileSync(plan, '# my plan\n\nunsaved thought\n');
-    const r = applier.applyUpdate({ discardDirty: true });
-    assert.equal(r.ok, false);
-    assert.equal(r.code, 'dirty-tree');
-    assert.deepEqual(r.dirty.discardable, []);
-    assert.ok(r.dirty.realWork.some((p) => p.startsWith('.tangleclaw/plans/')), JSON.stringify(r.dirty));
-    assert.equal(fs.readFileSync(plan, 'utf8'), '# my plan\n\nunsaved thought\n');
+    const content = '# my plan\n\nunsaved thought\n';
+    fs.writeFileSync(plan, content);
+
+    // Unconfirmed: #1537's original guarantee, unchanged by #3126 — nothing
+    // moves without the operator's explicit discardDirty: true.
+    const refused = applier.applyUpdate();
+    assert.equal(refused.ok, false);
+    assert.equal(refused.code, 'dirty-tree');
+    assert.deepEqual(refused.dirty.discardable, []);
+    assert.ok(refused.dirty.realWork.some((p) => p.startsWith('.tangleclaw/plans/')), JSON.stringify(refused.dirty));
+    assert.equal(fs.readFileSync(plan, 'utf8'), content);
     assert.equal(git(work, ['rev-parse', '--abbrev-ref', 'HEAD']).trim(), 'main', 'nothing moved');
+
+    // Confirmed: #3126 — backed up first, then removed (untracked), and the
+    // update proceeds.
+    const r = applier.applyUpdate({ discardDirty: true });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.toRef, 'v9.9.9');
+    const backed = r.backedUpRealWork.find((b) => b.path === '.tangleclaw/plans/inbox-triage.md');
+    assert.ok(backed, JSON.stringify(r.backedUpRealWork));
+    assert.equal(fs.readFileSync(backed.backup, 'utf8'), content, 'the exact original bytes are recoverable from the backup');
+    assert.equal(fs.existsSync(plan), false, 'removed from the working tree — untracked, so git has nothing to restore it from');
   });
 
-  it('a hand edit to a tracked plan survives, and is not reverted', () => {
+  it('a hand edit to a tracked plan survives UNCONFIRMED, then is backed up and restored to the committed copy once confirmed', () => {
     const plan = path.join(work, '.tangleclaw', 'plans', 'tracked.md');
-    fs.writeFileSync(plan, 'committed plan\nplus my edit\n');
+    const edited = 'committed plan\nplus my edit\n';
+    fs.writeFileSync(plan, edited);
+
+    const refused = applier.applyUpdate();
+    assert.equal(refused.code, 'dirty-tree');
+    assert.deepEqual(refused.dirty, { discardable: [], realWork: ['.tangleclaw/plans/tracked.md'], carried: [] });
+    assert.equal(fs.readFileSync(plan, 'utf8'), edited);
+
     const r = applier.applyUpdate({ discardDirty: true });
-    assert.equal(r.code, 'dirty-tree');
-    assert.deepEqual(r.dirty, { discardable: [], realWork: ['.tangleclaw/plans/tracked.md'], carried: [] });
-    assert.equal(fs.readFileSync(plan, 'utf8'), 'committed plan\nplus my edit\n');
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const backed = r.backedUpRealWork.find((b) => b.path === '.tangleclaw/plans/tracked.md');
+    assert.ok(backed, JSON.stringify(r.backedUpRealWork));
+    assert.equal(fs.readFileSync(backed.backup, 'utf8'), edited, 'the hand edit is recoverable from the backup');
+    assert.equal(fs.readFileSync(plan, 'utf8'), 'committed plan\n', 'restored to the committed copy, tracked — git had HEAD to restore it from');
   });
 
   it('TangleClaw retiring its own hook is restored and the update proceeds', () => {
@@ -131,12 +177,20 @@ describe('the self-updater preserves authored content in a real repository (#153
     assert.equal(fs.readFileSync(path.join(work, 'server.js'), 'utf8'), '// v9\n');
   });
 
-  it('an operator edit to .claude/settings.json blocks the update and is kept', () => {
+  it('an operator edit to .claude/settings.json blocks the update UNCONFIRMED, then is backed up and restored once confirmed', () => {
     const edited = json({ permissions: { allow: ['Bash(ls)'] }, hooks: { SessionStart: [OPERATOR_HOOK, TC_HOOK] } });
-    fs.writeFileSync(path.join(work, '.claude', 'settings.json'), edited);
+    const settings = path.join(work, '.claude', 'settings.json');
+    fs.writeFileSync(settings, edited);
+
+    const refused = applier.applyUpdate();
+    assert.equal(refused.code, 'dirty-tree');
+    assert.deepEqual(refused.dirty, { discardable: [], realWork: ['.claude/settings.json'], carried: [] });
+    assert.equal(fs.readFileSync(settings, 'utf8'), edited);
+
     const r = applier.applyUpdate({ discardDirty: true });
-    assert.equal(r.code, 'dirty-tree');
-    assert.deepEqual(r.dirty, { discardable: [], realWork: ['.claude/settings.json'], carried: [] });
-    assert.equal(fs.readFileSync(path.join(work, '.claude', 'settings.json'), 'utf8'), edited);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const backed = r.backedUpRealWork.find((b) => b.path === '.claude/settings.json');
+    assert.ok(backed, JSON.stringify(r.backedUpRealWork));
+    assert.equal(fs.readFileSync(backed.backup, 'utf8'), edited, 'the operator permission edit is recoverable from the backup');
   });
 });
