@@ -116,6 +116,20 @@ describe('validateFleetSpec — schema validation (#3115)', () => {
     assert.ok(result.errors.some((e) => e.path === 'seatGroups.Builder' && /min.*max/.test(e.message)));
   });
 
+  it('rejects a seatGroups default outside its own min/max range (PRR-A R1 BLOCKING 2a)', () => {
+    const tooHigh = validSpec();
+    tooHigh.seatGroups = { Builder: { min: 2, max: 4, default: 10 } };
+    assert.ok(spec.validateFleetSpec(tooHigh).errors.some((e) => e.path === 'seatGroups.Builder.default'));
+
+    const tooLow = validSpec();
+    tooLow.seatGroups = { Builder: { min: 2, max: 4, default: 0 } };
+    assert.ok(spec.validateFleetSpec(tooLow).errors.some((e) => e.path === 'seatGroups.Builder.default'));
+
+    const inRange = validSpec();
+    inRange.seatGroups = { Builder: { min: 2, max: 4, default: 3 } };
+    assert.equal(spec.validateFleetSpec(inRange).ok, true);
+  });
+
   it('validates every rule field, by name, and leaves severity\'s vocabulary open', () => {
     const s = validSpec();
     s.rules[0].severity = 'whatever-the-fleet-calls-it';
@@ -148,6 +162,30 @@ describe('validateFleetSpec — schema validation (#3115)', () => {
     assert.ok(result.errors.some((e) => e.path === 'sharedDocuments[0].content'));
   });
 
+  it('rejects a path-traversal or absolute sharedDocuments[].filename (PRR-A R1 BLOCKING 1a) — a .fleet.json is an untrusted, community-downloadable artifact', () => {
+    for (const badFilename of ['../../.ssh/authorized_keys', '/etc/passwd', '..\\evil.md', '.git/hooks/pre-commit', 'sub/dir.md', '.hidden']) {
+      const s = validSpec();
+      s.sharedDocuments[0].filename = badFilename;
+      const result = spec.validateFleetSpec(s);
+      assert.equal(result.ok, false, `expected "${badFilename}" to be rejected`);
+      assert.ok(result.errors.some((e) => e.path === 'sharedDocuments[0].filename'), `expected a filename error for "${badFilename}"`);
+    }
+    const ok = validSpec();
+    ok.sharedDocuments[0].filename = 'LANE_QUEUE.md';
+    assert.equal(spec.validateFleetSpec(ok).ok, true);
+  });
+
+  it('rejects a non-http(s) metadata.homepageUrl (PRR-A R1 BLOCKING 1b)', () => {
+    for (const badUrl of ['javascript:alert(1)', 'data:text/html,<script>', 'ftp://x.example', '']) {
+      const s = validSpec();
+      s.metadata.homepageUrl = badUrl;
+      assert.ok(spec.validateFleetSpec(s).errors.some((e) => e.path === 'metadata.homepageUrl'), `expected "${badUrl}" to be rejected`);
+    }
+    const ok = validSpec();
+    ok.metadata.homepageUrl = 'http://x.example/path';
+    assert.equal(spec.validateFleetSpec(ok).ok, true);
+  });
+
   it('reports every problem in one pass, not just the first', () => {
     const result = spec.validateFleetSpec({ schemaVersion: 'wrong' });
     assert.ok(result.errors.length >= 4, `expected several errors at once, got ${result.errors.length}`);
@@ -169,6 +207,13 @@ describe('_sanitize / exportFleetSpec — path and secret redaction (#3115)', ()
 
   it('never redacts an ordinary string with no path or secret in it', () => {
     assert.equal(spec._sanitize('just a normal sentence'), 'just a normal sentence');
+  });
+
+  it('redacts an inline secret/token VALUE inside a string, even with no telling key name (PRR-A R1 WARNING 1)', () => {
+    assert.equal(spec._sanitize('my anthropic key is sk-ant-abc123def456ghijklmno, keep it secret'), 'my anthropic key is <token-redacted>, keep it secret');
+    assert.equal(spec._sanitize('token: ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'), 'token: <token-redacted>');
+    assert.equal(spec._sanitize('Authorization: Bearer abcdef0123456789'), 'Authorization: <token-redacted>');
+    assert.equal(spec._sanitize('no secret here'), 'no secret here');
   });
 
   it('sanitizes recursively through arrays and nested objects', () => {
@@ -221,6 +266,13 @@ describe('previewFleetSpecImport — dry-run preview (#3115)', () => {
     assert.equal(spec.previewFleetSpecImport(s).preview.charterSummary, null);
   });
 
+  it('the preview\'s metadata is a copy — mutating it must never reach the input spec', () => {
+    const input = validSpec();
+    const result = spec.previewFleetSpecImport(input);
+    result.preview.metadata.tags.push('MUTATED');
+    assert.deepEqual(input.metadata.tags, ['a']);
+  });
+
   it('refuses to preview an invalid spec', () => {
     const result = spec.previewFleetSpecImport({ seats: [] });
     assert.equal(result.ok, false);
@@ -248,6 +300,24 @@ describe('applyFleetSpecImport — provisioning plan (#3115)', () => {
     const s = validSpec();
     s.charterTemplate = null;
     assert.equal(spec.applyFleetSpecImport(s).plan.charterTemplate, null);
+  });
+
+  it('deep-copies every nested array/object, never sharing a NESTED reference with the input spec (PRR-A R1 BLOCKING 2b)', () => {
+    const input = validSpec();
+    input.seatGroups = { Builder: { min: 1, max: 3, default: 2 } };
+    const result = spec.applyFleetSpecImport(input);
+
+    result.plan.seats[1].fallbackEngines.push('MUTATED');
+    assert.deepEqual(input.seats[1].fallbackEngines, ['claude'], 'mutating a plan seat\'s nested array must never reach the input spec');
+
+    result.plan.metadata.tags.push('MUTATED');
+    assert.deepEqual(input.metadata.tags, ['a'], 'mutating the plan\'s metadata.tags must never reach the input spec');
+
+    result.plan.charterTemplate.successCriteria.push('MUTATED');
+    assert.deepEqual(input.charterTemplate.successCriteria, ['done'], 'mutating the plan\'s charter must never reach the input spec');
+
+    result.plan.seatGroups.Builder.default = 999;
+    assert.equal(input.seatGroups.Builder.default, 2, 'mutating the plan\'s seatGroups must never reach the input spec');
   });
 
   it('refuses to build a plan from an invalid spec', () => {
@@ -291,9 +361,26 @@ describe('BUNDLED_FLEET_SPECS — the two flagship reference templates (#3115)',
     }
   });
 
-  it('bundled specs are frozen — read-only, never mutated by a caller', () => {
+  it('bundled specs are DEEPLY frozen — every nested array/object too, not just the top level (PRR-A R1 BLOCKING 2b)', () => {
     assert.ok(Object.isFrozen(spec.BUNDLED_FLEET_SPECS));
-    for (const bundled of Object.values(spec.BUNDLED_FLEET_SPECS)) assert.ok(Object.isFrozen(bundled));
+    for (const bundled of Object.values(spec.BUNDLED_FLEET_SPECS)) {
+      assert.ok(Object.isFrozen(bundled));
+      assert.ok(Object.isFrozen(bundled.seats), 'the seats ARRAY itself must be frozen');
+      assert.throws(() => bundled.seats.push({ evil: true }), TypeError, 'pushing to a frozen array must throw, not silently no-op');
+      for (const seat of bundled.seats) {
+        assert.ok(Object.isFrozen(seat), `seat ${seat.seatId} must be frozen`);
+        if (seat.fallbackEngines) assert.ok(Object.isFrozen(seat.fallbackEngines), `seat ${seat.seatId}.fallbackEngines must be frozen`);
+      }
+      assert.ok(Object.isFrozen(bundled.metadata) && Object.isFrozen(bundled.metadata.tags));
+      assert.ok(Object.isFrozen(bundled.rules));
+      for (const rule of bundled.rules) assert.ok(Object.isFrozen(rule));
+      if (bundled.charterTemplate) {
+        assert.ok(Object.isFrozen(bundled.charterTemplate));
+        assert.ok(Object.isFrozen(bundled.charterTemplate.successCriteria));
+      }
+      assert.ok(Object.isFrozen(bundled.sharedDocuments));
+      for (const doc of bundled.sharedDocuments) assert.ok(Object.isFrozen(doc));
+    }
   });
 
   it('a bundled spec can round-trip through previewFleetSpecImport and applyFleetSpecImport', () => {
