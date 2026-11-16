@@ -3882,7 +3882,30 @@ html[data-theme="light"] .tc-bg-watermark img {
   padding: 6px 10px;
   border-radius: 4px;
 }
+/* #3117: docked at the leading edge of .dash-bar (dockDrawerToggle in
+   public/v6-shell.js); visible only once the mobile media query below
+   turns it on. A compact icon button, not a full-width native bar —
+   still the project's own 44px touch-target floor (#823), never a
+   smaller contextual override of the `.btn` this element also carries. */
 .v6-shell-drawer-toggle {
+  display: none;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1em;
+}
+/* #3117: the drawer's own backdrop and close button, mobile-only (both
+   stay out of the way entirely above 760px, guarded by the drawer never
+   rendering `.is-open` markup worth a backdrop at that width in practice,
+   and by the drawer's own position reverting to static there). */
+.v6-shell-drawer-backdrop {
+  display: none;
+}
+.v6-shell-drawer-close {
   display: none;
 }
 .v6-shell-sidebar {
@@ -4106,7 +4129,7 @@ html[data-theme="light"] .tc-bg-watermark img {
     grid-template-columns: 1fr;
   }
   .v6-shell-drawer-toggle {
-    display: inline-block;
+    display: inline-flex;
   }
   .v6-shell-sidebar {
     grid-column: 1;
@@ -4114,8 +4137,40 @@ html[data-theme="light"] .tc-bg-watermark img {
     display: none;
     border-right: none;
   }
+  /* #3117: a proper slide-over drawer, not static in-flow content — it
+     used to push the whole chat view off the bottom of the screen. */
   .v6-shell-sidebar.is-open {
     display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(84vw, 320px);
+    z-index: var(--z-drawer, 300);
+    background: var(--card-bg, #0d0d0d);
+    border-right: 1.5px solid var(--v6-outline, #3d444d);
+    overflow-y: auto;
+    padding: calc(env(safe-area-inset-top, 0px) + 12px) 12px 24px;
+    max-height: none;
+  }
+  .v6-shell-drawer-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-drawer-backdrop, 290);
+    background: rgba(0, 0, 0, 0.5);
+  }
+  .v6-shell-drawer-close {
+    display: inline-flex;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1em;
+    margin-bottom: 8px;
   }
   .v6-shell-view,
   .v6-telemetry-header,
@@ -4733,6 +4788,111 @@ p.v6-history-secret {
   .v6-chat-composer-actions {
     flex-direction: row;
     justify-content: space-between;
+  }
+}
+
+/* #3117: Galaxy Fold / medium-foldable widths — one clean 2-tier .dash-bar
+   instead of brand + chat-identity + chat-actions + dash-actions each
+   wrapping to their own left-aligned row and leaving the right half empty.
+   `order` (not DOM order, which dockChatHeader still controls) puts
+   .dash-actions beside .dash-brand on tier 1, and the chat header — whose
+   OWN CSS already space-betweens its identity and actions — alone on tier 2. */
+@media (min-width: 761px) and (max-width: 1180px) {
+  body.v6-shell-active .dash-bar {
+    justify-content: space-between;
+  }
+  body.v6-shell-active .dash-bar > .dash-brand {
+    order: 0;
+  }
+  body.v6-shell-active .dash-bar > .dash-actions {
+    order: 1;
+    margin-left: auto;
+  }
+  body.v6-shell-active .dash-bar > .v6-chat-header {
+    order: 2;
+    flex: 1 1 100%;
+  }
+  body.v6-shell-active .dash-bar .v6-chat-version-badge,
+  body.v6-shell-active .dash-bar .v6-chat-git-badge {
+    max-width: 18ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+    vertical-align: bottom;
+  }
+  /* #3117: tighten the sidebar on medium widths so the main pane keeps
+     most of a Galaxy Fold's width. */
+  .v6-shell-sidebar {
+    width: 220px;
+    padding-left: 8px;
+  }
+  .v6-shell-member-link,
+  .v6-shell-project,
+  .v6-shell-fleet {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* #3117: iPhone — the whole top chrome in at most 2 compact rows instead
+   of 8-9. Row 1 is .dash-brand + the (now icon-sized) .dash-actions; row 2
+   is the chat header alone, itself shrunk to one tight strip. */
+@media (max-width: 760px) {
+  body.v6-shell-active .dash-bar {
+    align-items: center;
+    row-gap: 4px;
+  }
+  body.v6-shell-active .dash-bar > .dash-brand {
+    order: 0;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  body.v6-shell-active .dash-bar > .dash-actions {
+    order: 1;
+    flex: 0 0 auto;
+    gap: 4px;
+  }
+  body.v6-shell-active .dash-bar > .dash-actions .dash-action,
+  body.v6-shell-active .dash-bar > .dash-actions button {
+    padding: 4px 8px;
+    font-size: 0.85em;
+  }
+  body.v6-shell-active .dash-bar > .v6-chat-header {
+    order: 2;
+    flex: 1 1 100%;
+    margin-top: 2px;
+    min-height: 34px;
+    gap: 4px 6px;
+  }
+  body.v6-shell-active .dash-bar .v6-chat-identity {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  body.v6-shell-active .dash-bar .v6-chat-version-badge,
+  body.v6-shell-active .dash-bar .v6-chat-git-badge {
+    max-width: 14ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+    vertical-align: bottom;
+  }
+  body.v6-shell-active .dash-bar .v6-chat-actions {
+    flex: 0 0 auto;
+    margin-left: auto;
+    gap: 4px;
+  }
+  /* #823: the project's own 44px touch-target floor — never a smaller
+     contextual override of `.btn` itself, even to fit a tighter mobile row. */
+  body.v6-shell-active .dash-bar .v6-chat-icon-btn,
+  body.v6-shell-active .dash-bar .v6-chat-actions .btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
   }
 }
 
