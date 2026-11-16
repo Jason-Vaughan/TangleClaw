@@ -2295,9 +2295,10 @@ describe('chat composer attachment markup (#3053)', () => {
   const v = (chat) => ({ project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [],
     chat: Object.assign({ status: 'active' }, chat || {}) });
 
-  it('offers an Attach button and a hidden multi-file input inside the composer', () => {
+  it('offers an Attach button (a compact chip pinned in the input wrapper, #3106) and a hidden multi-file input inside the composer', () => {
     const html = G.tcV6ConversationViewMarkup(v());
-    assert.match(html, /<button type="button" id="v6ChatAttachBtn" class="btn btn-secondary btn-small v6-chat-attach-btn"[^>]*>📎 Attach<\/button>/);
+    assert.match(html, /<div id="v6ChatInputWrap" class="v6-chat-input-wrap">\s*<textarea id="v6ChatInput"/);
+    assert.match(html, /<button type="button" id="v6ChatAttachBtn" class="v6-chat-attach-btn"[^>]*><span aria-hidden="true">📎<\/span><\/button>/);
     assert.match(html, /<input type="file" id="v6ChatFileInput" class="v6-chat-file-input" multiple hidden>/);
   });
 
@@ -3704,6 +3705,44 @@ describe('higher-contrast outlines and surfaces in the chat window (#3068)', () 
   });
 });
 
+describe('composer tightening and two-way resize (#3106)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  const G = loadV6Shell();
+
+  it('removes an idle Waiting-on / activity slot from the flex-column gap instead of leaving it empty', () => {
+    assert.match(css, /\.v6-chat-question:not\(\.is-asking\),\s*\.v6-waiting-on-panel:not\(\.has-items\),\s*\.v6-waiting-on-section:not\(\.has-items\) \{\s*display: none;\s*\}/);
+    assert.match(css, /\.v6-chat-activity:not\(\.is-busy\) \{\s*display: none;\s*\}/);
+  });
+
+  it('pins the attach chip to the input wrapper\'s top-right corner, over the textarea rather than beside it', () => {
+    assert.match(css, /\.v6-chat-input-wrap \{\s*position: relative;\s*flex: 1;\s*min-width: 0;\s*\}/);
+    assert.match(css, /\.v6-chat-attach-btn \{\s*position: absolute;\s*top: 6px;\s*right: 6px;/);
+  });
+
+  it('gives the stream a resize floor min-height never overrides a smaller max-height', () => {
+    assert.match(css, /\.v6-chat-stream \{\s*max-height: 55vh;[\s\S]*?min-height: 120px;/);
+  });
+
+  it('tcV6CoupledStreamMaxHeight: unchanged or shrunk input leaves the stream at its default', () => {
+    assert.equal(G.tcV6CoupledStreamMaxHeight(64, 64), '');
+    assert.equal(G.tcV6CoupledStreamMaxHeight(40, 64), '');
+  });
+
+  it('tcV6CoupledStreamMaxHeight: a taller input shrinks the stream by exactly the growth', () => {
+    assert.equal(G.tcV6CoupledStreamMaxHeight(140, 64), 'calc(55vh - 76px)');
+  });
+
+  it('tcV6CoupledInputHeight: the other direction — a stream dragged taller than its own baseline snaps the input back to its resting height', () => {
+    assert.equal(G.tcV6CoupledInputHeight(300, 300, 64), '', 'unchanged stream leaves the input alone');
+    assert.equal(G.tcV6CoupledInputHeight(250, 300, 64), '', 'a shrunk stream leaves the input alone too');
+    assert.equal(G.tcV6CoupledInputHeight(400, 300, 64), '64px');
+  });
+
+  it('gives the stream its own resize handle, the other half of the two-way coupling', () => {
+    assert.match(css, /\.v6-chat-stream \{[\s\S]*?resize: vertical;/);
+  });
+});
+
 describe('a remembered fleet that is gone does not trap the picker (#3068, cumulative review)', () => {
   it('shows "Fleet not found", and All Fleets then brings the whole tree back', () => {
     const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['gone-fleet']) });
@@ -4525,6 +4564,145 @@ describe('the Waiting on you queue (#3079)', () => {
     const q = m.doc.getElementById('v6ChatQuestion');
     assert.equal(q.innerHTML, '');
     assert.equal(q.className, 'v6-chat-question');
+  });
+});
+
+describe('the unified 3-category Waiting-on panel (#3105)', () => {
+  const G = loadV6Shell();
+
+  describe('tcV6ExtractCliGates', () => {
+    it('detects a folder-trust prompt, nearest line first', () => {
+      const out = G.tcV6ExtractCliGates(['some earlier output', 'Do you trust the files in this folder?']);
+      assert.deepEqual([out.kind, out.text], ['trust', 'Do you trust the files in this folder?']);
+      assert.deepEqual(plain(out.options.map((o) => o.key)), ['y', 'n']);
+    });
+
+    it('detects a tool/bash permission prompt and a (y/n)-style line', () => {
+      assert.equal(G.tcV6ExtractCliGates(['Do you want to proceed?']).kind, 'permission');
+      assert.equal(G.tcV6ExtractCliGates(['Run command?']).kind, 'permission');
+      assert.equal(G.tcV6ExtractCliGates(['Apply this diff? (y/n)']).kind, 'permission');
+      assert.deepEqual(plain(G.tcV6ExtractCliGates(['Allow once?']).options.map((o) => o.key)), ['1', '2', '3']);
+    });
+
+    it('detects a numbered CLI selector menu by its first option', () => {
+      const out = G.tcV6ExtractCliGates(['❯ 1. Yes, allow', '  2. No']);
+      assert.equal(out.kind, 'selector');
+    });
+
+    it('returns null with no gate line, and ignores blank lines while scanning backward', () => {
+      assert.equal(G.tcV6ExtractCliGates(['', '  ', 'just a normal reply']), null);
+      assert.equal(G.tcV6ExtractCliGates(null), null);
+    });
+  });
+
+  describe('tcV6ExtractMultiChoice', () => {
+    it('reads 1-4 sequential numbered choices and the question line before them', () => {
+      const out = G.tcV6ExtractMultiChoice('Which approach?\n1. Branch from main\n2. Branch from the sprint branch\n3. Ask the Architect');
+      assert.deepEqual(plain(out), { question: 'Which approach?', choices: ['Branch from main', 'Branch from the sprint branch', 'Ask the Architect'] });
+    });
+
+    it('requires at least 2 choices in sequence starting at 1', () => {
+      assert.equal(G.tcV6ExtractMultiChoice('Only one option:\n1. Do it'), null);
+      assert.equal(G.tcV6ExtractMultiChoice('Mislabeled:\n2. Skip to two\n3. Three'), null);
+      assert.equal(G.tcV6ExtractMultiChoice(''), null);
+    });
+  });
+
+  describe('tcV6ExtractOperatorTodo', () => {
+    it('collects imperative items under each named header, stopping at a stop marker', () => {
+      const text = 'All done.\nYOUR TURN:\n1. Review the PR.\n2. Merge it.\n---\nSTATE: clean';
+      assert.deepEqual(plain(G.tcV6ExtractOperatorTodo(text)), ['Review the PR.', 'Merge it.']);
+    });
+
+    it('recognizes every named header and every stop marker', () => {
+      for (const header of ['Next step:', 'Next steps:', 'Your ToDo:', 'Action required:', 'Operator action:']) {
+        assert.deepEqual(plain(G.tcV6ExtractOperatorTodo(`${header}\n- Do the thing.`)), ['Do the thing.']);
+      }
+      assert.deepEqual(plain(G.tcV6ExtractOperatorTodo('YOUR TURN:\n- Do X.\n※ recap: done')), ['Do X.']);
+      assert.deepEqual(plain(G.tcV6ExtractOperatorTodo('YOUR TURN:\n- Do X.\nSAFE TO CLEAR: yes')), ['Do X.']);
+    });
+
+    it('ignores a line with no header, and a non-imperative line with no trailing period', () => {
+      assert.deepEqual(plain(G.tcV6ExtractOperatorTodo('No header here.\n- Do X.')), []);
+      assert.deepEqual(plain(G.tcV6ExtractOperatorTodo('YOUR TURN:\n- no period here')), []);
+    });
+  });
+
+  describe('tcV6OpenQueuedPrompts', () => {
+    it('lists queued prompts, numbering by position', () => {
+      const out = G.tcV6OpenQueuedPrompts([{ id: 'a', text: 'one' }, { id: 'b', text: 'two' }], null);
+      assert.deepEqual(plain(out), [{ id: 'a', text: 'one' }, { id: 'b', text: 'two' }]);
+    });
+
+    it('auto-clears a queued prompt once its text is already pending/sent', () => {
+      const out = G.tcV6OpenQueuedPrompts([{ id: 'a', text: 'one' }, { id: 'b', text: 'two' }], [{ text: 'one' }]);
+      assert.deepEqual(plain(out).map((p) => p.text), ['two']);
+    });
+  });
+
+  describe('tcV6WaitingOnMarkup via tcV6ConversationViewMarkup', () => {
+    const v = (chat) => ({ project: { id: 1, name: 'P' }, sessionId: 1, events: [], chat: Object.assign({ status: 'active', members: [] }, chat || {}) });
+
+    it('renders nothing visible (no has-items anywhere) when all 3 categories are empty', () => {
+      const html = G.tcV6ConversationViewMarkup(v({ live: { turns: [] } }));
+      assert.match(html, /<div id="v6ChatWaitingOn" class="v6-waiting-on-panel">/);
+      assert.doesNotMatch(html, /has-items/);
+      assert.match(html, /<div id="v6ChatQuestion" class="v6-chat-question" role="status"/, '#v6ChatQuestion still exists for #3079 direct lookups');
+    });
+
+    it('merges a CLI gate, a multi-choice question and a direct question under one YOU (N) header', () => {
+      const html = G.tcV6ConversationViewMarkup(v({
+        live: { turns: [{ role: 'assistant', text: 'Pick one:\n1. A\n2. B' }], rawLines: ['Do you want to proceed?'], questions: ['Also, is this urgent?'] }
+      }));
+      assert.match(html, /Waiting on: YOU \(<span id="v6ChatWaitingOnYouCount">3<\/span>\)/);
+      assert.match(html, /class="v6-chat-gate-card"><span class="v6-chat-question-text">Do you want to proceed\?/);
+      assert.match(html, /<button type="button" class="v6-chat-gate-action" data-gate-key="1">1 \/ Allow<\/button>/);
+      assert.match(html, /class="v6-chat-choice-card"><span class="v6-chat-question-text">Pick one:<\/span>/);
+      assert.match(html, /data-choice-key="1"[^>]*>1<\/button>/);
+      assert.match(html, /data-choice-key="other">5 \/ Other<\/button>/);
+      assert.match(html, /Also, is this urgent\?/);
+    });
+
+    it('shows a Your ToDo section with numbering and a Clear button once it has more than one item', () => {
+      const html = G.tcV6ConversationViewMarkup(v({
+        live: { turns: [{ role: 'assistant', text: 'YOUR TURN:\n1. Review the PR.\n2. Merge it.' }] }
+      }));
+      assert.match(html, /Waiting on: Your ToDo \(2\)/);
+      assert.match(html, /<ol id="v6ChatTodo"[^>]*><li><span class="v6-chat-question-badge" aria-hidden="true">\(1\)<\/span> Review the PR\.<\/li>/);
+      assert.match(html, /<button type="button" id="v6WaitingOnTodoClear"/);
+    });
+
+    it('shows an AI section with Force and dismiss for each queued prompt', () => {
+      const html = G.tcV6ConversationViewMarkup(v({ live: { turns: [] }, queuedPrompts: [{ id: 'q1', text: 'follow up' }] }));
+      assert.match(html, /Waiting on: AI \(1\)/);
+      assert.match(html, /<span class="v6-chat-question-text">follow up<\/span>/);
+      assert.match(html, /class="v6-waiting-on-ai-force" data-id="q1"/);
+      assert.match(html, /class="v6-waiting-on-ai-dismiss" data-id="q1"/);
+    });
+
+    it('a Clear on Your ToDo hides the same still-latest list, through the shell controller', () => {
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+      const live = { turns: [{ role: 'assistant', text: 'YOUR TURN:\n1. Review the PR.\n2. Merge it.' }] };
+      shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'P' }, sessionId: 1, events: [], chat: { status: 'active', members: [], live } } });
+      // This mini-dom's innerHTML parsing is flat (no nesting), so the
+      // markup STRING is what a fresh/full render must be asserted
+      // against; "Review the PR." legitimately also appears in the plain
+      // chat bubble for this same reply, so the check is scoped to
+      // #v6ChatTodo's own `<ol>` tag, not the page as a whole.
+      const todoOl = () => (/<ol id="v6ChatTodo"[^>]*>([\s\S]*?)<\/ol>/.exec(root.innerHTML) || [])[1];
+      assert.match(todoOl(), /Review the PR\./);
+      doc.getElementById('v6WaitingOnTodoClear').dispatch('click');
+      assert.equal(todoOl(), '', 'Clear emptied the <ol> on the very next full render');
+      // The same still-latest reply stays cleared through a poll-time
+      // targeted repaint too (#v6ChatTodo's own node is live-painted here,
+      // not re-parsed, so reading it back directly is reliable now).
+      shell.setLive({ peek: null, live });
+      assert.equal(doc.getElementById('v6ChatTodo').innerHTML, '');
+    });
   });
 });
 
@@ -6486,6 +6664,17 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
     // A live reading wins over a calibration on file, even a more hopeful one.
     const both = model(windows(), { sessions: [{ engine: 'claude', weeklyRemainingPct: 3 }] });
     assert.deepEqual([both.engines[0].remainingPct, both.engines[0].source, both.engines[0].state], [3, 'live', 'critical']);
+  });
+
+  it('falls back to live contextRemainingPct when neither a pane reading nor a calibration answers (#3113)', () => {
+    const w = windows({ calibration: { claude: null, codex: null } });
+    const m = model(w, { sessions: [{ engine: 'claude', contextRemainingPct: 18 }, { engine: 'claude', contextRemainingPct: 60 }] });
+    assert.deepEqual([m.engines[0].remainingPct, m.engines[0].source], [18, 'context']);
+    // A real pane/calibration reading still wins over context when both exist.
+    const both = model(w, { sessions: [{ engine: 'codex', weeklyRemainingPct: 9, contextRemainingPct: 50 }] });
+    assert.deepEqual([both.engines[1].remainingPct, both.engines[1].source], [9, 'live']);
+    // No pane reading, no calibration, no context: still unknown.
+    assert.equal(model(w, { sessions: [{ engine: 'claude' }] }).engines[0].source, 'none');
   });
 
   it('colours by what is left: above 25 healthy, 25 down to 6 warning, 5 or less critical', () => {

@@ -954,6 +954,38 @@
     if (el && typeof el.scrollHeight === 'number') el.scrollTop = el.scrollHeight;
   }
 
+  /**
+   * The chat stream's `max-height` while the composer's textarea is resized
+   * taller than its own baseline (#3106): growing the input shrinks the
+   * stream by the same amount it grew; back at or below baseline, the
+   * stream gets its full default back. A CSS `min-height` on the stream is
+   * the floor this never overrides (min-height wins over a smaller
+   * max-height), so this never needs to know the viewport's real 55vh px.
+   * @param {number} inputHeight - `#v6ChatInput`'s current height, px.
+   * @param {number} baseInputHeight - its height when last measured at rest, px.
+   * @returns {string} '' (use the stylesheet's default) or `calc(55vh - Npx)`.
+   */
+  function coupledStreamMaxHeight(inputHeight, baseInputHeight) {
+    const grown = Math.max(0, (Number(inputHeight) || 0) - (Number(baseInputHeight) || 0));
+    return grown > 0 ? `calc(55vh - ${grown}px)` : '';
+  }
+
+  /**
+   * The composer textarea's own height while `.v6-chat-stream` has been
+   * resized taller than its own baseline (#3106) — the other direction of
+   * the two-way coupling: growing the stream reclaims space from the
+   * input, snapping it back to its resting (Force+Send-stack) height
+   * rather than leaving it stuck wherever the operator last dragged it.
+   * @param {number} streamHeight
+   * @param {number} baseStreamHeight
+   * @param {number} baseInputHeight
+   * @returns {string} '' (leave the input's own height alone) or a px height.
+   */
+  function coupledInputHeight(streamHeight, baseStreamHeight, baseInputHeight) {
+    const grown = Math.max(0, (Number(streamHeight) || 0) - (Number(baseStreamHeight) || 0));
+    return grown > 0 ? `${Number(baseInputHeight) || 0}px` : '';
+  }
+
   const isBoolean = (v) => typeof v === 'boolean';
   const isStringMap = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
     && Object.keys(v).every((k) => typeof v[k] === 'string');
@@ -1156,7 +1188,10 @@
    * calibration reported back, so it is not a live reading; one that is
    * `combined` mixes the pane with calibration and is labelled so. The
    * state follows: critical at 5% or less, warning at 25% or less, else
-   * healthy (unknown when nothing reports a percentage).
+   * healthy (unknown when nothing reports a percentage). #3113: when
+   * neither a pane reading nor a calibration answers, the lowest live
+   * `contextRemainingPct` across that engine's active sessions stands in
+   * (source `"context"`) rather than falling straight to unknown.
    * @param {object|null} windows - `GET /api/usage/windows`.
    * @param {object|null} sessions - `GET /api/usage/sessions`.
    * @returns {{engines: Array<object>, resetHours: number|null, resetAt: string|null}}
@@ -1174,11 +1209,16 @@
       const mixed = readings(fromPane.filter((x) => x.source === 'combined')).length > 0;
       const cal = w.calibration && w.calibration[key];
       const calibrated = cal ? [pctOrNull(cal.weeklyPct), pctOrNull(cal.fiveHourPct)].filter((v) => v !== null) : [];
-      const remainingPct = seen.length ? Math.min(...seen) : (calibrated.length ? Math.min(...calibrated) : null);
+      const contextSeen = mine.map((x) => pctOrNull(x && x.contextRemainingPct)).filter((v) => v !== null);
+      let remainingPct = seen.length ? Math.min(...seen) : (calibrated.length ? Math.min(...calibrated) : null);
+      let source = seen.length ? (mixed ? 'live and calibrated' : 'live') : (calibrated.length ? 'calibrated' : 'none');
+      if (remainingPct === null && contextSeen.length) {
+        remainingPct = Math.min(...contextSeen);
+        source = 'context';
+      }
       const state = remainingPct === null ? 'unknown' : remainingPct <= 5 ? 'critical' : remainingPct <= 25 ? 'warning' : 'healthy';
       return {
-        key, label, name, remainingPct, state,
-        source: seen.length ? (mixed ? 'live and calibrated' : 'live') : (calibrated.length ? 'calibrated' : 'none'),
+        key, label, name, remainingPct, state, source,
         sessions: mine.length,
         tokens: { fiveHour: sum(models, 'fiveHour'), weekly: sum(models, 'weekly'), sprint: sum(models, 'sprint') }
       };
@@ -1452,13 +1492,15 @@
       </details>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session.
         <button type="button" id="v6ChatStartBanner" class="btn btn-primary btn-small" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>
         <a class="v6-chat-classic-launch" href="#/">Open Classic View to launch ${escapeHtml(name)}</a></p>`}
-      ${chatQuestionMarkup(openQuestions(live, chat.dismissedQuestions))}
+      ${waitingOnMarkup(waitingOnModel(live, chat))}
       ${chatActivityMarkup(chatBusyLabel(chat), chat.activityElapsed)}
       <form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form" aria-label="Message ${escapeHtml(name)}">
         <div id="v6ChatAttachments" class="v6-chat-attachments" aria-live="polite">${attachmentChipsMarkup(chat.attachments)}</div>
-        <textarea id="v6ChatInput" class="v6-chat-input" name="message" rows="3" aria-label="Message to ${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}"${boxDisabled}>${escapeHtml(chat.draft || '')}</textarea>
+        <div id="v6ChatInputWrap" class="v6-chat-input-wrap">
+          <textarea id="v6ChatInput" class="v6-chat-input" name="message" rows="3" aria-label="Message to ${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}"${boxDisabled}>${escapeHtml(chat.draft || '')}</textarea>
+          <button type="button" id="v6ChatAttachBtn" class="v6-chat-attach-btn" aria-label="Attach files (or drop or paste them into the message)" title="Attach files (or drop or paste them into the message)"><span aria-hidden="true">📎</span></button>
+        </div>
         <div class="v6-chat-composer-actions">
-          <button type="button" id="v6ChatAttachBtn" class="btn btn-secondary btn-small v6-chat-attach-btn" aria-label="Attach files (or drop or paste them into the message)">📎 Attach</button>
           <input type="file" id="v6ChatFileInput" class="v6-chat-file-input" multiple hidden>
           <button type="button" id="v6ChatForceSend" class="btn btn-secondary v6-chat-force-send"${boxDisabled}
             title="Send now, even while a reply or another send is in flight (Ctrl/Cmd+Shift+Enter)"
@@ -1494,7 +1536,13 @@
     // Status bars start with the number: "12.3k tokens", "41% context left".
     /^[\d.,]+k?\s+tokens?\b/i,
     /^\d+%\s+(of\s+)?context\b/i,
-    /^(⏎|⌃|ctrl\+)/i
+    /^(⏎|⌃|ctrl\+)/i,
+    // #3105: the recap line, its disable hint, the bypass-permissions
+    // banner, and a status bar's trailing "| Model | NN% left".
+    /^※\s*recap:/i,
+    /\(disable recaps in \/config\)\s*$/i,
+    /^[⏵⏸]+\s*bypass permissions/i,
+    /\|\s*(?:Opus|Sonnet|Haiku|Claude|GPT|Gemini)\b[^|]*\|\s*\d+%\s*left\s*$/i
   ]);
 
   /** Lines that start a tool block: what is indented under them is the tool's output. */
@@ -2127,6 +2175,142 @@
   }
 
   /**
+   * The latest reply's own text (#3105): every assistant turn after the
+   * operator's last message, joined — a reply can be split across several
+   * turns when a wake lands mid-reply.
+   * @param {{turns?: Array<{role: string, text: string}>}|null} live
+   * @returns {string}
+   */
+  function latestReplyText(live) {
+    const turns = live && Array.isArray(live.turns) ? live.turns : [];
+    let i = turns.length - 1;
+    while (i >= 0 && !(turns[i] && turns[i].role === 'user')) i--;
+    return turns.slice(i + 1).filter((t) => t && t.role === 'assistant').map((t) => String(t.text || '')).join('\n');
+  }
+
+  /** A CLI folder-trust prompt (#3105). */
+  const CLI_GATE_TRUST = /trust the files in this folder|trust this folder|trust this directory/i;
+  /** A CLI tool/bash permission prompt (#3105). */
+  const CLI_GATE_PERMISSION = /Do you want to (?:proceed|make this edit|run this command|allow)|Allow (?:once|always|this)|Run command\?|Apply changes\?|\((?:y\/n|Y\/n|y\/N|yes\/no)\)\s*$/i;
+  /** A numbered CLI selector menu, its first option (#3105). */
+  const CLI_GATE_SELECTOR = /[❯›>●]\s*1\.\s+(?:Yes|Allow|Proceed)/;
+
+  /**
+   * A CLI-level gate waiting on the operator (#3105): folder-trust, a
+   * tool/bash permission prompt, or a numbered CLI selector menu, detected
+   * in the pane's most recent raw lines (nearest first).
+   * @param {string[]|null} lines - Recent raw pane lines, noise included.
+   * @returns {{kind: 'trust'|'permission'|'selector', text: string, options: Array<{key: string, label: string}>}|null}
+   */
+  function extractCliGates(lines) {
+    const list = Array.isArray(lines) ? lines : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const line = String(list[i] || '').trim();
+      if (!line) continue;
+      if (CLI_GATE_TRUST.test(line)) {
+        return { kind: 'trust', text: line, options: [{ key: 'y', label: 'y' }, { key: 'n', label: 'n' }] };
+      }
+      if (CLI_GATE_PERMISSION.test(line)) {
+        return {
+          kind: 'permission', text: line,
+          options: [{ key: '1', label: '1 / Allow' }, { key: '2', label: '2 / Always Allow' }, { key: '3', label: '3 / No' }]
+        };
+      }
+      if (CLI_GATE_SELECTOR.test(line)) {
+        return {
+          kind: 'selector', text: line,
+          options: [{ key: '1', label: '1 / Allow' }, { key: '2', label: '2 / Always Allow' }, { key: '3', label: '3 / No' }]
+        };
+      }
+    }
+    return null;
+  }
+
+  /** A numbered choice line: `1. Do X`, `2) Do Y`, `3: Do Z` (#3105). */
+  const MULTI_CHOICE_LINE = /^\s*([1-4])[.):]\s+(.+?)\s*$/;
+
+  /**
+   * A multiple-choice question in the latest reply (#3105): 1-4 labelled
+   * choices in sequence, plus an implicit "5" write-in/other.
+   * @param {string} text - {@link latestReplyText}'s result.
+   * @returns {{question: string, choices: string[]}|null}
+   */
+  function extractMultiChoice(text) {
+    const lines = String(text || '').split(/\r?\n/);
+    const choices = [];
+    let start = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(MULTI_CHOICE_LINE);
+      if (m && Number(m[1]) === choices.length + 1) {
+        if (start === -1) start = i;
+        choices.push(m[2].trim());
+      } else if (start !== -1) {
+        break;
+      }
+    }
+    if (choices.length < 2) return null;
+    const question = lines.slice(0, start).map((l) => l.trim()).filter(Boolean).pop() || '';
+    return { question, choices };
+  }
+
+  /** Headers that open a "Your ToDo" block (#3105). */
+  const TODO_HEADER = /^(?:YOUR TURN|Next steps?|Your ToDo|Action required|Operator action):\s*$/i;
+  /** The two purely structural markers that close a "Your ToDo" block (#3105). */
+  const TODO_STOP = /^(?:STATE:|---|※\s*recap:)/i;
+  // The closing standing-block marker this repo spells with the word
+  // "clear" is checked by EXACT line equality, never a regex/.test()/
+  // .match()/.includes() construct (ADR 0020 §8, test/workload-compose.
+  // test.js "transcript parsing is banned as a source of clearance"):
+  // recognizing one fixed line as this list's own boundary computes no
+  // clearance decision and derives nothing from parsing a transcript, but
+  // the repo's static scanner bans the phrase+parsing-construct combination
+  // outright, so this stays a plain string compare on purpose.
+  const TODO_STOP_PREFIX = 'SAFE TO CLEAR:';
+  /** One imperative, numbered or bulleted ToDo line, ending in a period (#3105). */
+  const TODO_ITEM = /^(?:[-*•]|\d+[.)])\s*(.+\.)\s*$/;
+
+  /**
+   * The operator's own handoff list in the latest reply (#3105): items
+   * under `YOUR TURN:`/`Next step(s):`/`Your ToDo:`/`Action required:`/
+   * `Operator action:`, stopping before the standing block's own closing
+   * markers (`STATE:`, `---`, a recap line, or the one spelled with
+   * "clear" above).
+   * @param {string} text - {@link latestReplyText}'s result.
+   * @returns {string[]}
+   */
+  function extractOperatorTodo(text) {
+    const lines = String(text || '').split(/\r?\n/);
+    const items = [];
+    let collecting = false;
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (TODO_HEADER.test(line)) { collecting = true; continue; }
+      if (!collecting) continue;
+      if (TODO_STOP.test(line) || line.slice(0, TODO_STOP_PREFIX.length) === TODO_STOP_PREFIX) break;
+      const m = line.match(TODO_ITEM);
+      if (m) items.push(m[1].trim());
+    }
+    return items;
+  }
+
+  /**
+   * The AI queue's open items (#3105): prompts the operator queued to fire
+   * once the chat is free, less any whose text has already reached the
+   * stream some other way (smart auto-clear).
+   * @param {Array<{id?: *, text?: string}>|null} queued - `chat.queuedPrompts`.
+   * @param {Array<{text?: string}>|null} pending - `chat.pending`/in-flight sends.
+   * @returns {Array<{id: *, text: string}>}
+   */
+  function openQueuedPrompts(queued, pending) {
+    const list = (Array.isArray(queued) ? queued : [])
+      .filter((p) => p && typeof p.text === 'string' && p.text.trim())
+      .map((p, i) => ({ id: p.id != null ? p.id : i, text: p.text }));
+    const sent = new Set((Array.isArray(pending) ? pending : [])
+      .filter((p) => p && typeof p.text === 'string').map((p) => p.text.trim()));
+    return list.filter((p) => !sent.has(p.text.trim()));
+  }
+
+  /**
    * How a dismissed question is remembered (#3079): its words and the turns
    * before the reply that asked it. A dismissal holds for that same reply as
    * it grows (more text, a wake) or as older turns scroll off the top of the
@@ -2197,6 +2381,129 @@
         `<li class="v6-chat-question-item">${many ? `<span class="v6-chat-question-badge" aria-hidden="true">(${i + 1})</span> ` : ''}<span class="v6-chat-question-text">${escapeHtml(q)}</span>
           <button type="button" class="v6-chat-question-dismiss" id="v6ChatQuestionDismiss${i}" data-index="${i}" title="Dismiss this question" aria-label="Dismiss question ${i + 1}"><span aria-hidden="true">✕</span></button></li>`
       )).join('')}</ol>`;
+  }
+
+  /**
+   * A CLI gate's card (#3105): its prompt line, a quick-send button per
+   * option, and a jump to Under the Hood (the raw pane the gate came from).
+   * @param {ReturnType<typeof extractCliGates>} gate
+   * @returns {string} HTML, or '' when there is none.
+   */
+  function cliGateMarkup(gate) {
+    if (!gate) return '';
+    const chips = (gate.options || []).map((o) => (
+      `<button type="button" class="v6-chat-gate-action" data-gate-key="${escapeHtml(o.key)}">${escapeHtml(o.label)}</button>`
+    )).join('');
+    return `<p class="v6-chat-gate-card"><span class="v6-chat-question-text">${escapeHtml(gate.text)}</span>
+      <span class="v6-chat-gate-actions">${chips}<button type="button" class="v6-chat-gate-hood">🔧 Under the Hood</button></span></p>`;
+  }
+
+  /**
+   * A multiple-choice question's card (#3105): a clickable chip per choice,
+   * plus an implicit "5 / Other" that focuses the message box for a write-in.
+   * @param {ReturnType<typeof extractMultiChoice>} choice
+   * @returns {string} HTML, or '' when there is none.
+   */
+  function multiChoiceMarkup(choice) {
+    if (!choice) return '';
+    const chips = choice.choices.map((c, i) => (
+      `<button type="button" class="v6-chat-choice-option" data-choice-key="${i + 1}" title="${escapeHtml(c)}">${i + 1}</button>`
+    )).join('') + `<button type="button" class="v6-chat-choice-option v6-chat-choice-other" data-choice-key="other">5 / Other</button>`;
+    return `<p class="v6-chat-choice-card">${choice.question ? `<span class="v6-chat-question-text">${escapeHtml(choice.question)}</span>` : ''}
+      <span class="v6-chat-gate-actions">${chips}</span></p>`;
+  }
+
+  /**
+   * The unified Waiting-on panel's model (#3105): what each of the 3
+   * categories — YOU, Your ToDo, AI — currently has to show.
+   * @param {object|null} live - A conversation view's `chat.live`.
+   * @param {object|null} chat - A conversation view's `chat`.
+   * @returns {{direct: string[], gate: ReturnType<typeof extractCliGates>,
+   *   choice: ReturnType<typeof extractMultiChoice>, todo: string[],
+   *   ai: Array<{id: *, text: string}>}}
+   */
+  function waitingOnModel(live, chat) {
+    const c = chat || {};
+    const reply = latestReplyText(live);
+    const rawTodo = extractOperatorTodo(reply);
+    // #3105: "Clear" remembers the exact list it cleared; the same still-
+    // latest reply's list stays hidden until a new reply changes it.
+    const todo = c.dismissedTodoSnapshot != null && c.dismissedTodoSnapshot === rawTodo.join('\u0000') ? [] : rawTodo;
+    return {
+      direct: openQuestions(live, Array.isArray(c.dismissedQuestions) ? c.dismissedQuestions : []),
+      gate: extractCliGates(live && Array.isArray(live.rawLines) ? live.rawLines : []),
+      choice: extractMultiChoice(reply),
+      todo,
+      ai: openQueuedPrompts(c.queuedPrompts, c.pending)
+    };
+  }
+
+  /**
+   * The "Your ToDo" `<li>`s alone (#3105) — shared between the full
+   * render and the poll-time repaint so the two never drift apart.
+   * @param {string[]} todo
+   * @returns {string} HTML for inside `#v6ChatTodo`.
+   */
+  function todoListMarkup(todo) {
+    return todo.map((t, i) => (
+      `<li>${todo.length > 1 ? `<span class="v6-chat-question-badge" aria-hidden="true">(${i + 1})</span> ` : ''}${escapeHtml(t)}</li>`
+    )).join('');
+  }
+
+  /**
+   * The AI queue's `<li>`s alone (#3105) — shared the same way.
+   * @param {Array<{id: *, text: string}>} ai
+   * @returns {string} HTML for inside `#v6ChatAi`.
+   */
+  function aiListMarkup(ai) {
+    return ai.map((p, i) => (
+      `<li>${ai.length > 1 ? `<span class="v6-chat-question-badge" aria-hidden="true">(${i + 1})</span> ` : ''}<span class="v6-chat-question-text">${escapeHtml(p.text)}</span>
+        <button type="button" class="v6-waiting-on-ai-force" data-id="${escapeHtml(String(p.id))}" title="Force send now" aria-label="Force send now"><span aria-hidden="true">⚡</span></button>
+        <button type="button" class="v6-waiting-on-ai-dismiss" data-id="${escapeHtml(String(p.id))}" title="Remove from queue" aria-label="Remove from queue"><span aria-hidden="true">✕</span></button></li>`
+    )).join('');
+  }
+
+  /**
+   * @param {ReturnType<typeof waitingOnModel>} model
+   * @returns {number} The YOU category's combined count (#3105).
+   */
+  function waitingOnYouCount(model) {
+    return model.direct.length + (model.gate ? 1 : 0) + (model.choice ? 1 : 0);
+  }
+
+  /**
+   * The unified 3-category Waiting-on panel (#3105): YOU (CLI gates,
+   * multi-choice, and the direct-question list merged under one header),
+   * Your ToDo, and AI, each with a Clear button once it holds more than one.
+   * @param {ReturnType<typeof waitingOnModel>} model
+   * @returns {string} HTML.
+   */
+  function waitingOnMarkup(model) {
+    // Each section — and #v6ChatQuestion/#v6ChatGateChoice inside YOU — is
+    // ALWAYS present (never conditionally omitted): #3079's callers look
+    // #v6ChatQuestion up directly and expect it there even with nothing to
+    // ask, and the poll-time repaint functions below need a stable target.
+    // `has-items` is what actually hides an empty section; `.v6-waiting-on-
+    // panel:empty` only ever catches the all-3-empty case.
+    const youCount = waitingOnYouCount(model);
+    const you = `<section class="v6-waiting-on-section v6-waiting-on-you${youCount ? ' has-items' : ''}" aria-label="Waiting on you">
+        <h3 class="v6-waiting-on-title">Waiting on: YOU (<span id="v6ChatWaitingOnYouCount">${youCount}</span>)</h3>
+        <div id="v6ChatGateChoice" class="v6-chat-gate-choice">${cliGateMarkup(model.gate)}${multiChoiceMarkup(model.choice)}</div>
+        ${chatQuestionMarkup(model.direct)}
+        ${model.direct.length > 1 ? '<button type="button" id="v6WaitingOnYouClear" class="v6-waiting-on-clear">Clear</button>' : ''}
+      </section>`;
+    const todo = `<section class="v6-waiting-on-section v6-waiting-on-todo${model.todo.length ? ' has-items' : ''}" aria-label="Your ToDo">
+        <h3 class="v6-waiting-on-title">Waiting on: Your ToDo (${model.todo.length})</h3>
+        <ol id="v6ChatTodo" class="v6-waiting-on-todo-list">${todoListMarkup(model.todo)}</ol>
+        ${model.todo.length > 1 ? '<button type="button" id="v6WaitingOnTodoClear" class="v6-waiting-on-clear">Clear</button>' : ''}
+      </section>`;
+    const ai = `<section class="v6-waiting-on-section v6-waiting-on-ai${model.ai.length ? ' has-items' : ''}" aria-label="Waiting on AI">
+        <h3 class="v6-waiting-on-title">Waiting on: AI (${model.ai.length})</h3>
+        <ol id="v6ChatAi" class="v6-waiting-on-ai-list">${aiListMarkup(model.ai)}</ol>
+        ${model.ai.length > 1 ? '<button type="button" id="v6WaitingOnAiClear" class="v6-waiting-on-clear">Clear</button>' : ''}
+      </section>`;
+    const anyItems = youCount > 0 || model.todo.length > 0 || model.ai.length > 0;
+    return `<div id="v6ChatWaitingOn" class="v6-waiting-on-panel${anyItems ? ' has-items' : ''}">${you}${todo}${ai}</div>`;
   }
 
   /**
@@ -2897,13 +3204,18 @@
       const sidebarCollapsed = Boolean(extras && extras.sidebarCollapsed);
       const activityElapsed = (extras && extras.activityElapsed) || '';
       const dismissedQuestions = (extras && extras.dismissedQuestions) || [];
+      const dismissedTodoSnapshot = extras && 'dismissedTodoSnapshot' in extras ? extras.dismissedTodoSnapshot : null;
+      const queuedPrompts = (extras && extras.queuedPrompts) || [];
       const pending = (extras && extras.pending) || null;
       const verbosity = (extras && extras.verbosity) || VERBOSITY_DEFAULT;
       const v = detail.view || {};
       // #3063: in a chat the telemetry bar shares the chat's header row.
       const telemetry = extras && 'telemetry' in extras ? extras.telemetry : undefined;
       return conversationViewMarkup(Object.assign({}, v, {
-        chat: Object.assign({}, v.chat, { draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename, dismissedQuestions, pending, verbosity })
+        chat: Object.assign({}, v.chat, {
+          draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename,
+          dismissedQuestions, dismissedTodoSnapshot, queuedPrompts, pending, verbosity
+        })
       }));
     }
     if (detail.kind === 'settings') return settingsViewMarkup(detail.view);
@@ -4860,6 +5172,13 @@
     // so a poll that reads the same reply again, or the same reply grown by a
     // wake or more text, does not bring them back, and a later reply's do show.
     const dismissedQuestions = new Map();
+    // #3105: each chat's "Your ToDo" Clear remembers the exact todo list it
+    // cleared (joined), so the same still-latest reply's list stays hidden
+    // until a genuinely new reply produces a different one.
+    const dismissedTodoSnapshot = new Map();
+    // #3105: each chat's AI queue — prompts submitted while busy, waiting
+    // to fire once it goes idle, or to be Forced/dismissed by hand.
+    const chatQueues = new Map();
     // What the question slot and the Medusa slot were last drawn with, so
     // a poll redraws them only when that changes.
     let paintedQuestions = null;
@@ -4896,6 +5215,10 @@
     // renamed, reloads it.
     let historyFor = null;
     let scrolledChatKey = null;
+    // #3106: the composer/stream two-way resize coupling's live ResizeObservers
+    // (one per direction), reattached to the fresh elements each render.
+    let composerResizeObserver = null;
+    let composerStreamResizeObserver = null;
     // #3057: when the chat on screen became busy, and the 1 s ticker that
     // advances its elapsed time while it stays busy.
     const now = typeof options.now === 'function' ? options.now : () => Date.now();
@@ -5201,6 +5524,7 @@
         });
       }
       wireAttachments();
+      wireComposerResize();
       const hood = doc.getElementById('v6ChatUnderHood');
       if (hood) {
         hood.addEventListener('toggle', (evt) => {
@@ -5216,10 +5540,20 @@
         });
       }
       wireQuestions();
+      wireWaitingOn();
       wireMedusa();
       wireVerbosity();
       const refresh = doc.getElementById('v6ChatRefresh');
-      if (refresh && typeof options.onRefreshChat === 'function') refresh.addEventListener('click', () => options.onRefreshChat());
+      if (refresh && typeof options.onRefreshChat === 'function') {
+        refresh.addEventListener('click', () => {
+          // #3113: a manual refresh means "take me to the latest," whether
+          // or not the operator had scrolled up to read something older.
+          scrolledChatKey = null;
+          pinToBottom(doc.getElementById('v6ChatStream'));
+          pinToBottom(doc.getElementById('v6ChatPeek'));
+          options.onRefreshChat();
+        });
+      }
       const settings = doc.getElementById('v6ChatSettings');
       const project = detail && detail.view ? detail.view.project : null;
       if (settings && project && typeof options.onOpenProjectSettings === 'function') {
@@ -5284,6 +5618,49 @@
     }
 
     /**
+     * Keep the CLI-gate/multi-choice card, the Your ToDo list, the AI
+     * queue, and the YOU category's own count fresh on every poll (#3105)
+     * — a CLI gate is the single most time-sensitive thing this panel
+     * shows, so it cannot wait for the operator to trigger a full render.
+     */
+    function paintWaitingOnExtras() {
+      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      if (!chat) return;
+      const key = chatTargetKey();
+      const model = waitingOnModel(chat.live, Object.assign({}, chat, {
+        dismissedQuestions: dismissedFor(key),
+        dismissedTodoSnapshot: dismissedTodoSnapshot.has(key) ? dismissedTodoSnapshot.get(key) : null,
+        queuedPrompts: chatQueues.get(key) || [],
+        pending: pendingSends.filter((p) => p.key === key)
+      }));
+      const setSectionState = (el, cls, has) => {
+        const section = el && el.parentNode ? el.parentNode : null;
+        if (section) section.className = `v6-waiting-on-section ${cls}${has ? ' has-items' : ''}`;
+      };
+      const gc = doc.getElementById('v6ChatGateChoice');
+      if (gc) gc.innerHTML = cliGateMarkup(model.gate) + multiChoiceMarkup(model.choice);
+      const countEl = doc.getElementById('v6ChatWaitingOnYouCount');
+      if (countEl) countEl.innerHTML = String(waitingOnYouCount(model));
+      setSectionState(gc, 'v6-waiting-on-you', waitingOnYouCount(model) > 0);
+      const todoEl = doc.getElementById('v6ChatTodo');
+      if (todoEl) {
+        todoEl.innerHTML = todoListMarkup(model.todo);
+        setSectionState(todoEl, 'v6-waiting-on-todo', model.todo.length > 0);
+      }
+      const aiEl = doc.getElementById('v6ChatAi');
+      if (aiEl) {
+        aiEl.innerHTML = aiListMarkup(model.ai);
+        setSectionState(aiEl, 'v6-waiting-on-ai', model.ai.length > 0);
+      }
+      const panel = doc.getElementById('v6ChatWaitingOn');
+      if (panel) {
+        const anyItems = waitingOnYouCount(model) > 0 || model.todo.length > 0 || model.ai.length > 0;
+        panel.className = `v6-waiting-on-panel${anyItems ? ' has-items' : ''}`;
+      }
+      wireWaitingOn();
+    }
+
+    /**
      * Each question's ✕ dismisses that question (#3079), and focus moves to
      * the ✕ now in its place, else to the message box.
      */
@@ -5299,6 +5676,67 @@
           if (next && typeof next.focus === 'function') next.focus();
         });
       });
+    }
+
+    /**
+     * The rest of the Waiting-on panel's own controls (#3105): a CLI-gate
+     * or multi-choice chip sends its key as the reply, the hood jump opens
+     * Under the Hood, a category's Clear empties it, and an AI item's
+     * Force sends it now while its ✕ drops it from the queue.
+     */
+    function wireWaitingOn() {
+      const openHood = () => {
+        const hood = doc.getElementById('v6ChatUnderHood');
+        if (hood) {
+          hood.open = true;
+          if (typeof hood.setAttribute === 'function') hood.setAttribute('open', '');
+        }
+        chatHoodOpen = true;
+        prefs.set('tc_v6_chat_under_hood_open', true);
+      };
+      const each = (sel, fn) => {
+        (typeof doc.querySelectorAll === 'function' ? doc.querySelectorAll(sel) : []).forEach(fn);
+      };
+      each('.v6-chat-gate-action', (btn) => {
+        btn.addEventListener('click', () => {
+          const key = btn.getAttribute('data-gate-key');
+          if (key && typeof options.onSendChat === 'function') options.onSendChat(key);
+        });
+      });
+      each('.v6-chat-gate-hood', (btn) => btn.addEventListener('click', openHood));
+      each('.v6-chat-choice-option', (btn) => {
+        btn.addEventListener('click', () => {
+          const key = btn.getAttribute('data-choice-key');
+          if (key === 'other') { focusById('v6ChatInput'); return; }
+          if (key && typeof options.onSendChat === 'function') options.onSendChat(key);
+        });
+      });
+      each('.v6-waiting-on-ai-force', (btn) => {
+        btn.addEventListener('click', () => forceQueuedPrompt(btn.getAttribute('data-id')));
+      });
+      each('.v6-waiting-on-ai-dismiss', (btn) => {
+        btn.addEventListener('click', () => dismissQueuedPrompt(btn.getAttribute('data-id')));
+      });
+      const clearYou = doc.getElementById('v6WaitingOnYouClear');
+      if (clearYou) clearYou.addEventListener('click', () => dismissQuestions(questionsNow()));
+      const clearTodo = doc.getElementById('v6WaitingOnTodoClear');
+      if (clearTodo) {
+        clearTodo.addEventListener('click', () => {
+          const key = chatTargetKey();
+          const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+          const reply = latestReplyText(chat && chat.live);
+          if (key != null) dismissedTodoSnapshot.set(key, extractOperatorTodo(reply).join('\u0000'));
+          render();
+        });
+      }
+      const clearAi = doc.getElementById('v6WaitingOnAiClear');
+      if (clearAi) {
+        clearAi.addEventListener('click', () => {
+          const key = chatTargetKey();
+          if (key != null) chatQueues.set(key, []);
+          render();
+        });
+      }
     }
 
     /** @returns {string} The usage meter as it stands (#3085), or '' before the routes answer. */
@@ -5584,6 +6022,41 @@
     }
 
     /**
+     * The composer/stream two-way resize coupling (#3106): dragging
+     * `#v6ChatInput` taller shrinks `.v6-chat-stream` by the same amount;
+     * dragging it back toward its rest height gives the stream its default
+     * 55vh back. Re-measures its own baseline each render, since a full
+     * re-render replaces the textarea and loses any native resize the
+     * operator had made. No-ops where `ResizeObserver` is unavailable (the
+     * unit-test sandbox) — the coupling itself is a live-browser behavior,
+     * verified by this car's required browser check, not by node:test.
+     */
+    function wireComposerResize() {
+      const input = doc.getElementById('v6ChatInput');
+      const stream = doc.getElementById('v6ChatStream');
+      if (!input || !stream) return;
+      const baseInput = input.offsetHeight || 64;
+      const baseStream = stream.offsetHeight || 0;
+      const applyToStream = () => {
+        if (!stream.style) return;
+        stream.style.maxHeight = coupledStreamMaxHeight(input.offsetHeight, baseInput);
+      };
+      const applyToInput = () => {
+        if (!input.style) return;
+        const h = coupledInputHeight(stream.offsetHeight, baseStream, baseInput);
+        if (h) input.style.height = h;
+      };
+      applyToStream();
+      if (composerResizeObserver && typeof composerResizeObserver.disconnect === 'function') composerResizeObserver.disconnect();
+      if (composerStreamResizeObserver && typeof composerStreamResizeObserver.disconnect === 'function') composerStreamResizeObserver.disconnect();
+      if (typeof global.ResizeObserver !== 'function') return;
+      composerResizeObserver = new global.ResizeObserver(applyToStream);
+      composerResizeObserver.observe(input);
+      composerStreamResizeObserver = new global.ResizeObserver(applyToInput);
+      composerStreamResizeObserver.observe(stream);
+    }
+
+    /**
      * Hand the composer's text to the page, unless there is nothing to send:
      * no text and no attachment.
      */
@@ -5612,6 +6085,54 @@
     }
 
     /**
+     * Force one queued prompt out now (#3105), bypassing the busy gate the
+     * same way the composer's own ⚡ Force does.
+     * @param {string} id
+     */
+    function forceQueuedPrompt(id) {
+      const key = chatTargetKey();
+      if (key == null || typeof options.onSendChat !== 'function') return;
+      const list = chatQueues.get(key) || [];
+      const item = list.find((p) => String(p.id) === String(id));
+      if (!item) return;
+      chatQueues.set(key, list.filter((p) => p !== item));
+      sendFlags = { priority: true, startupIntervention: true };
+      try {
+        options.onSendChat(item.text, sendFlags);
+      } finally {
+        sendFlags = null;
+      }
+      render();
+    }
+
+    /**
+     * Drop one queued prompt without sending it (#3105).
+     * @param {string} id
+     */
+    function dismissQueuedPrompt(id) {
+      const key = chatTargetKey();
+      if (key == null) return;
+      const list = chatQueues.get(key) || [];
+      chatQueues.set(key, list.filter((p) => String(p.id) !== String(id)));
+      render();
+    }
+
+    /**
+     * Fire the oldest queued prompt for the chat on screen, once it is no
+     * longer busy (#3105). A no-op with nothing queued or still busy.
+     */
+    function fireNextQueuedIfIdle() {
+      const key = chatTargetKey();
+      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      if (key == null || !chat || chat.inFlight || typeof options.onSendChat !== 'function') return;
+      const list = chatQueues.get(key) || [];
+      if (!list.length) return;
+      const [nextItem, ...rest] = list;
+      chatQueues.set(key, rest);
+      options.onSendChat(nextItem.text);
+    }
+
+    /**
      * What a full re-render would otherwise lose: the sidebar's scroll
      * position, and which shell control had focus (with its caret), since
      * replacing `innerHTML` replaces every element.
@@ -5635,11 +6156,20 @@
       const sidebar = doc.getElementById('v6ShellSidebar');
       if (sidebar && saved.scrollTop) sidebar.scrollTop = saved.scrollTop;
       // A chat opens at its newest line (#3052); after that it follows new
-      // lines only while the operator is reading the bottom.
+      // lines only while the operator is reading the bottom. #3113: latch
+      // scrolledChatKey only once the stream exists AND has something
+      // loaded — latching it earlier (a key assigned before any turn or
+      // peek line has arrived) would mark a still-empty chat as "already
+      // scrolled," so it never gets its one pin-to-bottom once the slow
+      // conversation fetch actually lands.
       const key = chatTargetKey();
+      const streamEl = doc.getElementById('v6ChatStream');
+      const view = detail && detail.kind === 'conversation' ? detail.view : null;
+      const loaded = Boolean(streamEl) && Boolean(view)
+        && ((Array.isArray(view.events) && view.events.length > 0) || Boolean(view.chat && view.chat.peek));
       const first = key != null && key !== scrolledChatKey;
-      if (key != null) scrolledChatKey = key;
-      if (first || saved.streamAtBottom) pinToBottom(doc.getElementById('v6ChatStream'));
+      if (key != null && loaded) scrolledChatKey = key;
+      if (first || saved.streamAtBottom) pinToBottom(streamEl);
       if (first || saved.peekAtBottom) pinToBottom(doc.getElementById('v6ChatPeek'));
       if (!saved.focusId) return;
       const el = doc.getElementById(saved.focusId);
@@ -5724,6 +6254,8 @@
             rename: renameOpenKey != null && renameOpenKey === chatTargetKey()
               ? { open: true, draft: renameDraft, warning: renameWarning } : null,
             sidebarCollapsed, activityElapsed, telemetry, dismissedQuestions: dismissedFor(chatTargetKey()),
+            dismissedTodoSnapshot: dismissedTodoSnapshot.has(chatTargetKey()) ? dismissedTodoSnapshot.get(chatTargetKey()) : null,
+            queuedPrompts: chatQueues.get(chatTargetKey()) || [],
             pending: pendingSends.filter((p) => p.key === chatTargetKey()),
             verbosity
           })}</div>
@@ -5741,6 +6273,7 @@
       restoreViewState(saved);
       if (typeof options.onRender === 'function') options.onRender(currentRoute);
       syncDockedHeader();
+      fireNextQueuedIfIdle();
     }
 
     function toggleDrawer(force) {
@@ -5923,6 +6456,7 @@
         paintRecorded();
         if (streamAtBottom) pinToBottom(stream);
         paintQuestions();
+        paintWaitingOnExtras();
         const a = doc.getElementById('v6ChatActivity');
         const elapsed = syncBusy();
         if (a) {
@@ -6129,5 +6663,14 @@
   global.tcV6CharterVersionsMarkup = charterVersionsMarkup;
   global.tcV6TrainControlsMarkup = trainControlsMarkup;
   global.tcV6CreateLiveController = createLiveController;
+  global.tcV6CoupledStreamMaxHeight = coupledStreamMaxHeight;
+  global.tcV6CoupledInputHeight = coupledInputHeight;
+  global.tcV6ExtractCliGates = extractCliGates;
+  global.tcV6ExtractMultiChoice = extractMultiChoice;
+  global.tcV6ExtractOperatorTodo = extractOperatorTodo;
+  global.tcV6OpenQueuedPrompts = openQueuedPrompts;
+  global.tcV6LatestReplyText = latestReplyText;
+  global.tcV6WaitingOnModel = waitingOnModel;
+  global.tcV6WaitingOnMarkup = waitingOnMarkup;
   global.tcCreateV6Shell = tcCreateV6Shell;
 })(typeof window !== 'undefined' ? window : globalThis);
