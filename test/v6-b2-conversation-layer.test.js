@@ -479,6 +479,20 @@ describe('classifyMediaOrArtifactLink (#3107)', () => {
   it('returns null for a bare relative filename with no path-like prefix, so ordinary word-like tokens are never misread', () => {
     assert.equal(b2.classifyMediaOrArtifactLink('report.md'), null);
   });
+
+  // PRR-B R1 (PR #3123): a line is 1-indexed and a range cannot invert.
+  it('rejects #L0 (not 1-indexed) and an inverted range (#L20-L10), rather than reporting a bogus range', () => {
+    assert.equal(b2.classifyMediaOrArtifactLink('/a.js#L0'), null);
+    assert.equal(b2.classifyMediaOrArtifactLink('/a.js#L20-L10'), null);
+  });
+
+  // PRR-B R1 (PR #3123): the whole-line `Attached: ` prefix must match
+  // directly, not only via the token-scan fallback that happened to still
+  // find the bare "secrets/x" word on its own.
+  it('matches the whole-line "Attached: " prefix directly, not only its bare secrets/<file> tail', () => {
+    assert.deepEqual(b2.classifyMediaOrArtifactLink('Attached: secrets/shot.png'),
+      { kind: 'image', path: 'shot.png', source: 'secrets', zoomable: true });
+  });
 });
 
 describe('extractRichPreviewsFromMessage (#3107)', () => {
@@ -498,6 +512,32 @@ describe('extractRichPreviewsFromMessage (#3107)', () => {
   it('extracts a generic external link as an SSRF-evaluated candidate, never fetched', () => {
     const cards = b2.extractRichPreviewsFromMessage('Check https://example.com/page.');
     assert.deepEqual(cards, [{ kind: 'link-unfurl-candidate', url: 'https://example.com/page', safe: true, unsafeReason: null }]);
+  });
+
+  // PRR-B R1 (PR #3123): a plain `\s+` split alone breaks on a Markdown
+  // link's own internal space and leaves wrapping punctuation attached.
+  it('extracts a Markdown link\'s target whole, reading the code-line-range target correctly', () => {
+    const cards = b2.extractRichPreviewsFromMessage('[app.js](file:///Users/x/app.js#L10-L20)');
+    assert.deepEqual(cards, [{ kind: 'artifact', path: '/Users/x/app.js', source: 'file-url', fileExtension: 'js', title: 'app.js', lineRange: { start: 10, end: 20 } }]);
+  });
+
+  it('extracts a Markdown link\'s GitHub target even though its label itself contains a space', () => {
+    const cards = b2.extractRichPreviewsFromMessage('See [PR #3119](https://github.com/Jason-Vaughan/TangleClaw/pull/3119) for details.');
+    assert.deepEqual(cards, [{ kind: 'github', url: 'https://github.com/Jason-Vaughan/TangleClaw/pull/3119', owner: 'Jason-Vaughan', repo: 'TangleClaw', entityKind: 'pull', number: 3119 }]);
+  });
+
+  it('does not separately token-scan a Markdown link\'s label text', () => {
+    const cards = b2.extractRichPreviewsFromMessage('[See the plan](./plan.md)');
+    assert.equal(cards.length, 1, 'the label words ("See", "the", "plan") must not also produce cards');
+    assert.equal(cards[0].path, './plan.md');
+  });
+
+  it('extracts a backtick-wrapped local path and a paren-wrapped external link', () => {
+    const backtick = b2.extractRichPreviewsFromMessage('See `./docs/plan.md` for details');
+    assert.equal(backtick.length, 1);
+    assert.equal(backtick[0].path, './docs/plan.md');
+    const paren = b2.extractRichPreviewsFromMessage('(https://example.com/page)');
+    assert.deepEqual(paren, [{ kind: 'link-unfurl-candidate', url: 'https://example.com/page', safe: true, unsafeReason: null }]);
   });
 
   it('flags an unsafe external link candidate with its reason, rather than silently dropping it', () => {
@@ -573,11 +613,27 @@ describe('evaluateUnfurlTargetSafety (#3107)', () => {
     assert.equal(b2.evaluateUnfurlTargetSafety('http://127.0.0.1/x').reason, 'LOOPBACK');
     assert.equal(b2.evaluateUnfurlTargetSafety('http://127.5.5.5/x').reason, 'LOOPBACK');
     assert.equal(b2.evaluateUnfurlTargetSafety('http://169.254.169.254/latest').reason, 'LINK_LOCAL');
-    for (const ip of ['10.0.0.5', '172.16.0.1', '172.31.255.255', '192.168.1.1', '0.0.0.5']) {
+    for (const ip of ['10.0.0.5', '172.16.0.1', '172.31.255.255', '192.168.1.1', '0.0.0.5', '100.64.0.1', '100.127.255.254']) {
       assert.equal(b2.evaluateUnfurlTargetSafety(`http://${ip}/x`).reason, 'PRIVATE_RANGE', ip);
     }
     assert.equal(b2.evaluateUnfurlTargetSafety('http://172.32.0.1/x').reason, null, '172.32/16 is just outside 172.16.0.0/12');
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://100.128.0.1/x').reason, null, '100.128/9 is just outside 100.64.0.0/10');
     assert.equal(b2.evaluateUnfurlTargetSafety('http://8.8.8.8/x').reason, null, 'a real public IP stays safe');
+  });
+
+  // PRR-B R1 (PR #3123): RFC6598 shared/CGNAT space (100.64.0.0/10) — the
+  // range Tailscale's own mesh addresses live in — was missing entirely.
+  it('refuses the RFC6598 shared/CGNAT range (100.64.0.0/10) a tailnet mesh address lives in', () => {
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://100.100.100.100/x').reason, 'PRIVATE_RANGE');
+  });
+
+  // PRR-B R1 (PR #3123): a trailing DNS root dot, and the whole `.localhost`
+  // TLD RFC 6761 reserves, both name loopback too — a bare equality check
+  // on "localhost" missed both.
+  it('refuses "localhost." (trailing DNS root dot) and any "*.localhost" subdomain', () => {
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://localhost./x').reason, 'LOOPBACK');
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://foo.localhost/x').reason, 'LOOPBACK');
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://notlocalhost.com/x').reason, null, 'a real domain merely containing "localhost" must stay safe');
   });
 
   it('refuses literal IPv6 loopback, link-local (fe80::/10), and unique-local (fc00::/7)', () => {
@@ -625,5 +681,24 @@ describe('parseOpenGraphHtml (#3107)', () => {
     assert.equal(b2.parseOpenGraphHtml('<html><head><title>Plain</title></head></html>'), null);
     assert.equal(b2.parseOpenGraphHtml(''), null);
     assert.equal(b2.parseOpenGraphHtml(null), null);
+  });
+
+  // PRR-B R1 (PR #3123): String.fromCodePoint throws RangeError for a
+  // numeric entity outside the valid Unicode scalar range, or a lone
+  // UTF-16 surrogate — html here comes from an EXTERNAL host, so this must
+  // never throw regardless of how malformed/hostile its content is.
+  it('does not throw on a numeric entity beyond the valid Unicode range, leaving it undecoded', () => {
+    assert.doesNotThrow(() => b2.parseOpenGraphHtml('<meta property="og:title" content="bad &#9999999; entity">'));
+    assert.equal(b2.parseOpenGraphHtml('<meta property="og:title" content="bad &#9999999; entity">').title, 'bad &#9999999; entity');
+    assert.doesNotThrow(() => b2.parseOpenGraphHtml('<meta property="og:title" content="&#x110000;">'));
+  });
+
+  it('does not throw on a lone UTF-16 surrogate numeric entity, leaving it undecoded', () => {
+    assert.doesNotThrow(() => b2.parseOpenGraphHtml('<meta property="og:title" content="&#xD800;">'));
+    assert.equal(b2.parseOpenGraphHtml('<meta property="og:title" content="&#xD800;">').title, '&#xD800;');
+  });
+
+  it('still decodes a valid numeric entity at the edge of the range', () => {
+    assert.equal(b2.parseOpenGraphHtml('<meta property="og:title" content="&#x10FFFF;">').title, String.fromCodePoint(0x10FFFF));
   });
 });
