@@ -148,6 +148,7 @@ const sidecar = require('./lib/sidecar');
 const openclawHtml = require('./lib/openclaw-html');
 const tunnelMonitor = require('./lib/tunnel-monitor');
 const net = require('node:net');
+const dns = require('node:dns');
 const httpsSetup = require('./lib/https-setup');
 const remoteCaInstaller = require('./lib/remote-ca-installer');
 const hostInventory = require('./lib/host-inventory');
@@ -11663,6 +11664,106 @@ route('POST', '/api/v6/sandboxing/plan', (req, res, _params, body) => {
   const plan = a1Iso.planIsolation(profile, _v6ServerHostFacts());
   if (plan.ok && plan.launch && plan.launch.env) plan.launch.env = Object.keys(plan.launch.env).sort();
   _v6Respond(res, plan);
+});
+
+// ── #3107: rich link unfurling (Open Graph / oEmbed) ──
+
+/** `GET /api/v6/unfurl` successful fetches, by exact URL. Cleared on process restart; that's fine, it just refetches once. */
+const _v6UnfurlCache = new Map();
+const V6_UNFURL_CACHE_TTL_MS = 10 * 60 * 1000;
+const V6_UNFURL_CACHE_MAX = 500;
+/** Caps how much of a fetched page's bytes `_v6SafeUnfurlFetch` reads — `og:` tags live in `<head>`, always well inside this. */
+const V6_UNFURL_MAX_BYTES = 512 * 1024;
+
+/**
+ * Fetch `url`'s HTML for link unfurling, pinned to the IP this function
+ * itself resolved and validated — never a second, independent DNS lookup at
+ * connect time. `lib/v6/b2-conversation-layer.js#evaluateUnfurlTargetSafety`
+ * (already checked by the caller before this runs) only validates the
+ * URL's LITERAL host; it explicitly documents that the real fetch must also
+ * validate the RESOLVED address, or a DNS-rebinding target — a public name
+ * that first answers safe, then re-resolves to `127.0.0.1` at connect time —
+ * would pass that check and still reach an internal address here. This
+ * reuses `evaluateUnfurlTargetSafety` itself (never duplicating its private
+ * IPv4/IPv6 range logic) by re-running it against a URL built around each
+ * resolved candidate address.
+ * @param {string} url - Already confirmed safe by {@link module:lib/v6/b2-conversation-layer.evaluateUnfurlTargetSafety}.
+ * @returns {Promise<{ok: true, html: string}|{ok: false, reason: string}>}
+ */
+async function _v6SafeUnfurlFetch(url) {
+  const parsed = new URL(url);
+  let addresses;
+  try {
+    addresses = await dns.promises.lookup(parsed.hostname, { all: true, verbatim: true });
+  } catch {
+    return { ok: false, reason: 'DNS_LOOKUP_FAILED' };
+  }
+  if (!addresses.length) return { ok: false, reason: 'DNS_LOOKUP_FAILED' };
+  for (const { address, family } of addresses) {
+    const hostForUrl = family === 6 ? `[${address}]` : address;
+    const probe = b2.evaluateUnfurlTargetSafety(`${parsed.protocol}//${hostForUrl}${parsed.port ? `:${parsed.port}` : ''}/`);
+    if (!probe.safe) return { ok: false, reason: `RESOLVED_${probe.reason}` };
+  }
+  const pinned = addresses[0];
+  const client = parsed.protocol === 'https:' ? https : http;
+  return new Promise((resolve) => {
+    const req = client.request({
+      hostname: parsed.hostname, // kept for correct TLS SNI/cert-hostname checks
+      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+      path: `${parsed.pathname}${parsed.search}`,
+      headers: { Host: parsed.host, 'User-Agent': 'TangleClaw-LinkUnfurl/1.0', Accept: 'text/html' },
+      // Always answers with the single address already validated above —
+      // never re-resolves, which is the whole point of pinning.
+      lookup: (_hostname, _opts, cb) => cb(null, pinned.address, pinned.family),
+      timeout: 8000
+    }, (fres) => {
+      if (fres.statusCode == null || fres.statusCode < 200 || fres.statusCode >= 400) {
+        fres.resume();
+        return resolve({ ok: false, reason: `HTTP_${fres.statusCode}` });
+      }
+      let total = 0;
+      const chunks = [];
+      fres.on('data', (chunk) => {
+        total += chunk.length;
+        if (total > V6_UNFURL_MAX_BYTES) { req.destroy(); return; }
+        chunks.push(chunk);
+      });
+      fres.on('end', () => resolve({ ok: true, html: Buffer.concat(chunks).toString('utf8') }));
+      fres.on('error', () => resolve({ ok: false, reason: 'RESPONSE_ERROR' }));
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve({ ok: false, reason: 'FETCH_ERROR' }));
+    req.end();
+  });
+}
+
+route('GET', '/api/v6/unfurl', async (req, res) => {
+  if (!operatorProjectCaller(req, res, 'unfurl a chat link preview')) return;
+  const query = parseQuery(reqUrl(req).search);
+  const url = query && typeof query.url === 'string' ? query.url.trim() : '';
+  if (!url) return errorResponse(res, 400, 'url is required', 'BAD_REQUEST');
+
+  // A GitHub PR/Issue/Release URL never needs a fetch — the card is built
+  // from the URL alone, and github.com always passes the safety check below
+  // anyway, so checking this first just avoids the extra step for the
+  // common case.
+  const gh = b2.parseGitHubEntityUrl(url);
+  if (gh) return jsonResponse(res, 200, { ok: true, preview: { kind: 'github', url, ...gh } });
+
+  const safety = b2.evaluateUnfurlTargetSafety(url);
+  if (!safety.safe) return errorResponse(res, 400, `Refused: ${safety.reason}`, 'UNFURL_TARGET_UNSAFE');
+
+  const cached = _v6UnfurlCache.get(url);
+  if (cached && cached.expiresAt > Date.now()) return jsonResponse(res, 200, { ok: true, preview: cached.preview, cached: true });
+
+  const fetched = await _v6SafeUnfurlFetch(url);
+  if (!fetched.ok) return errorResponse(res, 502, `Could not unfurl this link: ${fetched.reason}`, 'UNFURL_FETCH_FAILED');
+
+  const og = b2.parseOpenGraphHtml(fetched.html);
+  const preview = og ? { kind: 'link-unfurl', url, ...og } : { kind: 'link-unfurl', url };
+  if (_v6UnfurlCache.size >= V6_UNFURL_CACHE_MAX) _v6UnfurlCache.delete(_v6UnfurlCache.keys().next().value);
+  _v6UnfurlCache.set(url, { expiresAt: Date.now() + V6_UNFURL_CACHE_TTL_MS, preview });
+  jsonResponse(res, 200, { ok: true, preview });
 });
 
 // ── Server Creation ──

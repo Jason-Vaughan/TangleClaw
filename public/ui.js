@@ -8242,6 +8242,8 @@ if (typeof window.tcCreateV6Shell === 'function') {
     onCreateWorkspaceProject(form) { v6Live.createWorkspaceProject(form); },
     onConvertToFleet(form) { v6Live.convertToFleet(form); },
     onProvisionFleet(args) { v6Live.provisionFleet(args); },
+    // #3107: the chat's own click-to-preview affordance (Ruling A752 — never auto-fetched).
+    onUnfurlLink(url) { v6Live.requestUnfurl(url); },
     onRender(route) {
       const active = Boolean(route && route.view);
       if (v6ShellRoot) v6ShellRoot.classList.toggle('hidden', !active);

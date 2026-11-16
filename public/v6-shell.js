@@ -1537,17 +1537,17 @@
       // what was recorded after it (sent, not yet on screen) below.
       const parts = arrangeRecorded(v.events, liveTurns, chat.lastSent);
       stream = parts.head.length
-        ? `<ol class="v6-conversation-stream" id="v6ChatRecorded">${recordedEventsMarkup(parts.head, name, chat.thumbs)}</ol>`
+        ? `<ol class="v6-conversation-stream" id="v6ChatRecorded">${recordedEventsMarkup(parts.head, name, chat.thumbs, chat.unfurls)}</ol>`
         : (liveTurns.length || parts.tail.length ? '<ol class="v6-conversation-stream" id="v6ChatRecorded"></ol>'
           : '<p class="v6-conversation-empty">No conversation events recorded for this session yet.</p>');
-      tail = recordedEventsMarkup(parts.tail, name, chat.thumbs);
+      tail = recordedEventsMarkup(parts.tail, name, chat.thumbs, chat.unfurls);
     }
     // #3052: the replies the session's live output shows, after what is
     // recorded; its own list so a poll can replace it without a re-render.
     stream = `<div id="v6ChatStream" class="v6-chat-stream" tabindex="0">${stream}
-      <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name, chat.verbosity, chat.thumbs)}</ol>
+      <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name, chat.verbosity, chat.thumbs, chat.unfurls)}</ol>
       <ol id="v6ChatRecordedTail" class="v6-conversation-stream v6-chat-recorded-tail">${tail}</ol>
-      <ol id="v6ChatPending" class="v6-conversation-stream v6-chat-pending">${pendingMarkup(chat.pending, chat.lastSent, chat.thumbs)}</ol>
+      <ol id="v6ChatPending" class="v6-conversation-stream v6-chat-pending">${pendingMarkup(chat.pending, chat.lastSent, chat.thumbs, chat.unfurls)}</ol>
     </div>`;
     // A member reached directly is still the project's delegate when it is
     // the one the delegate resolution picks (#3053).
@@ -1626,7 +1626,7 @@
         ${verbosityMarkup(chat.verbosity)}
         <section class="v6-chat-tucked" aria-label="Replies tucked away">
           <h3 class="v6-chat-switchboard-title">Tucked away</h3>
-          <ol id="v6ChatTucked" class="v6-chat-tucked-list">${tuckedMarkup(tuckedTurns(liveTurns, chat.verbosity), chat.thumbs)}</ol>
+          <ol id="v6ChatTucked" class="v6-chat-tucked-list">${tuckedMarkup(tuckedTurns(liveTurns, chat.verbosity), chat.thumbs, chat.unfurls)}</ol>
         </section>
         <section class="v6-chat-switchboard" aria-label="Switchboard and Medusa traffic">
           <h3 class="v6-chat-switchboard-title">Switchboard &amp; Medusa traffic</h3>
@@ -2022,6 +2022,236 @@
   const IMAGE_URL = /\.(?:png|jpe?g|webp|gif)(?:[?#]|$)/i;
 
   /**
+   * `github.com/<owner>/<repo>/(pull|issues|releases/tag)/<id>` (#3107). A
+   * client-side copy of `lib/v6/b2-conversation-layer.js#GITHUB_ENTITY_URL` —
+   * pure regex, no `node:net`/`node:path`, so it has no server dependency to
+   * share; kept byte-identical so a URL this page recognizes and the server's
+   * own classifier agree.
+   */
+  const GITHUB_ENTITY_URL = /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})?)\/([A-Za-z0-9._-]{1,100})\/(pull|issues|releases\/tag)\/([^/?#\s]+)/i;
+
+  /**
+   * Parse a GitHub PR, Issue, or Release URL (#3107) — a client-side copy of
+   * `lib/v6/b2-conversation-layer.js#parseGitHubEntityUrl`, kept in sync with
+   * it deliberately (see {@link GITHUB_ENTITY_URL}'s own note).
+   * @param {string} url
+   * @returns {({owner: string, repo: string, entityKind: 'pull', number: number}|
+   *   {owner: string, repo: string, entityKind: 'issue', number: number}|
+   *   {owner: string, repo: string, entityKind: 'release', tag: string}|null)}
+   */
+  function parseGithubEntityUrl(url) {
+    if (typeof url !== 'string') return null;
+    const m = GITHUB_ENTITY_URL.exec(url.trim());
+    if (!m) return null;
+    const [, owner, repo, kindRaw, idRaw] = m;
+    const kind = kindRaw.toLowerCase();
+    if (kind === 'pull' || kind === 'issues') {
+      const number = Number(idRaw);
+      if (!Number.isInteger(number) || number < 1) return null;
+      return { owner, repo, entityKind: kind === 'pull' ? 'pull' : 'issue', number };
+    }
+    try {
+      return { owner, repo, entityKind: 'release', tag: decodeURIComponent(idRaw) };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * One GitHub card (#3107): a PR/Issue number, or a Release tag — no fetch,
+   * built straight from the URL (the live title/state the real GET
+   * /api/v6/unfurl route could also return for this case is a documented
+   * scope reduction for this car, not yet wired here).
+   * @param {string} href
+   * @param {{owner: string, repo: string, entityKind: string, number?: number, tag?: string}} gh
+   * @returns {string} HTML.
+   */
+  function githubCardMarkup(href, gh) {
+    const safe = escapeHtml(href);
+    const label = gh.entityKind === 'release' ? `Release ${gh.tag}` : `#${gh.number}`;
+    const icon = gh.entityKind === 'pull' ? '🔀' : gh.entityKind === 'issue' ? '🐛' : '🏷';
+    return `<a class="v6-chat-link-preview v6-chat-github-card" href="${safe}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Opens in a new tab">`
+      + `<span class="v6-chat-link-preview-icon" aria-hidden="true">${icon}</span>`
+      + `<span class="v6-chat-github-repo">${escapeHtml(gh.owner)}/${escapeHtml(gh.repo)}</span>`
+      + `<span class="v6-chat-github-label">${escapeHtml(label)}</span></a>`;
+  }
+
+  /**
+   * One external link's unfurl state (#3107): never fetched until the
+   * viewer clicks "Preview" (Ruling A752 — an external host is never
+   * dereferenced just because the chat drew the message). `unfurls` is
+   * `detail.view.chat.unfurls`, read fresh on every redraw so a click's
+   * result (set via the shell's `setUnfurl`) shows without a full re-render.
+   * @param {string} href
+   * @param {Object<string, {state: ('loading'|'done'|'error'), preview?: object}>} [unfurls]
+   * @returns {string} HTML: a "👁 Preview" button, a spinner, the fetched
+   *   card, or a quiet failure note — one `v6-chat-unfurl` wrapper either way,
+   *   so {@link wireUnfurlLinks} can find it after a redraw.
+   */
+  function unfurlMarkup(href, label, unfurls) {
+    const safe = escapeHtml(href);
+    const entry = unfurls && Object.prototype.hasOwnProperty.call(unfurls, href) ? unfurls[href] : null;
+    const plainLink = `<a class="v6-chat-link" href="${safe}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">${escapeHtml(label || href)}</a>`;
+    if (!entry) {
+      return `<span class="v6-chat-unfurl" data-unfurl-url="${safe}">${plainLink} `
+        + `<button type="button" class="btn btn-compact v6-chat-unfurl-btn" data-unfurl-url="${safe}">👁 Preview</button></span>`;
+    }
+    if (entry.state === 'loading') return `<span class="v6-chat-unfurl" data-unfurl-url="${safe}">${plainLink} <span class="v6-chat-unfurl-loading">Loading preview…</span></span>`;
+    if (entry.state === 'error' || !entry.preview) return `<span class="v6-chat-unfurl" data-unfurl-url="${safe}">${plainLink} <span class="v6-chat-unfurl-error">Preview unavailable.</span></span>`;
+    const p = entry.preview;
+    const title = p.title ? escapeHtml(p.title) : safe;
+    const desc = p.description ? `<span class="v6-chat-unfurl-desc">${escapeHtml(p.description)}</span>` : '';
+    // og:image/og:video name an EXTERNAL host's media (Ruling A752) — shown
+    // as a labeled link, same as the existing external-image chip above,
+    // never an auto-fetched <img>/<video> even after the viewer already
+    // opted into fetching THIS page's metadata.
+    const media = p.image ? `<span class="v6-chat-unfurl-media-note"><span aria-hidden="true">🖼</span> image available at source</span>`
+      : p.video ? `<span class="v6-chat-unfurl-media-note"><span aria-hidden="true">🎬</span> video available at source</span>` : '';
+    return `<a class="v6-chat-link-preview v6-chat-unfurl-card" data-unfurl-url="${safe}" href="${safe}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Opens in a new tab">`
+      + `<span class="v6-chat-unfurl-title">${title}</span>${desc}${media}</a>`;
+  }
+
+  /** Extensions `classifyLocalReference` renders as an image card (#3107) — client copy of `lib/v6/b2-conversation-layer.js#IMAGE_EXTENSIONS`. */
+  const LOCAL_IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg']);
+  /** Extensions rendered as a video card (#3107) — client copy of `lib/v6/b2-conversation-layer.js#VIDEO_MIME_TYPES`'s keys. */
+  const LOCAL_VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov']);
+  /** Extensions rendered as an artifact card even with no line range (#3107) — client copy of `lib/v6/b2-conversation-layer.js#ARTIFACT_EXTENSIONS`. */
+  const LOCAL_ARTIFACT_EXTENSIONS = new Set(['md', 'html']);
+  /** A reference rooted at the workspace (#3107) — client copy of `lib/v6/b2-conversation-layer.js#WORKSPACE_PATH`. */
+  const LOCAL_WORKSPACE_PATH = /^(?:\.{1,2}\/|\/|~\/)\S+$/;
+  /** A `#L<start>` or `#L<start>-L<end>` code line-range suffix (#3107) — client copy of `lib/v6/b2-conversation-layer.js#LINE_RANGE_SUFFIX`. */
+  const LOCAL_LINE_RANGE_SUFFIX = /#L(\d+)(?:-L(\d+))?$/;
+
+  /**
+   * Split a trailing `#L<n>-L<n>` code line-range off a reference (#3107) —
+   * client copy of `lib/v6/b2-conversation-layer.js#_splitLineRange`.
+   * @param {string} ref
+   * @returns {{base: string, lineRange: ({start: number, end: number}|null)}}
+   */
+  function _splitLocalLineRange(ref) {
+    const m = LOCAL_LINE_RANGE_SUFFIX.exec(ref);
+    if (!m) return { base: ref, lineRange: null };
+    const start = Number(m[1]);
+    const end = m[2] !== undefined ? Number(m[2]) : start;
+    if (start < 1 || end < start) return { base: ref, lineRange: null };
+    return { base: ref.slice(0, m.index), lineRange: { start, end } };
+  }
+
+  /**
+   * A `file://` URL's filesystem path, or `null` (#3107) — a `new URL`-free
+   * client copy of `lib/v6/b2-conversation-layer.js#_fileUrlToPath` (the
+   * WHATWG `URL` class is a real browser global, but not one every lift-
+   * and-run `vm.createContext` test sandbox in this repo provides, so this
+   * file never relies on it anywhere else either). Only the common empty-
+   * authority form (`file:///abs/path`) is recognized — a rare `file://
+   * host/path` form is read the same way, host discarded, which is a
+   * documented simplification, not a parser.
+   * @param {string} url
+   * @returns {string|null}
+   */
+  function _fileUrlToLocalPath(url) {
+    const m = /^file:\/\/[^/]*(\/.*)$/i.exec(url);
+    if (!m) return null;
+    try {
+      return decodeURIComponent(m[1]);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The lowercased extension (no dot) of a path's final segment, or `null`
+   * (#3107) — a `path.posix.extname`-free client copy of
+   * `lib/v6/b2-conversation-layer.js#_extensionOf` (`path` is a Node builtin,
+   * unusable in the browser).
+   * @param {string} filePath
+   * @returns {string|null}
+   */
+  function _localExtensionOf(filePath) {
+    const name = filePath.slice(filePath.lastIndexOf('/') + 1);
+    const dot = name.lastIndexOf('.');
+    return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1).toLowerCase() : null;
+  }
+
+  /**
+   * Classify a whole line of message text as a LOCAL media/artifact
+   * reference (#3107, Rulings A809/A811: a `file://` URL or a workspace-
+   * rooted path, optionally with a `#L<n>-L<n>` code line range) — never a
+   * secrets-store reference, which {@link ATTACHED_LINE}/{@link attachmentMarkup}
+   * already own. A client copy of
+   * `lib/v6/b2-conversation-layer.js#classifyMediaOrArtifactLink`'s
+   * file-url/workspace branch; the secrets branch is deliberately omitted
+   * here since {@link messageMarkup} already tries {@link ATTACHED_LINE} first.
+   *
+   * Zero byte-fetching: by design (the security boundary PM/Architect ruled
+   * on for this car), this never resolves to a URL the browser can load —
+   * only a `{kind, path, source, fileExtension, lineRange}` model for
+   * {@link localReferenceCardMarkup} to describe, never display the bytes of.
+   * @param {string} ref - One whole, already-trimmed line.
+   * @returns {({kind: ('image'|'video'), path: string, source: ('file-url'|'workspace'), fileExtension: (string|null), lineRange: null}|
+   *   {kind: 'artifact', path: string, source: ('file-url'|'workspace'), fileExtension: (string|null), title: string, lineRange: ({start:number,end:number}|null)}|
+   *   null)}
+   */
+  function classifyLocalReference(ref) {
+    if (typeof ref !== 'string') return null;
+    const trimmed = ref.trim();
+    if (!trimmed) return null;
+    const { base, lineRange } = _splitLocalLineRange(trimmed);
+    let source;
+    let filePath;
+    if (/^file:\/\//i.test(base)) {
+      filePath = _fileUrlToLocalPath(base);
+      if (filePath == null) return null;
+      source = 'file-url';
+    } else if (LOCAL_WORKSPACE_PATH.test(base)) {
+      source = 'workspace';
+      filePath = base;
+    } else {
+      return null;
+    }
+    const ext = _localExtensionOf(filePath);
+    if (ext && LOCAL_IMAGE_EXTENSIONS.has(ext)) {
+      if (lineRange) return null;
+      return { kind: 'image', path: filePath, source, fileExtension: ext, lineRange: null };
+    }
+    if (ext && LOCAL_VIDEO_EXTENSIONS.has(ext)) {
+      if (lineRange) return null;
+      return { kind: 'video', path: filePath, source, fileExtension: ext, lineRange: null };
+    }
+    if ((ext && LOCAL_ARTIFACT_EXTENSIONS.has(ext)) || lineRange) {
+      const title = filePath.slice(filePath.lastIndexOf('/') + 1);
+      return { kind: 'artifact', path: filePath, source, fileExtension: ext, title: title || filePath, lineRange };
+    }
+    return null;
+  }
+
+  /**
+   * A local media/artifact reference's card (#3107, Rulings A809/A811): a
+   * metadata card — title, full path, extension badge, source badge, an
+   * optional line-range pill, and a copy-path affordance — never the
+   * referenced file's actual bytes. No new local-file-serving HTTP endpoint
+   * exists for this, by deliberate security design: an arbitrary workspace
+   * path or `file://` URL in chat text is never dereferenced by this page.
+   * @param {{kind: string, path: string, source: string, fileExtension: (string|null), title?: string, lineRange: ({start:number,end:number}|null)}} ref
+   * @returns {string} HTML.
+   */
+  function localReferenceCardMarkup(ref) {
+    const icon = ref.kind === 'image' ? '🖼' : ref.kind === 'video' ? '🎬' : '📄';
+    const title = ref.kind === 'artifact' ? ref.title : (ref.path.slice(ref.path.lastIndexOf('/') + 1) || ref.path);
+    const safePath = escapeHtml(ref.path);
+    const extBadge = ref.fileExtension ? `<span class="v6-chat-local-ref-ext">.${escapeHtml(ref.fileExtension)}</span>` : '';
+    const rangeNote = ref.lineRange
+      ? `<span class="v6-chat-local-ref-range">L${ref.lineRange.start}${ref.lineRange.end !== ref.lineRange.start ? `-L${ref.lineRange.end}` : ''}</span>` : '';
+    const sourceLabel = ref.source === 'file-url' ? 'file://' : 'workspace';
+    return `<span class="v6-chat-local-ref" data-copy-path="${safePath}">`
+      + `<span class="v6-chat-local-ref-icon" aria-hidden="true">${icon}</span>`
+      + `<span class="v6-chat-local-ref-title">${escapeHtml(title)}</span>${extBadge}${rangeNote}`
+      + `<span class="v6-chat-local-ref-source">${sourceLabel}</span>`
+      + `<span class="v6-chat-local-ref-path" title="${safePath}">${safePath}</span>`
+      + `<button type="button" class="btn btn-compact v6-chat-local-ref-copy" data-copy-path="${safePath}" aria-label="Copy path">📋 Copy path</button></span>`;
+  }
+
+  /**
    * Message text as HTML (#3082): every character escaped, with links opening
    * in a new tab (`rel="noopener noreferrer"`). An external URL naming an
    * image is a link card — its host and path, escaped — and never an `<img>`:
@@ -2029,12 +2259,19 @@
    * drew it, carrying whatever the URL holds to that host (Ruling A752).
    * @param {*} text
    * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL, from the thumbnail cache.
+   * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107); see {@link unfurlMarkup}.
    * @returns {string} HTML.
    */
-  function messageMarkup(text, thumbs) {
+  function messageMarkup(text, thumbs, unfurls) {
     return String(text == null ? '' : text).split('\n').map((line) => {
       const attached = ATTACHED_LINE.exec(line);
-      return attached ? attachmentMarkup(attached[1], thumbs) : lineMarkup(line);
+      if (attached) return attachmentMarkup(attached[1], thumbs);
+      // #3107: a whole line that is itself a file:// URL or workspace path
+      // (Attached:-prefixed secrets lines are already handled above) — the
+      // same "whole line is the reference" convention ATTACHED_LINE uses.
+      const localRef = classifyLocalReference(line);
+      if (localRef) return localReferenceCardMarkup(localRef);
+      return lineMarkup(line, unfurls);
     }).join('\n');
   }
 
@@ -2069,9 +2306,10 @@
   /**
    * One line of message text (#3082): escaped, with its links.
    * @param {string} raw
+   * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107).
    * @returns {string} HTML.
    */
-  function lineMarkup(raw) {
+  function lineMarkup(raw, unfurls) {
     let out = '';
     let last = 0;
     MESSAGE_LINK.lastIndex = 0;
@@ -2092,7 +2330,7 @@
         continue;
       }
       out += escapeHtml(raw.slice(last, m.index));
-      out += linkMarkup(href, label);
+      out += linkMarkup(href, label, unfurls);
       last = m.index + match.length;
       MESSAGE_LINK.lastIndex = last;
     }
@@ -2100,12 +2338,15 @@
   }
 
   /**
-   * One link (#3082): a new-tab anchor, or for an external image a link card.
+   * One link (#3082): a new-tab anchor, an external-image link card, a
+   * GitHub PR/Issue/Release card (#3107), or — for any other external link —
+   * a click-to-reveal Open Graph preview (#3107, {@link unfurlMarkup}).
    * @param {string} href - An `http(s)://` URL or a same-origin path, unescaped.
    * @param {string} [label] - A Markdown label.
+   * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107).
    * @returns {string} HTML.
    */
-  function linkMarkup(href, label) {
+  function linkMarkup(href, label, unfurls) {
     const safe = escapeHtml(href);
     const external = /^https?:\/\//i.test(href);
     if (external && IMAGE_URL.test(href)) {
@@ -2115,6 +2356,11 @@
       return `<a class="v6-chat-link-preview" href="${safe}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Opens in a new tab; not loaded here">`
         + `<span class="v6-chat-link-preview-icon" aria-hidden="true">🖼</span>`
         + `<span class="v6-chat-link-preview-host">${escapeHtml(host)}</span><span class="v6-chat-link-preview-path">${escapeHtml(label || path)}</span></a>`;
+    }
+    if (external) {
+      const gh = parseGithubEntityUrl(href);
+      if (gh) return githubCardMarkup(href, gh);
+      return unfurlMarkup(href, label, unfurls);
     }
     return `<a class="v6-chat-link" href="${safe}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">${escapeHtml(label || href)}</a>`;
   }
@@ -2177,13 +2423,14 @@
    * @param {Array<object>} events
    * @param {string} name - The project's name.
    * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
+   * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107).
    * @returns {string} The recorded events as conversation bubbles.
    */
-  function recordedEventsMarkup(events, name, thumbs) {
+  function recordedEventsMarkup(events, name, thumbs, unfurls) {
     return events.map((e) => (
       `<li class="v6-conversation-event is-${escapeHtml(e && e.role)}">
             ${chatRoleMarkup(e && e.role, name)}
-            <span class="v6-conversation-content">${messageMarkup(e && e.content, thumbs)}</span>
+            <span class="v6-conversation-content">${messageMarkup(e && e.content, thumbs, unfurls)}</span>
           </li>`
     )).join('');
   }
@@ -2194,13 +2441,14 @@
    * @param {{id: *, text: string}|null|undefined} pending
    * @param {{id: *}|null|undefined} lastSent
    * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
+   * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107).
    * @returns {string} HTML list item, or ''.
    */
-  function pendingMarkup(pending, lastSent, thumbs) {
+  function pendingMarkup(pending, lastSent, thumbs, unfurls) {
     // One bubble per send on its way (#3082: a forced send can overlap another).
     const list = (Array.isArray(pending) ? pending : [pending])
       .filter((p) => p && typeof p.text === 'string' && !(lastSent && lastSent.id === p.id));
-    return list.map((p) => `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${messageMarkup(p.text, thumbs)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`).join('');
+    return list.map((p) => `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${messageMarkup(p.text, thumbs, unfurls)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`).join('');
   }
 
   /**
@@ -2210,11 +2458,12 @@
    * @param {string} name
    * @param {{blockers: boolean, milestones: boolean, chatter: boolean}} [verbosity] - Which switchboard replies show (#3082).
    * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
+   * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107).
    * @returns {string} HTML list items.
    */
-  function liveTurnsMarkup(turns, name, verbosity, thumbs) {
+  function liveTurnsMarkup(turns, name, verbosity, thumbs, unfurls) {
     return (Array.isArray(turns) ? turns : []).filter((t) => shownInChat(t, verbosity)).map((t) => (
-      `<li class="v6-conversation-event is-${escapeHtml(t && t.role)} is-live">${chatRoleMarkup(t && t.role, name)}<span class="v6-conversation-content">${messageMarkup(t && t.text, thumbs)}</span></li>`
+      `<li class="v6-conversation-event is-${escapeHtml(t && t.role)} is-live">${chatRoleMarkup(t && t.role, name)}<span class="v6-conversation-content">${messageMarkup(t && t.text, thumbs, unfurls)}</span></li>`
     )).join('');
   }
 
@@ -2273,11 +2522,12 @@
   /**
    * @param {Array<object>} tucked
    * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
+   * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107).
    * @returns {string} HTML list items, or the empty note.
    */
-  function tuckedMarkup(tucked, thumbs) {
+  function tuckedMarkup(tucked, thumbs, unfurls) {
     if (!tucked.length) return '<li class="v6-chat-tucked-empty">Nothing tucked away.</li>';
-    return tucked.map((t) => `<li class="v6-chat-tucked-item is-${turnKind(t)}"><span class="v6-chat-tucked-kind">${TURN_KIND_LABELS[turnKind(t)]}</span> <span class="v6-conversation-content">${messageMarkup(t.text, thumbs)}</span></li>`).join('');
+    return tucked.map((t) => `<li class="v6-chat-tucked-item is-${turnKind(t)}"><span class="v6-chat-tucked-kind">${TURN_KIND_LABELS[turnKind(t)]}</span> <span class="v6-conversation-content">${messageMarkup(t.text, thumbs, unfurls)}</span></li>`).join('');
   }
 
   /** @param {number} n @returns {string} The summary's count of tucked replies, or ''. */
@@ -5288,10 +5538,28 @@
       return tree.length ? routeHash({ view: 'project', projectId: tree[0].id }) : '#/settings/';
     }
 
+    /**
+     * Ask `GET /api/v6/unfurl` for one link's rich preview (#3107). Never
+     * triggered automatically — only from the shell's own Preview-button
+     * click handler ({@link wireRichPreviews}), per Ruling A752 (an
+     * external host is never dereferenced just because the chat drew the
+     * message). The shell already shows "Loading…" the moment the click
+     * happened; this only ever needs to report `'done'` or `'error'`.
+     * @param {string} url
+     * @returns {Promise<void>}
+     */
+    async function requestUnfurl(url) {
+      const shell = getShell();
+      if (!shell || typeof url !== 'string' || !url || typeof shell.setUnfurl !== 'function') return;
+      const res = await api(`/api/v6/unfurl?url=${encodeURIComponent(url)}`);
+      if (res && res.ok && res.preview) shell.setUnfurl(url, { state: 'done', preview: res.preview });
+      else shell.setUnfurl(url, { state: 'error' });
+    }
+
     return {
       handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, attachFiles, removeAttachment,
       startSession, startFleet, treeLinkClicked, renameProject, loadHistory, openHistorySession,
-      createWorkspaceProject, convertToFleet, provisionFleet,
+      createWorkspaceProject, convertToFleet, provisionFleet, requestUnfurl,
       getProjects() { return projects; }
     };
   }
@@ -5688,6 +5956,7 @@
       wireStart();
       wireRename();
       wireTreeLinks();
+      wireRichPreviews();
       const search = doc.getElementById('v6FilterSearch');
       if (search) {
         search.addEventListener('input', (evt) => {
@@ -5915,6 +6184,36 @@
           fleet.members.forEach((m, mi) => {
             if (m.seatId) report(`v6TreeLink-m${pi}-${fi}-${mi}`, routeHash({ view: 'conversation', resourceId: m.seatId }));
           });
+        });
+      });
+    }
+
+    /**
+     * The rich preview affordances a message can draw (#3107): a "Preview"
+     * button asks for an external link's Open Graph card (never auto-
+     * fetched, per Ruling A752), and a local-reference card's copy-path
+     * button copies its path. Re-wired every render, the same as every
+     * other per-element listener here, since `root.innerHTML` is reset
+     * each time.
+     */
+    function wireRichPreviews() {
+      if (typeof doc.querySelectorAll !== 'function') return;
+      doc.querySelectorAll('.v6-chat-local-ref-copy').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const path = btn.getAttribute('data-copy-path');
+          const clipboard = win && win.navigator && win.navigator.clipboard;
+          if (!path || !clipboard || typeof clipboard.writeText !== 'function') return;
+          clipboard.writeText(path).catch(() => {
+            // prawduct:allow prawduct/broad-except -- a copy that fails leaves the path visible to copy by hand; it must never break the chat
+          });
+        });
+      });
+      doc.querySelectorAll('.v6-chat-unfurl-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const url = btn.getAttribute('data-unfurl-url');
+          if (!url) return;
+          setUnfurl(url, { state: 'loading' });
+          if (typeof options.onUnfurlLink === 'function') options.onUnfurlLink(url);
         });
       });
     }
@@ -6395,6 +6694,33 @@
       return (chat && chat.thumbs) || {};
     }
 
+    /** The chat on screen's unfurl state by URL, right now (#3107). */
+    function unfurlsNow() {
+      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      return (chat && chat.unfurls) || {};
+    }
+
+    /**
+     * One link's unfurl state changed (#3107): redraws the message lists in
+     * place, the same as `setThumbs` — never a full `render()`, so the
+     * chat's scroll position, draft and focus are untouched. A plain
+     * function (not only a shell method) so {@link wireRichPreviews}' click
+     * handler can call it directly, the same split {@link setWorkspaceMode}
+     * already uses.
+     * @param {string} url
+     * @param {{state: ('loading'|'done'|'error'), preview?: object}} entry
+     */
+    function setUnfurl(url, entry) {
+      if (!detail || detail.kind !== 'conversation' || !detail.view || typeof url !== 'string') return;
+      const unfurls = Object.assign({}, detail.view.chat.unfurls, { [url]: entry });
+      detail = Object.assign({}, detail, { view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { unfurls }) }) });
+      const view = detail.view;
+      const liveEl = doc.getElementById('v6ChatLive');
+      if (liveEl) liveEl.innerHTML = liveTurnsMarkup(view.chat.live ? view.chat.live.turns : [], String((view.project && view.project.name) || ''), verbosity, thumbsNow(), unfurlsNow());
+      paintTucked(view.chat.live);
+      paintRecorded();
+    }
+
     /**
      * Redraw the replies the verbosity filter tucked away, and their count
      * on the Under the Hood summary (#3082).
@@ -6403,7 +6729,7 @@
     function paintTucked(live) {
       const tucked = tuckedTurns(live && Array.isArray(live.turns) ? live.turns : [], verbosity);
       const list = doc.getElementById('v6ChatTucked');
-      if (list) list.innerHTML = tuckedMarkup(tucked, thumbsNow());
+      if (list) list.innerHTML = tuckedMarkup(tucked, thumbsNow(), unfurlsNow());
       const count = doc.getElementById('v6ChatTuckedCount');
       if (count) count.innerHTML = escapeHtml(tuckedCountText(tucked.length));
     }
@@ -6425,7 +6751,7 @@
           const view = detail && detail.kind === 'conversation' ? detail.view : null;
           const live = view && view.chat ? view.chat.live : null;
           const liveEl = doc.getElementById('v6ChatLive');
-          if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], String((view && view.project && view.project.name) || ''), verbosity, thumbsNow());
+          if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], String((view && view.project && view.project.name) || ''), verbosity, thumbsNow(), unfurlsNow());
           paintTucked(live);
         });
       });
@@ -6442,11 +6768,11 @@
       const name = String((view.project && view.project.name) || '');
       const parts = arrangeRecorded(view.events, chat.live && Array.isArray(chat.live.turns) ? chat.live.turns : [], chat.lastSent);
       const head = doc.getElementById('v6ChatRecorded');
-      if (head) head.innerHTML = recordedEventsMarkup(parts.head, name, chat.thumbs);
+      if (head) head.innerHTML = recordedEventsMarkup(parts.head, name, chat.thumbs, chat.unfurls);
       const tailEl = doc.getElementById('v6ChatRecordedTail');
-      if (tailEl) tailEl.innerHTML = recordedEventsMarkup(parts.tail, name, chat.thumbs);
+      if (tailEl) tailEl.innerHTML = recordedEventsMarkup(parts.tail, name, chat.thumbs, chat.unfurls);
       const pendingEl = doc.getElementById('v6ChatPending');
-      if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSends.filter((p) => p.key === chatTargetKey()), chat.lastSent, chat.thumbs);
+      if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSends.filter((p) => p.key === chatTargetKey()), chat.lastSent, chat.thumbs, chat.unfurls);
     }
 
     /**
@@ -7056,7 +7382,7 @@
         const stream = doc.getElementById('v6ChatStream');
         const streamAtBottom = isAtBottom(stream);
         const liveEl = doc.getElementById('v6ChatLive');
-        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name, verbosity, thumbsNow());
+        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name, verbosity, thumbsNow(), unfurlsNow());
         paintTucked(live);
         paintRecorded();
         if (streamAtBottom) pinToBottom(stream);
@@ -7145,10 +7471,22 @@
         detail = Object.assign({}, detail, { view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { thumbs: thumbs || {} }) }) });
         const view = detail.view;
         const liveEl = doc.getElementById('v6ChatLive');
-        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(view.chat.live ? view.chat.live.turns : [], String((view.project && view.project.name) || ''), verbosity, thumbsNow());
+        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(view.chat.live ? view.chat.live.turns : [], String((view.project && view.project.name) || ''), verbosity, thumbsNow(), unfurlsNow());
         paintTucked(view.chat.live);
         paintRecorded();
       },
+      /**
+       * One link's unfurl state changed (#3107): `'loading'` the moment the
+       * viewer clicks Preview, then `'done'`/`'error'` once the fetch
+       * resolves. Called both externally (the live controller, once the
+       * fetch resolves) and internally ({@link wireRichPreviews}' own click
+       * handler, to show "Loading…" immediately) — see {@link setUnfurl}
+       * (the plain internal function this delegates to; same split
+       * {@link setWorkspaceMode} already uses for the same reason).
+       * @param {string} url
+       * @param {{state: ('loading'|'done'|'error'), preview?: object}} entry
+       */
+      setUnfurl(url, entry) { setUnfurl(url, entry); },
       /**
        * Run `fn` when the shell is torn down (#3082: the chat's blob URLs
        * are released then).

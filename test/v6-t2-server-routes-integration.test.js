@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -587,6 +587,119 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       const res = await post('/api/v6/branding/effective', { key: 'branding.notReal', storedValue: true });
       assert.equal(res.statusCode, 400, res.body);
       assert.equal(json(res).code, 'UNKNOWN_BRANDING_KEY');
+    });
+  });
+
+  describe('GET /api/v6/unfurl (#3107)', () => {
+    // node:dns/node:http/node:https are built-ins: require() returns the
+    // SAME cached singleton object server.js's own top-level requires hold,
+    // so mutating a method here reaches server.js's calls too — the same
+    // "monkey-patch the shared global" technique this file already uses
+    // for globalThis.fetch (see the GitHub connection-probe tests above),
+    // just on a different pair of shared objects, since _v6SafeUnfurlFetch
+    // needs node:dns's own lookup (to validate the RESOLVED address, not
+    // just the literal host) and so cannot be written against fetch alone.
+    const dns = require('node:dns');
+    const http = require('node:http');
+    const https = require('node:https');
+    let origLookup;
+    let origHttpRequest;
+    let origHttpsRequest;
+
+    beforeEach(() => {
+      origLookup = dns.promises.lookup;
+      origHttpRequest = http.request;
+      origHttpsRequest = https.request;
+    });
+
+    afterEach(() => {
+      dns.promises.lookup = origLookup;
+      http.request = origHttpRequest;
+      https.request = origHttpsRequest;
+    });
+
+    /** A fake `http.request`/`https.request` answering with a fixed status + body, never touching the network. */
+    function stubRequest(client, { statusCode = 200, body = '' } = {}) {
+      client.request = (_opts, cb) => {
+        const chunks = body ? [Buffer.from(body)] : [];
+        const fres = {
+          statusCode,
+          resume() {},
+          on(event, fn) {
+            if (event === 'data') chunks.forEach((c) => fn(c));
+            if (event === 'end') fn();
+            return fres;
+          }
+        };
+        cb(fres);
+        return { on() {}, end() {}, destroy() {} };
+      };
+    }
+
+    it('refuses with no url query param, before any DNS lookup', async () => {
+      const res = await get('/api/v6/unfurl');
+      assert.equal(res.statusCode, 400, res.body);
+      assert.equal(json(res).code, 'BAD_REQUEST');
+    });
+
+    it('refuses a non-operator caller', async () => {
+      const res = await get('/api/v6/unfurl?url=https%3A%2F%2Fexample.com', { operator: false });
+      assert.ok([401, 403].includes(res.statusCode), res.body);
+    });
+
+    it('builds a GitHub card straight from the URL, with no DNS lookup or fetch at all', async () => {
+      let lookupCalled = false;
+      dns.promises.lookup = async () => { lookupCalled = true; return []; };
+      const res = await get('/api/v6/unfurl?url=https%3A%2F%2Fgithub.com%2Facme%2Fwidgets%2Fpull%2F42');
+      assert.equal(res.statusCode, 200, res.body);
+      assert.deepEqual(json(res).preview, { kind: 'github', url: 'https://github.com/acme/widgets/pull/42', owner: 'acme', repo: 'widgets', entityKind: 'pull', number: 42 });
+      assert.equal(lookupCalled, false, 'a GitHub URL never needs a DNS lookup');
+    });
+
+    it('refuses a literal loopback target before any DNS lookup (the fast, host-string check)', async () => {
+      let lookupCalled = false;
+      dns.promises.lookup = async () => { lookupCalled = true; return []; };
+      const res = await get('/api/v6/unfurl?url=http%3A%2F%2F127.0.0.1%2Fsecret');
+      assert.equal(res.statusCode, 400, res.body);
+      assert.equal(json(res).code, 'UNFURL_TARGET_UNSAFE');
+      assert.equal(lookupCalled, false);
+    });
+
+    it('refuses a public-looking hostname whose DNS answer rebinds to a private address — the fetch-time check the literal-host check cannot see', async () => {
+      dns.promises.lookup = async () => [{ address: '127.0.0.1', family: 4 }];
+      const res = await get('/api/v6/unfurl?url=https%3A%2F%2Ftotally-public-looking.example%2Fpage');
+      assert.equal(res.statusCode, 502, res.body);
+      assert.equal(json(res).code, 'UNFURL_FETCH_FAILED');
+      assert.match(json(res).error, /RESOLVED_LOOPBACK/);
+    });
+
+    it('fetches, parses Open Graph tags, and caches the result for the next identical request', async () => {
+      dns.promises.lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+      stubRequest(https, {
+        statusCode: 200,
+        body: '<html><head><meta property="og:title" content="A Real Page"><meta property="og:description" content="Nice."></head></html>'
+      });
+      let requestCalls = 0;
+      const stubbed = https.request;
+      https.request = (opts, cb) => { requestCalls += 1; return stubbed(opts, cb); };
+      const url = 'https://totally-public-looking.example/page';
+      const first = await get(`/api/v6/unfurl?url=${encodeURIComponent(url)}`);
+      assert.equal(first.statusCode, 200, first.body);
+      assert.deepEqual(json(first).preview, { kind: 'link-unfurl', url, title: 'A Real Page', description: 'Nice.' });
+      assert.equal(json(first).cached, undefined);
+
+      const second = await get(`/api/v6/unfurl?url=${encodeURIComponent(url)}`);
+      assert.equal(second.statusCode, 200, second.body);
+      assert.equal(json(second).cached, true);
+      assert.equal(requestCalls, 1, 'the second request answered from cache, never re-fetched');
+    });
+
+    it('answers 502 when the fetch itself errors (no og: tags to parse either way)', async () => {
+      dns.promises.lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+      https.request = (_opts, _cb) => ({ on(event, fn) { if (event === 'error') fn(new Error('boom')); }, end() {}, destroy() {} });
+      const res = await get(`/api/v6/unfurl?url=${encodeURIComponent('https://some-other-public-host.example/')}`);
+      assert.equal(res.statusCode, 502, res.body);
+      assert.equal(json(res).code, 'UNFURL_FETCH_FAILED');
     });
   });
 });
