@@ -412,3 +412,218 @@ describe('checkInterruptSupport (#2982 deliverable 2)', () => {
     assert.equal(b2.checkInterruptSupport(undefined).allowed, false);
   });
 });
+
+// #3107 (Car V650-W1-A, pipelined via Guardrail 06): rich link unfurling &
+// inline media/artifact previews. Classification/parsing only — no fetch,
+// no route, no public/v6-shell.js rendering (see the module's own header).
+
+describe('classifyMediaOrArtifactLink (#3107)', () => {
+  it('classifies a workspace-rooted image, with zoom metadata', () => {
+    assert.deepEqual(b2.classifyMediaOrArtifactLink('./shots/foo.png'),
+      { kind: 'image', path: './shots/foo.png', source: 'workspace', zoomable: true });
+    assert.deepEqual(b2.classifyMediaOrArtifactLink('/Users/x/screenshot.JPG').kind, 'image', 'extension match is case-insensitive');
+  });
+
+  it('classifies every documented image extension', () => {
+    for (const ext of ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg']) {
+      assert.equal(b2.classifyMediaOrArtifactLink(`/a.${ext}`).kind, 'image', ext);
+    }
+  });
+
+  it('classifies a video with its mimeType, preload and controls', () => {
+    assert.deepEqual(b2.classifyMediaOrArtifactLink('/Users/x/clip.mp4'),
+      { kind: 'video', path: '/Users/x/clip.mp4', source: 'workspace', mimeType: 'video/mp4', preload: 'metadata', controls: true });
+    assert.equal(b2.classifyMediaOrArtifactLink('/a.webm').mimeType, 'video/webm');
+    assert.equal(b2.classifyMediaOrArtifactLink('/a.mov').mimeType, 'video/quicktime');
+  });
+
+  it('classifies a secrets-store reference, mirroring public/v6-shell.js\'s ATTACHED_LINE convention', () => {
+    assert.deepEqual(b2.classifyMediaOrArtifactLink('secrets/abc.jpg'),
+      { kind: 'image', path: 'abc.jpg', source: 'secrets', zoomable: true });
+    assert.equal(b2.classifyMediaOrArtifactLink('.tangleclaw/secrets/clip.mp4').source, 'secrets');
+  });
+
+  it('classifies a file:// URL, decoding percent-encoding in the path', () => {
+    assert.deepEqual(b2.classifyMediaOrArtifactLink('file:///Users/x/my%20plan.md'),
+      { kind: 'artifact', path: '/Users/x/my plan.md', source: 'file-url', fileExtension: 'md', title: 'my plan.md', lineRange: null });
+  });
+
+  it('classifies an .md/.html artifact with no line range, and names its title and extension', () => {
+    assert.deepEqual(b2.classifyMediaOrArtifactLink('./docs/plan.md'),
+      { kind: 'artifact', path: './docs/plan.md', source: 'workspace', fileExtension: 'md', title: 'plan.md', lineRange: null });
+    assert.equal(b2.classifyMediaOrArtifactLink('/reports/sprint.html').fileExtension, 'html');
+  });
+
+  it('classifies a #L<n>-L<n> code line-range card for ANY extension, not just .md/.html', () => {
+    assert.deepEqual(b2.classifyMediaOrArtifactLink('file:///Users/x/app.js#L10-L20'),
+      { kind: 'artifact', path: '/Users/x/app.js', source: 'file-url', fileExtension: 'js', title: 'app.js', lineRange: { start: 10, end: 20 } });
+  });
+
+  it('a single #L<n> with no end names the same line as both start and end', () => {
+    assert.deepEqual(b2.classifyMediaOrArtifactLink('/a.js#L5').lineRange, { start: 5, end: 5 });
+  });
+
+  it('refuses a line range on an image or video — a frame range makes no sense for either', () => {
+    assert.equal(b2.classifyMediaOrArtifactLink('/a.png#L1-L2'), null);
+    assert.equal(b2.classifyMediaOrArtifactLink('/a.mp4#L1-L2'), null);
+  });
+
+  it('returns null for ordinary prose, an unrecognized extension with no line range, and non-strings', () => {
+    assert.equal(b2.classifyMediaOrArtifactLink('version 2.1 shipped'), null);
+    assert.equal(b2.classifyMediaOrArtifactLink('/a.exe'), null);
+    assert.equal(b2.classifyMediaOrArtifactLink(''), null);
+    assert.equal(b2.classifyMediaOrArtifactLink(null), null);
+    assert.equal(b2.classifyMediaOrArtifactLink(42), null);
+  });
+
+  it('returns null for a bare relative filename with no path-like prefix, so ordinary word-like tokens are never misread', () => {
+    assert.equal(b2.classifyMediaOrArtifactLink('report.md'), null);
+  });
+});
+
+describe('extractRichPreviewsFromMessage (#3107)', () => {
+  it('extracts an Attached: secrets line as its own card, without also token-scanning that line', () => {
+    const cards = b2.extractRichPreviewsFromMessage('Attached: secrets/shot.png');
+    assert.deepEqual(cards, [{ kind: 'image', path: 'shot.png', source: 'secrets', zoomable: true }]);
+  });
+
+  it('extracts a workspace path and a GitHub URL embedded in prose, trimming trailing punctuation', () => {
+    const cards = b2.extractRichPreviewsFromMessage('See ./plan.md and https://github.com/a/b/pull/5, please.');
+    assert.equal(cards.length, 2);
+    assert.equal(cards[0].kind, 'artifact');
+    assert.equal(cards[0].path, './plan.md');
+    assert.deepEqual(cards[1], { kind: 'github', url: 'https://github.com/a/b/pull/5', owner: 'a', repo: 'b', entityKind: 'pull', number: 5 });
+  });
+
+  it('extracts a generic external link as an SSRF-evaluated candidate, never fetched', () => {
+    const cards = b2.extractRichPreviewsFromMessage('Check https://example.com/page.');
+    assert.deepEqual(cards, [{ kind: 'link-unfurl-candidate', url: 'https://example.com/page', safe: true, unsafeReason: null }]);
+  });
+
+  it('flags an unsafe external link candidate with its reason, rather than silently dropping it', () => {
+    const cards = b2.extractRichPreviewsFromMessage('http://169.254.169.254/latest/meta-data');
+    assert.deepEqual(cards, [{ kind: 'link-unfurl-candidate', url: 'http://169.254.169.254/latest/meta-data', safe: false, unsafeReason: 'LINK_LOCAL' }]);
+  });
+
+  it('preserves reference order across multiple lines', () => {
+    const cards = b2.extractRichPreviewsFromMessage('./a.png\nsome prose\n./b.mp4');
+    assert.deepEqual(cards.map((c) => c.kind), ['image', 'video']);
+  });
+
+  it('returns an empty array for text with no reference, and for non-strings', () => {
+    assert.deepEqual(b2.extractRichPreviewsFromMessage('just some words'), []);
+    assert.deepEqual(b2.extractRichPreviewsFromMessage(''), []);
+    assert.deepEqual(b2.extractRichPreviewsFromMessage(null), []);
+  });
+});
+
+describe('parseGitHubEntityUrl (#3107)', () => {
+  it('parses a pull request URL', () => {
+    assert.deepEqual(b2.parseGitHubEntityUrl('https://github.com/Jason-Vaughan/TangleClaw/pull/3119'),
+      { owner: 'Jason-Vaughan', repo: 'TangleClaw', entityKind: 'pull', number: 3119 });
+  });
+
+  it('parses an issue URL', () => {
+    assert.deepEqual(b2.parseGitHubEntityUrl('https://github.com/Jason-Vaughan/TangleClaw/issues/3107'),
+      { owner: 'Jason-Vaughan', repo: 'TangleClaw', entityKind: 'issue', number: 3107 });
+  });
+
+  it('parses a release tag URL, decoding percent-encoding in the tag', () => {
+    assert.deepEqual(b2.parseGitHubEntityUrl('https://github.com/a/b/releases/tag/v6.4%2E1'),
+      { owner: 'a', repo: 'b', entityKind: 'release', tag: 'v6.4.1' });
+  });
+
+  it('parses with a trailing path/query/fragment after the id', () => {
+    assert.equal(b2.parseGitHubEntityUrl('https://github.com/a/b/pull/5/files').number, 5);
+    assert.equal(b2.parseGitHubEntityUrl('https://github.com/a/b/issues/5?x=1#c1').number, 5);
+  });
+
+  it('returns null for a non-matching github.com URL (profile, repo root, blob, commit) and for a non-github URL', () => {
+    assert.equal(b2.parseGitHubEntityUrl('https://github.com/a/b'), null);
+    assert.equal(b2.parseGitHubEntityUrl('https://github.com/a'), null);
+    assert.equal(b2.parseGitHubEntityUrl('https://github.com/a/b/blob/main/x.js'), null);
+    assert.equal(b2.parseGitHubEntityUrl('https://example.com/a/b/pull/5'), null);
+    assert.equal(b2.parseGitHubEntityUrl(42), null);
+  });
+
+  it('returns null for a pull/issue id that is not a positive integer', () => {
+    assert.equal(b2.parseGitHubEntityUrl('https://github.com/a/b/pull/not-a-number'), null);
+    assert.equal(b2.parseGitHubEntityUrl('https://github.com/a/b/issues/0'), null);
+  });
+});
+
+describe('evaluateUnfurlTargetSafety (#3107)', () => {
+  it('allows an ordinary public hostname', () => {
+    assert.deepEqual(b2.evaluateUnfurlTargetSafety('https://example.com/x'), { safe: true, reason: null });
+  });
+
+  it('refuses a non-http(s) scheme', () => {
+    assert.deepEqual(b2.evaluateUnfurlTargetSafety('ftp://example.com/x'), { safe: false, reason: 'UNSUPPORTED_SCHEME' });
+    assert.equal(b2.evaluateUnfurlTargetSafety('file:///etc/passwd').reason, 'UNSUPPORTED_SCHEME');
+  });
+
+  it('refuses an unparseable URL and non-string input', () => {
+    assert.deepEqual(b2.evaluateUnfurlTargetSafety('not a url'), { safe: false, reason: 'INVALID_URL' });
+    assert.equal(b2.evaluateUnfurlTargetSafety('').reason, 'INVALID_URL');
+    assert.equal(b2.evaluateUnfurlTargetSafety(null).reason, 'INVALID_URL');
+  });
+
+  it('refuses "localhost" by name, and literal IPv4 loopback/link-local/private ranges', () => {
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://localhost/x').reason, 'LOOPBACK');
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://127.0.0.1/x').reason, 'LOOPBACK');
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://127.5.5.5/x').reason, 'LOOPBACK');
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://169.254.169.254/latest').reason, 'LINK_LOCAL');
+    for (const ip of ['10.0.0.5', '172.16.0.1', '172.31.255.255', '192.168.1.1', '0.0.0.5']) {
+      assert.equal(b2.evaluateUnfurlTargetSafety(`http://${ip}/x`).reason, 'PRIVATE_RANGE', ip);
+    }
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://172.32.0.1/x').reason, null, '172.32/16 is just outside 172.16.0.0/12');
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://8.8.8.8/x').reason, null, 'a real public IP stays safe');
+  });
+
+  it('refuses literal IPv6 loopback, link-local (fe80::/10), and unique-local (fc00::/7)', () => {
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://[::1]/x').reason, 'LOOPBACK');
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://[fe80::1]/x').reason, 'LINK_LOCAL');
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://[fc00::1]/x').reason, 'PRIVATE_RANGE');
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://[fd12:3456::1]/x').reason, 'PRIVATE_RANGE');
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://[2001:4860:4860::8888]/x').reason, null, 'a real public IPv6 (Google DNS) stays safe');
+  });
+
+  it('refuses an IPv4-mapped IPv6 literal embedding a private address, even though URL normalizes it to hex groups', () => {
+    // new URL('http://[::ffff:10.0.0.1]/x').hostname is '[::ffff:a00:1]', never
+    // the dotted form — this is the exact case a naive dotted-only regex misses.
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://[::ffff:10.0.0.1]/x').reason, 'PRIVATE_RANGE');
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://[::ffff:127.0.0.1]/x').reason, 'LOOPBACK');
+    assert.equal(b2.evaluateUnfurlTargetSafety('http://[::ffff:8.8.8.8]/x').reason, null, 'a mapped PUBLIC IPv4 stays safe');
+  });
+});
+
+describe('parseOpenGraphHtml (#3107)', () => {
+  it('extracts title, description, image, video and site_name', () => {
+    const html = '<meta property="og:title" content="Hello"><meta property="og:description" content="A page">'
+      + '<meta property="og:image" content="https://example.com/x.png"><meta property="og:video" content="https://example.com/x.mp4">'
+      + '<meta property="og:site_name" content="Example">';
+    assert.deepEqual(b2.parseOpenGraphHtml(html), {
+      title: 'Hello', description: 'A page', image: 'https://example.com/x.png', video: 'https://example.com/x.mp4', siteName: 'Example'
+    });
+  });
+
+  it('decodes common HTML entities, including numeric and hex forms, in content', () => {
+    const html = '<meta property="og:title" content="Tom &amp; Jerry &#39; s &#x27;Great&#x27; Day">';
+    assert.equal(b2.parseOpenGraphHtml(html).title, "Tom & Jerry ' s 'Great' Day");
+  });
+
+  it('accepts name= as well as property=, and single-quoted attributes', () => {
+    assert.equal(b2.parseOpenGraphHtml("<meta name='og:title' content='Hi'>").title, 'Hi');
+  });
+
+  it('keeps only the FIRST occurrence of a field when a page repeats a tag', () => {
+    const html = '<meta property="og:title" content="First"><meta property="og:title" content="Second">';
+    assert.equal(b2.parseOpenGraphHtml(html).title, 'First');
+  });
+
+  it('returns null for HTML with no og: tags, and for non-string/empty input', () => {
+    assert.equal(b2.parseOpenGraphHtml('<html><head><title>Plain</title></head></html>'), null);
+    assert.equal(b2.parseOpenGraphHtml(''), null);
+    assert.equal(b2.parseOpenGraphHtml(null), null);
+  });
+});
