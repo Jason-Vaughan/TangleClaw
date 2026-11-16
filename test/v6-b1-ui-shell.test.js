@@ -981,10 +981,17 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
         }
         if (/^\/api\/projects\/[^/]+$/.test(url) && method === 'PATCH') {
           const name = decodeURIComponent(url.split('/').pop());
-          const row = live.projects.find((p) => p.name === name);
-          if (!row) return null;
-          row.name = body.name;
-          return { id: row.id, name: row.name };
+          const idx = live.projects.findIndex((p) => p.name === name);
+          if (idx === -1) return null;
+          // Replace with a new object rather than mutating the row in
+          // place: PROJECTS.slice() above only shallow-copies the ARRAY,
+          // so mutating a row here used to rename the SHARED element
+          // PROJECTS itself still references, permanently (for the rest
+          // of this file's run, since PROJECTS is declared once at module
+          // scope) renaming it for every OTHER test that mounts afterward.
+          const renamed = Object.assign({}, live.projects[idx], { name: body.name });
+          live.projects[idx] = renamed;
+          return { id: renamed.id, name: renamed.name };
         }
         if (/\/plan$/.test(url) && method === 'POST') return plan || null;
         return null;
@@ -1017,6 +1024,11 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
         onCreateWorkspaceProject: (form) => pending.push(liveCtl.createWorkspaceProject(form)),
         onConvertToFleet: (form) => pending.push(liveCtl.convertToFleet(form)),
         onProvisionFleet: (args) => pending.push(liveCtl.provisionFleet(args)),
+        onUnfurlLink: (url) => pending.push(liveCtl.requestUnfurl(url)),
+        onLoadBundledFleetSpecs: () => pending.push(liveCtl.loadBundledFleetSpecs()),
+        onValidateFleetSpec: (spec) => pending.push(liveCtl.requestValidateFleetSpec(spec)),
+        onApplyFleetSpec: (args) => pending.push(liveCtl.applyFleetSpec(args)),
+        onExportFleetSpec: (args) => pending.push(liveCtl.exportFleetSpec(args)),
         onRender: (route) => pending.push(liveCtl.handleRoute(route))
       });
       pending.push(liveCtl.handleRoute(shell.getRoute()));
@@ -1134,6 +1146,210 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
       await settle();
       assert.match(root.innerHTML, /ship it/, 'the chat detail survived the round trip through the Wizard');
     });
+
+    it('requestUnfurl asks GET /api/v6/unfurl and reports the result back into the chat on screen (#3107, Ruling A813)', async () => {
+      const url = 'https://blog.example/post';
+      const { win, doc, root, live, calls, settle } = mountWizard({
+        '/api/v6/projects/11/sessions/501/conversation/events': { events: [{ seq: 1, role: 'user', content: `See ${url}` }] },
+        [`/api/v6/unfurl?url=${encodeURIComponent(url)}`]: { ok: true, preview: { title: 'A Post' } }
+      });
+      win.location.hash = '#/resources/11/conversation';
+      await settle();
+      // root.innerHTML's getter answers the raw string last assigned to IT
+      // specifically (test/_mini-dom.js's withIdParsingInnerHTML), which is
+      // what the first full render set — the right place to see this.
+      assert.match(root.innerHTML, /👁 Preview/, 'the unclicked affordance rendered for the external link');
+      await live.requestUnfurl(url);
+      assert.ok(calls.includes(`/api/v6/unfurl?url=${encodeURIComponent(url)}`), 'the exact route was asked');
+      // The seeded message is RECORDED history (session 501 is active, so
+      // requestUnfurl's result lands via setUnfurl's own targeted redraw —
+      // paintRecorded, not the live-turns list — never touching
+      // root.innerHTML itself, so the follow-up checks read the real
+      // redrawn elements directly.
+      const recordedHtml = doc.getElementById('v6ChatRecorded').innerHTML + doc.getElementById('v6ChatRecordedTail').innerHTML;
+      assert.match(recordedHtml, /<span class="v6-chat-unfurl-title">A Post<\/span>/, 'the fetched preview replaced the Preview button');
+      assert.doesNotMatch(recordedHtml, /👁 Preview/);
+    });
+  describe('the Fleet Spec Wizard tab (#3115)', () => {
+    const bundled = {
+      specs: { 'software-factory-10-role': { metadata: { id: 'software-factory-10-role', name: 'Autonomous Software Factory', description: 'A 10-seat fleet.' } } },
+      ecosystemDirectory: { marketplaceUrl: 'https://tangleclaw.com/marketplace', description: 'Browse community templates.' }
+    };
+    const validSpec = {
+      schemaVersion: '1.0',
+      metadata: { id: 'x', name: 'Monad', version: '1.0.0', author: 'a', description: 'd', category: 'c', tags: [], homepageUrl: 'https://tangleclaw.com/marketplace', license: 'MIT' },
+      seats: [{ seatId: 'pm', displayNameSuffix: 'PM', role: 'PM', supervisory: true, launchPolicy: 'immediate', recommendedEngine: 'claude', fallbackEngines: [] }],
+      rules: [], charterTemplate: null, sharedDocuments: []
+    };
+
+    function mountFleetSpec(extraMap) {
+      // A real, per-element copy (not PROJECTS.slice(), which shares every
+      // element OBJECT by reference) — mountWizard's own mutate() renames
+      // projects by mutating a row IN PLACE, and since node:test runs every
+      // it() in this file's declaration order, an EARLIER Workflow B test
+      // renaming TangleClaw would otherwise leak into every later test here
+      // that still expects its original name.
+      const live = { projects: PROJECTS.map((p) => Object.assign({}, p)) };
+      const map = baseMap(Object.assign({
+        '/api/projects': () => ({ projects: live.projects }),
+        '/api/v6/fleet-templates/bundled-specs': bundled
+      }, extraMap || {}));
+      let nextId = 100;
+      const mutate = (url, method, body) => {
+        if (url === '/api/v6/fleet-templates/validate-spec' && method === 'POST') {
+          if (!body.spec || !body.spec.seats) return { ok: false, errors: [{ path: 'seats', message: 'required' }] };
+          return { ok: true, preview: { metadata: body.spec.metadata, seatCount: body.spec.seats.length, immediateSeatCount: 1, onDemandSeatCount: 0, recommendedEngineCounts: {}, rulesCount: 0, charterSummary: null, sharedDocumentNames: [] } };
+        }
+        if (url === '/api/v6/fleet-templates/apply-spec' && method === 'POST') {
+          const created = body.spec.seats.map((s) => {
+            const row = { id: nextId++, name: `${body.fleetName}-${s.displayNameSuffix}`, engine: s.recommendedEngine };
+            live.projects.push(row);
+            return { seatId: s.seatId, name: row.name, id: row.id };
+          });
+          return { ok: true, created, failed: [] };
+        }
+        return null;
+      };
+      const m = mountLiveWithMutate(map, mutate);
+      m.live2 = live;
+      return m;
+    }
+
+    it('switches to the tab, lazy-loads the bundled specs once, and the marketplace banner links out', async () => {
+      const { win, doc, root, calls, settle } = mountFleetSpec();
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      assert.ok(calls.includes('/api/v6/fleet-templates/bundled-specs'));
+      assert.match(root.innerHTML, /Browse Community Fleet Templates on TangleClaw\.com/);
+      assert.match(root.innerHTML, /Autonomous Software Factory/);
+      doc.getElementById('v6WorkspaceMode-chat').dispatch('click');
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      assert.equal(calls.filter((c) => c === '/api/v6/fleet-templates/bundled-specs').length, 1, 'never refetched once loaded');
+    });
+
+    it('"Use this template" pre-fills the import textarea with the exact bundled spec', async () => {
+      // test/_mini-dom.js's withIdParsingInnerHTML only ever tracks ids —
+      // a <textarea>'s CONTENT becomes .value in a real browser, never here
+      // (it is deliberately not a real parser), so every assertion in this
+      // describe block below checks root.innerHTML's raw string directly
+      // (the getter answers exactly what was last assigned to it) rather
+      // than reading .value/getAttribute back off a flat-parsed element.
+      const { win, doc, root, settle } = mountFleetSpec();
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardUseBundled-software-factory-10-role').dispatch('click');
+      assert.match(root.innerHTML, /id="v6WizardFleetSpecJson"[^>]*>[^<]*&quot;name&quot;: &quot;Autonomous Software Factory&quot;/);
+    });
+
+    it('Validate previews a well-formed spec and enables Apply; Apply provisions one project per seat and navigates to the first', async () => {
+      const { win, doc, root, settle } = mountFleetSpec();
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardFleetSpecJson').value = JSON.stringify(validSpec);
+      doc.getElementById('v6WizardFleetSpecJson').dispatch('input');
+      doc.getElementById('v6WizardFleetSpecFleetName').value = 'Monad';
+      doc.getElementById('v6WizardFleetSpecFleetName').dispatch('input');
+      assert.match(root.innerHTML, /id="v6WizardFleetSpecApplyBtn"[^>]* disabled>/, 'disabled before any validation');
+      doc.getElementById('v6WizardFleetSpecImportForm').dispatch('submit');
+      await settle();
+      assert.match(root.innerHTML, /1 seat\(s\) — Monad/);
+      assert.doesNotMatch(root.innerHTML, /id="v6WizardFleetSpecApplyBtn"[^>]* disabled>/, 'enabled once the preview is ok');
+      doc.getElementById('v6WizardFleetSpecApplyBtn').dispatch('click');
+      await settle();
+      assert.match(win.location.hash, /#\/resources\/\d+\/conversation/, 'navigated to the first provisioned seat');
+      assert.match(root.innerHTML, /Monad-PM/);
+    });
+
+    it('Validate refuses a malformed spec, naming the real validator\'s errors, and Apply stays disabled', async () => {
+      const { win, doc, root, settle } = mountFleetSpec();
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardFleetSpecJson').value = JSON.stringify({ not: 'a spec' });
+      doc.getElementById('v6WizardFleetSpecJson').dispatch('input');
+      doc.getElementById('v6WizardFleetSpecImportForm').dispatch('submit');
+      await settle();
+      assert.match(root.innerHTML, /seats: required/);
+      assert.match(root.innerHTML, /id="v6WizardFleetSpecApplyBtn"[^>]* disabled>/);
+    });
+
+    it('rejects text that is not valid JSON before ever asking the server', async () => {
+      const { win, doc, root, calls, settle } = mountFleetSpec();
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardFleetSpecJson').value = 'not json at all';
+      doc.getElementById('v6WizardFleetSpecJson').dispatch('input');
+      doc.getElementById('v6WizardFleetSpecImportForm').dispatch('submit');
+      await settle();
+      assert.match(root.innerHTML, /Not valid JSON\./);
+      assert.equal(calls.some((c) => c.includes('validate-spec')), false);
+    });
+
+    it('exports an existing standalone workspace as a .fleet.json and shows it, read-only', async () => {
+      const { win, doc, root, settle } = mountFleetSpec({
+        '/api/v6/projects/30/fleet-spec?members=TangleClaw': { ok: true, spec: { metadata: { name: 'TangleClaw' }, seats: [] } }
+      });
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      // #3115 (PRR-A R1 C2): the export picker now lists every exportable
+      // fleet from the whole tree, not only standalone workspaces — the
+      // PROJECTS fixture's TC-Lane-A/TC-Lane-B group as "TC-Lane Fleet"
+      // (value '10'), listed before the standalone TangleClaw (value '30',
+      // the project's own name as its label — a 1-member "fleet" is really
+      // just a standalone project, and showing the catch-all's own generic
+      // "Workspace Projects" label there would make every standalone
+      // project in the picker look identical).
+      assert.match(root.innerHTML, /id="v6WizardFleetSpecExportProject"[^>]*><option value=""[^>]*>Choose…<\/option><option value="10">TC-Lane Fleet<\/option><option value="30">TangleClaw<\/option>/);
+      doc.getElementById('v6WizardFleetSpecExportProject').value = '30';
+      doc.getElementById('v6WizardFleetSpecExportProject').dispatch('change');
+      doc.getElementById('v6WizardFleetSpecExportForm').dispatch('submit');
+      await settle();
+      assert.match(root.innerHTML, /id="v6WizardFleetSpecExported"[^>]* readonly[^>]*>[^<]*&quot;name&quot;: &quot;TangleClaw&quot;/);
+    });
+
+    it('exports a real multi-seat fleet, passing every member’s name via ?members= (PRR-A R1 C2)', async () => {
+      const { win, doc, root, calls, settle } = mountFleetSpec({
+        '/api/v6/projects/10/fleet-spec?members=TC-Lane-A%2CTC-Lane-B': { ok: true, spec: { metadata: { name: 'TC-Lane' }, seats: [{}, {}] } }
+      });
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardFleetSpecExportProject').value = '10';
+      doc.getElementById('v6WizardFleetSpecExportProject').dispatch('change');
+      doc.getElementById('v6WizardFleetSpecExportForm').dispatch('submit');
+      await settle();
+      assert.ok(calls.includes('/api/v6/projects/10/fleet-spec?members=TC-Lane-A%2CTC-Lane-B'), 'both fleet members were named, not only the picked id');
+      assert.match(root.innerHTML, /id="v6WizardFleetSpecExported"[^>]* readonly[^>]*>[^<]*&quot;name&quot;: &quot;TC-Lane&quot;/);
+    });
+  });
   });
 
   it('enterHash names the first logical project, loading the projects if needed', async () => {
@@ -1223,6 +1439,11 @@ describe('page wiring (#3022 deliverable a) — index.html and ui.js', () => {
     assert.match(block, /onCreateWorkspaceProject\(form\) \{ v6Live\.createWorkspaceProject\(form\); \}/);
     assert.match(block, /onConvertToFleet\(form\) \{ v6Live\.convertToFleet\(form\); \}/);
     assert.match(block, /onProvisionFleet\(args\) \{ v6Live\.provisionFleet\(args\); \}/);
+  });
+
+  it('ui.js wires the chat\'s click-to-preview affordance to the live controller (#3107, Ruling A813)', () => {
+    const block = UI.slice(UI.indexOf("if (typeof window.tcCreateV6Shell === 'function')"));
+    assert.match(block, /onUnfurlLink\(url\) \{ v6Live\.requestUnfurl\(url\); \}/);
   });
 });
 
@@ -5715,9 +5936,14 @@ describe('links in messages open in a new tab, and only http(s) is ever a link (
   const f = (t, thumbs) => G.tcV6MessageMarkup(t, thumbs);
 
   it('a bare URL, MagicDNS port and all, is a new-tab link; trailing punctuation is not part of it', () => {
+    // #3107: any other external link now gets a click-to-preview affordance
+    // (Ruling A752 — never auto-fetched) alongside the plain link; the link
+    // itself is still exactly the new-tab anchor this test's name promises.
     const html = f('Plan: https://cursatory.tail123678.ts.net:8443/plans/111/p.md, read it.');
-    assert.equal(html, 'Plan: <a class="v6-chat-link" href="https://cursatory.tail123678.ts.net:8443/plans/111/p.md" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">https://cursatory.tail123678.ts.net:8443/plans/111/p.md</a>, read it.');
-    assert.match(f('(see https://x.example/a)'), /href="https:\/\/x\.example\/a"[^>]*>https:\/\/x\.example\/a<\/a>\)$/);
+    assert.equal(html, 'Plan: <span class="v6-chat-unfurl" data-unfurl-url="https://cursatory.tail123678.ts.net:8443/plans/111/p.md">'
+      + '<a class="v6-chat-link" href="https://cursatory.tail123678.ts.net:8443/plans/111/p.md" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">https://cursatory.tail123678.ts.net:8443/plans/111/p.md</a> '
+      + '<button type="button" class="btn btn-compact v6-chat-unfurl-btn" data-unfurl-url="https://cursatory.tail123678.ts.net:8443/plans/111/p.md">👁 Preview</button></span>, read it.');
+    assert.match(f('(see https://x.example/a)'), /href="https:\/\/x\.example\/a"[^>]*>https:\/\/x\.example\/a<\/a>[\s\S]*\)$/);
     assert.match(f('https://x.example/wiki/A_(b)'), /href="https:\/\/x\.example\/wiki\/A_\(b\)"/);
   });
 
@@ -5737,9 +5963,11 @@ describe('links in messages open in a new tab, and only http(s) is ever a link (
     const html = f('<b>hi</b> [<i>lbl</i>](https://a.example/?q=1&r=2) "https://b.example/x"');
     assert.doesNotMatch(html, /<b>|<i>/);
     assert.match(html, /href="https:\/\/a\.example\/\?q=1&amp;r=2"[^>]*>&lt;i&gt;lbl&lt;\/i&gt;<\/a>/);
-    // A quote ends a bare URL, so it can never break out of the href.
-    assert.match(f('https://a.example/x"onmouseover="y'), /href="https:\/\/a\.example\/x"[^>]*>https:\/\/a\.example\/x<\/a>&quot;onmouseover=&quot;y/);
-    assert.match(html, /&quot;<a class="v6-chat-link" href="https:\/\/b\.example\/x"/);
+    // A quote ends a bare URL, so it can never break out of the href. (#3107:
+    // the unfurl wrapper's own markup sits between the closing </a> and the
+    // escaped trailing text now, so this matches loosely across it.)
+    assert.match(f('https://a.example/x"onmouseover="y'), /href="https:\/\/a\.example\/x"[^>]*>https:\/\/a\.example\/x<\/a>[\s\S]*&quot;onmouseover=&quot;y/);
+    assert.match(html, /&quot;<span class="v6-chat-unfurl"[^>]*><a class="v6-chat-link" href="https:\/\/b\.example\/x"/);
   });
 
   it('an external image URL in an assistant turn is a link card and NO img, so nothing is fetched (A752-1)', () => {
@@ -5758,6 +5986,145 @@ describe('links in messages open in a new tab, and only http(s) is ever a link (
     assert.match(f('Attached: secrets/shot.png'), /^<span class="v6-chat-attachment"><span aria-hidden="true">📎<\/span> shot\.png<\/span>$/);
     assert.doesNotMatch(f('Attached: .tangleclaw/secrets/shot.png', { 'shot.png': 'javascript:alert(1)' }), /<img|href/);
     assert.doesNotMatch(f('Attached: .tangleclaw/secrets/notes.txt', { 'notes.txt': 'blob:http://h/2' }), /<img/);
+  });
+});
+
+describe('rich link unfurling & local reference cards (#3107, Rulings A809/A811)', () => {
+  const G = loadV6Shell();
+  const f = (t, unfurls) => G.tcV6MessageMarkup(t, null, unfurls);
+
+  it('a GitHub PR/Issue/Release URL renders a structured chip, never a plain link or a fetch', () => {
+    assert.equal(f('See https://github.com/acme/widgets/pull/42 for the fix'),
+      'See <a class="v6-chat-link-preview v6-chat-github-card" href="https://github.com/acme/widgets/pull/42" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Opens in a new tab">'
+      + '<span class="v6-chat-link-preview-icon" aria-hidden="true">🔀</span><span class="v6-chat-github-repo">acme/widgets</span><span class="v6-chat-github-label">#42</span></a> for the fix');
+    assert.match(f('https://github.com/acme/widgets/issues/7'), /<span class="v6-chat-github-label">#7<\/span>/);
+    assert.match(f('https://github.com/acme/widgets/issues/7'), /aria-hidden="true">🐛</);
+    assert.match(f('https://github.com/acme/widgets/releases/tag/v2.0'), /<span class="v6-chat-github-label">Release v2\.0<\/span>/);
+    assert.match(f('https://github.com/acme/widgets/releases/tag/v2.0'), /aria-hidden="true">🏷</);
+    // Not a PR/issue/release URL — the ordinary unfurl-preview path, not a GitHub card.
+    assert.doesNotMatch(f('https://github.com/acme/widgets'), /v6-chat-github-card/);
+  });
+
+  it('a local file:// URL or workspace path, on its own line, is a metadata card with zero byte-fetching — never a new file-serving endpoint', () => {
+    assert.equal(f('file:///Users/me/shot.png'),
+      '<span class="v6-chat-local-ref" data-copy-path="/Users/me/shot.png"><span class="v6-chat-local-ref-icon" aria-hidden="true">🖼</span>'
+      + '<span class="v6-chat-local-ref-title">shot.png</span><span class="v6-chat-local-ref-ext">.png</span><span class="v6-chat-local-ref-source">file://</span>'
+      + '<span class="v6-chat-local-ref-path" title="/Users/me/shot.png">/Users/me/shot.png</span>'
+      + '<button type="button" class="btn btn-compact v6-chat-local-ref-copy" data-copy-path="/Users/me/shot.png" aria-label="Copy path">📋 Copy path</button></span>');
+    assert.match(f('./notes/plan.md'), /v6-chat-local-ref-icon" aria-hidden="true">📄/, 'an artifact extension even with no line range');
+    assert.match(f('./notes/plan.md'), /data-copy-path="\.\/notes\/plan\.md"/);
+    assert.match(f('~/videos/demo.mp4'), /v6-chat-local-ref-icon" aria-hidden="true">🎬/);
+    assert.match(f('/abs/path/server.js#L10-L20'), /<span class="v6-chat-local-ref-range">L10-L20<\/span>/, 'a line range makes a non-media extension an artifact card');
+    // A line range on an image/video makes no sense (a frame range), so it is never classified at all — same as the backend's own rule.
+    assert.doesNotMatch(f('/abs/path/clip.mov#L10-L20'), /v6-chat-local-ref/);
+    assert.match(f('/abs/path/server.js#L10'), /<span class="v6-chat-local-ref-range">L10<\/span>/, 'a single line number, no end, still renders as a range pill');
+    // Never a real <img>/<video>/<a href> pointing at the raw path — no byte access, by design.
+    assert.doesNotMatch(f('file:///Users/me/shot.png'), /<img|<video|href="file:/);
+    // Not a recognized local form — falls through to ordinary escaped text / link handling.
+    assert.doesNotMatch(f('just a relative mention of plan.md in prose'), /v6-chat-local-ref/);
+    assert.equal(f('/no/extension/at/all'), '/no/extension/at/all', 'no extension and no line range: not classified as anything');
+  });
+
+  it('an unfurl-eligible external link starts as a Preview button; clicking marks it loading; a cached preview renders as a card', () => {
+    const url = 'https://blog.example/post';
+    assert.equal(f(`Check ${url}`, {}),
+      `Check <span class="v6-chat-unfurl" data-unfurl-url="${url}"><a class="v6-chat-link" href="${url}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">${url}</a> `
+      + `<button type="button" class="btn btn-compact v6-chat-unfurl-btn" data-unfurl-url="${url}">👁 Preview</button></span>`);
+    assert.match(f(url, { [url]: { state: 'loading' } }), /<span class="v6-chat-unfurl-loading">Loading preview…<\/span>/);
+    assert.match(f(url, { [url]: { state: 'error' } }), /<span class="v6-chat-unfurl-error">Preview unavailable\.<\/span>/);
+    // Fetched fine, just nothing recognized to show: still a card (the URL stands in for a title), not an error.
+    assert.match(f(url, { [url]: { state: 'done', preview: {} } }), /<span class="v6-chat-unfurl-title">https:\/\/blog\.example\/post<\/span><\/a>$/);
+    assert.match(f(url, { [url]: { state: 'done' } }), /<span class="v6-chat-unfurl-error">Preview unavailable\.<\/span>/, 'done with NO preview key at all (a genuine failure) reads as unavailable');
+    const done = f(url, { [url]: { state: 'done', preview: { title: 'A Post', description: 'Nice read' } } });
+    assert.equal(done, `<a class="v6-chat-link-preview v6-chat-unfurl-card" data-unfurl-url="${url}" href="${url}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Opens in a new tab">`
+      + `<span class="v6-chat-unfurl-title">A Post</span><span class="v6-chat-unfurl-desc">Nice read</span></a>`);
+    // og:image/og:video never auto-render — a labeled note only (Ruling A752), even for a preview the viewer already opted into fetching.
+    assert.match(f(url, { [url]: { state: 'done', preview: { title: 'T', image: 'https://blog.example/x.png' } } }), /<span class="v6-chat-unfurl-media-note"><span aria-hidden="true">🖼<\/span> image available at source<\/span>/);
+    assert.doesNotMatch(f(url, { [url]: { state: 'done', preview: { title: 'T', image: 'https://blog.example/x.png' } } }), /<img/);
+  });
+
+  // wireRichPreviews' own click wiring (Preview -> setUnfurl('loading') +
+  // options.onUnfurlLink; copy-path -> clipboard.writeText) is NOT covered
+  // here by a mounted-DOM click test: both buttons are deliberately class-
+  // only, no id (there is no natural per-URL/per-path id to give them), and
+  // test/_mini-dom.js's withIdParsingInnerHTML is explicitly "not a real
+  // parser" — it only ever creates a node for an id="..." it finds, so a
+  // class-only button inside root.innerHTML or a targeted innerHTML
+  // assignment (v6ChatLive, same as every other message redraw) is never
+  // actually represented as a queryable node in this harness. The markup
+  // tests above cover every rendered state directly and precisely instead.
+
+  describe('wireRichPreviews re-wires after EVERY targeted (non-render()) message-list redraw (PRR-A R1 C1/C2)', () => {
+    /**
+     * Mount a real shell with a spy on doc.querySelectorAll, so a call
+     * wireRichPreviews() itself makes (the one thing that function does
+     * that THIS test can observe through withIdParsingInnerHTML's
+     * class-only-element blind spot — see the note above) is countable,
+     * independent of whether the harness can represent the resulting
+     * listeners as queryable nodes.
+     */
+    function mountWithSpy() {
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      root.id = 'v6ShellRoot';
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      let calls = 0;
+      const realQSA = doc.body.querySelectorAll.bind(doc.body);
+      doc.querySelectorAll = (sel) => {
+        if (sel === '.v6-chat-local-ref-copy' || sel === '.v6-chat-unfurl-btn') calls += 1;
+        return realQSA(sel);
+      };
+      doc.querySelector = (sel) => doc.body.querySelector(sel);
+      const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+      shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+        chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'See https://blog.example/post' }] } } } });
+      return { shell, calls: () => calls, resetCalls: () => { calls = 0; } };
+    }
+
+    it('setLive (every live poll) re-wires rich previews, not only the initial render', () => {
+      const { shell, calls, resetCalls } = mountWithSpy();
+      assert.ok(calls() > 0, 'the initial render already wired it at least once');
+      resetCalls();
+      shell.setLive({ live: { turns: [{ role: 'assistant', text: 'See https://blog.example/post' }] } });
+      assert.ok(calls() > 0, 'setLive (a live poll) re-wired it too — this is the exact bug PRR-A found: it did not, before this fix');
+    });
+
+    it('setThumbs, setUnfurl, and the verbosity checkboxes\' targeted redraw all re-wire too', () => {
+      const { shell, calls, resetCalls } = mountWithSpy();
+      resetCalls();
+      shell.setThumbs({});
+      assert.ok(calls() > 0, 'setThumbs re-wired it');
+      resetCalls();
+      shell.setUnfurl('https://blog.example/post', { state: 'done', preview: { title: 'T' } });
+      assert.ok(calls() > 0, 'setUnfurl re-wired it');
+    });
+  });
+
+  it('setDetail preserves unfurls across a same-chat redraw (showChat/sendChat own replacement), but not across switching to a different chat (PRR-A R1 C1/C2)', () => {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    root.id = 'v6ShellRoot';
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    doc.querySelector = (sel) => doc.body.querySelector(sel);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+    const chatOf = (id) => ({ kind: 'conversation', view: { project: { id, name: `P${id}` }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'See https://blog.example/post' }] } } } });
+    shell.setDetail(chatOf(1));
+    shell.setUnfurl('https://blog.example/post', { state: 'done', preview: { title: 'Already Fetched' } });
+    // setUnfurl is a TARGETED redraw (#v6ChatLive alone), unlike setDetail's
+    // full render() — root.innerHTML's getter only reflects what was last
+    // assigned directly to root itself, so this checks the real element.
+    assert.match(doc.getElementById('v6ChatLive').innerHTML, /Already Fetched/, 'unfurled right after setUnfurl');
+    // showChat/sendChat's own replacement: the SAME project, a fresh view
+    // object built by the controller (which never carries unfurls at all).
+    // setDetail always calls render() -- root.innerHTML reflects it fully.
+    shell.setDetail(chatOf(1));
+    assert.match(root.innerHTML, /Already Fetched/, 'survived a same-chat setDetail replacement — the controller-side rebuild never has this field, so without the fix it reverts to the unclicked Preview button');
+    // A genuinely different chat must NOT inherit project 1's unfurled cards.
+    shell.setDetail(chatOf(2));
+    assert.doesNotMatch(root.innerHTML, /Already Fetched/, 'a different project\'s chat starts with no inherited unfurl state');
   });
 });
 

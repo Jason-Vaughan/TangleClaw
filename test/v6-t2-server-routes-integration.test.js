@@ -1,13 +1,13 @@
 'use strict';
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { DatabaseSync } = require('node:sqlite');
 const store = require('../lib/store');
-const { handleRequest } = require('../server');
+const { handleRequest, _v6PinnedLookup } = require('../server');
 
 // v6 Train 2 (BRIDGE-2b, Car V60-T2-W2-ROUTES): live HTTP wiring for
 // lib/v6/b2-conversation-layer.js (#2982), lib/v6/b4-telemetry-header.js
@@ -587,6 +587,239 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       const res = await post('/api/v6/branding/effective', { key: 'branding.notReal', storedValue: true });
       assert.equal(res.statusCode, 400, res.body);
       assert.equal(json(res).code, 'UNKNOWN_BRANDING_KEY');
+    });
+  });
+
+  describe('GET /api/v6/unfurl (#3107)', () => {
+    // node:dns/node:http/node:https are built-ins: require() returns the
+    // SAME cached singleton object server.js's own top-level requires hold,
+    // so mutating a method here reaches server.js's calls too — the same
+    // "monkey-patch the shared global" technique this file already uses
+    // for globalThis.fetch (see the GitHub connection-probe tests above),
+    // just on a different pair of shared objects, since _v6SafeUnfurlFetch
+    // needs node:dns's own lookup (to validate the RESOLVED address, not
+    // just the literal host) and so cannot be written against fetch alone.
+    const dns = require('node:dns');
+    const http = require('node:http');
+    const https = require('node:https');
+    let origLookup;
+    let origHttpRequest;
+    let origHttpsRequest;
+
+    beforeEach(() => {
+      origLookup = dns.promises.lookup;
+      origHttpRequest = http.request;
+      origHttpsRequest = https.request;
+    });
+
+    afterEach(() => {
+      dns.promises.lookup = origLookup;
+      http.request = origHttpRequest;
+      https.request = origHttpsRequest;
+    });
+
+    /** A fake `http.request`/`https.request` answering with a fixed status + body, never touching the network. */
+    function stubRequest(client, { statusCode = 200, body = '' } = {}) {
+      client.request = (_opts, cb) => {
+        const chunks = body ? [Buffer.from(body)] : [];
+        const fres = {
+          statusCode,
+          resume() {},
+          on(event, fn) {
+            if (event === 'data') chunks.forEach((c) => fn(c));
+            if (event === 'end') fn();
+            return fres;
+          }
+        };
+        cb(fres);
+        return { on() {}, end() {}, destroy() {} };
+      };
+    }
+
+    it('_v6PinnedLookup answers the array form when asked opts.all, and the plain form otherwise (PRR-A R1 WARNING)', () => {
+      // Confirmed live (not just from the Node docs) before writing this
+      // test: Node 20+'s net.autoSelectFamily defaults to true, and an
+      // http(s).request's own socket connection calls a custom `lookup`
+      // with {all: true} by default — the plain 3-arg callback form threw
+      // ERR_INVALID_IP_ADDRESS on every single real request on this exact
+      // runtime (verified with a standalone https.request before fixing).
+      const lookup = _v6PinnedLookup({ address: '93.184.216.34', family: 4 });
+      let got;
+      lookup('irrelevant.example', { all: true, hints: 1024 }, (err, result) => { got = { err, result }; });
+      assert.equal(got.err, null);
+      assert.deepEqual(got.result, [{ address: '93.184.216.34', family: 4 }]);
+      let got2;
+      lookup('irrelevant.example', {}, (err, address, family) => { got2 = { err, address, family }; });
+      assert.deepEqual(got2, { err: null, address: '93.184.216.34', family: 4 });
+    });
+
+    it('refuses with no url query param, before any DNS lookup', async () => {
+      const res = await get('/api/v6/unfurl');
+      assert.equal(res.statusCode, 400, res.body);
+      assert.equal(json(res).code, 'BAD_REQUEST');
+    });
+
+    it('refuses a non-operator caller', async () => {
+      const res = await get('/api/v6/unfurl?url=https%3A%2F%2Fexample.com', { operator: false });
+      assert.ok([401, 403].includes(res.statusCode), res.body);
+    });
+
+    it('builds a GitHub card straight from the URL, with no DNS lookup or fetch at all', async () => {
+      let lookupCalled = false;
+      dns.promises.lookup = async () => { lookupCalled = true; return []; };
+      const res = await get('/api/v6/unfurl?url=https%3A%2F%2Fgithub.com%2Facme%2Fwidgets%2Fpull%2F42');
+      assert.equal(res.statusCode, 200, res.body);
+      assert.deepEqual(json(res).preview, { kind: 'github', url: 'https://github.com/acme/widgets/pull/42', owner: 'acme', repo: 'widgets', entityKind: 'pull', number: 42 });
+      assert.equal(lookupCalled, false, 'a GitHub URL never needs a DNS lookup');
+    });
+
+    it('refuses a literal loopback target before any DNS lookup (the fast, host-string check)', async () => {
+      let lookupCalled = false;
+      dns.promises.lookup = async () => { lookupCalled = true; return []; };
+      const res = await get('/api/v6/unfurl?url=http%3A%2F%2F127.0.0.1%2Fsecret');
+      assert.equal(res.statusCode, 400, res.body);
+      assert.equal(json(res).code, 'UNFURL_TARGET_UNSAFE');
+      assert.equal(lookupCalled, false);
+    });
+
+    it('refuses a public-looking hostname whose DNS answer rebinds to a private address — the fetch-time check the literal-host check cannot see', async () => {
+      dns.promises.lookup = async () => [{ address: '127.0.0.1', family: 4 }];
+      const res = await get('/api/v6/unfurl?url=https%3A%2F%2Ftotally-public-looking.example%2Fpage');
+      assert.equal(res.statusCode, 502, res.body);
+      assert.equal(json(res).code, 'UNFURL_FETCH_FAILED');
+      assert.match(json(res).error, /RESOLVED_LOOPBACK/);
+    });
+
+    it('fetches, parses Open Graph tags, and caches the result for the next identical request', async () => {
+      dns.promises.lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+      stubRequest(https, {
+        statusCode: 200,
+        body: '<html><head><meta property="og:title" content="A Real Page"><meta property="og:description" content="Nice."></head></html>'
+      });
+      let requestCalls = 0;
+      const stubbed = https.request;
+      https.request = (opts, cb) => { requestCalls += 1; return stubbed(opts, cb); };
+      const url = 'https://totally-public-looking.example/page';
+      const first = await get(`/api/v6/unfurl?url=${encodeURIComponent(url)}`);
+      assert.equal(first.statusCode, 200, first.body);
+      assert.deepEqual(json(first).preview, { kind: 'link-unfurl', url, title: 'A Real Page', description: 'Nice.' });
+      assert.equal(json(first).cached, undefined);
+
+      const second = await get(`/api/v6/unfurl?url=${encodeURIComponent(url)}`);
+      assert.equal(second.statusCode, 200, second.body);
+      assert.equal(json(second).cached, true);
+      assert.equal(requestCalls, 1, 'the second request answered from cache, never re-fetched');
+    });
+
+    it('answers 502 when the fetch itself errors (no og: tags to parse either way)', async () => {
+      dns.promises.lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+      https.request = (_opts, _cb) => ({ on(event, fn) { if (event === 'error') fn(new Error('boom')); }, end() {}, destroy() {} });
+      const res = await get(`/api/v6/unfurl?url=${encodeURIComponent('https://some-other-public-host.example/')}`);
+      assert.equal(res.statusCode, 502, res.body);
+      assert.equal(json(res).code, 'UNFURL_FETCH_FAILED');
+    });
+  });
+
+  describe('Portable Fleet Template Spec routes (#3115)', () => {
+    it('GET /api/v6/fleet-templates/bundled-specs lists both reference specs and the ecosystem directory link', async () => {
+      const res = await get('/api/v6/fleet-templates/bundled-specs');
+      assert.equal(res.statusCode, 200, res.body);
+      const body = json(res);
+      assert.deepEqual(Object.keys(body.specs).sort(), ['ai-design-agency', 'software-factory-10-role']);
+      assert.equal(body.specs['software-factory-10-role'].seats.length, 10);
+      assert.equal(body.ecosystemDirectory.marketplaceUrl, 'https://tangleclaw.com/marketplace');
+    });
+
+    it('GET /api/v6/projects/:id/fleet-spec exports a single project as a valid, importable spec', async () => {
+      const pid = await seedProject('TangleClaw');
+      const res = await get(`/api/v6/projects/${pid}/fleet-spec`);
+      assert.equal(res.statusCode, 200, res.body);
+      const { spec } = json(res);
+      assert.equal(spec.metadata.name, 'TangleClaw');
+      // supervisory: true even though the inferred role isn't 'PM' — a
+      // 1-seat export's only seat stands in as the fleet's launch trigger
+      // (validateFleetSpec requires at least one).
+      assert.deepEqual(spec.seats, [{ seatId: 'TangleClaw', displayNameSuffix: 'TangleClaw', role: 'Builder', supervisory: true, launchPolicy: 'immediate', recommendedEngine: 'claude', fallbackEngines: [] }]);
+      // A deliberate scope reduction (documented in the route's own doc
+      // comment): this car has no route into rules/charter/shared-docs, so
+      // these export empty/null, not fabricated.
+      assert.deepEqual(spec.rules, []);
+      assert.equal(spec.charterTemplate, null);
+      assert.deepEqual(spec.sharedDocuments, []);
+      // Round-trips through the module's own validator cleanly.
+      const preview = await post('/api/v6/fleet-templates/validate-spec', { spec });
+      assert.equal(preview.statusCode, 200, preview.body);
+      assert.equal(json(preview).preview.seatCount, 1);
+    });
+
+    it('GET .../fleet-spec?members=... exports a multi-seat fleet, inferring each seat\'s role from its name', async () => {
+      const pmId = await seedProject('Monad-PM');
+      await seedProject('Monad-Builder-a');
+      const res = await get(`/api/v6/projects/${pmId}/fleet-spec?members=${encodeURIComponent('Monad-PM,Monad-Builder-a')}`);
+      assert.equal(res.statusCode, 200, res.body);
+      const { spec } = json(res);
+      assert.equal(spec.metadata.name, 'Monad');
+      assert.deepEqual(spec.seats.map((s) => [s.seatId, s.role, s.supervisory]), [['Monad-PM', 'PM', true], ['Monad-Builder-a', 'Builder', false]]);
+    });
+
+    it('GET .../fleet-spec 404s for an unknown project id', async () => {
+      const res = await get('/api/v6/projects/999999/fleet-spec');
+      assert.equal(res.statusCode, 404, res.body);
+    });
+
+    it('POST /api/v6/fleet-templates/validate-spec previews a bundled spec without creating anything', async () => {
+      const bundled = await get('/api/v6/fleet-templates/bundled-specs');
+      const spec = json(bundled).specs['ai-design-agency'];
+      const res = await post('/api/v6/fleet-templates/validate-spec', { spec });
+      assert.equal(res.statusCode, 200, res.body);
+      const { preview } = json(res);
+      assert.equal(preview.seatCount, 8);
+      assert.equal(preview.metadata.name, 'AI Design & Creative Agency');
+    });
+
+    it('POST /api/v6/fleet-templates/validate-spec refuses an invalid spec with the real validator\'s errors', async () => {
+      const res = await post('/api/v6/fleet-templates/validate-spec', { spec: { not: 'a spec' } });
+      assert.equal(res.statusCode, 400, res.body);
+      assert.ok(Array.isArray(json(res).errors) && json(res).errors.length > 0);
+    });
+
+    it('POST /api/v6/fleet-templates/apply-spec provisions a real project per seat, named <fleetName>-<seat>', async () => {
+      // createProject scaffolds a REAL directory via config.projectsDir —
+      // independent of store._setBasePath(tempDir) above (#2604's own
+      // "config.projectsDir does not scope with the store redirect"
+      // finding) — so this MUST point projectsDir at tempDir itself, or
+      // it scaffolds real directories under the operator's actual
+      // ~/Projects. Restored in this same test, not just left to the
+      // outer afterEach, since nothing else here needs the real default.
+      const cfg = store.config.load();
+      const realProjectsDir = cfg.projectsDir;
+      cfg.projectsDir = tempDir;
+      store.config.save(cfg);
+      try {
+        const bundled = await get('/api/v6/fleet-templates/bundled-specs');
+        const spec = json(bundled).specs['ai-design-agency'];
+        const res = await post('/api/v6/fleet-templates/apply-spec', { spec, fleetName: 'Zenith' });
+        assert.equal(res.statusCode, 200, res.body);
+        const { created, failed } = json(res);
+        assert.deepEqual(failed, []);
+        assert.deepEqual(created.map((c) => c.name).sort(), [
+          'Zenith-Art Director', 'Zenith-Critic', 'Zenith-Integrator', 'Zenith-Lane A', 'Zenith-Lane B', 'Zenith-Lane C', 'Zenith-Observer', 'Zenith-PM'
+        ].sort());
+        for (const c of created) {
+          assert.ok(store.getDb().prepare('SELECT id FROM projects WHERE id = ?').get(c.id), `${c.name} is a real row`);
+          assert.ok(fs.existsSync(path.join(tempDir, c.name)), `${c.name}'s directory landed under tempDir, never the real projects dir`);
+        }
+      } finally {
+        const restoreCfg = store.config.load();
+        restoreCfg.projectsDir = realProjectsDir;
+        store.config.save(restoreCfg);
+      }
+    });
+
+    it('POST /api/v6/fleet-templates/apply-spec refuses an invalid spec, creating nothing', async () => {
+      const res = await post('/api/v6/fleet-templates/apply-spec', { spec: { not: 'a spec' }, fleetName: 'X' });
+      assert.equal(res.statusCode, 400, res.body);
+      assert.equal(json(res).created, undefined);
     });
   });
 });

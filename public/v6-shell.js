@@ -1222,6 +1222,67 @@
   }
 
   /**
+   * The Import/Export `.fleet.json` tab (#3115): browse the 2 bundled
+   * reference specs and the `tangleclaw.com` marketplace, paste/edit a
+   * spec and validate it before anything is created, then provision it —
+   * or export an existing standalone workspace as a portable spec.
+   * @param {object|null} form - `wizardForm.fleetSpec`: `{json, fleetName, exportProjectId}`.
+   * @param {Record<string, object>|null} bundled - `BUNDLED_FLEET_SPECS`, lazy-loaded.
+   * @param {{marketplaceUrl: string, description: string}|null} ecosystem
+   * @param {{ok: boolean, preview?: object, errors?: Array<{path:string,message:string}>}|null} preview - A validated import, or its errors.
+   * @param {{ok: boolean, spec?: object}|null} exported - A completed export.
+   * @param {Array<{id: string, label: string, memberSeatIds: string[]}>} exportableFleets -
+   *   `exportableFleetsNow()`'s result (#3115, PRR-A R1 C2) — every real
+   *   multi-seat fleet AND every standalone workspace, never standalone-only.
+   * @returns {string} HTML.
+   */
+  function wizardFleetSpecMarkup(form, bundled, ecosystem, preview, exported, exportableFleets) {
+    const f = form || {};
+    const bundledCards = bundled ? Object.keys(bundled).map((id) => {
+      const spec = bundled[id];
+      return `<div class="v6-wizard-bundled-spec">
+        <p class="v6-wizard-bundled-spec-title">${escapeHtml(spec.metadata.name)}</p>
+        <p class="v6-wizard-bundled-spec-desc">${escapeHtml(spec.metadata.description)}</p>
+        <button type="button" id="v6WizardUseBundled-${escapeHtml(id)}" class="btn btn-secondary btn-small" data-bundled-id="${escapeHtml(id)}">Use this template</button>
+      </div>`;
+    }).join('') : '<p class="v6-workspace-empty">Loading bundled templates…</p>';
+    const banner = ecosystem
+      ? `<p class="v6-wizard-marketplace-banner"><span aria-hidden="true">🌐</span> <a href="${escapeHtml(ecosystem.marketplaceUrl)}" target="_blank" rel="noopener noreferrer">Browse Community Fleet Templates on TangleClaw.com</a></p>`
+      : '';
+    const previewHtml = preview
+      ? (preview.ok
+        ? `<div class="v6-wizard-fleetspec-preview"><p>${preview.preview.seatCount} seat(s) — ${escapeHtml(preview.preview.metadata.name)}</p>
+            <p>${preview.preview.immediateSeatCount} immediate, ${preview.preview.onDemandSeatCount} on-demand; ${preview.preview.rulesCount} rule(s)</p></div>`
+        : `<ul class="v6-wizard-fleetspec-errors">${preview.errors.map((e) => `<li>${escapeHtml(e.path)}: ${escapeHtml(e.message)}</li>`).join('')}</ul>`)
+      : '';
+    // #3115 (PRR-A R1 C2): every real multi-seat fleet, not only standalone
+    // workspaces — exportableFleetsNow() walks the whole tree, not just the
+    // "workspace" catch-all wizardConvertMarkup's own source dropdown uses.
+    const exportOptions = (exportableFleets || []).map((f) => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.label)}</option>`).join('');
+    const exportedHtml = exported
+      ? (exported.ok
+        ? `<textarea id="v6WizardFleetSpecExported" class="v6-wizard-fleetspec-json" readonly rows="10">${escapeHtml(JSON.stringify(exported.spec, null, 2))}</textarea>`
+        : '<p class="v6-workspace-empty is-error">Export failed.</p>')
+      : '';
+    return `<div class="v6-wizard-fleetspec">
+      ${banner}
+      <div class="v6-wizard-bundled-specs">${bundledCards}</div>
+      <form id="v6WizardFleetSpecImportForm" class="v6-wizard-form" aria-label="Import a .fleet.json spec">
+        <label class="v6-wizard-field">Paste or edit a .fleet.json spec<textarea id="v6WizardFleetSpecJson" class="v6-wizard-fleetspec-json" rows="10">${escapeHtml(f.json || '')}</textarea></label>
+        <label class="v6-wizard-field">Fleet name<input type="text" id="v6WizardFleetSpecFleetName" class="filter-input" value="${escapeHtml(f.fleetName || '')}" maxlength="48"></label>
+        <button type="submit" id="v6WizardFleetSpecValidateBtn" class="btn btn-secondary btn-small">Validate</button>
+        <button type="button" id="v6WizardFleetSpecApplyBtn" class="btn btn-primary btn-small"${preview && preview.ok ? '' : ' disabled'}>Import &amp; Provision</button>
+      </form>
+      ${previewHtml}
+      <form id="v6WizardFleetSpecExportForm" class="v6-wizard-form" aria-label="Export an existing workspace as a .fleet.json spec">
+        <label class="v6-wizard-field">Export existing workspace<select id="v6WizardFleetSpecExportProject" class="filter-input"><option value="">Choose…</option>${exportOptions}</select></label>
+        <button type="submit" id="v6WizardFleetSpecExportBtn" class="btn btn-secondary btn-small">Export as .fleet.json</button>
+      </form>
+      ${exportedHtml}
+    </div>`;
+  }
+
+  /**
    * The interactive Wizard panel inside `#v6ShellWizard` (#3114): 3 tabs —
    * Template (the default, so the starter-fleet list the existing
    * `#v6ShellWizardLaunch-*` tests expect is always visible on first
@@ -1236,7 +1297,7 @@
    */
   function wizardMarkup(templates, standaloneProjects, wizard) {
     const w = wizard || {};
-    const tab = ['templates', 'standalone', 'convert'].includes(w.tab) ? w.tab : 'templates';
+    const tab = ['templates', 'standalone', 'convert', 'fleetSpec'].includes(w.tab) ? w.tab : 'templates';
     const status = w.status
       ? `<p class="v6-wizard-status is-${escapeHtml(w.status.kind)}" role="status">${escapeHtml(w.status.message)}</p>` : '';
     const tabBtn = (id, label) => (
@@ -1244,12 +1305,14 @@
         aria-pressed="${tab === id ? 'true' : 'false'}" data-wizard-tab="${id}">${escapeHtml(label)}</button>`
     );
     const tabs = `<div class="v6-wizard-tabs" role="tablist" aria-label="New Project / Fleet Wizard workflow">
-      ${tabBtn('templates', '📁 Template')}${tabBtn('standalone', '🆕 New Workspace')}${tabBtn('convert', '🔀 Convert to Fleet')}</div>`;
+      ${tabBtn('templates', '📁 Template')}${tabBtn('standalone', '🆕 New Workspace')}${tabBtn('convert', '🔀 Convert to Fleet')}${tabBtn('fleetSpec', '📦 Fleet Spec')}</div>`;
     const form = w.form || {};
     let body;
     if (tab === 'standalone') body = wizardStandaloneMarkup(form.standalone);
     else if (tab === 'convert') body = wizardConvertMarkup(form.convert, standaloneProjects);
-    else body = wizardTemplatesMarkup(templates, w.templateId, w.plan, form.templates);
+    else if (tab === 'fleetSpec') {
+      body = wizardFleetSpecMarkup(form.fleetSpec, w.bundledFleetSpecs, w.ecosystemDirectory, w.fleetSpecPreview, w.fleetSpecExport, w.exportableFleets);
+    } else body = wizardTemplatesMarkup(templates, w.templateId, w.plan, form.templates);
     return `<div class="v6-wizard">${tabs}${status}${body}</div>`;
   }
 
@@ -1537,17 +1600,17 @@
       // what was recorded after it (sent, not yet on screen) below.
       const parts = arrangeRecorded(v.events, liveTurns, chat.lastSent);
       stream = parts.head.length
-        ? `<ol class="v6-conversation-stream" id="v6ChatRecorded">${recordedEventsMarkup(parts.head, name, chat.thumbs)}</ol>`
+        ? `<ol class="v6-conversation-stream" id="v6ChatRecorded">${recordedEventsMarkup(parts.head, name, chat.thumbs, chat.unfurls)}</ol>`
         : (liveTurns.length || parts.tail.length ? '<ol class="v6-conversation-stream" id="v6ChatRecorded"></ol>'
           : '<p class="v6-conversation-empty">No conversation events recorded for this session yet.</p>');
-      tail = recordedEventsMarkup(parts.tail, name, chat.thumbs);
+      tail = recordedEventsMarkup(parts.tail, name, chat.thumbs, chat.unfurls);
     }
     // #3052: the replies the session's live output shows, after what is
     // recorded; its own list so a poll can replace it without a re-render.
     stream = `<div id="v6ChatStream" class="v6-chat-stream" tabindex="0">${stream}
-      <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name, chat.verbosity, chat.thumbs)}</ol>
+      <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name, chat.verbosity, chat.thumbs, chat.unfurls)}</ol>
       <ol id="v6ChatRecordedTail" class="v6-conversation-stream v6-chat-recorded-tail">${tail}</ol>
-      <ol id="v6ChatPending" class="v6-conversation-stream v6-chat-pending">${pendingMarkup(chat.pending, chat.lastSent, chat.thumbs)}</ol>
+      <ol id="v6ChatPending" class="v6-conversation-stream v6-chat-pending">${pendingMarkup(chat.pending, chat.lastSent, chat.thumbs, chat.unfurls)}</ol>
     </div>`;
     // A member reached directly is still the project's delegate when it is
     // the one the delegate resolution picks (#3053).
@@ -1626,7 +1689,7 @@
         ${verbosityMarkup(chat.verbosity)}
         <section class="v6-chat-tucked" aria-label="Replies tucked away">
           <h3 class="v6-chat-switchboard-title">Tucked away</h3>
-          <ol id="v6ChatTucked" class="v6-chat-tucked-list">${tuckedMarkup(tuckedTurns(liveTurns, chat.verbosity), chat.thumbs)}</ol>
+          <ol id="v6ChatTucked" class="v6-chat-tucked-list">${tuckedMarkup(tuckedTurns(liveTurns, chat.verbosity), chat.thumbs, chat.unfurls)}</ol>
         </section>
         <section class="v6-chat-switchboard" aria-label="Switchboard and Medusa traffic">
           <h3 class="v6-chat-switchboard-title">Switchboard &amp; Medusa traffic</h3>
@@ -2022,6 +2085,236 @@
   const IMAGE_URL = /\.(?:png|jpe?g|webp|gif)(?:[?#]|$)/i;
 
   /**
+   * `github.com/<owner>/<repo>/(pull|issues|releases/tag)/<id>` (#3107). A
+   * client-side copy of `lib/v6/b2-conversation-layer.js#GITHUB_ENTITY_URL` —
+   * pure regex, no `node:net`/`node:path`, so it has no server dependency to
+   * share; kept byte-identical so a URL this page recognizes and the server's
+   * own classifier agree.
+   */
+  const GITHUB_ENTITY_URL = /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})?)\/([A-Za-z0-9._-]{1,100})\/(pull|issues|releases\/tag)\/([^/?#\s]+)/i;
+
+  /**
+   * Parse a GitHub PR, Issue, or Release URL (#3107) — a client-side copy of
+   * `lib/v6/b2-conversation-layer.js#parseGitHubEntityUrl`, kept in sync with
+   * it deliberately (see {@link GITHUB_ENTITY_URL}'s own note).
+   * @param {string} url
+   * @returns {({owner: string, repo: string, entityKind: 'pull', number: number}|
+   *   {owner: string, repo: string, entityKind: 'issue', number: number}|
+   *   {owner: string, repo: string, entityKind: 'release', tag: string}|null)}
+   */
+  function parseGithubEntityUrl(url) {
+    if (typeof url !== 'string') return null;
+    const m = GITHUB_ENTITY_URL.exec(url.trim());
+    if (!m) return null;
+    const [, owner, repo, kindRaw, idRaw] = m;
+    const kind = kindRaw.toLowerCase();
+    if (kind === 'pull' || kind === 'issues') {
+      const number = Number(idRaw);
+      if (!Number.isInteger(number) || number < 1) return null;
+      return { owner, repo, entityKind: kind === 'pull' ? 'pull' : 'issue', number };
+    }
+    try {
+      return { owner, repo, entityKind: 'release', tag: decodeURIComponent(idRaw) };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * One GitHub card (#3107): a PR/Issue number, or a Release tag — no fetch,
+   * built straight from the URL (the live title/state the real GET
+   * /api/v6/unfurl route could also return for this case is a documented
+   * scope reduction for this car, not yet wired here).
+   * @param {string} href
+   * @param {{owner: string, repo: string, entityKind: string, number?: number, tag?: string}} gh
+   * @returns {string} HTML.
+   */
+  function githubCardMarkup(href, gh) {
+    const safe = escapeHtml(href);
+    const label = gh.entityKind === 'release' ? `Release ${gh.tag}` : `#${gh.number}`;
+    const icon = gh.entityKind === 'pull' ? '🔀' : gh.entityKind === 'issue' ? '🐛' : '🏷';
+    return `<a class="v6-chat-link-preview v6-chat-github-card" href="${safe}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Opens in a new tab">`
+      + `<span class="v6-chat-link-preview-icon" aria-hidden="true">${icon}</span>`
+      + `<span class="v6-chat-github-repo">${escapeHtml(gh.owner)}/${escapeHtml(gh.repo)}</span>`
+      + `<span class="v6-chat-github-label">${escapeHtml(label)}</span></a>`;
+  }
+
+  /**
+   * One external link's unfurl state (#3107): never fetched until the
+   * viewer clicks "Preview" (Ruling A752 — an external host is never
+   * dereferenced just because the chat drew the message). `unfurls` is
+   * `detail.view.chat.unfurls`, read fresh on every redraw so a click's
+   * result (set via the shell's `setUnfurl`) shows without a full re-render.
+   * @param {string} href
+   * @param {Object<string, {state: ('loading'|'done'|'error'), preview?: object}>} [unfurls]
+   * @returns {string} HTML: a "👁 Preview" button, a spinner, the fetched
+   *   card, or a quiet failure note — one `v6-chat-unfurl` wrapper either way,
+   *   so {@link wireUnfurlLinks} can find it after a redraw.
+   */
+  function unfurlMarkup(href, label, unfurls) {
+    const safe = escapeHtml(href);
+    const entry = unfurls && Object.prototype.hasOwnProperty.call(unfurls, href) ? unfurls[href] : null;
+    const plainLink = `<a class="v6-chat-link" href="${safe}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">${escapeHtml(label || href)}</a>`;
+    if (!entry) {
+      return `<span class="v6-chat-unfurl" data-unfurl-url="${safe}">${plainLink} `
+        + `<button type="button" class="btn btn-compact v6-chat-unfurl-btn" data-unfurl-url="${safe}">👁 Preview</button></span>`;
+    }
+    if (entry.state === 'loading') return `<span class="v6-chat-unfurl" data-unfurl-url="${safe}">${plainLink} <span class="v6-chat-unfurl-loading">Loading preview…</span></span>`;
+    if (entry.state === 'error' || !entry.preview) return `<span class="v6-chat-unfurl" data-unfurl-url="${safe}">${plainLink} <span class="v6-chat-unfurl-error">Preview unavailable.</span></span>`;
+    const p = entry.preview;
+    const title = p.title ? escapeHtml(p.title) : safe;
+    const desc = p.description ? `<span class="v6-chat-unfurl-desc">${escapeHtml(p.description)}</span>` : '';
+    // og:image/og:video name an EXTERNAL host's media (Ruling A752) — shown
+    // as a labeled link, same as the existing external-image chip above,
+    // never an auto-fetched <img>/<video> even after the viewer already
+    // opted into fetching THIS page's metadata.
+    const media = p.image ? `<span class="v6-chat-unfurl-media-note"><span aria-hidden="true">🖼</span> image available at source</span>`
+      : p.video ? `<span class="v6-chat-unfurl-media-note"><span aria-hidden="true">🎬</span> video available at source</span>` : '';
+    return `<a class="v6-chat-link-preview v6-chat-unfurl-card" data-unfurl-url="${safe}" href="${safe}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Opens in a new tab">`
+      + `<span class="v6-chat-unfurl-title">${title}</span>${desc}${media}</a>`;
+  }
+
+  /** Extensions `classifyLocalReference` renders as an image card (#3107) — client copy of `lib/v6/b2-conversation-layer.js#IMAGE_EXTENSIONS`. */
+  const LOCAL_IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg']);
+  /** Extensions rendered as a video card (#3107) — client copy of `lib/v6/b2-conversation-layer.js#VIDEO_MIME_TYPES`'s keys. */
+  const LOCAL_VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov']);
+  /** Extensions rendered as an artifact card even with no line range (#3107) — client copy of `lib/v6/b2-conversation-layer.js#ARTIFACT_EXTENSIONS`. */
+  const LOCAL_ARTIFACT_EXTENSIONS = new Set(['md', 'html']);
+  /** A reference rooted at the workspace (#3107) — client copy of `lib/v6/b2-conversation-layer.js#WORKSPACE_PATH`. */
+  const LOCAL_WORKSPACE_PATH = /^(?:\.{1,2}\/|\/|~\/)\S+$/;
+  /** A `#L<start>` or `#L<start>-L<end>` code line-range suffix (#3107) — client copy of `lib/v6/b2-conversation-layer.js#LINE_RANGE_SUFFIX`. */
+  const LOCAL_LINE_RANGE_SUFFIX = /#L(\d+)(?:-L(\d+))?$/;
+
+  /**
+   * Split a trailing `#L<n>-L<n>` code line-range off a reference (#3107) —
+   * client copy of `lib/v6/b2-conversation-layer.js#_splitLineRange`.
+   * @param {string} ref
+   * @returns {{base: string, lineRange: ({start: number, end: number}|null)}}
+   */
+  function _splitLocalLineRange(ref) {
+    const m = LOCAL_LINE_RANGE_SUFFIX.exec(ref);
+    if (!m) return { base: ref, lineRange: null };
+    const start = Number(m[1]);
+    const end = m[2] !== undefined ? Number(m[2]) : start;
+    if (start < 1 || end < start) return { base: ref, lineRange: null };
+    return { base: ref.slice(0, m.index), lineRange: { start, end } };
+  }
+
+  /**
+   * A `file://` URL's filesystem path, or `null` (#3107) — a `new URL`-free
+   * client copy of `lib/v6/b2-conversation-layer.js#_fileUrlToPath` (the
+   * WHATWG `URL` class is a real browser global, but not one every lift-
+   * and-run `vm.createContext` test sandbox in this repo provides, so this
+   * file never relies on it anywhere else either). Only the common empty-
+   * authority form (`file:///abs/path`) is recognized — a rare `file://
+   * host/path` form is read the same way, host discarded, which is a
+   * documented simplification, not a parser.
+   * @param {string} url
+   * @returns {string|null}
+   */
+  function _fileUrlToLocalPath(url) {
+    const m = /^file:\/\/[^/]*(\/.*)$/i.exec(url);
+    if (!m) return null;
+    try {
+      return decodeURIComponent(m[1]);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The lowercased extension (no dot) of a path's final segment, or `null`
+   * (#3107) — a `path.posix.extname`-free client copy of
+   * `lib/v6/b2-conversation-layer.js#_extensionOf` (`path` is a Node builtin,
+   * unusable in the browser).
+   * @param {string} filePath
+   * @returns {string|null}
+   */
+  function _localExtensionOf(filePath) {
+    const name = filePath.slice(filePath.lastIndexOf('/') + 1);
+    const dot = name.lastIndexOf('.');
+    return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1).toLowerCase() : null;
+  }
+
+  /**
+   * Classify a whole line of message text as a LOCAL media/artifact
+   * reference (#3107, Rulings A809/A811: a `file://` URL or a workspace-
+   * rooted path, optionally with a `#L<n>-L<n>` code line range) — never a
+   * secrets-store reference, which {@link ATTACHED_LINE}/{@link attachmentMarkup}
+   * already own. A client copy of
+   * `lib/v6/b2-conversation-layer.js#classifyMediaOrArtifactLink`'s
+   * file-url/workspace branch; the secrets branch is deliberately omitted
+   * here since {@link messageMarkup} already tries {@link ATTACHED_LINE} first.
+   *
+   * Zero byte-fetching: by design (the security boundary PM/Architect ruled
+   * on for this car), this never resolves to a URL the browser can load —
+   * only a `{kind, path, source, fileExtension, lineRange}` model for
+   * {@link localReferenceCardMarkup} to describe, never display the bytes of.
+   * @param {string} ref - One whole, already-trimmed line.
+   * @returns {({kind: ('image'|'video'), path: string, source: ('file-url'|'workspace'), fileExtension: (string|null), lineRange: null}|
+   *   {kind: 'artifact', path: string, source: ('file-url'|'workspace'), fileExtension: (string|null), title: string, lineRange: ({start:number,end:number}|null)}|
+   *   null)}
+   */
+  function classifyLocalReference(ref) {
+    if (typeof ref !== 'string') return null;
+    const trimmed = ref.trim();
+    if (!trimmed) return null;
+    const { base, lineRange } = _splitLocalLineRange(trimmed);
+    let source;
+    let filePath;
+    if (/^file:\/\//i.test(base)) {
+      filePath = _fileUrlToLocalPath(base);
+      if (filePath == null) return null;
+      source = 'file-url';
+    } else if (LOCAL_WORKSPACE_PATH.test(base)) {
+      source = 'workspace';
+      filePath = base;
+    } else {
+      return null;
+    }
+    const ext = _localExtensionOf(filePath);
+    if (ext && LOCAL_IMAGE_EXTENSIONS.has(ext)) {
+      if (lineRange) return null;
+      return { kind: 'image', path: filePath, source, fileExtension: ext, lineRange: null };
+    }
+    if (ext && LOCAL_VIDEO_EXTENSIONS.has(ext)) {
+      if (lineRange) return null;
+      return { kind: 'video', path: filePath, source, fileExtension: ext, lineRange: null };
+    }
+    if ((ext && LOCAL_ARTIFACT_EXTENSIONS.has(ext)) || lineRange) {
+      const title = filePath.slice(filePath.lastIndexOf('/') + 1);
+      return { kind: 'artifact', path: filePath, source, fileExtension: ext, title: title || filePath, lineRange };
+    }
+    return null;
+  }
+
+  /**
+   * A local media/artifact reference's card (#3107, Rulings A809/A811): a
+   * metadata card — title, full path, extension badge, source badge, an
+   * optional line-range pill, and a copy-path affordance — never the
+   * referenced file's actual bytes. No new local-file-serving HTTP endpoint
+   * exists for this, by deliberate security design: an arbitrary workspace
+   * path or `file://` URL in chat text is never dereferenced by this page.
+   * @param {{kind: string, path: string, source: string, fileExtension: (string|null), title?: string, lineRange: ({start:number,end:number}|null)}} ref
+   * @returns {string} HTML.
+   */
+  function localReferenceCardMarkup(ref) {
+    const icon = ref.kind === 'image' ? '🖼' : ref.kind === 'video' ? '🎬' : '📄';
+    const title = ref.kind === 'artifact' ? ref.title : (ref.path.slice(ref.path.lastIndexOf('/') + 1) || ref.path);
+    const safePath = escapeHtml(ref.path);
+    const extBadge = ref.fileExtension ? `<span class="v6-chat-local-ref-ext">.${escapeHtml(ref.fileExtension)}</span>` : '';
+    const rangeNote = ref.lineRange
+      ? `<span class="v6-chat-local-ref-range">L${ref.lineRange.start}${ref.lineRange.end !== ref.lineRange.start ? `-L${ref.lineRange.end}` : ''}</span>` : '';
+    const sourceLabel = ref.source === 'file-url' ? 'file://' : 'workspace';
+    return `<span class="v6-chat-local-ref" data-copy-path="${safePath}">`
+      + `<span class="v6-chat-local-ref-icon" aria-hidden="true">${icon}</span>`
+      + `<span class="v6-chat-local-ref-title">${escapeHtml(title)}</span>${extBadge}${rangeNote}`
+      + `<span class="v6-chat-local-ref-source">${sourceLabel}</span>`
+      + `<span class="v6-chat-local-ref-path" title="${safePath}">${safePath}</span>`
+      + `<button type="button" class="btn btn-compact v6-chat-local-ref-copy" data-copy-path="${safePath}" aria-label="Copy path">📋 Copy path</button></span>`;
+  }
+
+  /**
    * Message text as HTML (#3082): every character escaped, with links opening
    * in a new tab (`rel="noopener noreferrer"`). An external URL naming an
    * image is a link card — its host and path, escaped — and never an `<img>`:
@@ -2029,12 +2322,19 @@
    * drew it, carrying whatever the URL holds to that host (Ruling A752).
    * @param {*} text
    * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL, from the thumbnail cache.
+   * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107); see {@link unfurlMarkup}.
    * @returns {string} HTML.
    */
-  function messageMarkup(text, thumbs) {
+  function messageMarkup(text, thumbs, unfurls) {
     return String(text == null ? '' : text).split('\n').map((line) => {
       const attached = ATTACHED_LINE.exec(line);
-      return attached ? attachmentMarkup(attached[1], thumbs) : lineMarkup(line);
+      if (attached) return attachmentMarkup(attached[1], thumbs);
+      // #3107: a whole line that is itself a file:// URL or workspace path
+      // (Attached:-prefixed secrets lines are already handled above) — the
+      // same "whole line is the reference" convention ATTACHED_LINE uses.
+      const localRef = classifyLocalReference(line);
+      if (localRef) return localReferenceCardMarkup(localRef);
+      return lineMarkup(line, unfurls);
     }).join('\n');
   }
 
@@ -2069,9 +2369,10 @@
   /**
    * One line of message text (#3082): escaped, with its links.
    * @param {string} raw
+   * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107).
    * @returns {string} HTML.
    */
-  function lineMarkup(raw) {
+  function lineMarkup(raw, unfurls) {
     let out = '';
     let last = 0;
     MESSAGE_LINK.lastIndex = 0;
@@ -2092,7 +2393,7 @@
         continue;
       }
       out += escapeHtml(raw.slice(last, m.index));
-      out += linkMarkup(href, label);
+      out += linkMarkup(href, label, unfurls);
       last = m.index + match.length;
       MESSAGE_LINK.lastIndex = last;
     }
@@ -2100,12 +2401,15 @@
   }
 
   /**
-   * One link (#3082): a new-tab anchor, or for an external image a link card.
+   * One link (#3082): a new-tab anchor, an external-image link card, a
+   * GitHub PR/Issue/Release card (#3107), or — for any other external link —
+   * a click-to-reveal Open Graph preview (#3107, {@link unfurlMarkup}).
    * @param {string} href - An `http(s)://` URL or a same-origin path, unescaped.
    * @param {string} [label] - A Markdown label.
+   * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107).
    * @returns {string} HTML.
    */
-  function linkMarkup(href, label) {
+  function linkMarkup(href, label, unfurls) {
     const safe = escapeHtml(href);
     const external = /^https?:\/\//i.test(href);
     if (external && IMAGE_URL.test(href)) {
@@ -2115,6 +2419,11 @@
       return `<a class="v6-chat-link-preview" href="${safe}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Opens in a new tab; not loaded here">`
         + `<span class="v6-chat-link-preview-icon" aria-hidden="true">🖼</span>`
         + `<span class="v6-chat-link-preview-host">${escapeHtml(host)}</span><span class="v6-chat-link-preview-path">${escapeHtml(label || path)}</span></a>`;
+    }
+    if (external) {
+      const gh = parseGithubEntityUrl(href);
+      if (gh) return githubCardMarkup(href, gh);
+      return unfurlMarkup(href, label, unfurls);
     }
     return `<a class="v6-chat-link" href="${safe}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">${escapeHtml(label || href)}</a>`;
   }
@@ -2177,13 +2486,14 @@
    * @param {Array<object>} events
    * @param {string} name - The project's name.
    * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
+   * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107).
    * @returns {string} The recorded events as conversation bubbles.
    */
-  function recordedEventsMarkup(events, name, thumbs) {
+  function recordedEventsMarkup(events, name, thumbs, unfurls) {
     return events.map((e) => (
       `<li class="v6-conversation-event is-${escapeHtml(e && e.role)}">
             ${chatRoleMarkup(e && e.role, name)}
-            <span class="v6-conversation-content">${messageMarkup(e && e.content, thumbs)}</span>
+            <span class="v6-conversation-content">${messageMarkup(e && e.content, thumbs, unfurls)}</span>
           </li>`
     )).join('');
   }
@@ -2194,13 +2504,14 @@
    * @param {{id: *, text: string}|null|undefined} pending
    * @param {{id: *}|null|undefined} lastSent
    * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
+   * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107).
    * @returns {string} HTML list item, or ''.
    */
-  function pendingMarkup(pending, lastSent, thumbs) {
+  function pendingMarkup(pending, lastSent, thumbs, unfurls) {
     // One bubble per send on its way (#3082: a forced send can overlap another).
     const list = (Array.isArray(pending) ? pending : [pending])
       .filter((p) => p && typeof p.text === 'string' && !(lastSent && lastSent.id === p.id));
-    return list.map((p) => `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${messageMarkup(p.text, thumbs)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`).join('');
+    return list.map((p) => `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${messageMarkup(p.text, thumbs, unfurls)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`).join('');
   }
 
   /**
@@ -2210,11 +2521,12 @@
    * @param {string} name
    * @param {{blockers: boolean, milestones: boolean, chatter: boolean}} [verbosity] - Which switchboard replies show (#3082).
    * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
+   * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107).
    * @returns {string} HTML list items.
    */
-  function liveTurnsMarkup(turns, name, verbosity, thumbs) {
+  function liveTurnsMarkup(turns, name, verbosity, thumbs, unfurls) {
     return (Array.isArray(turns) ? turns : []).filter((t) => shownInChat(t, verbosity)).map((t) => (
-      `<li class="v6-conversation-event is-${escapeHtml(t && t.role)} is-live">${chatRoleMarkup(t && t.role, name)}<span class="v6-conversation-content">${messageMarkup(t && t.text, thumbs)}</span></li>`
+      `<li class="v6-conversation-event is-${escapeHtml(t && t.role)} is-live">${chatRoleMarkup(t && t.role, name)}<span class="v6-conversation-content">${messageMarkup(t && t.text, thumbs, unfurls)}</span></li>`
     )).join('');
   }
 
@@ -2273,11 +2585,12 @@
   /**
    * @param {Array<object>} tucked
    * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
+   * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107).
    * @returns {string} HTML list items, or the empty note.
    */
-  function tuckedMarkup(tucked, thumbs) {
+  function tuckedMarkup(tucked, thumbs, unfurls) {
     if (!tucked.length) return '<li class="v6-chat-tucked-empty">Nothing tucked away.</li>';
-    return tucked.map((t) => `<li class="v6-chat-tucked-item is-${turnKind(t)}"><span class="v6-chat-tucked-kind">${TURN_KIND_LABELS[turnKind(t)]}</span> <span class="v6-conversation-content">${messageMarkup(t.text, thumbs)}</span></li>`).join('');
+    return tucked.map((t) => `<li class="v6-chat-tucked-item is-${turnKind(t)}"><span class="v6-chat-tucked-kind">${TURN_KIND_LABELS[turnKind(t)]}</span> <span class="v6-conversation-content">${messageMarkup(t.text, thumbs, unfurls)}</span></li>`).join('');
   }
 
   /** @param {number} n @returns {string} The summary's count of tucked replies, or ''. */
@@ -5288,10 +5601,110 @@
       return tree.length ? routeHash({ view: 'project', projectId: tree[0].id }) : '#/settings/';
     }
 
+    /**
+     * Ask `GET /api/v6/unfurl` for one link's rich preview (#3107). Never
+     * triggered automatically — only from the shell's own Preview-button
+     * click handler ({@link wireRichPreviews}), per Ruling A752 (an
+     * external host is never dereferenced just because the chat drew the
+     * message). The shell already shows "Loading…" the moment the click
+     * happened; this only ever needs to report `'done'` or `'error'`.
+     * @param {string} url
+     * @returns {Promise<void>}
+     */
+    async function requestUnfurl(url) {
+      const shell = getShell();
+      if (!shell || typeof url !== 'string' || !url || typeof shell.setUnfurl !== 'function') return;
+      const res = await api(`/api/v6/unfurl?url=${encodeURIComponent(url)}`);
+      if (res && res.ok && res.preview) shell.setUnfurl(url, { state: 'done', preview: res.preview });
+      else shell.setUnfurl(url, { state: 'error' });
+    }
+
+    /**
+     * Ask `GET /api/v6/fleet-templates/bundled-specs` for the 2 bundled
+     * reference `.fleet.json` specs and the ecosystem directory link
+     * (#3115), on the Fleet Spec tab's own lazy-load entry.
+     * @returns {Promise<void>}
+     */
+    async function loadBundledFleetSpecs() {
+      const shell = getShell();
+      if (!shell || typeof shell.setBundledFleetSpecs !== 'function') return;
+      const res = await api('/api/v6/fleet-templates/bundled-specs');
+      if (res && res.specs) shell.setBundledFleetSpecs({ specs: res.specs, ecosystemDirectory: res.ecosystemDirectory });
+    }
+
+    /**
+     * Ask `POST /api/v6/fleet-templates/validate-spec` for a dry-run
+     * preview of a pasted/edited `.fleet.json` spec (#3115), before
+     * anything is created.
+     * @param {*} spec
+     * @returns {Promise<void>}
+     */
+    async function requestValidateFleetSpec(spec) {
+      const shell = getShell();
+      if (!shell || typeof shell.setWizardFleetSpecPreview !== 'function') return;
+      const res = await apiMutate('/api/v6/fleet-templates/validate-spec', 'POST', { spec });
+      shell.setWizardFleetSpecPreview(res || { ok: false, errors: [{ path: '', message: api.lastError || 'the server refused it' }] });
+    }
+
+    /**
+     * Ask `POST /api/v6/fleet-templates/apply-spec` to actually provision
+     * the fleet a validated `.fleet.json` spec describes (#3115), then
+     * navigate to its first created seat the same way Workflow C's
+     * {@link provisionFleet} does.
+     * @param {{spec: object, fleetName: string}} args
+     * @returns {Promise<void>}
+     */
+    async function applyFleetSpec(args) {
+      const shell = getShell();
+      if (!shell) return;
+      const res = await apiMutate('/api/v6/fleet-templates/apply-spec', 'POST', { spec: args.spec, fleetName: args.fleetName });
+      if (!res || !res.ok) {
+        if (typeof shell.setWizardStatus === 'function') {
+          shell.setWizardStatus({ kind: 'error', message: `Not provisioned: ${api.lastError || 'the server refused it'}` });
+        }
+        return;
+      }
+      if (res.failed && res.failed.length && typeof shell.setWizardStatus === 'function') {
+        shell.setWizardStatus({ kind: 'warning', message: `Provisioned, but some seats failed: ${res.failed.map((f) => f.name).join(', ')}` });
+      }
+      await afterWizardAction(shell, res.created && res.created[0] && res.created[0].name);
+    }
+
+    /**
+     * Ask `GET /api/v6/projects/:id/fleet-spec` to export an existing
+     * standalone workspace as a portable `.fleet.json` (#3115).
+     * @param {{projectId: string}} args - `projectId` is the export
+     *   dropdown's own value — the project's numeric id (`seatId`), the
+     *   same convention `convertToFleet`'s source dropdown already uses.
+     * @returns {Promise<void>}
+     */
+    /**
+     * @param {{projectId: string, members?: string[]}} args - `projectId` and
+     *   each of `members` are the export picker's own values — numeric
+     *   seat ids (#3115, PRR-A R1 C2: `exportableFleetsNow`'s
+     *   `memberSeatIds`), not names; the route's own `?members=` wants
+     *   names, resolved here from `projects`.
+     */
+    async function exportFleetSpec(args) {
+      const shell = getShell();
+      if (!shell || typeof shell.setWizardFleetSpecExport !== 'function') return;
+      const row = (projects || []).find((p) => String(p.id) === String(args.projectId));
+      if (!row) return shell.setWizardFleetSpecExport({ ok: false });
+      const memberIds = Array.isArray(args.members) && args.members.length ? args.members : [args.projectId];
+      const memberNames = memberIds.map((id) => {
+        const m = (projects || []).find((p) => String(p.id) === String(id));
+        return m ? m.name : null;
+      }).filter(Boolean);
+      const qs = memberNames.length ? `?members=${encodeURIComponent(memberNames.join(','))}` : '';
+      const res = await api(`/api/v6/projects/${encodeURIComponent(row.id)}/fleet-spec${qs}`);
+      shell.setWizardFleetSpecExport(res || { ok: false });
+    }
+
     return {
       handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, attachFiles, removeAttachment,
       startSession, startFleet, treeLinkClicked, renameProject, loadHistory, openHistorySession,
-      createWorkspaceProject, convertToFleet, provisionFleet,
+      createWorkspaceProject, convertToFleet, provisionFleet, requestUnfurl,
+      loadBundledFleetSpecs, requestValidateFleetSpec, applyFleetSpec, exportFleetSpec,
       getProjects() { return projects; }
     };
   }
@@ -5342,10 +5755,17 @@
     // active chat survives switching to 🧙 Wizard and back, since nothing
     // here ever calls setDetail.
     let wizardTab = 'templates';
-    let wizardForm = { standalone: {}, convert: {}, templates: {} };
+    let wizardForm = { standalone: {}, convert: {}, templates: {}, fleetSpec: {} };
     let wizardTemplateId = null;
     let wizardPlan = null;
     let wizardStatus = null;
+    // #3115: the Import/Export .fleet.json tab's own state — the bundled
+    // reference specs (lazy-loaded the same way Wizard templates are),
+    // a validated import preview, and an export result. All separate
+    // from wizardPlan/wizardTemplateId, which are Workflow C's own.
+    let bundledFleetSpecs = options.bundledFleetSpecs || null;
+    let wizardFleetSpecPreview = null;
+    let wizardFleetSpecExport = null;
     let attestation = options.attestation || null;
     let detail = options.detail || null;
     const showWatermark = options.showWatermark !== false;
@@ -5688,6 +6108,7 @@
       wireStart();
       wireRename();
       wireTreeLinks();
+      wireRichPreviews();
       const search = doc.getElementById('v6FilterSearch');
       if (search) {
         search.addEventListener('input', (evt) => {
@@ -5920,15 +6341,55 @@
     }
 
     /**
+     * The rich preview affordances a message can draw (#3107): a "Preview"
+     * button asks for an external link's Open Graph card (never auto-
+     * fetched, per Ruling A752), and a local-reference card's copy-path
+     * button copies its path. Re-wired every render, the same as every
+     * other per-element listener here, since `root.innerHTML` is reset
+     * each time.
+     */
+    function wireRichPreviews() {
+      if (typeof doc.querySelectorAll !== 'function') return;
+      doc.querySelectorAll('.v6-chat-local-ref-copy').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const path = btn.getAttribute('data-copy-path');
+          const clipboard = win && win.navigator && win.navigator.clipboard;
+          if (!path || !clipboard || typeof clipboard.writeText !== 'function') return;
+          clipboard.writeText(path).catch(() => {
+            // prawduct:allow prawduct/broad-except -- a copy that fails leaves the path visible to copy by hand; it must never break the chat
+          });
+        });
+      });
+      doc.querySelectorAll('.v6-chat-unfurl-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const url = btn.getAttribute('data-unfurl-url');
+          if (!url) return;
+          setUnfurl(url, { state: 'loading' });
+          if (typeof options.onUnfurlLink === 'function') options.onUnfurlLink(url);
+        });
+      });
+    }
+
+    /**
      * The Wizard panel's own controls (#3114): tab switching, live form
      * field tracking (so a re-render — a tab switch, a plan arriving —
      * never drops what the operator already typed), and the 3 workflow
      * submit actions. None of this ever calls `shell.setDetail`.
      */
     function wireWizard() {
-      ['templates', 'standalone', 'convert'].forEach((id) => {
+      ['templates', 'standalone', 'convert', 'fleetSpec'].forEach((id) => {
         const btn = doc.getElementById(`v6WizardTab-${id}`);
-        if (btn) btn.addEventListener('click', () => { wizardTab = id; wizardStatus = null; render(); });
+        if (btn) {
+          btn.addEventListener('click', () => {
+            wizardTab = id; wizardStatus = null;
+            // #3115: lazy-load the bundled specs on entry, the same pattern
+            // #3114's Template tab already uses for its own templates list.
+            if (id === 'fleetSpec' && !bundledFleetSpecs && typeof options.onLoadBundledFleetSpecs === 'function') {
+              options.onLoadBundledFleetSpecs();
+            }
+            render();
+          });
+        }
       });
       const track = (fieldId, group, key) => {
         const el = doc.getElementById(fieldId);
@@ -5950,6 +6411,9 @@
       track('v6WizardConvertEngine', 'convert', 'engine');
       track('v6WizardFleetName', 'templates', 'fleetName');
       track('v6WizardFleetEngine', 'templates', 'engine');
+      track('v6WizardFleetSpecJson', 'fleetSpec', 'json');
+      track('v6WizardFleetSpecFleetName', 'fleetSpec', 'fleetName');
+      track('v6WizardFleetSpecExportProject', 'fleetSpec', 'exportProjectId');
       WIZARD_FLEET_ROLES.forEach((role) => {
         const el = doc.getElementById(`v6WizardConvertRole-${role}`);
         if (!el) return;
@@ -6023,6 +6487,74 @@
           if (typeof options.onProvisionFleet === 'function') {
             options.onProvisionFleet({ templateId: wizardTemplateId, plan: wizardPlan, fleetName, engine: f.engine || 'claude' });
           }
+        });
+      }
+      // #3115: each bundled reference spec's "Use this template" button
+      // pre-fills the import textarea — client-side, no fetch, since
+      // bundledFleetSpecs is already loaded by this point.
+      if (bundledFleetSpecs && bundledFleetSpecs.specs) {
+        Object.keys(bundledFleetSpecs.specs).forEach((id) => {
+          const btn = doc.getElementById(`v6WizardUseBundled-${id}`);
+          if (!btn) return;
+          btn.addEventListener('click', () => {
+            wizardForm.fleetSpec = Object.assign({}, wizardForm.fleetSpec, {
+              json: JSON.stringify(bundledFleetSpecs.specs[id], null, 2),
+              fleetName: bundledFleetSpecs.specs[id].metadata.name.replace(/[^A-Za-z0-9 _-]+/g, '').trim()
+            });
+            wizardFleetSpecPreview = null;
+            render();
+          });
+        });
+      }
+      const fleetSpecImportForm = doc.getElementById('v6WizardFleetSpecImportForm');
+      if (fleetSpecImportForm) {
+        fleetSpecImportForm.addEventListener('submit', (evt) => {
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          let parsed;
+          try {
+            parsed = JSON.parse(String((wizardForm.fleetSpec && wizardForm.fleetSpec.json) || ''));
+          } catch {
+            wizardFleetSpecPreview = { ok: false, errors: [{ path: '', message: 'Not valid JSON.' }] };
+            render();
+            return;
+          }
+          if (typeof options.onValidateFleetSpec === 'function') options.onValidateFleetSpec(parsed);
+        });
+      }
+      const fleetSpecApplyBtn = doc.getElementById('v6WizardFleetSpecApplyBtn');
+      if (fleetSpecApplyBtn) {
+        fleetSpecApplyBtn.addEventListener('click', () => {
+          const f = wizardForm.fleetSpec || {};
+          const fleetName = String(f.fleetName || '').trim();
+          if (!fleetName || !PROJECT_NAME_CHARS.test(fleetName) || !wizardFleetSpecPreview || !wizardFleetSpecPreview.ok) return;
+          let parsed;
+          try {
+            parsed = JSON.parse(String(f.json || ''));
+          } catch {
+            return; // the Validate step already would have caught this; Apply is disabled until preview.ok anyway
+          }
+          wizardStatus = { kind: 'pending', message: `Provisioning ${fleetName}…` };
+          render();
+          if (typeof options.onApplyFleetSpec === 'function') options.onApplyFleetSpec({ spec: parsed, fleetName });
+        });
+      }
+      const fleetSpecExportForm = doc.getElementById('v6WizardFleetSpecExportForm');
+      if (fleetSpecExportForm) {
+        fleetSpecExportForm.addEventListener('submit', (evt) => {
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          const projectId = wizardForm.fleetSpec && wizardForm.fleetSpec.exportProjectId;
+          if (!projectId) {
+            wizardStatus = { kind: 'error', message: 'Choose a workspace or fleet to export.' };
+            render();
+            return;
+          }
+          // #3115 (PRR-A R1 C2): a multi-seat fleet's OTHER members never
+          // reach the export route without this — exportableFleetsNow()
+          // re-derived fresh at submit time, matched by the id the picker
+          // actually offered as this option's value.
+          const picked = exportableFleetsNow().find((fl) => String(fl.id) === String(projectId));
+          const members = picked ? picked.memberSeatIds : [projectId];
+          if (typeof options.onExportFleetSpec === 'function') options.onExportFleetSpec({ projectId, members });
         });
       }
     }
@@ -6395,6 +6927,34 @@
       return (chat && chat.thumbs) || {};
     }
 
+    /** The chat on screen's unfurl state by URL, right now (#3107). */
+    function unfurlsNow() {
+      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      return (chat && chat.unfurls) || {};
+    }
+
+    /**
+     * One link's unfurl state changed (#3107): redraws the message lists in
+     * place, the same as `setThumbs` — never a full `render()`, so the
+     * chat's scroll position, draft and focus are untouched. A plain
+     * function (not only a shell method) so {@link wireRichPreviews}' click
+     * handler can call it directly, the same split {@link setWorkspaceMode}
+     * already uses.
+     * @param {string} url
+     * @param {{state: ('loading'|'done'|'error'), preview?: object}} entry
+     */
+    function setUnfurl(url, entry) {
+      if (!detail || detail.kind !== 'conversation' || !detail.view || typeof url !== 'string') return;
+      const unfurls = Object.assign({}, detail.view.chat.unfurls, { [url]: entry });
+      detail = Object.assign({}, detail, { view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { unfurls }) }) });
+      const view = detail.view;
+      const liveEl = doc.getElementById('v6ChatLive');
+      if (liveEl) liveEl.innerHTML = liveTurnsMarkup(view.chat.live ? view.chat.live.turns : [], String((view.project && view.project.name) || ''), verbosity, thumbsNow(), unfurlsNow());
+      wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): paintTucked/paintRecorded below also re-wire (global, not scoped), but this covers #v6ChatLive explicitly even if that ever changes.
+      paintTucked(view.chat.live);
+      paintRecorded();
+    }
+
     /**
      * Redraw the replies the verbosity filter tucked away, and their count
      * on the Under the Hood summary (#3082).
@@ -6403,9 +6963,16 @@
     function paintTucked(live) {
       const tucked = tuckedTurns(live && Array.isArray(live.turns) ? live.turns : [], verbosity);
       const list = doc.getElementById('v6ChatTucked');
-      if (list) list.innerHTML = tuckedMarkup(tucked, thumbsNow());
+      if (list) list.innerHTML = tuckedMarkup(tucked, thumbsNow(), unfurlsNow());
       const count = doc.getElementById('v6ChatTuckedCount');
       if (count) count.innerHTML = escapeHtml(tuckedCountText(tucked.length));
+      // #3107 (PRR-A R1 C1/C2): this innerHTML assignment destroys whatever
+      // listeners wireControls()'s last full render attached to any
+      // .v6-chat-unfurl-btn/.v6-chat-local-ref-copy inside #v6ChatTucked —
+      // every targeted (non-render()) redraw of a rich-preview region must
+      // re-wire them itself, the same way wireControls() always does after
+      // a full render.
+      wireRichPreviews();
     }
 
     /**
@@ -6425,7 +6992,8 @@
           const view = detail && detail.kind === 'conversation' ? detail.view : null;
           const live = view && view.chat ? view.chat.live : null;
           const liveEl = doc.getElementById('v6ChatLive');
-          if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], String((view && view.project && view.project.name) || ''), verbosity, thumbsNow());
+          if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], String((view && view.project && view.project.name) || ''), verbosity, thumbsNow(), unfurlsNow());
+          wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): #v6ChatLive's own listeners, same reason as paintTucked's.
           paintTucked(live);
         });
       });
@@ -6442,11 +7010,12 @@
       const name = String((view.project && view.project.name) || '');
       const parts = arrangeRecorded(view.events, chat.live && Array.isArray(chat.live.turns) ? chat.live.turns : [], chat.lastSent);
       const head = doc.getElementById('v6ChatRecorded');
-      if (head) head.innerHTML = recordedEventsMarkup(parts.head, name, chat.thumbs);
+      if (head) head.innerHTML = recordedEventsMarkup(parts.head, name, chat.thumbs, chat.unfurls);
       const tailEl = doc.getElementById('v6ChatRecordedTail');
-      if (tailEl) tailEl.innerHTML = recordedEventsMarkup(parts.tail, name, chat.thumbs);
+      if (tailEl) tailEl.innerHTML = recordedEventsMarkup(parts.tail, name, chat.thumbs, chat.unfurls);
       const pendingEl = doc.getElementById('v6ChatPending');
-      if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSends.filter((p) => p.key === chatTargetKey()), chat.lastSent, chat.thumbs);
+      if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSends.filter((p) => p.key === chatTargetKey()), chat.lastSent, chat.thumbs, chat.unfurls);
+      wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): same reason as paintTucked's own call.
     }
 
     /**
@@ -6514,6 +7083,37 @@
       const workspace = tree.find((p) => p && p.id === 'workspace');
       const fleet = workspace && Array.isArray(workspace.fleets) ? workspace.fleets[0] : null;
       return fleet && Array.isArray(fleet.members) ? fleet.members : [];
+    }
+
+    /**
+     * Every exportable fleet or standalone workspace in `tree` (#3115,
+     * PRR-A R1 C1/C2): unlike {@link standaloneProjectsNow}, this walks
+     * every logical project's fleets, not only the "workspace" catch-all —
+     * #3115's own Deliverable 2 names exporting "any existing logical
+     * project/fleet", and a real multi-seat fleet (`TC-Lane-*`, `Monad-*`)
+     * was unreachable from the Export dropdown without this. `id` is the
+     * fleet's first member (the `GET /api/v6/projects/:id/fleet-spec`
+     * route's own `:id`); `memberSeatIds` is the full roster, passed as
+     * that route's `?members=` so a multi-seat fleet exports every seat,
+     * not just the one named in the URL.
+     * @returns {Array<{id: string, label: string, memberSeatIds: string[]}>}
+     */
+    function exportableFleetsNow() {
+      const out = [];
+      tree.forEach((p) => {
+        (p && Array.isArray(p.fleets) ? p.fleets : []).forEach((f) => {
+          const members = Array.isArray(f.members) ? f.members : [];
+          if (!members.length || !members[0].seatId) return;
+          // A single-member fleet is a standalone project, not a real named
+          // fleet — its own member's role (the project's actual name) is
+          // the readable label; the "Workspace Projects" catch-all's own
+          // displayName would otherwise show on EVERY standalone project
+          // identically, indistinguishable from one another in the picker.
+          const label = members.length > 1 ? (f.displayName || p.displayName) : members[0].role;
+          out.push({ id: members[0].seatId, label, memberSeatIds: members.map((m) => m.seatId) });
+        });
+      });
+      return out;
     }
 
     /** @returns {string|null} What the chat on screen is busy with, if anything (#3057). */
@@ -6836,7 +7436,9 @@
             verbosity
           })}</div>
           <div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard"${shown.wizard ? '' : ' hidden'}>${wizardMarkup(templates, standaloneProjectsNow(), {
-            tab: wizardTab, form: wizardForm, templateId: wizardTemplateId, plan: wizardPlan, status: wizardStatus
+            tab: wizardTab, form: wizardForm, templateId: wizardTemplateId, plan: wizardPlan, status: wizardStatus,
+            bundledFleetSpecs: bundledFleetSpecs && bundledFleetSpecs.specs, ecosystemDirectory: bundledFleetSpecs && bundledFleetSpecs.ecosystemDirectory,
+            fleetSpecPreview: wizardFleetSpecPreview, fleetSpecExport: wizardFleetSpecExport, exportableFleets: exportableFleetsNow()
           })}</div>
           <div id="v6ShellAttestation"${shown.attestation ? '' : ' hidden'}>${modelAttestationMarkup(attestation)}</div>
           <section id="v6WorkspacePanel" class="v6-workspace-panel" role="tabpanel"
@@ -6994,16 +7596,49 @@
        */
       setWizardStatus(status) { wizardStatus = status && typeof status === 'object' ? status : null; render(); },
       /**
+       * The live controller's answer to `GET /api/v6/fleet-templates/bundled-specs`
+       * (#3115) — `{specs, ecosystemDirectory}`, landing in the Fleet Spec
+       * tab's own state.
+       * @param {{specs: object, ecosystemDirectory: object}|null} data
+       */
+      setBundledFleetSpecs(data) { bundledFleetSpecs = data && typeof data === 'object' ? data : null; render(); },
+      /**
+       * The live controller's answer to `POST /api/v6/fleet-templates/validate-spec`
+       * (#3115): a dry-run preview, or the validator's own errors.
+       * @param {{ok: boolean, preview?: object, errors?: Array<object>}|null} preview
+       */
+      setWizardFleetSpecPreview(preview) { wizardFleetSpecPreview = preview && typeof preview === 'object' ? preview : null; render(); },
+      /**
+       * The live controller's answer to `GET /api/v6/projects/:id/fleet-spec`
+       * (#3115): the exported, sanitized spec.
+       * @param {{ok: boolean, spec?: object}|null} result
+       */
+      setWizardFleetSpecExport(result) { wizardFleetSpecExport = result && typeof result === 'object' ? result : null; render(); },
+      /**
        * Reset the Wizard back to its landing tab once a workflow finishes
        * (#3114) — called after a successful create/convert/provision, right
        * before navigating away to the new project/fleet.
        */
       resetWizard() {
-        wizardTab = 'templates'; wizardForm = { standalone: {}, convert: {}, templates: {} };
+        wizardTab = 'templates'; wizardForm = { standalone: {}, convert: {}, templates: {}, fleetSpec: {} };
         wizardTemplateId = null; wizardPlan = null; wizardStatus = null;
+        wizardFleetSpecPreview = null; wizardFleetSpecExport = null;
       },
       setAttestation(nextAttestation) { attestation = nextAttestation || null; render(); },
       setDetail(nextDetail) {
+        // #3107 (PRR-A R1 C1/C2): the controller's own current.view (what
+        // showChat/showSend/sendChat pass here) never carries unfurls — that
+        // state lives only in this shell's detail, set via setUnfurl. A
+        // bare replacement would silently revert every already-unfurled
+        // card back to its unclicked Preview button on the NEXT send or
+        // attachment change in the SAME chat. Carry it forward when both
+        // the old and new detail name the same project's conversation.
+        const oldProjectId = detail && detail.kind === 'conversation' && detail.view && detail.view.project ? detail.view.project.id : null;
+        const newProjectId = nextDetail && nextDetail.kind === 'conversation' && nextDetail.view && nextDetail.view.project ? nextDetail.view.project.id : null;
+        if (nextDetail && nextDetail.kind === 'conversation' && nextDetail.view && oldProjectId != null && String(oldProjectId) === String(newProjectId)
+          && !nextDetail.view.chat.unfurls && detail.view.chat.unfurls) {
+          nextDetail = Object.assign({}, nextDetail, { view: Object.assign({}, nextDetail.view, { chat: Object.assign({}, nextDetail.view.chat, { unfurls: detail.view.chat.unfurls }) }) });
+        }
         detail = nextDetail || null;
         // #3066: an open history panel follows the chat to another member (or
         // this one renamed); a reload of the same chat, which passes through a
@@ -7056,7 +7691,8 @@
         const stream = doc.getElementById('v6ChatStream');
         const streamAtBottom = isAtBottom(stream);
         const liveEl = doc.getElementById('v6ChatLive');
-        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name, verbosity, thumbsNow());
+        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name, verbosity, thumbsNow(), unfurlsNow());
+        wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): setLive runs on every live poll — the bug this finding is actually about.
         paintTucked(live);
         paintRecorded();
         if (streamAtBottom) pinToBottom(stream);
@@ -7145,10 +7781,23 @@
         detail = Object.assign({}, detail, { view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { thumbs: thumbs || {} }) }) });
         const view = detail.view;
         const liveEl = doc.getElementById('v6ChatLive');
-        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(view.chat.live ? view.chat.live.turns : [], String((view.project && view.project.name) || ''), verbosity, thumbsNow());
+        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(view.chat.live ? view.chat.live.turns : [], String((view.project && view.project.name) || ''), verbosity, thumbsNow(), unfurlsNow());
+        wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): same targeted-redraw gap as setLive's.
         paintTucked(view.chat.live);
         paintRecorded();
       },
+      /**
+       * One link's unfurl state changed (#3107): `'loading'` the moment the
+       * viewer clicks Preview, then `'done'`/`'error'` once the fetch
+       * resolves. Called both externally (the live controller, once the
+       * fetch resolves) and internally ({@link wireRichPreviews}' own click
+       * handler, to show "Loading…" immediately) — see {@link setUnfurl}
+       * (the plain internal function this delegates to; same split
+       * {@link setWorkspaceMode} already uses for the same reason).
+       * @param {string} url
+       * @param {{state: ('loading'|'done'|'error'), preview?: object}} entry
+       */
+      setUnfurl(url, entry) { setUnfurl(url, entry); },
       /**
        * Run `fn` when the shell is torn down (#3082: the chat's blob URLs
        * are released then).

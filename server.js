@@ -148,6 +148,7 @@ const sidecar = require('./lib/sidecar');
 const openclawHtml = require('./lib/openclaw-html');
 const tunnelMonitor = require('./lib/tunnel-monitor');
 const net = require('node:net');
+const dns = require('node:dns');
 const httpsSetup = require('./lib/https-setup');
 const remoteCaInstaller = require('./lib/remote-ca-installer');
 const hostInventory = require('./lib/host-inventory');
@@ -212,6 +213,7 @@ const incidentRegistry = require('./lib/v6/incident-registry');
 const b2 = require('./lib/v6/b2-conversation-layer');
 const b4 = require('./lib/v6/b4-telemetry-header');
 const c2 = require('./lib/v6/c2-fleet-templates');
+const fleetSpec = require('./lib/v6/fleet-template-spec');
 const d1 = require('./lib/v6/d1-model-attestation');
 const e1 = require('./lib/v6/e1-doc-planes-context-compiler');
 const g3 = require('./lib/v6/g3-medusa-isolation');
@@ -10156,6 +10158,52 @@ route('GET', '/api/v6/projects/:id/telemetry', (req, res) => {
   jsonResponse(res, 200, b4.assembleTelemetryBar(scope, _v6LiveTelemetryMetrics()));
 });
 
+// ── #3115: Portable Fleet Template Spec (.fleet.json) ──
+//
+// lib/v6/fleet-template-spec.js (Car V650-W1-B) owns the schema, sanitize/
+// validate/export/preview/apply logic, and the 2 bundled reference specs
+// (software-factory-10-role, ai-design-agency) — entirely separate from
+// C2's older in-app fleet-templates system above. These routes are thin
+// adapters: assembling a project's own live seat roster into the
+// `fleetState` shape exportFleetSpec expects, and — for apply — actually
+// provisioning the seats a validated plan names.
+//
+// bundled-specs/validate-spec/apply-spec must be registered ABOVE C2's
+// GET /api/v6/fleet-templates/:templateId below: this route table matches
+// in registration order, first match wins, and a wildcard :templateId
+// segment would otherwise greedily swallow these literal paths as if
+// "bundled-specs" etc. were a C2 template id.
+
+route('GET', '/api/v6/fleet-templates/bundled-specs', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'list bundled fleet template specs')) return;
+  jsonResponse(res, 200, { specs: fleetSpec.BUNDLED_FLEET_SPECS, ecosystemDirectory: fleetSpec.getEcosystemDirectoryInfo() });
+});
+
+route('POST', '/api/v6/fleet-templates/validate-spec', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'validate a fleet spec')) return;
+  const b = _v6Body(body);
+  const result = fleetSpec.previewFleetSpecImport(b.spec);
+  jsonResponse(res, result.ok ? 200 : 400, result);
+});
+
+route('POST', '/api/v6/fleet-templates/apply-spec', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'apply a fleet spec')) return;
+  const b = _v6Body(body);
+  const result = fleetSpec.applyFleetSpecImport(b.spec);
+  if (!result.ok) return jsonResponse(res, 400, result);
+  const fleetName = String(b.fleetName || (result.plan.metadata && result.plan.metadata.name) || '').trim();
+  if (!fleetName) return errorResponse(res, 400, 'fleetName is required to name the provisioned seats', 'BAD_REQUEST');
+  const created = [];
+  const failed = [];
+  for (const seat of result.plan.seats) {
+    const seatName = `${fleetName}-${seat.displayNameSuffix || seat.seatId}`;
+    const outcome = projects.createProject({ name: seatName, engine: seat.recommendedEngine });
+    if (outcome.project) created.push({ seatId: seat.seatId, name: seatName, id: outcome.project.id });
+    else failed.push({ seatId: seat.seatId, name: seatName, error: outcome.errors[0] || 'unknown error' });
+  }
+  jsonResponse(res, 200, { ok: true, created, failed });
+});
+
 // ── C2: Starter Fleet Template Catalog (#2984) ──
 //
 // Pure, stateless planning functions — no persistence. A `plan` is
@@ -10198,6 +10246,70 @@ route('POST', '/api/v6/fleet-templates/:templateId/admit', (req, res, params, bo
   }
   const { plan, admitted } = c2.admitDeferredSeat(b.plan, b.seatId);
   jsonResponse(res, 200, { plan, admitted });
+});
+
+
+/**
+ * `GET /api/v6/projects/:id/fleet-spec?members=<name>,<name>,...` (#3115):
+ * export the named project (and, when given, its fleet siblings — the
+ * caller's own `?members=` list, since the dash-prefix grouping
+ * `synthesizeTreeFromProjects` already computes lives in
+ * `public/v6-shell.js`, client-side only; this route trusts rather than
+ * re-derives it, so the two never drift against each other) as a
+ * sanitized `.fleet.json`.
+ *
+ * Deliberate scope reduction, documented rather than silently dropped:
+ * `rules`/`charterTemplate`/`sharedDocuments` export empty/null here. This
+ * car's envelope has no route into the session-rules store, charter
+ * lifecycle, or shared-docs subsystems to read a REAL fleet's own rules/
+ * charter/docs — only `seats` (name, engine, inferred role) is real.
+ * `exportFleetSpec`/`validateFleetSpec` both accept an empty `rules: []`/
+ * `sharedDocuments: []`/`charterTemplate: null` as valid, so the exported
+ * spec is genuine and importable, just partial.
+ */
+route('GET', '/api/v6/projects/:id/fleet-spec', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'export a project as a fleet spec')) return;
+  const pid = Number(params.id);
+  const project = Number.isInteger(pid) ? store.projects.get(pid) : null;
+  if (!project) return errorResponse(res, 404, `Project "${params.id}" not found`, 'NOT_FOUND');
+  const query = parseQuery(reqUrl(req).search);
+  const memberNames = typeof query.members === 'string' && query.members
+    ? query.members.split(',').map((n) => n.trim()).filter(Boolean) : [project.name];
+  const members = memberNames.map((name) => store.projects.getByName(name)).filter(Boolean);
+  if (!members.length) return errorResponse(res, 400, 'No named member resolved to a real project', 'BAD_REQUEST');
+  const fleetName = project.name.includes('-') ? project.name.split('-')[0] : project.name;
+  const seats = members.map((m) => {
+    const isFleetMember = m.name.startsWith(`${fleetName}-`);
+    const afterFleet = isFleetMember ? m.name.slice(fleetName.length + 1) : m.name;
+    // Only a genuine <fleetName>-<Role> member's suffix names a real role —
+    // a standalone project with no dash-prefix convention at all (the
+    // common 1-seat export) is never itself a role name.
+    const role = (isFleetMember && afterFleet.split('-')[0]) || 'Builder';
+    return {
+      seatId: m.name, displayNameSuffix: afterFleet || m.name, role,
+      supervisory: role === 'PM', launchPolicy: 'immediate',
+      recommendedEngine: fleetSpec.ENGINES.includes(m.engineId) ? m.engineId : 'claude', fallbackEngines: []
+    };
+  });
+  // validateFleetSpec requires at least one supervisory seat (the fleet
+  // needs a launch trigger) — a standalone export with no "PM"-named
+  // member has none by the role-inference above, so the first seat
+  // stands in rather than failing a true 1-seat export outright.
+  if (!seats.some((s) => s.supervisory)) seats[0].supervisory = true;
+  const result = fleetSpec.exportFleetSpec({
+    // homepageUrl is a required field with no real local-machine
+    // equivalent for an exported project; the ecosystem directory's own
+    // URL is a reasonable, honest placeholder (this spec did not come
+    // FROM the marketplace, it just has nowhere else to point).
+    metadata: {
+      id: fleetName.toLowerCase().replace(/[^a-z0-9-]+/g, '-'), name: fleetName, version: '1.0.0', author: 'operator',
+      description: `Exported from ${fleetName}`, category: 'Software Engineering', tags: [],
+      homepageUrl: fleetSpec.getEcosystemDirectoryInfo().marketplaceUrl, license: 'UNLICENSED'
+    },
+    seats, rules: [], charterTemplate: null, sharedDocuments: []
+  });
+  if (!result.ok) return errorResponse(res, 500, 'Could not assemble a valid fleet spec from this project', 'EXPORT_FAILED');
+  jsonResponse(res, 200, { ok: true, spec: result.spec });
 });
 
 // ── D1: Model Attestation (#2985) ──
@@ -11665,6 +11777,126 @@ route('POST', '/api/v6/sandboxing/plan', (req, res, _params, body) => {
   _v6Respond(res, plan);
 });
 
+// ── #3107: rich link unfurling (Open Graph / oEmbed) ──
+
+/** `GET /api/v6/unfurl` successful fetches, by exact URL. Cleared on process restart; that's fine, it just refetches once. */
+const _v6UnfurlCache = new Map();
+const V6_UNFURL_CACHE_TTL_MS = 10 * 60 * 1000;
+const V6_UNFURL_CACHE_MAX = 500;
+/** Caps how much of a fetched page's bytes `_v6SafeUnfurlFetch` reads — `og:` tags live in `<head>`, always well inside this. */
+const V6_UNFURL_MAX_BYTES = 512 * 1024;
+
+/**
+ * Fetch `url`'s HTML for link unfurling, pinned to the IP this function
+ * itself resolved and validated — never a second, independent DNS lookup at
+ * connect time. `lib/v6/b2-conversation-layer.js#evaluateUnfurlTargetSafety`
+ * (already checked by the caller before this runs) only validates the
+ * URL's LITERAL host; it explicitly documents that the real fetch must also
+ * validate the RESOLVED address, or a DNS-rebinding target — a public name
+ * that first answers safe, then re-resolves to `127.0.0.1` at connect time —
+ * would pass that check and still reach an internal address here. This
+ * reuses `evaluateUnfurlTargetSafety` itself (never duplicating its private
+ * IPv4/IPv6 range logic) by re-running it against a URL built around each
+ * resolved candidate address.
+ * @param {string} url - Already confirmed safe by {@link module:lib/v6/b2-conversation-layer.evaluateUnfurlTargetSafety}.
+ * @returns {Promise<{ok: true, html: string}|{ok: false, reason: string}>}
+ */
+/**
+ * A `http.request`/`https.request` custom `lookup` option that always
+ * answers with one already-validated, pinned address — factored out so
+ * its `opts.all` branch is directly unit-testable (PRR-A R1 WARNING):
+ * Node 20+'s `net.autoSelectFamily` defaults to `true` (confirmed live on
+ * this runtime) and calls a custom `lookup` with `{all: true}`, which
+ * REQUIRES the array callback form (`cb(null, [{address, family}])`) — the
+ * plain 3-arg form (`cb(null, address, family)`) throws
+ * `ERR_INVALID_IP_ADDRESS` on literally every request otherwise, confirmed
+ * by calling the old form directly against a real `https.request` before
+ * writing this fix, not assumed from the Node docs alone.
+ * @param {{address: string, family: number}} pinned
+ * @returns {(hostname: string, opts: object, cb: Function) => void}
+ */
+function _v6PinnedLookup(pinned) {
+  return (_hostname, opts, cb) => (opts && opts.all
+    ? cb(null, [{ address: pinned.address, family: pinned.family }])
+    : cb(null, pinned.address, pinned.family));
+}
+
+async function _v6SafeUnfurlFetch(url) {
+  const parsed = new URL(url);
+  let addresses;
+  try {
+    addresses = await dns.promises.lookup(parsed.hostname, { all: true, verbatim: true });
+  } catch {
+    return { ok: false, reason: 'DNS_LOOKUP_FAILED' };
+  }
+  if (!addresses.length) return { ok: false, reason: 'DNS_LOOKUP_FAILED' };
+  for (const { address, family } of addresses) {
+    const hostForUrl = family === 6 ? `[${address}]` : address;
+    const probe = b2.evaluateUnfurlTargetSafety(`${parsed.protocol}//${hostForUrl}${parsed.port ? `:${parsed.port}` : ''}/`);
+    if (!probe.safe) return { ok: false, reason: `RESOLVED_${probe.reason}` };
+  }
+  const pinned = addresses[0];
+  const client = parsed.protocol === 'https:' ? https : http;
+  return new Promise((resolve) => {
+    const req = client.request({
+      hostname: parsed.hostname, // kept for correct TLS SNI/cert-hostname checks
+      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+      path: `${parsed.pathname}${parsed.search}`,
+      headers: { Host: parsed.host, 'User-Agent': 'TangleClaw-LinkUnfurl/1.0', Accept: 'text/html' },
+      // Always answers with the single address already validated above —
+      // never re-resolves, which is the whole point of pinning.
+      lookup: _v6PinnedLookup(pinned),
+      timeout: 8000
+    }, (fres) => {
+      if (fres.statusCode == null || fres.statusCode < 200 || fres.statusCode >= 400) {
+        fres.resume();
+        return resolve({ ok: false, reason: `HTTP_${fres.statusCode}` });
+      }
+      let total = 0;
+      const chunks = [];
+      fres.on('data', (chunk) => {
+        total += chunk.length;
+        if (total > V6_UNFURL_MAX_BYTES) { req.destroy(); return; }
+        chunks.push(chunk);
+      });
+      fres.on('end', () => resolve({ ok: true, html: Buffer.concat(chunks).toString('utf8') }));
+      fres.on('error', () => resolve({ ok: false, reason: 'RESPONSE_ERROR' }));
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve({ ok: false, reason: 'FETCH_ERROR' }));
+    req.end();
+  });
+}
+
+route('GET', '/api/v6/unfurl', async (req, res) => {
+  if (!operatorProjectCaller(req, res, 'unfurl a chat link preview')) return;
+  const query = parseQuery(reqUrl(req).search);
+  const url = query && typeof query.url === 'string' ? query.url.trim() : '';
+  if (!url) return errorResponse(res, 400, 'url is required', 'BAD_REQUEST');
+
+  // A GitHub PR/Issue/Release URL never needs a fetch — the card is built
+  // from the URL alone, and github.com always passes the safety check below
+  // anyway, so checking this first just avoids the extra step for the
+  // common case.
+  const gh = b2.parseGitHubEntityUrl(url);
+  if (gh) return jsonResponse(res, 200, { ok: true, preview: { kind: 'github', url, ...gh } });
+
+  const safety = b2.evaluateUnfurlTargetSafety(url);
+  if (!safety.safe) return errorResponse(res, 400, `Refused: ${safety.reason}`, 'UNFURL_TARGET_UNSAFE');
+
+  const cached = _v6UnfurlCache.get(url);
+  if (cached && cached.expiresAt > Date.now()) return jsonResponse(res, 200, { ok: true, preview: cached.preview, cached: true });
+
+  const fetched = await _v6SafeUnfurlFetch(url);
+  if (!fetched.ok) return errorResponse(res, 502, `Could not unfurl this link: ${fetched.reason}`, 'UNFURL_FETCH_FAILED');
+
+  const og = b2.parseOpenGraphHtml(fetched.html);
+  const preview = og ? { kind: 'link-unfurl', url, ...og } : { kind: 'link-unfurl', url };
+  if (_v6UnfurlCache.size >= V6_UNFURL_CACHE_MAX) _v6UnfurlCache.delete(_v6UnfurlCache.keys().next().value);
+  _v6UnfurlCache.set(url, { expiresAt: Date.now() + V6_UNFURL_CACHE_TTL_MS, preview });
+  jsonResponse(res, 200, { ok: true, preview });
+});
+
 // ── Server Creation ──
 
 /**
@@ -12505,4 +12737,4 @@ if (require.main === module) {
 }
 
 
-module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller, _checkPublicAssets, _setPublicDir, _resetTailscaleOriginCacheForTest, _sanitizeOpenclawDirectHeaders, OPENCLAW_DIRECT_CF_HEADERS };
+module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller, _checkPublicAssets, _setPublicDir, _resetTailscaleOriginCacheForTest, _sanitizeOpenclawDirectHeaders, OPENCLAW_DIRECT_CF_HEADERS, _v6PinnedLookup };

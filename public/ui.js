@@ -8242,6 +8242,13 @@ if (typeof window.tcCreateV6Shell === 'function') {
     onCreateWorkspaceProject(form) { v6Live.createWorkspaceProject(form); },
     onConvertToFleet(form) { v6Live.convertToFleet(form); },
     onProvisionFleet(args) { v6Live.provisionFleet(args); },
+    // #3107: the chat's own click-to-preview affordance (Ruling A752 — never auto-fetched).
+    onUnfurlLink(url) { v6Live.requestUnfurl(url); },
+    // #3115: the Fleet Spec tab's own lazy-load, validate, apply and export actions.
+    onLoadBundledFleetSpecs() { v6Live.loadBundledFleetSpecs(); },
+    onValidateFleetSpec(spec) { v6Live.requestValidateFleetSpec(spec); },
+    onApplyFleetSpec(args) { v6Live.applyFleetSpec(args); },
+    onExportFleetSpec(args) { v6Live.exportFleetSpec(args); },
     onRender(route) {
       const active = Boolean(route && route.view);
       if (v6ShellRoot) v6ShellRoot.classList.toggle('hidden', !active);
