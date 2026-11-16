@@ -1017,6 +1017,11 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
         onCreateWorkspaceProject: (form) => pending.push(liveCtl.createWorkspaceProject(form)),
         onConvertToFleet: (form) => pending.push(liveCtl.convertToFleet(form)),
         onProvisionFleet: (args) => pending.push(liveCtl.provisionFleet(args)),
+        onUnfurlLink: (url) => pending.push(liveCtl.requestUnfurl(url)),
+        onLoadBundledFleetSpecs: () => pending.push(liveCtl.loadBundledFleetSpecs()),
+        onValidateFleetSpec: (spec) => pending.push(liveCtl.requestValidateFleetSpec(spec)),
+        onApplyFleetSpec: (args) => pending.push(liveCtl.applyFleetSpec(args)),
+        onExportFleetSpec: (args) => pending.push(liveCtl.exportFleetSpec(args)),
         onRender: (route) => pending.push(liveCtl.handleRoute(route))
       });
       pending.push(liveCtl.handleRoute(shell.getRoute()));
@@ -1158,6 +1163,157 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
       assert.match(recordedHtml, /<span class="v6-chat-unfurl-title">A Post<\/span>/, 'the fetched preview replaced the Preview button');
       assert.doesNotMatch(recordedHtml, /👁 Preview/);
     });
+  describe('the Fleet Spec Wizard tab (#3115)', () => {
+    const bundled = {
+      specs: { 'software-factory-10-role': { metadata: { id: 'software-factory-10-role', name: 'Autonomous Software Factory', description: 'A 10-seat fleet.' } } },
+      ecosystemDirectory: { marketplaceUrl: 'https://tangleclaw.com/marketplace', description: 'Browse community templates.' }
+    };
+    const validSpec = {
+      schemaVersion: '1.0',
+      metadata: { id: 'x', name: 'Monad', version: '1.0.0', author: 'a', description: 'd', category: 'c', tags: [], homepageUrl: 'https://tangleclaw.com/marketplace', license: 'MIT' },
+      seats: [{ seatId: 'pm', displayNameSuffix: 'PM', role: 'PM', supervisory: true, launchPolicy: 'immediate', recommendedEngine: 'claude', fallbackEngines: [] }],
+      rules: [], charterTemplate: null, sharedDocuments: []
+    };
+
+    function mountFleetSpec(extraMap) {
+      const live = { projects: PROJECTS.slice() };
+      const map = baseMap(Object.assign({
+        '/api/projects': () => ({ projects: live.projects }),
+        '/api/v6/fleet-templates/bundled-specs': bundled
+      }, extraMap || {}));
+      let nextId = 100;
+      const mutate = (url, method, body) => {
+        if (url === '/api/v6/fleet-templates/validate-spec' && method === 'POST') {
+          if (!body.spec || !body.spec.seats) return { ok: false, errors: [{ path: 'seats', message: 'required' }] };
+          return { ok: true, preview: { metadata: body.spec.metadata, seatCount: body.spec.seats.length, immediateSeatCount: 1, onDemandSeatCount: 0, recommendedEngineCounts: {}, rulesCount: 0, charterSummary: null, sharedDocumentNames: [] } };
+        }
+        if (url === '/api/v6/fleet-templates/apply-spec' && method === 'POST') {
+          const created = body.spec.seats.map((s) => {
+            const row = { id: nextId++, name: `${body.fleetName}-${s.displayNameSuffix}`, engine: s.recommendedEngine };
+            live.projects.push(row);
+            return { seatId: s.seatId, name: row.name, id: row.id };
+          });
+          return { ok: true, created, failed: [] };
+        }
+        return null;
+      };
+      const m = mountLiveWithMutate(map, mutate);
+      m.live2 = live;
+      return m;
+    }
+
+    it('switches to the tab, lazy-loads the bundled specs once, and the marketplace banner links out', async () => {
+      const { win, doc, root, calls, settle } = mountFleetSpec();
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      assert.ok(calls.includes('/api/v6/fleet-templates/bundled-specs'));
+      assert.match(root.innerHTML, /Browse Community Fleet Templates on TangleClaw\.com/);
+      assert.match(root.innerHTML, /Autonomous Software Factory/);
+      doc.getElementById('v6WorkspaceMode-chat').dispatch('click');
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      assert.equal(calls.filter((c) => c === '/api/v6/fleet-templates/bundled-specs').length, 1, 'never refetched once loaded');
+    });
+
+    it('"Use this template" pre-fills the import textarea with the exact bundled spec', async () => {
+      // test/_mini-dom.js's withIdParsingInnerHTML only ever tracks ids —
+      // a <textarea>'s CONTENT becomes .value in a real browser, never here
+      // (it is deliberately not a real parser), so every assertion in this
+      // describe block below checks root.innerHTML's raw string directly
+      // (the getter answers exactly what was last assigned to it) rather
+      // than reading .value/getAttribute back off a flat-parsed element.
+      const { win, doc, root, settle } = mountFleetSpec();
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardUseBundled-software-factory-10-role').dispatch('click');
+      assert.match(root.innerHTML, /id="v6WizardFleetSpecJson"[^>]*>[^<]*&quot;name&quot;: &quot;Autonomous Software Factory&quot;/);
+    });
+
+    it('Validate previews a well-formed spec and enables Apply; Apply provisions one project per seat and navigates to the first', async () => {
+      const { win, doc, root, settle } = mountFleetSpec();
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardFleetSpecJson').value = JSON.stringify(validSpec);
+      doc.getElementById('v6WizardFleetSpecJson').dispatch('input');
+      doc.getElementById('v6WizardFleetSpecFleetName').value = 'Monad';
+      doc.getElementById('v6WizardFleetSpecFleetName').dispatch('input');
+      assert.match(root.innerHTML, /id="v6WizardFleetSpecApplyBtn"[^>]* disabled>/, 'disabled before any validation');
+      doc.getElementById('v6WizardFleetSpecImportForm').dispatch('submit');
+      await settle();
+      assert.match(root.innerHTML, /1 seat\(s\) — Monad/);
+      assert.doesNotMatch(root.innerHTML, /id="v6WizardFleetSpecApplyBtn"[^>]* disabled>/, 'enabled once the preview is ok');
+      doc.getElementById('v6WizardFleetSpecApplyBtn').dispatch('click');
+      await settle();
+      assert.match(win.location.hash, /#\/resources\/\d+\/conversation/, 'navigated to the first provisioned seat');
+      assert.match(root.innerHTML, /Monad-PM/);
+    });
+
+    it('Validate refuses a malformed spec, naming the real validator\'s errors, and Apply stays disabled', async () => {
+      const { win, doc, root, settle } = mountFleetSpec();
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardFleetSpecJson').value = JSON.stringify({ not: 'a spec' });
+      doc.getElementById('v6WizardFleetSpecJson').dispatch('input');
+      doc.getElementById('v6WizardFleetSpecImportForm').dispatch('submit');
+      await settle();
+      assert.match(root.innerHTML, /seats: required/);
+      assert.match(root.innerHTML, /id="v6WizardFleetSpecApplyBtn"[^>]* disabled>/);
+    });
+
+    it('rejects text that is not valid JSON before ever asking the server', async () => {
+      const { win, doc, root, calls, settle } = mountFleetSpec();
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardFleetSpecJson').value = 'not json at all';
+      doc.getElementById('v6WizardFleetSpecJson').dispatch('input');
+      doc.getElementById('v6WizardFleetSpecImportForm').dispatch('submit');
+      await settle();
+      assert.match(root.innerHTML, /Not valid JSON\./);
+      assert.equal(calls.some((c) => c.includes('validate-spec')), false);
+    });
+
+    it('exports an existing workspace as a .fleet.json and shows it, read-only', async () => {
+      const { win, doc, root, settle } = mountFleetSpec({
+        '/api/v6/projects/30/fleet-spec': { ok: true, spec: { metadata: { name: 'TangleClaw' }, seats: [] } }
+      });
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      // The export dropdown's value is the project's numeric seatId — the
+      // same convention convertToFleet's own source dropdown uses (its own
+      // existing test picks TangleClaw the identical way: value '30').
+      assert.match(root.innerHTML, /id="v6WizardFleetSpecExportProject"[^>]*><option value=""[^>]*>Choose…<\/option><option value="30">/);
+      doc.getElementById('v6WizardFleetSpecExportProject').value = '30';
+      doc.getElementById('v6WizardFleetSpecExportProject').dispatch('change');
+      doc.getElementById('v6WizardFleetSpecExportForm').dispatch('submit');
+      await settle();
+      assert.match(root.innerHTML, /id="v6WizardFleetSpecExported"[^>]* readonly[^>]*>[^<]*&quot;name&quot;: &quot;TangleClaw&quot;/);
+    });
+  });
   });
 
   it('enterHash names the first logical project, loading the projects if needed', async () => {

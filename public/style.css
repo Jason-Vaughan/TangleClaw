@@ -4008,6 +4008,46 @@ html[data-theme="light"] .tc-bg-watermark img {
   flex-wrap: wrap;
   gap: 8px;
 }
+/* #3115: the Fleet Spec Wizard tab. */
+.v6-wizard-marketplace-banner {
+  margin: 0 0 8px;
+}
+.v6-wizard-bundled-specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.v6-wizard-bundled-spec {
+  flex: 1 1 220px;
+  padding: 8px;
+  border: 1px solid var(--v6-outline, #3d444d);
+  border-radius: 6px;
+}
+.v6-wizard-bundled-spec-title {
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+.v6-wizard-bundled-spec-desc {
+  font-size: 0.85em;
+  opacity: 0.8;
+  margin: 0 0 8px;
+}
+.v6-wizard-fleetspec-json {
+  width: 100%;
+  font-family: monospace;
+  font-size: 0.85em;
+}
+.v6-wizard-fleetspec-preview {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--v6-outline, #3d444d);
+  border-radius: 6px;
+}
+.v6-wizard-fleetspec-errors {
+  color: #e5534b;
+  font-size: 0.9em;
+}
 .v6-model-attestation {
   display: inline-block;
   padding: 2px 6px;

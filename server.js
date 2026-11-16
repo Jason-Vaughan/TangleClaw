@@ -213,6 +213,7 @@ const incidentRegistry = require('./lib/v6/incident-registry');
 const b2 = require('./lib/v6/b2-conversation-layer');
 const b4 = require('./lib/v6/b4-telemetry-header');
 const c2 = require('./lib/v6/c2-fleet-templates');
+const fleetSpec = require('./lib/v6/fleet-template-spec');
 const d1 = require('./lib/v6/d1-model-attestation');
 const e1 = require('./lib/v6/e1-doc-planes-context-compiler');
 const g3 = require('./lib/v6/g3-medusa-isolation');
@@ -10157,6 +10158,52 @@ route('GET', '/api/v6/projects/:id/telemetry', (req, res) => {
   jsonResponse(res, 200, b4.assembleTelemetryBar(scope, _v6LiveTelemetryMetrics()));
 });
 
+// ── #3115: Portable Fleet Template Spec (.fleet.json) ──
+//
+// lib/v6/fleet-template-spec.js (Car V650-W1-B) owns the schema, sanitize/
+// validate/export/preview/apply logic, and the 2 bundled reference specs
+// (software-factory-10-role, ai-design-agency) — entirely separate from
+// C2's older in-app fleet-templates system above. These routes are thin
+// adapters: assembling a project's own live seat roster into the
+// `fleetState` shape exportFleetSpec expects, and — for apply — actually
+// provisioning the seats a validated plan names.
+//
+// bundled-specs/validate-spec/apply-spec must be registered ABOVE C2's
+// GET /api/v6/fleet-templates/:templateId below: this route table matches
+// in registration order, first match wins, and a wildcard :templateId
+// segment would otherwise greedily swallow these literal paths as if
+// "bundled-specs" etc. were a C2 template id.
+
+route('GET', '/api/v6/fleet-templates/bundled-specs', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'list bundled fleet template specs')) return;
+  jsonResponse(res, 200, { specs: fleetSpec.BUNDLED_FLEET_SPECS, ecosystemDirectory: fleetSpec.getEcosystemDirectoryInfo() });
+});
+
+route('POST', '/api/v6/fleet-templates/validate-spec', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'validate a fleet spec')) return;
+  const b = _v6Body(body);
+  const result = fleetSpec.previewFleetSpecImport(b.spec);
+  jsonResponse(res, result.ok ? 200 : 400, result);
+});
+
+route('POST', '/api/v6/fleet-templates/apply-spec', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'apply a fleet spec')) return;
+  const b = _v6Body(body);
+  const result = fleetSpec.applyFleetSpecImport(b.spec);
+  if (!result.ok) return jsonResponse(res, 400, result);
+  const fleetName = String(b.fleetName || (result.plan.metadata && result.plan.metadata.name) || '').trim();
+  if (!fleetName) return errorResponse(res, 400, 'fleetName is required to name the provisioned seats', 'BAD_REQUEST');
+  const created = [];
+  const failed = [];
+  for (const seat of result.plan.seats) {
+    const seatName = `${fleetName}-${seat.displayNameSuffix || seat.seatId}`;
+    const outcome = projects.createProject({ name: seatName, engine: seat.recommendedEngine });
+    if (outcome.project) created.push({ seatId: seat.seatId, name: seatName, id: outcome.project.id });
+    else failed.push({ seatId: seat.seatId, name: seatName, error: outcome.errors[0] || 'unknown error' });
+  }
+  jsonResponse(res, 200, { ok: true, created, failed });
+});
+
 // ── C2: Starter Fleet Template Catalog (#2984) ──
 //
 // Pure, stateless planning functions — no persistence. A `plan` is
@@ -10199,6 +10246,70 @@ route('POST', '/api/v6/fleet-templates/:templateId/admit', (req, res, params, bo
   }
   const { plan, admitted } = c2.admitDeferredSeat(b.plan, b.seatId);
   jsonResponse(res, 200, { plan, admitted });
+});
+
+
+/**
+ * `GET /api/v6/projects/:id/fleet-spec?members=<name>,<name>,...` (#3115):
+ * export the named project (and, when given, its fleet siblings — the
+ * caller's own `?members=` list, since the dash-prefix grouping
+ * `synthesizeTreeFromProjects` already computes lives in
+ * `public/v6-shell.js`, client-side only; this route trusts rather than
+ * re-derives it, so the two never drift against each other) as a
+ * sanitized `.fleet.json`.
+ *
+ * Deliberate scope reduction, documented rather than silently dropped:
+ * `rules`/`charterTemplate`/`sharedDocuments` export empty/null here. This
+ * car's envelope has no route into the session-rules store, charter
+ * lifecycle, or shared-docs subsystems to read a REAL fleet's own rules/
+ * charter/docs — only `seats` (name, engine, inferred role) is real.
+ * `exportFleetSpec`/`validateFleetSpec` both accept an empty `rules: []`/
+ * `sharedDocuments: []`/`charterTemplate: null` as valid, so the exported
+ * spec is genuine and importable, just partial.
+ */
+route('GET', '/api/v6/projects/:id/fleet-spec', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'export a project as a fleet spec')) return;
+  const pid = Number(params.id);
+  const project = Number.isInteger(pid) ? store.projects.get(pid) : null;
+  if (!project) return errorResponse(res, 404, `Project "${params.id}" not found`, 'NOT_FOUND');
+  const query = parseQuery(reqUrl(req).search);
+  const memberNames = typeof query.members === 'string' && query.members
+    ? query.members.split(',').map((n) => n.trim()).filter(Boolean) : [project.name];
+  const members = memberNames.map((name) => store.projects.getByName(name)).filter(Boolean);
+  if (!members.length) return errorResponse(res, 400, 'No named member resolved to a real project', 'BAD_REQUEST');
+  const fleetName = project.name.includes('-') ? project.name.split('-')[0] : project.name;
+  const seats = members.map((m) => {
+    const isFleetMember = m.name.startsWith(`${fleetName}-`);
+    const afterFleet = isFleetMember ? m.name.slice(fleetName.length + 1) : m.name;
+    // Only a genuine <fleetName>-<Role> member's suffix names a real role —
+    // a standalone project with no dash-prefix convention at all (the
+    // common 1-seat export) is never itself a role name.
+    const role = (isFleetMember && afterFleet.split('-')[0]) || 'Builder';
+    return {
+      seatId: m.name, displayNameSuffix: afterFleet || m.name, role,
+      supervisory: role === 'PM', launchPolicy: 'immediate',
+      recommendedEngine: fleetSpec.ENGINES.includes(m.engineId) ? m.engineId : 'claude', fallbackEngines: []
+    };
+  });
+  // validateFleetSpec requires at least one supervisory seat (the fleet
+  // needs a launch trigger) — a standalone export with no "PM"-named
+  // member has none by the role-inference above, so the first seat
+  // stands in rather than failing a true 1-seat export outright.
+  if (!seats.some((s) => s.supervisory)) seats[0].supervisory = true;
+  const result = fleetSpec.exportFleetSpec({
+    // homepageUrl is a required field with no real local-machine
+    // equivalent for an exported project; the ecosystem directory's own
+    // URL is a reasonable, honest placeholder (this spec did not come
+    // FROM the marketplace, it just has nowhere else to point).
+    metadata: {
+      id: fleetName.toLowerCase().replace(/[^a-z0-9-]+/g, '-'), name: fleetName, version: '1.0.0', author: 'operator',
+      description: `Exported from ${fleetName}`, category: 'Software Engineering', tags: [],
+      homepageUrl: fleetSpec.getEcosystemDirectoryInfo().marketplaceUrl, license: 'UNLICENSED'
+    },
+    seats, rules: [], charterTemplate: null, sharedDocuments: []
+  });
+  if (!result.ok) return errorResponse(res, 500, 'Could not assemble a valid fleet spec from this project', 'EXPORT_FAILED');
+  jsonResponse(res, 200, { ok: true, spec: result.spec });
 });
 
 // ── D1: Model Attestation (#2985) ──

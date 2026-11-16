@@ -702,4 +702,107 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       assert.equal(json(res).code, 'UNFURL_FETCH_FAILED');
     });
   });
+
+  describe('Portable Fleet Template Spec routes (#3115)', () => {
+    it('GET /api/v6/fleet-templates/bundled-specs lists both reference specs and the ecosystem directory link', async () => {
+      const res = await get('/api/v6/fleet-templates/bundled-specs');
+      assert.equal(res.statusCode, 200, res.body);
+      const body = json(res);
+      assert.deepEqual(Object.keys(body.specs).sort(), ['ai-design-agency', 'software-factory-10-role']);
+      assert.equal(body.specs['software-factory-10-role'].seats.length, 10);
+      assert.equal(body.ecosystemDirectory.marketplaceUrl, 'https://tangleclaw.com/marketplace');
+    });
+
+    it('GET /api/v6/projects/:id/fleet-spec exports a single project as a valid, importable spec', async () => {
+      const pid = await seedProject('TangleClaw');
+      const res = await get(`/api/v6/projects/${pid}/fleet-spec`);
+      assert.equal(res.statusCode, 200, res.body);
+      const { spec } = json(res);
+      assert.equal(spec.metadata.name, 'TangleClaw');
+      // supervisory: true even though the inferred role isn't 'PM' — a
+      // 1-seat export's only seat stands in as the fleet's launch trigger
+      // (validateFleetSpec requires at least one).
+      assert.deepEqual(spec.seats, [{ seatId: 'TangleClaw', displayNameSuffix: 'TangleClaw', role: 'Builder', supervisory: true, launchPolicy: 'immediate', recommendedEngine: 'claude', fallbackEngines: [] }]);
+      // A deliberate scope reduction (documented in the route's own doc
+      // comment): this car has no route into rules/charter/shared-docs, so
+      // these export empty/null, not fabricated.
+      assert.deepEqual(spec.rules, []);
+      assert.equal(spec.charterTemplate, null);
+      assert.deepEqual(spec.sharedDocuments, []);
+      // Round-trips through the module's own validator cleanly.
+      const preview = await post('/api/v6/fleet-templates/validate-spec', { spec });
+      assert.equal(preview.statusCode, 200, preview.body);
+      assert.equal(json(preview).preview.seatCount, 1);
+    });
+
+    it('GET .../fleet-spec?members=... exports a multi-seat fleet, inferring each seat\'s role from its name', async () => {
+      const pmId = await seedProject('Monad-PM');
+      await seedProject('Monad-Builder-a');
+      const res = await get(`/api/v6/projects/${pmId}/fleet-spec?members=${encodeURIComponent('Monad-PM,Monad-Builder-a')}`);
+      assert.equal(res.statusCode, 200, res.body);
+      const { spec } = json(res);
+      assert.equal(spec.metadata.name, 'Monad');
+      assert.deepEqual(spec.seats.map((s) => [s.seatId, s.role, s.supervisory]), [['Monad-PM', 'PM', true], ['Monad-Builder-a', 'Builder', false]]);
+    });
+
+    it('GET .../fleet-spec 404s for an unknown project id', async () => {
+      const res = await get('/api/v6/projects/999999/fleet-spec');
+      assert.equal(res.statusCode, 404, res.body);
+    });
+
+    it('POST /api/v6/fleet-templates/validate-spec previews a bundled spec without creating anything', async () => {
+      const bundled = await get('/api/v6/fleet-templates/bundled-specs');
+      const spec = json(bundled).specs['ai-design-agency'];
+      const res = await post('/api/v6/fleet-templates/validate-spec', { spec });
+      assert.equal(res.statusCode, 200, res.body);
+      const { preview } = json(res);
+      assert.equal(preview.seatCount, 8);
+      assert.equal(preview.metadata.name, 'AI Design & Creative Agency');
+    });
+
+    it('POST /api/v6/fleet-templates/validate-spec refuses an invalid spec with the real validator\'s errors', async () => {
+      const res = await post('/api/v6/fleet-templates/validate-spec', { spec: { not: 'a spec' } });
+      assert.equal(res.statusCode, 400, res.body);
+      assert.ok(Array.isArray(json(res).errors) && json(res).errors.length > 0);
+    });
+
+    it('POST /api/v6/fleet-templates/apply-spec provisions a real project per seat, named <fleetName>-<seat>', async () => {
+      // createProject scaffolds a REAL directory via config.projectsDir —
+      // independent of store._setBasePath(tempDir) above (#2604's own
+      // "config.projectsDir does not scope with the store redirect"
+      // finding) — so this MUST point projectsDir at tempDir itself, or
+      // it scaffolds real directories under the operator's actual
+      // ~/Projects. Restored in this same test, not just left to the
+      // outer afterEach, since nothing else here needs the real default.
+      const cfg = store.config.load();
+      const realProjectsDir = cfg.projectsDir;
+      cfg.projectsDir = tempDir;
+      store.config.save(cfg);
+      try {
+        const bundled = await get('/api/v6/fleet-templates/bundled-specs');
+        const spec = json(bundled).specs['ai-design-agency'];
+        const res = await post('/api/v6/fleet-templates/apply-spec', { spec, fleetName: 'Zenith' });
+        assert.equal(res.statusCode, 200, res.body);
+        const { created, failed } = json(res);
+        assert.deepEqual(failed, []);
+        assert.deepEqual(created.map((c) => c.name).sort(), [
+          'Zenith-Art Director', 'Zenith-Critic', 'Zenith-Integrator', 'Zenith-Lane A', 'Zenith-Lane B', 'Zenith-Lane C', 'Zenith-Observer', 'Zenith-PM'
+        ].sort());
+        for (const c of created) {
+          assert.ok(store.getDb().prepare('SELECT id FROM projects WHERE id = ?').get(c.id), `${c.name} is a real row`);
+          assert.ok(fs.existsSync(path.join(tempDir, c.name)), `${c.name}'s directory landed under tempDir, never the real projects dir`);
+        }
+      } finally {
+        const restoreCfg = store.config.load();
+        restoreCfg.projectsDir = realProjectsDir;
+        store.config.save(restoreCfg);
+      }
+    });
+
+    it('POST /api/v6/fleet-templates/apply-spec refuses an invalid spec, creating nothing', async () => {
+      const res = await post('/api/v6/fleet-templates/apply-spec', { spec: { not: 'a spec' }, fleetName: 'X' });
+      assert.equal(res.statusCode, 400, res.body);
+      assert.equal(json(res).created, undefined);
+    });
+  });
 });

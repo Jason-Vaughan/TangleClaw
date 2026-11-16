@@ -1222,6 +1222,65 @@
   }
 
   /**
+   * The Import/Export `.fleet.json` tab (#3115): browse the 2 bundled
+   * reference specs and the `tangleclaw.com` marketplace, paste/edit a
+   * spec and validate it before anything is created, then provision it —
+   * or export an existing standalone workspace as a portable spec.
+   * @param {object|null} form - `wizardForm.fleetSpec`: `{json, fleetName, exportProjectId}`.
+   * @param {Record<string, object>|null} bundled - `BUNDLED_FLEET_SPECS`, lazy-loaded.
+   * @param {{marketplaceUrl: string, description: string}|null} ecosystem
+   * @param {{ok: boolean, preview?: object, errors?: Array<{path:string,message:string}>}|null} preview - A validated import, or its errors.
+   * @param {{ok: boolean, spec?: object}|null} exported - A completed export.
+   * @param {Array<{seatId: string}>} standaloneProjects - For the export dropdown.
+   * @returns {string} HTML.
+   */
+  function wizardFleetSpecMarkup(form, bundled, ecosystem, preview, exported, standaloneProjects) {
+    const f = form || {};
+    const bundledCards = bundled ? Object.keys(bundled).map((id) => {
+      const spec = bundled[id];
+      return `<div class="v6-wizard-bundled-spec">
+        <p class="v6-wizard-bundled-spec-title">${escapeHtml(spec.metadata.name)}</p>
+        <p class="v6-wizard-bundled-spec-desc">${escapeHtml(spec.metadata.description)}</p>
+        <button type="button" id="v6WizardUseBundled-${escapeHtml(id)}" class="btn btn-secondary btn-small" data-bundled-id="${escapeHtml(id)}">Use this template</button>
+      </div>`;
+    }).join('') : '<p class="v6-workspace-empty">Loading bundled templates…</p>';
+    const banner = ecosystem
+      ? `<p class="v6-wizard-marketplace-banner"><span aria-hidden="true">🌐</span> <a href="${escapeHtml(ecosystem.marketplaceUrl)}" target="_blank" rel="noopener noreferrer">Browse Community Fleet Templates on TangleClaw.com</a></p>`
+      : '';
+    const previewHtml = preview
+      ? (preview.ok
+        ? `<div class="v6-wizard-fleetspec-preview"><p>${preview.preview.seatCount} seat(s) — ${escapeHtml(preview.preview.metadata.name)}</p>
+            <p>${preview.preview.immediateSeatCount} immediate, ${preview.preview.onDemandSeatCount} on-demand; ${preview.preview.rulesCount} rule(s)</p></div>`
+        : `<ul class="v6-wizard-fleetspec-errors">${preview.errors.map((e) => `<li>${escapeHtml(e.path)}: ${escapeHtml(e.message)}</li>`).join('')}</ul>`)
+      : '';
+    // Same value/label split as wizardConvertMarkup's own source dropdown
+    // (#3114) — seatId is the project's numeric id, role is its readable
+    // name here (a standalone project is a 1-member pseudo-fleet).
+    const exportOptions = (standaloneProjects || []).map((p) => `<option value="${escapeHtml(p.seatId)}">${escapeHtml(p.role)}</option>`).join('');
+    const exportedHtml = exported
+      ? (exported.ok
+        ? `<textarea id="v6WizardFleetSpecExported" class="v6-wizard-fleetspec-json" readonly rows="10">${escapeHtml(JSON.stringify(exported.spec, null, 2))}</textarea>`
+        : '<p class="v6-workspace-empty is-error">Export failed.</p>')
+      : '';
+    return `<div class="v6-wizard-fleetspec">
+      ${banner}
+      <div class="v6-wizard-bundled-specs">${bundledCards}</div>
+      <form id="v6WizardFleetSpecImportForm" class="v6-wizard-form" aria-label="Import a .fleet.json spec">
+        <label class="v6-wizard-field">Paste or edit a .fleet.json spec<textarea id="v6WizardFleetSpecJson" class="v6-wizard-fleetspec-json" rows="10">${escapeHtml(f.json || '')}</textarea></label>
+        <label class="v6-wizard-field">Fleet name<input type="text" id="v6WizardFleetSpecFleetName" class="filter-input" value="${escapeHtml(f.fleetName || '')}" maxlength="48"></label>
+        <button type="submit" id="v6WizardFleetSpecValidateBtn" class="btn btn-secondary btn-small">Validate</button>
+        <button type="button" id="v6WizardFleetSpecApplyBtn" class="btn btn-primary btn-small"${preview && preview.ok ? '' : ' disabled'}>Import &amp; Provision</button>
+      </form>
+      ${previewHtml}
+      <form id="v6WizardFleetSpecExportForm" class="v6-wizard-form" aria-label="Export an existing workspace as a .fleet.json spec">
+        <label class="v6-wizard-field">Export existing workspace<select id="v6WizardFleetSpecExportProject" class="filter-input"><option value="">Choose…</option>${exportOptions}</select></label>
+        <button type="submit" id="v6WizardFleetSpecExportBtn" class="btn btn-secondary btn-small">Export as .fleet.json</button>
+      </form>
+      ${exportedHtml}
+    </div>`;
+  }
+
+  /**
    * The interactive Wizard panel inside `#v6ShellWizard` (#3114): 3 tabs —
    * Template (the default, so the starter-fleet list the existing
    * `#v6ShellWizardLaunch-*` tests expect is always visible on first
@@ -1236,7 +1295,7 @@
    */
   function wizardMarkup(templates, standaloneProjects, wizard) {
     const w = wizard || {};
-    const tab = ['templates', 'standalone', 'convert'].includes(w.tab) ? w.tab : 'templates';
+    const tab = ['templates', 'standalone', 'convert', 'fleetSpec'].includes(w.tab) ? w.tab : 'templates';
     const status = w.status
       ? `<p class="v6-wizard-status is-${escapeHtml(w.status.kind)}" role="status">${escapeHtml(w.status.message)}</p>` : '';
     const tabBtn = (id, label) => (
@@ -1244,12 +1303,14 @@
         aria-pressed="${tab === id ? 'true' : 'false'}" data-wizard-tab="${id}">${escapeHtml(label)}</button>`
     );
     const tabs = `<div class="v6-wizard-tabs" role="tablist" aria-label="New Project / Fleet Wizard workflow">
-      ${tabBtn('templates', '📁 Template')}${tabBtn('standalone', '🆕 New Workspace')}${tabBtn('convert', '🔀 Convert to Fleet')}</div>`;
+      ${tabBtn('templates', '📁 Template')}${tabBtn('standalone', '🆕 New Workspace')}${tabBtn('convert', '🔀 Convert to Fleet')}${tabBtn('fleetSpec', '📦 Fleet Spec')}</div>`;
     const form = w.form || {};
     let body;
     if (tab === 'standalone') body = wizardStandaloneMarkup(form.standalone);
     else if (tab === 'convert') body = wizardConvertMarkup(form.convert, standaloneProjects);
-    else body = wizardTemplatesMarkup(templates, w.templateId, w.plan, form.templates);
+    else if (tab === 'fleetSpec') {
+      body = wizardFleetSpecMarkup(form.fleetSpec, w.bundledFleetSpecs, w.ecosystemDirectory, w.fleetSpecPreview, w.fleetSpecExport, standaloneProjects);
+    } else body = wizardTemplatesMarkup(templates, w.templateId, w.plan, form.templates);
     return `<div class="v6-wizard">${tabs}${status}${body}</div>`;
   }
 
@@ -5556,10 +5617,82 @@
       else shell.setUnfurl(url, { state: 'error' });
     }
 
+    /**
+     * Ask `GET /api/v6/fleet-templates/bundled-specs` for the 2 bundled
+     * reference `.fleet.json` specs and the ecosystem directory link
+     * (#3115), on the Fleet Spec tab's own lazy-load entry.
+     * @returns {Promise<void>}
+     */
+    async function loadBundledFleetSpecs() {
+      const shell = getShell();
+      if (!shell || typeof shell.setBundledFleetSpecs !== 'function') return;
+      const res = await api('/api/v6/fleet-templates/bundled-specs');
+      if (res && res.specs) shell.setBundledFleetSpecs({ specs: res.specs, ecosystemDirectory: res.ecosystemDirectory });
+    }
+
+    /**
+     * Ask `POST /api/v6/fleet-templates/validate-spec` for a dry-run
+     * preview of a pasted/edited `.fleet.json` spec (#3115), before
+     * anything is created.
+     * @param {*} spec
+     * @returns {Promise<void>}
+     */
+    async function requestValidateFleetSpec(spec) {
+      const shell = getShell();
+      if (!shell || typeof shell.setWizardFleetSpecPreview !== 'function') return;
+      const res = await apiMutate('/api/v6/fleet-templates/validate-spec', 'POST', { spec });
+      shell.setWizardFleetSpecPreview(res || { ok: false, errors: [{ path: '', message: api.lastError || 'the server refused it' }] });
+    }
+
+    /**
+     * Ask `POST /api/v6/fleet-templates/apply-spec` to actually provision
+     * the fleet a validated `.fleet.json` spec describes (#3115), then
+     * navigate to its first created seat the same way Workflow C's
+     * {@link provisionFleet} does.
+     * @param {{spec: object, fleetName: string}} args
+     * @returns {Promise<void>}
+     */
+    async function applyFleetSpec(args) {
+      const shell = getShell();
+      if (!shell) return;
+      const res = await apiMutate('/api/v6/fleet-templates/apply-spec', 'POST', { spec: args.spec, fleetName: args.fleetName });
+      if (!res || !res.ok) {
+        if (typeof shell.setWizardStatus === 'function') {
+          shell.setWizardStatus({ kind: 'error', message: `Not provisioned: ${api.lastError || 'the server refused it'}` });
+        }
+        return;
+      }
+      if (res.failed && res.failed.length && typeof shell.setWizardStatus === 'function') {
+        shell.setWizardStatus({ kind: 'warning', message: `Provisioned, but some seats failed: ${res.failed.map((f) => f.name).join(', ')}` });
+      }
+      await afterWizardAction(shell, res.created && res.created[0] && res.created[0].name);
+    }
+
+    /**
+     * Ask `GET /api/v6/projects/:id/fleet-spec` to export an existing
+     * standalone workspace as a portable `.fleet.json` (#3115).
+     * @param {{projectId: string}} args - `projectId` is the export
+     *   dropdown's own value — the project's numeric id (`seatId`), the
+     *   same convention `convertToFleet`'s source dropdown already uses.
+     * @returns {Promise<void>}
+     */
+    async function exportFleetSpec(args) {
+      const shell = getShell();
+      if (!shell || typeof shell.setWizardFleetSpecExport !== 'function') return;
+      // args.projectId is the export dropdown's own value — the project's
+      // numeric id (seatId), the same convention wizardConvertMarkup's
+      // source dropdown already uses, not its name.
+      const row = (projects || []).find((p) => String(p.id) === String(args.projectId));
+      if (!row) return shell.setWizardFleetSpecExport({ ok: false });
+      const res = await api(`/api/v6/projects/${encodeURIComponent(row.id)}/fleet-spec`);
+      shell.setWizardFleetSpecExport(res || { ok: false });
+    }
+
     return {
       handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, attachFiles, removeAttachment,
       startSession, startFleet, treeLinkClicked, renameProject, loadHistory, openHistorySession,
       createWorkspaceProject, convertToFleet, provisionFleet, requestUnfurl,
+      loadBundledFleetSpecs, requestValidateFleetSpec, applyFleetSpec, exportFleetSpec,
       getProjects() { return projects; }
     };
   }
@@ -5610,10 +5743,17 @@
     // active chat survives switching to 🧙 Wizard and back, since nothing
     // here ever calls setDetail.
     let wizardTab = 'templates';
-    let wizardForm = { standalone: {}, convert: {}, templates: {} };
+    let wizardForm = { standalone: {}, convert: {}, templates: {}, fleetSpec: {} };
     let wizardTemplateId = null;
     let wizardPlan = null;
     let wizardStatus = null;
+    // #3115: the Import/Export .fleet.json tab's own state — the bundled
+    // reference specs (lazy-loaded the same way Wizard templates are),
+    // a validated import preview, and an export result. All separate
+    // from wizardPlan/wizardTemplateId, which are Workflow C's own.
+    let bundledFleetSpecs = options.bundledFleetSpecs || null;
+    let wizardFleetSpecPreview = null;
+    let wizardFleetSpecExport = null;
     let attestation = options.attestation || null;
     let detail = options.detail || null;
     const showWatermark = options.showWatermark !== false;
@@ -6225,9 +6365,19 @@
      * submit actions. None of this ever calls `shell.setDetail`.
      */
     function wireWizard() {
-      ['templates', 'standalone', 'convert'].forEach((id) => {
+      ['templates', 'standalone', 'convert', 'fleetSpec'].forEach((id) => {
         const btn = doc.getElementById(`v6WizardTab-${id}`);
-        if (btn) btn.addEventListener('click', () => { wizardTab = id; wizardStatus = null; render(); });
+        if (btn) {
+          btn.addEventListener('click', () => {
+            wizardTab = id; wizardStatus = null;
+            // #3115: lazy-load the bundled specs on entry, the same pattern
+            // #3114's Template tab already uses for its own templates list.
+            if (id === 'fleetSpec' && !bundledFleetSpecs && typeof options.onLoadBundledFleetSpecs === 'function') {
+              options.onLoadBundledFleetSpecs();
+            }
+            render();
+          });
+        }
       });
       const track = (fieldId, group, key) => {
         const el = doc.getElementById(fieldId);
@@ -6249,6 +6399,9 @@
       track('v6WizardConvertEngine', 'convert', 'engine');
       track('v6WizardFleetName', 'templates', 'fleetName');
       track('v6WizardFleetEngine', 'templates', 'engine');
+      track('v6WizardFleetSpecJson', 'fleetSpec', 'json');
+      track('v6WizardFleetSpecFleetName', 'fleetSpec', 'fleetName');
+      track('v6WizardFleetSpecExportProject', 'fleetSpec', 'exportProjectId');
       WIZARD_FLEET_ROLES.forEach((role) => {
         const el = doc.getElementById(`v6WizardConvertRole-${role}`);
         if (!el) return;
@@ -6322,6 +6475,68 @@
           if (typeof options.onProvisionFleet === 'function') {
             options.onProvisionFleet({ templateId: wizardTemplateId, plan: wizardPlan, fleetName, engine: f.engine || 'claude' });
           }
+        });
+      }
+      // #3115: each bundled reference spec's "Use this template" button
+      // pre-fills the import textarea — client-side, no fetch, since
+      // bundledFleetSpecs is already loaded by this point.
+      if (bundledFleetSpecs && bundledFleetSpecs.specs) {
+        Object.keys(bundledFleetSpecs.specs).forEach((id) => {
+          const btn = doc.getElementById(`v6WizardUseBundled-${id}`);
+          if (!btn) return;
+          btn.addEventListener('click', () => {
+            wizardForm.fleetSpec = Object.assign({}, wizardForm.fleetSpec, {
+              json: JSON.stringify(bundledFleetSpecs.specs[id], null, 2),
+              fleetName: bundledFleetSpecs.specs[id].metadata.name.replace(/[^A-Za-z0-9 _-]+/g, '').trim()
+            });
+            wizardFleetSpecPreview = null;
+            render();
+          });
+        });
+      }
+      const fleetSpecImportForm = doc.getElementById('v6WizardFleetSpecImportForm');
+      if (fleetSpecImportForm) {
+        fleetSpecImportForm.addEventListener('submit', (evt) => {
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          let parsed;
+          try {
+            parsed = JSON.parse(String((wizardForm.fleetSpec && wizardForm.fleetSpec.json) || ''));
+          } catch {
+            wizardFleetSpecPreview = { ok: false, errors: [{ path: '', message: 'Not valid JSON.' }] };
+            render();
+            return;
+          }
+          if (typeof options.onValidateFleetSpec === 'function') options.onValidateFleetSpec(parsed);
+        });
+      }
+      const fleetSpecApplyBtn = doc.getElementById('v6WizardFleetSpecApplyBtn');
+      if (fleetSpecApplyBtn) {
+        fleetSpecApplyBtn.addEventListener('click', () => {
+          const f = wizardForm.fleetSpec || {};
+          const fleetName = String(f.fleetName || '').trim();
+          if (!fleetName || !PROJECT_NAME_CHARS.test(fleetName) || !wizardFleetSpecPreview || !wizardFleetSpecPreview.ok) return;
+          let parsed;
+          try {
+            parsed = JSON.parse(String(f.json || ''));
+          } catch {
+            return; // the Validate step already would have caught this; Apply is disabled until preview.ok anyway
+          }
+          wizardStatus = { kind: 'pending', message: `Provisioning ${fleetName}…` };
+          render();
+          if (typeof options.onApplyFleetSpec === 'function') options.onApplyFleetSpec({ spec: parsed, fleetName });
+        });
+      }
+      const fleetSpecExportForm = doc.getElementById('v6WizardFleetSpecExportForm');
+      if (fleetSpecExportForm) {
+        fleetSpecExportForm.addEventListener('submit', (evt) => {
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          const projectId = wizardForm.fleetSpec && wizardForm.fleetSpec.exportProjectId;
+          if (!projectId) {
+            wizardStatus = { kind: 'error', message: 'Choose a workspace to export.' };
+            render();
+            return;
+          }
+          if (typeof options.onExportFleetSpec === 'function') options.onExportFleetSpec({ projectId });
         });
       }
     }
@@ -7162,7 +7377,9 @@
             verbosity
           })}</div>
           <div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard"${shown.wizard ? '' : ' hidden'}>${wizardMarkup(templates, standaloneProjectsNow(), {
-            tab: wizardTab, form: wizardForm, templateId: wizardTemplateId, plan: wizardPlan, status: wizardStatus
+            tab: wizardTab, form: wizardForm, templateId: wizardTemplateId, plan: wizardPlan, status: wizardStatus,
+            bundledFleetSpecs: bundledFleetSpecs && bundledFleetSpecs.specs, ecosystemDirectory: bundledFleetSpecs && bundledFleetSpecs.ecosystemDirectory,
+            fleetSpecPreview: wizardFleetSpecPreview, fleetSpecExport: wizardFleetSpecExport
           })}</div>
           <div id="v6ShellAttestation"${shown.attestation ? '' : ' hidden'}>${modelAttestationMarkup(attestation)}</div>
           <section id="v6WorkspacePanel" class="v6-workspace-panel" role="tabpanel"
@@ -7320,13 +7537,33 @@
        */
       setWizardStatus(status) { wizardStatus = status && typeof status === 'object' ? status : null; render(); },
       /**
+       * The live controller's answer to `GET /api/v6/fleet-templates/bundled-specs`
+       * (#3115) — `{specs, ecosystemDirectory}`, landing in the Fleet Spec
+       * tab's own state.
+       * @param {{specs: object, ecosystemDirectory: object}|null} data
+       */
+      setBundledFleetSpecs(data) { bundledFleetSpecs = data && typeof data === 'object' ? data : null; render(); },
+      /**
+       * The live controller's answer to `POST /api/v6/fleet-templates/validate-spec`
+       * (#3115): a dry-run preview, or the validator's own errors.
+       * @param {{ok: boolean, preview?: object, errors?: Array<object>}|null} preview
+       */
+      setWizardFleetSpecPreview(preview) { wizardFleetSpecPreview = preview && typeof preview === 'object' ? preview : null; render(); },
+      /**
+       * The live controller's answer to `GET /api/v6/projects/:id/fleet-spec`
+       * (#3115): the exported, sanitized spec.
+       * @param {{ok: boolean, spec?: object}|null} result
+       */
+      setWizardFleetSpecExport(result) { wizardFleetSpecExport = result && typeof result === 'object' ? result : null; render(); },
+      /**
        * Reset the Wizard back to its landing tab once a workflow finishes
        * (#3114) — called after a successful create/convert/provision, right
        * before navigating away to the new project/fleet.
        */
       resetWizard() {
-        wizardTab = 'templates'; wizardForm = { standalone: {}, convert: {}, templates: {} };
+        wizardTab = 'templates'; wizardForm = { standalone: {}, convert: {}, templates: {}, fleetSpec: {} };
         wizardTemplateId = null; wizardPlan = null; wizardStatus = null;
+        wizardFleetSpecPreview = null; wizardFleetSpecExport = null;
       },
       setAttestation(nextAttestation) { attestation = nextAttestation || null; render(); },
       setDetail(nextDetail) {
