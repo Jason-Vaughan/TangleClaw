@@ -200,3 +200,69 @@ describe('merge-role-guard: evaluateMergeRoleGuard (#2601)', () => {
     assert.equal(r.code, 'MERGE_ROLE_FORBIDDEN');
   });
 });
+
+describe('merge-role-guard: multi-fleet Integrators & standalone merge methods (#3110)', () => {
+  for (const lane of ['TC-Lane-INT', 'TV-INT', 'TiLT-v2', 'Monad-1']) {
+    it(`_resolveRoleCategory resolves lane "${lane}" as 'integrator'`, () => {
+      assert.equal(guard._resolveRoleCategory({ lane }), 'integrator');
+    });
+  }
+
+  it('_resolveRoleCategory resolves a "<fleet>-Lane-INT" shape as integrator too', () => {
+    assert.equal(guard._resolveRoleCategory({ lane: 'TV-Lane-INT' }), 'integrator');
+  });
+
+  it('_resolveRoleCategory does not treat an unrelated "...INT"-containing lane as an integrator', () => {
+    assert.equal(guard._resolveRoleCategory({ lane: 'Sprint-INT-Thing' }), null);
+  });
+
+  for (const lane of ['TC-Lane-INT', 'TV-INT', 'TiLT-v2', 'Monad-1']) {
+    it(`allows lane "${lane}" to merge with --merge`, () => {
+      const r = guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 --merge', lane });
+      assert.equal(r.ok, true);
+    });
+  }
+
+  it('allows Monad-1 to merge with --squash (Rule #401 standalone-repo convention)', () => {
+    const r = guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 --squash', lane: 'Monad-1' });
+    assert.equal(r.ok, true);
+    assert.equal(r.result.allowed, true);
+  });
+
+  it('allows Monad-1 to merge with the short -s alias, same as --squash', () => {
+    const r = guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 -s', lane: 'Monad-1' });
+    assert.equal(r.ok, true);
+  });
+
+  it('still refuses TC-Lane-INT (and every other fleet) using --squash -- the Monad-1 exception does not generalize', () => {
+    const r = guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 --squash', lane: 'TC-Lane-INT' });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'MERGE_METHOD_FORBIDDEN');
+  });
+
+  it('still refuses TV-INT and TiLT-v2 using --squash -- only Monad-1 by name is exempted', () => {
+    assert.equal(guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 --squash', lane: 'TV-INT' }).code, 'MERGE_METHOD_FORBIDDEN');
+    assert.equal(guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 --squash', lane: 'TiLT-v2' }).code, 'MERGE_METHOD_FORBIDDEN');
+  });
+
+  it('refuses Monad-1 using --rebase -- the exception is squash-only, not every non-merge method', () => {
+    const r = guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 --rebase', lane: 'Monad-1' });
+    assert.equal(r.code, 'MERGE_METHOD_FORBIDDEN');
+  });
+
+  it('allowedMergeMethods generalizes the same exception to any other caller named per call', () => {
+    const r = guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 --rebase', lane: 'TC-Lane-INT', allowedMergeMethods: ['rebase'] });
+    assert.equal(r.ok, true);
+  });
+
+  it('refuses a non-array allowedMergeMethods', () => {
+    const r = guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 --merge', lane: 'Monad-1', allowedMergeMethods: 'squash' });
+    assert.equal(r.code, 'MERGE_ROLE_GUARD_INVALID');
+  });
+
+  it('a forbidden role\'s lane is still checked for role before the Monad-1 squash exception could apply', () => {
+    // A builder lane cannot spoof an exception meant for Monad-1's own identity.
+    const r = guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 --squash', lane: 'TC-Lane-A' });
+    assert.equal(r.code, 'MERGE_ROLE_FORBIDDEN');
+  });
+});

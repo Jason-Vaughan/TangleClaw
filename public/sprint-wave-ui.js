@@ -438,12 +438,233 @@
     return html;
   }
 
+  /**
+   * One 6-stage pill badge (#3112): `lib/native-sprint-tracker.js#sixStagePill`'s
+   * `{code, label}`, rendered the same visual language as {@link _gatePill}'s
+   * gate pills but under its own class so the two never collide in CSS.
+   * @param {{code?: string, label?: string}|null|undefined} pill
+   * @returns {string}
+   */
+  function _sixStagePillBadge(pill) {
+    const p = pill && typeof pill === 'object' ? pill : {};
+    const code = typeof p.code === 'string' && p.code ? p.code : 'open';
+    const label = typeof p.label === 'string' && p.label ? p.label : (STAGE_LABELS[code] || code);
+    return `<span class="sprint-stage-pill is-${_escapeHtml(code)}">${_escapeHtml(label)}</span>`;
+  }
+
+  /**
+   * One file-scope tag list, each file its own escaped `<code>` chip.
+   * @param {string[]|null|undefined} files
+   * @returns {string}
+   */
+  function _fileScopeTags(files) {
+    const list = Array.isArray(files) ? files : [];
+    if (!list.length) return '';
+    return `<ul class="sprint-file-scope">${list.map((f) => `<li><code>${_escapeHtml(f)}</code></li>`).join('')}</ul>`;
+  }
+
+  /**
+   * The Release-First Roadmap (#3112): a summary metrics bar, then one
+   * expandable `<details>` card per release group (Active, Planned, Shipped)
+   * holding that release's own workstream/car table — each car's issues
+   * shown with their 6-stage pill, prerequisites (`dependsOn`) and summary.
+   * Renders below wherever the caller already draws the active Project
+   * Charter & role sign-offs ({@link renderCharterReadinessPanel}) and above
+   * wherever it already draws Train Launch controls (`public/v6-shell.js`'s
+   * own `tcV6TrainResultMarkup`/charter panel controls) — neither is
+   * duplicated here.
+   * @param {{releases?: {active?: object[], planned?: object[], shipped?: object[]},
+   *   summary?: {plannedVersions?: number, releasedVersions?: number,
+   *   activeSprintProgress?: {closed?: number, total?: number, pct?: number},
+   *   scheduledItems?: number}, cars?: Array<{id: string, version?: (string|null),
+   *   lane?: (string|null), pill?: object, issues?: object[]}>}} snapshotData -
+   *   `lib/native-sprint-tracker.js#buildSprintWaveSnapshot`'s own return shape.
+   * @param {{innerHTML?: string}|null} [container] - A DOM element to write
+   *   into, or omit to only get the HTML string back.
+   * @returns {string} The rendered HTML.
+   */
+  function renderReleaseRoadmap(snapshotData, container) {
+    _refuseContainerFirst(snapshotData, 'renderReleaseRoadmap');
+    const d = snapshotData && typeof snapshotData === 'object' ? snapshotData : {};
+    const releases = d.releases && typeof d.releases === 'object' ? d.releases : {};
+    const summary = d.summary && typeof d.summary === 'object' ? d.summary : {};
+    const progress = summary.activeSprintProgress && typeof summary.activeSprintProgress === 'object' ? summary.activeSprintProgress : {};
+    const cars = Array.isArray(d.cars) ? d.cars : [];
+
+    const metrics = [
+      { label: 'Planned versions', value: summary.plannedVersions },
+      { label: 'Released versions', value: summary.releasedVersions },
+      { label: 'Active sprint progress', value: `${progress.closed === undefined ? '—' : progress.closed}/${progress.total === undefined ? '—' : progress.total} (${progress.pct === undefined ? '—' : progress.pct}%)` },
+      { label: 'Scheduled items', value: summary.scheduledItems }
+    ];
+    const metricsBar = `<div class="sprint-roadmap-metrics">${metrics.map((m) => (
+      `<div class="sprint-roadmap-metric"><div class="sprint-roadmap-metric-label">${_escapeHtml(m.label)}</div>`
+      + `<div class="sprint-roadmap-metric-value">${_escapeHtml(m.value === null || m.value === undefined ? '—' : m.value)}</div></div>`
+    )).join('')}</div>`;
+
+    const carTable = (version) => {
+      const versionCars = cars.filter((c) => c && c.version === version);
+      if (!versionCars.length) return '<p class="sprint-panel-empty">No cars scheduled yet.</p>';
+      const rows = versionCars.map((car) => {
+        const issueRows = (Array.isArray(car.issues) ? car.issues : []).map((issue) => (
+          `<tr class="sprint-roadmap-issue-row" data-issue-id="${_escapeHtml(issue && issue.id)}">`
+          + `<td class="sprint-roadmap-issue-id">#${_escapeHtml(issue && issue.id)}</td>`
+          + `<td class="sprint-roadmap-issue-pill">${_sixStagePillBadge(issue && issue.pill)}</td>`
+          + `<td class="sprint-roadmap-issue-prereqs">${(issue && Array.isArray(issue.dependsOn) ? issue.dependsOn : []).map((p) => `<code>${_escapeHtml(p)}</code>`).join(', ') || '—'}</td>`
+          + `<td class="sprint-roadmap-issue-summary">${_escapeHtml((issue && (issue.summary || issue.title)) || '—')}</td>`
+          + '</tr>'
+        )).join('');
+        return `<tr class="sprint-roadmap-car-row" data-car-id="${_escapeHtml(car.id)}">`
+          + `<th scope="row" class="sprint-roadmap-car-id">${_escapeHtml(car.id)}</th>`
+          + `<td class="sprint-roadmap-car-lane">${_escapeHtml(car.lane || '—')}</td>`
+          + `<td class="sprint-roadmap-car-pill">${_sixStagePillBadge(car.pill)}</td>`
+          + `</tr>${issueRows}`;
+      }).join('');
+      return `<table class="sprint-roadmap-car-table"><thead><tr><th scope="col">Car</th><th scope="col">Lane</th>`
+        + `<th scope="col">Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+    };
+
+    const releaseCard = (release, open) => (
+      `<details class="sprint-roadmap-release"${open ? ' open' : ''} data-version="${_escapeHtml(release.version)}">`
+      + `<summary>${_escapeHtml(release.version)} (${_escapeHtml(release.carCount === undefined ? 0 : release.carCount)} car${release.carCount === 1 ? '' : 's'})</summary>`
+      + carTable(release.version) + '</details>'
+    );
+
+    const group = (title, list, open) => {
+      const items = Array.isArray(list) ? list : [];
+      if (!items.length) return '';
+      return `<section class="sprint-roadmap-group" aria-label="${_escapeHtml(title)}">`
+        + `<h3 class="sprint-roadmap-group-title">${_escapeHtml(title)}</h3>`
+        + items.map((r) => releaseCard(r, open)).join('') + '</section>';
+    };
+
+    const groupsHtml = group('Current Active Sprint', releases.active, true)
+      + group('Upcoming Planned Releases', releases.planned, false)
+      + group('Released Versions', releases.shipped, false);
+
+    const html = '<section class="sprint-roadmap-panel" aria-label="Release-First Roadmap">'
+      + '<h2 class="sprint-roadmap-title">Release-First Roadmap</h2>'
+      + metricsBar
+      + (groupsHtml || '<p class="sprint-panel-empty">No releases to show yet.</p>')
+      + '</section>';
+    if (container && typeof container === 'object') container.innerHTML = html;
+    return html;
+  }
+
+  /**
+   * Live Wave & Car execution cards (#3112), for `🚂 Sprint & Cars`: one card
+   * per car with its assigned Builder lane, O-Gate/PRR reviewers, 6-stage
+   * pill (car-level and per-issue), the six governance gate badges ({@link
+   * carGates}/{@link _gatePill} — the same gate machinery {@link
+   * renderSprintWaveBoard}'s matrix already uses, not a second one), and its
+   * disjoint file-scope tags.
+   * @param {{cars?: Array<{id: string, lane?: (string|null),
+   *   reviewers?: {oGate?: string, prr?: string}, files?: string[],
+   *   prNumber?: (number|null), pill?: object, issues?: object[]}>}} snapshotData -
+   *   `lib/native-sprint-tracker.js#buildSprintWaveSnapshot`'s own return shape.
+   * @param {{innerHTML?: string}|null} [container] - A DOM element to write
+   *   into, or omit to only get the HTML string back.
+   * @returns {string} The rendered HTML.
+   */
+  function renderSprintCarCards(snapshotData, container) {
+    _refuseContainerFirst(snapshotData, 'renderSprintCarCards');
+    const d = snapshotData && typeof snapshotData === 'object' ? snapshotData : {};
+    const cars = Array.isArray(d.cars) ? d.cars : [];
+    if (!cars.length) {
+      const html = '<p class="sprint-panel-empty">No cars dispatched yet.</p>';
+      if (container && typeof container === 'object') container.innerHTML = html;
+      return html;
+    }
+    const cards = cars.map((car) => {
+      const reviewers = car.reviewers && typeof car.reviewers === 'object' ? car.reviewers : {};
+      const gates = carGates({ stage: _pillToStage(car.pill) });
+      const issuePills = (Array.isArray(car.issues) ? car.issues : [])
+        .map((issue) => `<li class="sprint-car-issue" data-issue-id="${_escapeHtml(issue && issue.id)}">`
+          + `<span class="sprint-car-issue-id">#${_escapeHtml(issue && issue.id)}</span>${_sixStagePillBadge(issue && issue.pill)}</li>`)
+        .join('');
+      return `<article class="sprint-car-card" data-car-id="${_escapeHtml(car.id)}">`
+        + `<header class="sprint-car-card-header"><span class="sprint-car-id">${_escapeHtml(car.id)}</span>${_sixStagePillBadge(car.pill)}</header>`
+        + `<div class="sprint-car-meta">`
+        + (car.lane ? `<span class="sprint-car-lane">Builder: ${_escapeHtml(car.lane)}</span>` : '')
+        + (reviewers.oGate ? `<span class="sprint-car-ogate">O-Gate: ${_escapeHtml(reviewers.oGate)}</span>` : '')
+        + (reviewers.prr ? `<span class="sprint-car-prr">PRR: ${_escapeHtml(reviewers.prr)}</span>` : '')
+        + (car.prNumber !== null && car.prNumber !== undefined ? `<span class="sprint-car-pr">#${_escapeHtml(car.prNumber)}</span>` : '')
+        + '</div>'
+        + `<div class="sprint-car-gates">${gates.map((g) => `<span class="sprint-gate-cell">${_gatePill(g)}</span>`).join('')}</div>`
+        + (issuePills ? `<ul class="sprint-car-issues">${issuePills}</ul>` : '')
+        + _fileScopeTags(car.files)
+        + '</article>';
+    }).join('');
+    const html = `<div class="sprint-car-cards">${cards}</div>`;
+    if (container && typeof container === 'object') container.innerHTML = html;
+    return html;
+  }
+
+  /**
+   * The best {@link carGates} stage to infer this car's six gates from,
+   * given only its 6-stage pill code — {@link carGates} itself still reads
+   * {@link STAGE_GATES}'s own dispatch-stage vocabulary, so this is the one
+   * translation point back from the 6-stage pill to it.
+   * @param {{code?: string}|null|undefined} pill
+   * @returns {string}
+   */
+  function _pillToStage(pill) {
+    const code = pill && typeof pill === 'object' && typeof pill.code === 'string' ? pill.code : 'open';
+    if (code === 'open') return 'unassigned';
+    if (code === 'deployed') return 'merged';
+    return code;
+  }
+
+  /**
+   * Live Kaizen & Sprint Reports catalog cards (#3112), for `📈 Kaizen &
+   * Reports`: one card per report/retrospective from the Sprint Reports Hub
+   * catalog, alongside whatever {@link renderKaizenLedgerPanel} already
+   * draws for the live Kaizen ledger and Gate 0 feed — this renders only the
+   * reports CATALOG (potentially several), where {@link renderKaizenLedgerPanel}'s
+   * own `reportSummary` field is just the one current report.
+   * @param {{reports?: Array<{id: string, version?: (string|null), title?: string,
+   *   url?: (string|null), kind?: string}>}} snapshotData -
+   *   `lib/native-sprint-tracker.js#buildSprintWaveSnapshot`'s own return shape.
+   * @param {{innerHTML?: string}|null} [container] - A DOM element to write
+   *   into, or omit to only get the HTML string back.
+   * @returns {string} The rendered HTML.
+   */
+  function renderSprintReportsCatalog(snapshotData, container) {
+    _refuseContainerFirst(snapshotData, 'renderSprintReportsCatalog');
+    const d = snapshotData && typeof snapshotData === 'object' ? snapshotData : {};
+    const reports = Array.isArray(d.reports) ? d.reports : [];
+    if (!reports.length) {
+      const html = '<p class="sprint-panel-empty">No sprint reports yet.</p>';
+      if (container && typeof container === 'object') container.innerHTML = html;
+      return html;
+    }
+    const cards = reports.map((r) => {
+      const href = _safeHref(r && r.url);
+      const title = (r && r.title) || (r && r.id) || 'Sprint report';
+      const kind = r && r.kind === 'retrospective' ? 'retrospective' : 'report';
+      return `<li class="sprint-report-card" data-kind="${_escapeHtml(kind)}" data-report-id="${_escapeHtml(r && r.id)}">`
+        + (href
+          ? `<a href="${_escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${_escapeHtml(title)}</a>`
+          : `<span>${_escapeHtml(title)}</span>`)
+        + (r && r.version ? `<span class="sprint-report-version">${_escapeHtml(r.version)}</span>` : '')
+        + '</li>';
+    }).join('');
+    const html = `<ul class="sprint-report-cards">${cards}</ul>`;
+    if (container && typeof container === 'object') container.innerHTML = html;
+    return html;
+  }
+
   const sprintWaveUi = {
     STAGE_ORDER, STAGE_LABELS, GATES, renderSprintKpiCards, renderSprintWaveBoard, filterSprintWaveRows, carGates,
     renderCharterReadinessPanel, renderKaizenLedgerPanel,
     // The same two builders under the names the v6 workspace modes use (Ruling A774).
     renderSprintCharterRoadmapPanel: renderCharterReadinessPanel,
-    renderSprintKaizenReportsPanel: renderKaizenLedgerPanel
+    renderSprintKaizenReportsPanel: renderKaizenLedgerPanel,
+    // #3112: the Release-First Roadmap, enriched Sprint & Cars execution
+    // cards, and the Sprint Reports/Retrospectives catalog -- all pure
+    // builders over `buildSprintWaveSnapshot`'s shape, composed alongside
+    // (never replacing) the two builders above.
+    renderReleaseRoadmap, renderSprintCarCards, renderSprintReportsCatalog
   };
 
   if (typeof module !== 'undefined' && module.exports) {
