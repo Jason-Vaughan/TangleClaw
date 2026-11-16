@@ -1379,3 +1379,60 @@ describe('usage_calibration v83 -> v84: Antigravity becomes a calibrated provide
     assert.match(bad.errors.join(' '), /provider must be one of claude, codex, antigravity/);
   });
 });
+
+describe('lib/usage-windows — large transcript history does not overflow the call stack (#3109)', () => {
+  afterEach(() => {
+    uw._resetUsageWindowsCacheForTests();
+  });
+
+  const RECORD_COUNT = 120000;
+
+  /**
+   * A single fake `.jsonl` file's text holding `RECORD_COUNT` valid Claude
+   * assistant-usage lines — enough on its own to overflow a spread-into-a-
+   * function-call accumulator (`fn.push(...bigArray)` / `fn(...bigArray)`),
+   * well past V8's ~65,536-argument call limit, without ever touching disk.
+   */
+  function hugeClaudeTranscriptText() {
+    const lines = new Array(RECORD_COUNT);
+    for (let i = 0; i < RECORD_COUNT; i++) {
+      lines[i] = JSON.stringify({
+        type: 'assistant',
+        timestamp: new Date(1700000000000 + i).toISOString(),
+        message: { model: 'claude-sonnet-5', usage: { input_tokens: 1, output_tokens: 1 } }
+      });
+    }
+    return lines.join('\n');
+  }
+
+  it('parseClaudeTranscripts reads a single 120,000-record file without a RangeError (the per-file accumulation in _scanFiles)', () => {
+    const text = hugeClaudeTranscriptText();
+    const deps = {
+      readdir: () => [{ name: 'huge.jsonl', isFile: () => true }],
+      readFile: () => text
+    };
+    const records = uw.parseClaudeTranscripts('/fake/claude-huge', deps);
+    assert.equal(records.length, RECORD_COUNT);
+  });
+
+  it('getUsageWindows composes a 120,000-record scan without a RangeError (the cross-provider accumulation in _computeUsageWindows)', () => {
+    const text = hugeClaudeTranscriptText();
+    const deps = {
+      readdir: (dir) => (dir === '/fake/claude-huge' ? [{ name: 'huge.jsonl', isFile: () => true }] : []),
+      readFile: () => text
+    };
+    const result = uw.getUsageWindows({
+      claudeProjectsDir: '/fake/claude-huge',
+      codexSessionsDir: '/fake/codex-empty',
+      antigravityBrainDir: '/fake/ag-empty',
+      // All synthetic records land in [1700000000000, 1700000000000 +
+      // RECORD_COUNT) — placing "now" just past the last one puts the whole
+      // batch inside the fiveHour window, so the assertion below proves
+      // every record survived the scan, not just that nothing threw.
+      nowMs: 1700000000000 + RECORD_COUNT,
+      deps
+    });
+    assert.equal(result.complete, true);
+    assert.equal(result.byProviderModel.claude['claude-sonnet-5'].fiveHour.totalTokens, RECORD_COUNT * 2);
+  });
+});

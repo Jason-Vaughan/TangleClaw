@@ -240,6 +240,43 @@ describe('native-sprint-tracker: syncWaveDispatchState', () => {
   it('throws without an input.cars array', () => {
     assert.throws(() => tracker.syncWaveDispatchState({}), TypeError);
   });
+
+  it('always carries a 6-stage pill, computed from stage alone (#3112, PRR-B I-Gate R1 BLOCKING 2)', () => {
+    const result = tracker.syncWaveDispatchState({ cars: baseCars });
+    assert.deepEqual(result['car-a'].pill, { code: 'open', label: 'Not started' });
+  });
+
+  it('a bare car (no files/reviewers/headSha/issues) produces exactly {stage, laneName, openPrNumber, pill} -- no extra keys', () => {
+    const result = tracker.syncWaveDispatchState({ cars: [{ id: 'car-a' }] });
+    assert.deepEqual(Object.keys(result['car-a']).sort(), ['laneName', 'openPrNumber', 'pill', 'stage']);
+  });
+
+  it('passes through files, reviewers and headSha only when the car carries them', () => {
+    const result = tracker.syncWaveDispatchState({
+      cars: [{ id: 'car-a', files: ['lib/a.js'], reviewers: { oGate: 'TC-Lane-Obsr' }, headSha: 'abcdef1' }]
+    });
+    assert.deepEqual(result['car-a'].files, ['lib/a.js']);
+    assert.deepEqual(result['car-a'].reviewers, { oGate: 'TC-Lane-Obsr' });
+    assert.equal(result['car-a'].headSha, 'abcdef1');
+  });
+
+  it('gives each issue its own pill, inheriting the car\'s stage unless the issue itself is closed', () => {
+    const result = tracker.syncWaveDispatchState({
+      cars: [{ id: 'car-a', issues: [{ id: 1, state: 'open' }, { id: 2, state: 'closed' }] }],
+      lanes: [{ carId: 'car-a', status: 'committed' }]
+    });
+    assert.deepEqual(result['car-a'].issues, [
+      { id: 1, pill: { code: 'in-progress', label: 'In progress' } },
+      { id: 2, pill: { code: 'closed', label: 'Completed' } }
+    ]);
+  });
+
+  it('a closed car marked deployedNotConfirmed reads "Deployed, awaiting a check" in its pill', () => {
+    const result = tracker.syncWaveDispatchState({
+      cars: [{ id: 'car-a', deployedNotConfirmed: true, issues: [{ id: 1, state: 'closed' }] }]
+    });
+    assert.deepEqual(result['car-a'].pill, { code: 'deployed', label: 'Deployed, awaiting a check' });
+  });
 });
 
 describe('native-sprint-tracker: buildNativeSprintReportSummary', () => {
@@ -309,6 +346,226 @@ describe('native-sprint-tracker: buildNativeSprintReportSummary', () => {
     assert.equal(summary.version, null);
     assert.equal(summary.heroKpis.builderPRs, 0);
     assert.equal(summary.guardrailLedger.length, 12);
+    assert.deepEqual(summary.reports, []);
+  });
+
+  it('normalizes a reports catalog when the caller supplies one (#3112, PRR-B I-Gate R1 BLOCKING 2)', () => {
+    const summary = tracker.buildNativeSprintReportSummary({
+      reports: [{ id: 'v6.4.0', version: 'v6.4.0', title: 'v6.4.0 live report', url: 'https://example.test/v6.4.0' }]
+    });
+    assert.deepEqual(summary.reports, [
+      { id: 'v6.4.0', version: 'v6.4.0', title: 'v6.4.0 live report', url: 'https://example.test/v6.4.0', kind: 'report' }
+    ]);
+  });
+});
+
+describe('native-sprint-tracker: sixStagePill (#3112)', () => {
+  it('maps unassigned and claimed to the same open/"Not started" pill', () => {
+    assert.deepEqual(tracker.sixStagePill('unassigned'), { code: 'open', label: 'Not started' });
+    assert.deepEqual(tracker.sixStagePill('claimed'), { code: 'open', label: 'Not started' });
+  });
+
+  it('maps in-progress, in-review and blocked straight through', () => {
+    assert.deepEqual(tracker.sixStagePill('in-progress'), { code: 'in-progress', label: 'In progress' });
+    assert.deepEqual(tracker.sixStagePill('in-review'), { code: 'in-review', label: 'In review' });
+    assert.deepEqual(tracker.sixStagePill('blocked'), { code: 'blocked', label: 'Blocked' });
+  });
+
+  it('maps closed to "Completed" by default, and to "Deployed, awaiting a check" when not yet confirmed', () => {
+    assert.deepEqual(tracker.sixStagePill('closed'), { code: 'closed', label: 'Completed' });
+    assert.deepEqual(tracker.sixStagePill('closed', true), { code: 'deployed', label: 'Deployed, awaiting a check' });
+    assert.deepEqual(tracker.sixStagePill('closed', false), { code: 'closed', label: 'Completed' });
+  });
+
+  it('falls back to open/"Not started" for an unrecognized stage', () => {
+    assert.deepEqual(tracker.sixStagePill('nonsense'), { code: 'open', label: 'Not started' });
+  });
+
+  it('exports the same 6-stage label vocabulary the issue names', () => {
+    assert.deepEqual(tracker.SIX_STAGE_PILL_LABELS, {
+      open: 'Not started',
+      'in-progress': 'In progress',
+      'in-review': 'In review',
+      blocked: 'Blocked',
+      deployed: 'Deployed, awaiting a check',
+      closed: 'Completed'
+    });
+  });
+});
+
+describe('native-sprint-tracker: buildSprintWaveSnapshot (#3112)', () => {
+  const baseInput = {
+    currentVersion: 'v6.4.1',
+    shippedVersions: ['6.4.0', 'v6.3.0', '6.2.10', '6.2.9'],
+    roadmapData: {
+      releases: [
+        { version: '6.4.0', trains: [{ cars: [1, 2] }] },
+        { version: '6.4.1', trains: [{ cars: [3, 4, 5] }] },
+        { version: '6.5.0', trains: [{ cars: [6] }] }
+      ]
+    },
+    cars: [
+      {
+        id: 'W1-A', version: 'v6.4.1', lane: 'TC-Lane-A', reviewers: { oGate: 'TC-Lane-Obsr', prr: 'TC-Lane-PRR-A' },
+        files: ['public/v6-shell.js'],
+        issues: [{ id: 3105, state: 'closed' }, { id: 3106, state: 'closed' }]
+      },
+      {
+        id: 'W1-B', version: 'v6.4.1', reviewers: { oGate: 'TC-Lane-Obsr', prr: 'TC-Lane-PRR-B' },
+        files: ['lib/usage-windows.js'],
+        issues: [{ id: 3109, state: 'open' }, { id: 3110, state: 'open' }]
+      }
+    ],
+    lanes: [
+      { carId: 'W1-A', name: 'TC-Lane-A', status: 'committed' },
+      { carId: 'W1-B', name: 'TC-Lane-B', status: 'committed' }
+    ],
+    pullRequests: [
+      { carId: 'W1-A', number: 3200, state: 'merged' },
+      { carId: 'W1-B', number: 3201, state: 'open' }
+    ],
+    reports: [
+      { id: 'v6.4.0', version: 'v6.4.0', title: 'v6.4.0 live report', url: 'https://example.test/v6.4.0' },
+      { id: 'v6.2.2-v6.4.0-retrospective', version: null, title: 'v6.2.2-v6.4.0 Retrospective', kind: 'retrospective' }
+    ]
+  };
+
+  it('classifies releases into active, planned and shipped', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot(baseInput);
+    assert.deepEqual(snapshot.releases.active, [{ version: 'v6.4.1', status: 'active', carCount: 3 }]);
+    assert.deepEqual(snapshot.releases.planned, [{ version: 'v6.5.0', status: 'planned', carCount: 1 }]);
+    assert.deepEqual(snapshot.releases.shipped, [{ version: 'v6.4.0', status: 'shipped', carCount: 2 }]);
+  });
+
+  it('enriches every car with its lane, reviewers, files, PR number and 6-stage pill', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot(baseInput);
+    const carA = snapshot.cars.find((c) => c.id === 'W1-A');
+    const carB = snapshot.cars.find((c) => c.id === 'W1-B');
+    // W1-A: both issues closed and a merged PR -> dispatch stage 'closed' -> pill 'closed'.
+    assert.equal(carA.lane, 'TC-Lane-A');
+    assert.deepEqual(carA.reviewers, { oGate: 'TC-Lane-Obsr', prr: 'TC-Lane-PRR-A' });
+    assert.deepEqual(carA.files, ['public/v6-shell.js']);
+    assert.equal(carA.prNumber, 3200);
+    assert.deepEqual(carA.pill, { code: 'closed', label: 'Completed' });
+    // W1-B: an open PR -> dispatch stage 'in-review' -> pill 'in-review'; no explicit
+    // car.lane given, so it falls back to the lane row's own name.
+    assert.equal(carB.lane, 'TC-Lane-B');
+    assert.equal(carB.prNumber, 3201);
+    assert.deepEqual(carB.pill, { code: 'in-review', label: 'In review' });
+  });
+
+  it('gives each issue its own pill: closed when the issue itself is closed, else the car\'s current stage', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot(baseInput);
+    const carB = snapshot.cars.find((c) => c.id === 'W1-B');
+    assert.deepEqual(carB.issues, [
+      { id: 3109, title: null, summary: null, dependsOn: [], pill: { code: 'in-review', label: 'In review' } },
+      { id: 3110, title: null, summary: null, dependsOn: [], pill: { code: 'in-review', label: 'In review' } }
+    ]);
+  });
+
+  it('passes through an issue\'s title, summary and dependsOn (prerequisites) when given', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({
+      cars: [{
+        id: 'W1-X',
+        issues: [{ id: 1, state: 'open', title: 'Fix the thing', summary: 'A short summary', dependsOn: ['#2'] }]
+      }]
+    });
+    assert.deepEqual(snapshot.cars[0].issues, [
+      { id: 1, title: 'Fix the thing', summary: 'A short summary', dependsOn: ['#2'], pill: { code: 'open', label: 'Not started' } }
+    ]);
+  });
+
+  it('computes the active sprint progress and scheduled-item summary', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot(baseInput);
+    assert.deepEqual(snapshot.summary, {
+      plannedVersions: 1,
+      releasedVersions: 1,
+      activeSprintProgress: { closed: 2, total: 4, pct: 50 },
+      scheduledItems: 3 + 1 // active car count + planned car count
+    });
+  });
+
+  it('normalizes the reports catalog, defaulting title to id and kind to "report"', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot(baseInput);
+    assert.deepEqual(snapshot.reports, [
+      { id: 'v6.4.0', version: 'v6.4.0', title: 'v6.4.0 live report', url: 'https://example.test/v6.4.0', kind: 'report' },
+      { id: 'v6.2.2-v6.4.0-retrospective', version: null, title: 'v6.2.2-v6.4.0 Retrospective', url: null, kind: 'retrospective' }
+    ]);
+  });
+
+  it('a closed car marked deployedNotConfirmed reads "Deployed, awaiting a check" rather than "Completed"', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({
+      cars: [{ id: 'W-REL', deployedNotConfirmed: true, issues: [{ id: 1, state: 'closed' }] }],
+      pullRequests: [{ carId: 'W-REL', number: 1, state: 'merged' }]
+    });
+    assert.deepEqual(snapshot.cars[0].pill, { code: 'deployed', label: 'Deployed, awaiting a check' });
+  });
+
+  it('defaults every field on an empty input rather than throwing', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({});
+    assert.deepEqual(snapshot.releases, { active: [], planned: [], shipped: [] });
+    assert.deepEqual(snapshot.cars, []);
+    assert.deepEqual(snapshot.reports, []);
+    assert.deepEqual(snapshot.summary, {
+      plannedVersions: 0, releasedVersions: 0,
+      activeSprintProgress: { closed: 0, total: 0, pct: 0 },
+      scheduledItems: 0
+    });
+  });
+
+  it('drops a reports entry with no string id rather than throwing', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({ reports: [{ title: 'no id' }, null, { id: 'ok', title: 'Fine' }] });
+    assert.deepEqual(snapshot.reports, [{ id: 'ok', version: null, title: 'Fine', url: null, kind: 'report' }]);
+  });
+
+  it('passes through a car\'s version, defaulting to null, so the UI layer can group cars by release', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({ cars: [{ id: 'a', version: 'v6.4.1' }, { id: 'b' }] });
+    assert.equal(snapshot.cars[0].version, 'v6.4.1');
+    assert.equal(snapshot.cars[1].version, null);
+  });
+
+  it('sorts shipped releases newest-first and planned releases soonest-first', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({
+      currentVersion: 'v6.4.1',
+      shippedVersions: ['6.2.9', '6.2.10', '6.3.0', '6.4.0'],
+      roadmapData: {
+        releases: [
+          { version: '6.2.9', trains: [] }, { version: '6.4.0', trains: [] },
+          { version: '6.2.10', trains: [] }, { version: '6.3.0', trains: [] },
+          { version: '6.6.0', trains: [] }, { version: '6.5.0', trains: [] }
+        ]
+      }
+    });
+    assert.deepEqual(snapshot.releases.shipped.map((r) => r.version), ['v6.4.0', 'v6.3.0', 'v6.2.10', 'v6.2.9']);
+    assert.deepEqual(snapshot.releases.planned.map((r) => r.version), ['v6.5.0', 'v6.6.0']);
+  });
+
+  it('synthesizes a fallback car row from roadmap trains for a release with no matching input car (#3112, PRR-B I-Gate R1 WARNING 1)', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot(baseInput);
+    // v6.4.0 (shipped) and v6.5.0 (planned) have no car in baseInput.cars -- both must still
+    // show their roadmap-placed issues, not an empty table.
+    const shipped = snapshot.cars.find((c) => c.version === 'v6.4.0');
+    const planned = snapshot.cars.find((c) => c.version === 'v6.5.0');
+    assert.deepEqual(shipped.issues.map((i) => i.id), [1, 2]);
+    assert.deepEqual(shipped.pill, { code: 'open', label: 'Not started' });
+    assert.deepEqual(planned.issues.map((i) => i.id), [6]);
+    // v6.4.1 (active) DOES have matching cars (W1-A, W1-B) -- no fallback row for it.
+    assert.equal(snapshot.cars.filter((c) => c.version === 'v6.4.1').length, 2);
+  });
+
+  it('does not count a fallback car\'s placeholder issues toward activeSprintProgress', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot(baseInput);
+    // Only W1-A's 2 closed + W1-B's 2 open issues (4 total, 2 closed) -- not the 3 extra
+    // placeholder issues the v6.4.0/v6.5.0 fallback rows carry.
+    assert.deepEqual(snapshot.summary.activeSprintProgress, { closed: 2, total: 4, pct: 50 });
+  });
+
+  it('synthesizes one fallback row per train, and skips a train with no cars', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({
+      roadmapData: { releases: [{ version: '6.5.0', trains: [{ cars: [1] }, { cars: [] }, { cars: [2, 3] }] }] }
+    });
+    const rows = snapshot.cars.filter((c) => c.version === 'v6.5.0');
+    assert.deepEqual(rows.map((r) => r.issues.map((i) => i.id)), [[1], [2, 3]]);
   });
 });
 
@@ -582,6 +839,32 @@ describe('public/sprint-wave-ui', () => {
     assert.doesNotMatch(html, /<script>/);
   });
 
+  it('renders a pill badge inside a card only when the row carries one (#3112, PRR-B I-Gate R1 BLOCKING 2)', () => {
+    const withPill = sprintWaveUi.renderSprintWaveBoard(null, {
+      dispatch: { 'car-a': { stage: 'claimed', laneName: null, openPrNumber: null, pill: { code: 'open', label: 'Not started' } } }
+    });
+    assert.match(withPill, /sprint-stage-pill is-open">Not started</);
+    const withoutPill = sprintWaveUi.renderSprintWaveBoard(null, { dispatch: { 'car-a': { stage: 'claimed', laneName: null, openPrNumber: null } } });
+    assert.doesNotMatch(withoutPill, /sprint-stage-pill/);
+  });
+
+  it('composes enriched car cards after the board/matrix, only when a row carries files, reviewers or issues', () => {
+    const plain = sprintWaveUi.renderSprintWaveBoard(null, { dispatch: { 'car-a': { stage: 'claimed', laneName: null, openPrNumber: null } } });
+    assert.doesNotMatch(plain, /sprint-car-cards/);
+    const enriched = sprintWaveUi.renderSprintWaveBoard(null, {
+      dispatch: {
+        'car-a': {
+          stage: 'in-review', laneName: 'TC-Lane-A', openPrNumber: 42,
+          pill: { code: 'in-review', label: 'In review' },
+          files: ['lib/a.js'], reviewers: { oGate: 'TC-Lane-Obsr' }
+        }
+      }
+    });
+    assert.ok(enriched.indexOf('class="sprint-wave-board"') < enriched.indexOf('class="sprint-car-cards"'), 'cards come after the board/matrix');
+    assert.match(enriched, /data-car-id="car-a"[\s\S]*Builder: TC-Lane-A/);
+    assert.match(enriched, /<code>lib\/a\.js<\/code>/);
+  });
+
   it('filterSprintWaveRows filters by stage, lane name and case-insensitive search', () => {
     const rows = [
       { carId: 'car-a', stage: 'claimed', laneName: 'TC-Lane-A' },
@@ -667,6 +950,188 @@ describe('public/sprint-wave-ui: Charter & Kaizen panels (#3087, Rulings A760/A7
     assert.throws(() => sprintWaveUi.renderCharterReadinessPanel({ innerHTML: '' }), /data comes first/);
     assert.throws(() => sprintWaveUi.renderKaizenLedgerPanel({ innerHTML: '' }, {}), /data comes first/);
   });
+
+  it('renderKaizenLedgerPanel composes the hero KPI cards and reports catalog when given heroKpis/reports (#3112, PRR-B I-Gate R1 BLOCKING 2)', () => {
+    // The exact shape `GET /api/sprint-reports/:version` -> `data.report || data` already
+    // passes straight through to this function (buildNativeSprintReportSummary's own return).
+    const html = sprintWaveUi.renderKaizenLedgerPanel({
+      heroKpis: { issuesClosed: 3, builderPRs: 1 },
+      reports: [{ id: 'v6.4.0', title: 'v6.4.0 live report', url: 'https://x.example/r' }]
+    });
+    assert.match(html, /Issues Closed/);
+    assert.match(html, /<a href="https:\/\/x\.example\/r"[^>]*>v6\.4\.0 live report<\/a>/);
+  });
+
+  it('renderKaizenLedgerPanel renders neither when heroKpis/reports are absent, unchanged from before #3112', () => {
+    const html = sprintWaveUi.renderKaizenLedgerPanel({ items: [{ rootCause: 'x' }] });
+    assert.doesNotMatch(html, /sprint-kpi-row/);
+    assert.doesNotMatch(html, /sprint-report-cards/);
+  });
+
+  it('renderCharterReadinessPanel composes the Release-First Roadmap only when given a roadmapSnapshot (#3112, PRR-B I-Gate R1 BLOCKING 2)', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({
+      roadmapData: { releases: [{ version: '6.4.1', trains: [{ cars: [1] }] }] }, currentVersion: 'v6.4.1'
+    });
+    const html = sprintWaveUi.renderCharterReadinessPanel({ charter: { title: 'T' }, roadmapSnapshot: snapshot });
+    assert.match(html, /sprint-roadmap-panel/);
+    const without = sprintWaveUi.renderCharterReadinessPanel({ charter: { title: 'T' } });
+    assert.doesNotMatch(without, /sprint-roadmap-panel/);
+  });
+});
+
+describe('public/sprint-wave-ui: Release-First Roadmap, Sprint Car cards & Reports catalog (#3112)', () => {
+  const HOSTILE = '<img src=x onerror=alert(1)>';
+
+  const snapshot = () => tracker.buildSprintWaveSnapshot({
+    currentVersion: 'v6.4.1',
+    shippedVersions: ['6.4.0'],
+    roadmapData: {
+      releases: [
+        { version: '6.4.0', trains: [{ cars: [1] }] },
+        { version: '6.4.1', trains: [{ cars: [2, 3] }] },
+        { version: '6.5.0', trains: [{ cars: [4] }] }
+      ]
+    },
+    cars: [
+      {
+        id: 'W1-A', version: 'v6.4.1', lane: 'TC-Lane-A',
+        reviewers: { oGate: 'TC-Lane-Obsr', prr: 'TC-Lane-PRR-A' },
+        files: ['public/v6-shell.js'],
+        issues: [{ id: 3105, state: 'open', summary: 'Waiting-On panel', dependsOn: ['#3100'] }]
+      }
+    ],
+    lanes: [{ carId: 'W1-A', name: 'TC-Lane-A', status: 'committed' }],
+    pullRequests: [{ carId: 'W1-A', number: 3200, state: 'open' }],
+    reports: [{ id: 'v6.4.0', version: 'v6.4.0', title: 'v6.4.0 live report', url: 'https://x.example/r' }]
+  });
+
+  describe('renderReleaseRoadmap', () => {
+    it('renders the summary metrics bar', () => {
+      const html = sprintWaveUi.renderReleaseRoadmap(snapshot());
+      assert.match(html, /Planned versions[\s\S]*>1</);
+      assert.match(html, /Released versions[\s\S]*>1</);
+      assert.match(html, /Active sprint progress/);
+      assert.match(html, /Scheduled items/);
+    });
+
+    it('renders one expandable release card per group, active open by default', () => {
+      const html = sprintWaveUi.renderReleaseRoadmap(snapshot());
+      assert.match(html, /<details class="sprint-roadmap-release" open data-version="v6\.4\.1">/);
+      assert.match(html, /<details class="sprint-roadmap-release" data-version="v6\.5\.0">/);
+      assert.match(html, /<details class="sprint-roadmap-release" data-version="v6\.4\.0">/);
+      assert.doesNotMatch(html, /<details class="sprint-roadmap-release" open data-version="v6\.5\.0">/);
+    });
+
+    it('renders the active release\'s car/issue table with its 6-stage pill, prerequisites and summary', () => {
+      const html = sprintWaveUi.renderReleaseRoadmap(snapshot());
+      assert.match(html, /data-car-id="W1-A"/);
+      assert.match(html, /<td class="sprint-roadmap-car-lane">TC-Lane-A<\/td>/);
+      assert.match(html, /data-issue-id="3105"/);
+      assert.match(html, /sprint-stage-pill is-in-review">In review</);
+      assert.match(html, /<code>#3100<\/code>/);
+      assert.match(html, /Waiting-On panel/);
+    });
+
+    it('escapes hostile markup in a release version, car id, lane and issue fields', () => {
+      const html = sprintWaveUi.renderReleaseRoadmap(tracker.buildSprintWaveSnapshot({
+        currentVersion: HOSTILE,
+        roadmapData: { releases: [{ version: HOSTILE, trains: [] }] },
+        cars: [{ id: HOSTILE, version: `v${HOSTILE}`, lane: HOSTILE, issues: [{ id: HOSTILE, summary: HOSTILE, dependsOn: [HOSTILE] }] }]
+      }));
+      assert.ok(!html.includes('<img'), 'a raw <img> tag reached the roadmap HTML');
+      assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'), 'the hostile text is not shown escaped');
+    });
+
+    it('refuses a container passed first', () => {
+      assert.throws(() => sprintWaveUi.renderReleaseRoadmap({ innerHTML: '' }), /data comes first/);
+    });
+
+    it('every field is optional: an empty call renders a calm empty panel', () => {
+      assert.match(sprintWaveUi.renderReleaseRoadmap(), /No releases to show yet/);
+    });
+
+    it('writes into a container that has an innerHTML property', () => {
+      const container = {};
+      const html = sprintWaveUi.renderReleaseRoadmap(snapshot(), container);
+      assert.equal(container.innerHTML, html);
+    });
+  });
+
+  describe('renderSprintCarCards', () => {
+    it('renders one card per car with its lane, reviewers, PR, 6-stage pill, gates and file scope', () => {
+      const html = sprintWaveUi.renderSprintCarCards(snapshot());
+      assert.match(html, /data-car-id="W1-A"/);
+      assert.match(html, /Builder: TC-Lane-A/);
+      assert.match(html, /O-Gate: TC-Lane-Obsr/);
+      assert.match(html, /PRR: TC-Lane-PRR-A/);
+      assert.match(html, /#3200/);
+      assert.match(html, /sprint-stage-pill is-in-review">In review</);
+      assert.match(html, /sprint-gate-pill/);
+      assert.match(html, /<code>public\/v6-shell\.js<\/code>/);
+    });
+
+    it('escapes hostile markup in every car and issue field', () => {
+      const html = sprintWaveUi.renderSprintCarCards({
+        cars: [{ id: HOSTILE, lane: HOSTILE, reviewers: { oGate: HOSTILE, prr: HOSTILE }, files: [HOSTILE],
+          pill: { code: 'open', label: HOSTILE }, issues: [{ id: HOSTILE, pill: { code: 'open', label: HOSTILE } }] }]
+      });
+      assert.ok(!html.includes('<img'), 'a raw <img> tag reached the car card HTML');
+      assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'), 'the hostile text is not shown escaped');
+    });
+
+    it('refuses a container passed first', () => {
+      assert.throws(() => sprintWaveUi.renderSprintCarCards({ innerHTML: '' }), /data comes first/);
+    });
+
+    it('renders a calm empty state with no cars', () => {
+      assert.match(sprintWaveUi.renderSprintCarCards({}), /No cars dispatched yet/);
+    });
+
+    it('writes into a container that has an innerHTML property', () => {
+      const container = {};
+      const html = sprintWaveUi.renderSprintCarCards(snapshot(), container);
+      assert.equal(container.innerHTML, html);
+    });
+  });
+
+  describe('renderSprintReportsCatalog', () => {
+    it('renders one card per report, linking only an http(s) url', () => {
+      const html = sprintWaveUi.renderSprintReportsCatalog(snapshot());
+      assert.match(html, /<a href="https:\/\/x\.example\/r" target="_blank" rel="noopener noreferrer">v6\.4\.0 live report<\/a>/);
+      assert.match(html, /<span class="sprint-report-version">v6\.4\.0<\/span>/);
+    });
+
+    it('renders plain text, not a link, for a report with no safe url', () => {
+      const html = sprintWaveUi.renderSprintReportsCatalog({ reports: [{ id: 'r1', title: 'Report One', url: 'javascript:alert(1)' }] });
+      assert.doesNotMatch(html, /<a /);
+      assert.match(html, /<span>Report One<\/span>/);
+    });
+
+    it('marks a retrospective with data-kind="retrospective"', () => {
+      const html = sprintWaveUi.renderSprintReportsCatalog({ reports: [{ id: 'r1', title: 'Retro', kind: 'retrospective' }] });
+      assert.match(html, /data-kind="retrospective"/);
+    });
+
+    it('escapes hostile markup in every report field', () => {
+      const html = sprintWaveUi.renderSprintReportsCatalog({ reports: [{ id: HOSTILE, title: HOSTILE, version: HOSTILE }] });
+      assert.ok(!html.includes('<img'), 'a raw <img> tag reached the reports catalog HTML');
+      assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'), 'the hostile text is not shown escaped');
+    });
+
+    it('refuses a container passed first', () => {
+      assert.throws(() => sprintWaveUi.renderSprintReportsCatalog({ innerHTML: '' }), /data comes first/);
+    });
+
+    it('renders a calm empty state with no reports', () => {
+      assert.match(sprintWaveUi.renderSprintReportsCatalog({}), /No sprint reports yet/);
+    });
+
+    it('writes into a container that has an innerHTML property', () => {
+      const container = {};
+      const html = sprintWaveUi.renderSprintReportsCatalog(snapshot(), container);
+      assert.equal(container.innerHTML, html);
+    });
+  });
 });
 
 describe('native-sprint-tracker: sprintDataFromWaveRuns (#3087, Ruling A774)', () => {
@@ -677,8 +1142,41 @@ describe('native-sprint-tracker: sprintDataFromWaveRuns (#3087, Ruling A774)', (
 
   it('answers an empty sprint for "current" when no run is persisted, and null for an unknown version', () => {
     assert.deepEqual(tracker.sprintDataFromWaveRuns({}, 'current'),
-      { cars: [], lanes: [], pullRequests: [], waves: [], learnings: [], releaseCommit: null });
+      { version: null, cars: [], lanes: [], pullRequests: [], waves: [], learnings: [], releaseCommit: null });
     assert.equal(tracker.sprintDataFromWaveRuns({}, '9.9.9'), null);
+  });
+
+  it('resolves the sprint version from metadata.version, falling back to the run id (#3112, PRR-B I-Gate R1 BLOCKING 2)', () => {
+    const runs = {
+      old: run('old', 1, 'active', { a: {} }, { version: '6.3.0' }),
+      v640: run('v6.4.0', 4, 'complete', { d: {} })
+    };
+    assert.equal(tracker.sprintDataFromWaveRuns(runs, 'v6.3.0').version, 'v6.3.0');
+    assert.equal(tracker.sprintDataFromWaveRuns(runs, '6.4.0').version, 'v6.4.0');
+  });
+
+  it('carries forward a car\'s fileScope, reviewers, headSha and lane, and synthesizes an open PR from openPrNumber (#3112, PRR-B I-Gate R1 BLOCKING 2)', () => {
+    const data = tracker.sprintDataFromWaveRuns({
+      r: run('r', 1, 'active', {
+        rich: {
+          status: 'running',
+          fileScope: ['lib/a.js', 'lib/b.js'],
+          payload: {
+            lane: 'TC-Lane-A', reviewers: { oGate: 'TC-Lane-Obsr', prr: 'TC-Lane-PRR-A' },
+            headSha: 'abcdef1234567890', openPrNumber: 42
+          }
+        }
+      })
+    }, 'current');
+    const car = data.cars.find((c) => c.id === 'rich');
+    assert.deepEqual(car.files, ['lib/a.js', 'lib/b.js']);
+    assert.deepEqual(car.reviewers, { oGate: 'TC-Lane-Obsr', prr: 'TC-Lane-PRR-A' });
+    assert.equal(car.headSha, 'abcdef1234567890');
+    assert.equal(car.lane, 'TC-Lane-A');
+    assert.deepEqual(data.pullRequests, [{ carId: 'rich', number: 42, state: 'open' }]);
+    const dispatch = tracker.syncWaveDispatchState({ cars: data.cars, lanes: data.lanes, pullRequests: data.pullRequests });
+    assert.equal(dispatch.rich.openPrNumber, 42);
+    assert.equal(dispatch.rich.stage, 'in-review');
   });
 
   it('reads the newest ACTIVE run as current, and a version by metadata.version or id', () => {
