@@ -852,17 +852,38 @@ describe('_tccSafeWrapperDir / _stageTccSafeWrapperModules (#3108 secondary bug)
     }
   });
 
-  it('createSessionWithTccBootstrap never stages for an unprotected cwd', () => {
-    const name = uniqueSessionName('tcc_no_stage_unprotected');
+  it('createSessionWithTccBootstrap also stages for an UNPROTECTED cwd, as long as options.env is given (PRR-A R1 BLOCKING 2) — the wrapper directory is shared across every session, not per-session', () => {
+    const name = uniqueSessionName('tcc_stage_unprotected_with_env');
     createdDefault.push(name);
     const realStage = tmux._stageTccSafeWrapperModules;
-    tmux._stageTccSafeWrapperModules = () => { throw new Error('must not stage wrapper modules for an unprotected cwd'); };
+    let stagedWithEnv;
+    const env = { TC_TEST_MARKER: 'yes' };
+    tmux._stageTccSafeWrapperModules = (e) => { stagedWithEnv = e; };
     try {
-      assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd: os.tmpdir() }), true);
+      assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd: os.tmpdir(), env }), true);
+      assert.equal(stagedWithEnv, env, 'staging ran for an unprotected cwd too, with the exact options.env given');
     } finally {
       tmux._stageTccSafeWrapperModules = realStage;
     }
   });
+
+  it('_stageTccSafeWrapperModules is a true no-op — never even reads the homedir — when no env object is given at all (PRR-A R1 BLOCKING 2)', () => {
+    // Now that createSessionWithTccBootstrap calls this unconditionally, a
+    // bare test call with no options.env (the shape dozens of existing
+    // tests use) must never reach for the host's real
+    // ~/.tangleclaw/merge-role-guard-wrapper. Proven by making homedir()
+    // throw: if this function read it at all, the call below would throw.
+    const realHomedir = tmux._tccSeams.homedir;
+    tmux._tccSeams.homedir = () => { throw new Error('must not read homedir() when no env object was given'); };
+    try {
+      assert.doesNotThrow(() => tmux._stageTccSafeWrapperModules(undefined));
+      assert.doesNotThrow(() => tmux._stageTccSafeWrapperModules(null));
+      assert.doesNotThrow(() => tmux._stageTccSafeWrapperModules('not an object'));
+    } finally {
+      tmux._tccSeams.homedir = realHomedir;
+    }
+  });
+
 });
 
 describe('_isAntigravitySurveyPrompt / capturePane auto-dismiss (#3111)', () => {
@@ -967,6 +988,94 @@ describe('_isAntigravitySurveyPrompt / capturePane auto-dismiss (#3111)', () => 
     }
     assert.match(result.lines.join('\n'), /How's the CLI experience so far\?/);
     assert.equal(captureCount, '1', 'captured exactly once — the disabled flag skipped the dismiss-and-recapture path');
+    assert.equal(sendKeysLogExists, false, 'never sent the dismiss keypress');
+  });
+
+  /**
+   * A `tmux` shim for `readPaneAsync`'s own command sequence: `has-session`,
+   * `display-message` (the combined alt-screen/cursor facts probe), and
+   * `capture-pane` — never the `-e` cursor-line variant, since the facts
+   * probe below always answers with empty cursor coordinates, which
+   * `readPaneAsync` reads as `NaN` and therefore never pursues. The banner
+   * is served on the first `capture-pane` call and an ordinary prompt on
+   * every call after, so a dismiss-and-re-read is observable the same way
+   * the synchronous `capturePane` shims above prove it.
+   * @param {string} binDir - Where to write the shim
+   * @param {{captureCountFile: string, sendKeysLogFile: string, bannerFile: string}} files
+   * @returns {void}
+   */
+  function writeAsyncSurveyShim(binDir, { captureCountFile, sendKeysLogFile, bannerFile }) {
+    fs.writeFileSync(path.join(binDir, 'tmux'), [
+      '#!/bin/sh',
+      'case "$*" in',
+      '  *has-session*) exit 0 ;;',
+      '  *display-message*) printf "%s\\n" "0,,,0"; exit 0 ;;',
+      '  *capture-pane*)',
+      `    n=$(cat ${captureCountFile})`,
+      '    n=$((n+1))',
+      `    echo $n > ${captureCountFile}`,
+      '    if [ "$n" = "1" ]; then',
+      `      cat ${bannerFile}`,
+      '    else',
+      '      printf "%s\\n" "$ "',
+      '    fi',
+      '    exit 0 ;;',
+      '  *send-keys*)',
+      `    echo "$*" >> ${sendKeysLogFile}`,
+      '    exit 0 ;;',
+      '  *) exit 0 ;;',
+      'esac'
+    ].join('\n'), { mode: 0o755 });
+  }
+
+  it('readPaneAsync sends "0" (Skip) and re-reads exactly once when the survey banner is showing (PRR-A R1 BLOCKING 1) — the live medusa-wake path, not just capturePane', async () => {
+    const name = uniqueSessionName('tcc_agy_survey_async_dismiss');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-survey-async-shim-'));
+    const captureCountFile = path.join(binDir, 'capture-count');
+    const sendKeysLogFile = path.join(binDir, 'send-keys-log');
+    const bannerFile = path.join(binDir, 'banner.txt');
+    fs.writeFileSync(captureCountFile, '0');
+    fs.writeFileSync(bannerFile, "Help us improve: [1] Good [2] Fine [3] Bad [0] Skip\nHow's the CLI experience so far?\n");
+    writeAsyncSurveyShim(binDir, { captureCountFile, sendKeysLogFile, bannerFile });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    let result;
+    let sendKeysLog;
+    try {
+      result = await tmux.readPaneAsync(name, { lines: 5, timeout: 5000 });
+      sendKeysLog = fs.existsSync(sendKeysLogFile) ? fs.readFileSync(sendKeysLogFile, 'utf8') : '';
+    } finally {
+      process.env.PATH = realPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+    assert.deepEqual(result.cap.lines, ['$']);
+    assert.match(sendKeysLog, /send-keys .*\b0\b/, 'sent the literal "0" keypress to dismiss the survey (Skip)');
+  });
+
+  it('readPaneAsync never auto-dismisses, and never re-reads, when options.dismissSurvey is false', async () => {
+    const name = uniqueSessionName('tcc_agy_survey_async_disabled');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-survey-async-shim-off-'));
+    const captureCountFile = path.join(binDir, 'capture-count');
+    const sendKeysLogFile = path.join(binDir, 'send-keys-log');
+    const bannerFile = path.join(binDir, 'banner.txt');
+    fs.writeFileSync(captureCountFile, '0');
+    fs.writeFileSync(bannerFile, "Help us improve: [1] Good [2] Fine [3] Bad [0] Skip\nHow's the CLI experience so far?\n");
+    writeAsyncSurveyShim(binDir, { captureCountFile, sendKeysLogFile, bannerFile });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    let result;
+    let captureCount;
+    let sendKeysLogExists;
+    try {
+      result = await tmux.readPaneAsync(name, { lines: 5, timeout: 5000, dismissSurvey: false });
+      captureCount = fs.readFileSync(captureCountFile, 'utf8').trim();
+      sendKeysLogExists = fs.existsSync(sendKeysLogFile);
+    } finally {
+      process.env.PATH = realPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+    assert.match(result.cap.lines.join('\n'), /How's the CLI experience so far\?/);
+    assert.equal(captureCount, '1', 'read exactly once — the disabled flag skipped the dismiss-and-re-read path');
     assert.equal(sendKeysLogExists, false, 'never sent the dismiss keypress');
   });
 });
