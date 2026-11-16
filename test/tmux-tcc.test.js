@@ -46,7 +46,6 @@ const REAL_TMUX = execFileSync('which', ['tmux'], {
 let createdDefault = [];
 let createdFakeHome = null;
 const realBootstrap = tmux.bootstrapTccAuthorizedServer;
-const realDefaultServerRunning = tmux._tccSeams.defaultServerRunning;
 // Captured before any test runs, so it holds the real production constant
 // ('tangleclaw-tcc-authorized') — `beforeEach` below overrides
 // `tmux.TCC_SOCKET` per test, so no later read of it gives this value back.
@@ -60,18 +59,8 @@ const REAL_TCC_SOCKET = tmux.TCC_SOCKET;
 tmux._tccSeams.settle = () => {};
 
 // #2945 — a real session on the DEFAULT server, held for this whole file's
-// run. `beforeEach` below stubs `defaultServerRunning` to `true` so a test
-// that doesn't care about the default server's state never races an empty
-// one into the TCC/`osascript` bootstrap path (see that stub's own comment)
-// — but `probeTccReadable` itself still runs a REAL `tmux run-shell` against
-// the default socket regardless of that stub, and `run-shell`, unlike
-// `new-session`, never implicitly starts an absent server: on a fresh
-// runner with no default server yet (or one whose last session a prior
-// test's `afterEach` just killed, letting it `exit-empty`), that real probe
-// fails with "no such file or directory" — a false "not readable" — and
-// routes straight into the real bootstrap, which shells out to `osascript`
-// and fails off macOS. Keeping one real session alive on the default server
-// for the whole file closes the gap the stub alone didn't.
+// run, so every test's attach proxy (created on the default server
+// alongside the real TCC-authorized session) has a live server to land on.
 const DEFAULT_ANCHOR_SESSION = uniqueSessionName('tcc_default_anchor');
 
 before(() => {
@@ -99,13 +88,6 @@ after(() => {
 // isolated per-test socket with no other test code needing to change.
 beforeEach(() => {
   tmux.TCC_SOCKET = uniqueSessionName('tcc_sock');
-  // A test that does not care about the default server's state must not race
-  // an empty one: on a CI runner with no default tmux server up yet,
-  // `_tmuxServerRunning()` can read `false` between tests and send a test that
-  // never meant to exercise the TCC bootstrap path into `osascript`, which
-  // does not exist off macOS (W1-F3_v542). Tests that DO care (e.g. the
-  // fail-closed case) override this themselves after `beforeEach` runs.
-  tmux._tccSeams.defaultServerRunning = () => true;
 });
 
 afterEach(() => {
@@ -120,7 +102,6 @@ afterEach(() => {
   delete tmux._tccSeams.homedir;
   tmux._tccSeams.homedir = () => os.homedir();
   tmux.bootstrapTccAuthorizedServer = realBootstrap;
-  tmux._tccSeams.defaultServerRunning = realDefaultServerRunning;
   // Best-effort: some tests intentionally leave the TCC-authorized server
   // without a session the test itself tracks (the fail-closed case never
   // creates one; others clean up their own named session already). Reads
@@ -311,22 +292,26 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
     assert.throws(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
   });
 
-  it('delegates straight to createSession for a protected cwd the default server CAN read', () => {
+  it('routes a protected cwd to the TCC-authorized server even when the default server CAN also read it right now (#3108)', () => {
     const cwd = fakeProtectedCwd('Documents/readable-proj');
-    // #2735 — this real, unshimmed probe against the DEFAULT server is
-    // normally near-instant, but under full-suite batch contention (many
-    // concurrent files' own tmux clients competing for the same host) it
-    // can occasionally exceed probeTccReadable's internal budget on pure
-    // scheduling noise, with no defect in the code under test. Retried
-    // rather than timeout-tuned: that budget is a lib/tmux.js-internal
-    // constant this file has no envelope to change.
+    // #3108 — a protected cwd must never land on the default server just
+    // because it transiently passed a readability probe: macOS can revoke
+    // that server's access ~20-30 minutes later even though the
+    // TCC-authorized server's own grant never lapses. This test proves the
+    // default server being readable right now changes nothing: the session
+    // still lands on TCC_SOCKET, with the usual attach proxy on default.
     withContentionRetry(() => {
       const name = uniqueSessionName('tcc_protected_readable');
       createdDefault.push(name);
+      startAuthorizedAnchor();
       const created = tmux.createSessionWithTccBootstrap(name, { cwd });
       assert.equal(created, true);
+      // The real session lives on the TCC-authorized server...
+      assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
+      // ...with the usual attach-only proxy on the default server, never a
+      // real session created there directly.
       assert.equal(tmux.hasSession(name), true);
-      assert.throws(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
+      assert.deepEqual(tmux.sessionSocketFlags(name), ['-L', tmux.TCC_SOCKET]);
     });
   });
 
@@ -450,9 +435,8 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
     });
   });
 
-  it('never runs the starting-type probe against an absent default server — it would risk orphaning an unprivileged one (PRR-B Round 3)', () => {
+  it('never probes the default server at all for a protected cwd (#3108) — only the TCC-authorized server\'s own readability is ever consulted', () => {
     const cwd = fakeProtectedCwd('Documents/default-absent-proj');
-    tmux._tccSeams.defaultServerRunning = () => false;
 
     // #2735 — the TCC-socket probe below (the real client-server round-trip
     // against the already-running authorized server) is the same
@@ -488,7 +472,7 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       const probeCalled = fs.existsSync(markerFile);
       fs.rmSync(binDir, { recursive: true, force: true });
       assert.equal(created, true);
-      assert.equal(probeCalled, false, 'the default-server probe must never run when the default server is reported absent');
+      assert.equal(probeCalled, false, 'a protected cwd must never probe the default server\'s readability at all (#3108) — only the TCC-authorized server\'s own probe runs');
 
       // The real session still lands on the already-running authorized server.
       assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
@@ -786,5 +770,312 @@ describe('TCC attach-proxy follow-up fixes (#2929, issue comment #6699775329)', 
       // guessing at the default server.
       assert.equal(result, null);
     });
+  });
+});
+
+describe('_tccSafeWrapperDir / _stageTccSafeWrapperModules (#3108 secondary bug)', () => {
+  it('_tccSafeWrapperDir finds the wrapper directory on PATH by basename', () => {
+    const wrapperDir = path.join(os.tmpdir(), 'tc-tcc-wrapper-on-path-test', 'merge-role-guard-wrapper');
+    const envPath = `/usr/local/bin${path.delimiter}${wrapperDir}${path.delimiter}/usr/bin`;
+    assert.equal(tmux._tccSafeWrapperDir(envPath), wrapperDir);
+  });
+
+  it('_tccSafeWrapperDir falls back to ~/.tangleclaw/merge-role-guard-wrapper when PATH has no such entry', () => {
+    createdFakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-fakehome-'));
+    tmux._tccSeams.homedir = () => createdFakeHome;
+    assert.equal(
+      tmux._tccSafeWrapperDir('/usr/local/bin:/usr/bin'),
+      path.join(createdFakeHome, '.tangleclaw', 'merge-role-guard-wrapper')
+    );
+    assert.equal(
+      tmux._tccSafeWrapperDir(null),
+      path.join(createdFakeHome, '.tangleclaw', 'merge-role-guard-wrapper'),
+      'a missing/non-string PATH falls back the same way as one with no match'
+    );
+  });
+
+  it('is a silent no-op when the wrapper directory does not exist (best-effort, never throws)', () => {
+    const missingDir = path.join(os.tmpdir(), uniqueSessionName('tc-tcc-no-such-wrapper-dir'));
+    assert.doesNotThrow(() => tmux._stageTccSafeWrapperModules({ PATH: missingDir }));
+  });
+
+  it('copies merge-role-guard.js and tmux-guard.js into the wrapper directory and repoints the gh/curl/tmux wrapper scripts\' require() at the staged copy, never the checkout\'s absolute path', () => {
+    const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-wrapper-stage-'));
+    // The basename must be exactly `merge-role-guard-wrapper` — that's what
+    // `_tccSafeWrapperDir` matches on PATH; a scratch dir with any other
+    // name is invisible to it and falls through to the ~/.tangleclaw
+    // fallback instead.
+    const wrapperDir = path.join(stagingRoot, 'merge-role-guard-wrapper');
+    fs.mkdirSync(wrapperDir);
+    try {
+      const checkoutGuardPath = path.join(path.sep, 'Users', 'fake-operator', 'Documents', 'Projects', 'TC-Lane-Fake', 'lib', 'merge-role-guard.js');
+      const checkoutTmuxGuardPath = path.join(path.sep, 'Users', 'fake-operator', 'Documents', 'Projects', 'TC-Lane-Fake', 'lib', 'tmux-guard.js');
+      fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/usr/bin/env node\nconst guard = require(${JSON.stringify(checkoutGuardPath)});\n`);
+      fs.writeFileSync(path.join(wrapperDir, 'curl'), `#!/usr/bin/env node\nconst guard = require(${JSON.stringify(checkoutGuardPath)});\n`);
+      fs.writeFileSync(path.join(wrapperDir, 'tmux'), `#!/usr/bin/env node\nconst guard = require(${JSON.stringify(checkoutTmuxGuardPath)});\n`);
+
+      tmux._stageTccSafeWrapperModules({ PATH: `/usr/local/bin${path.delimiter}${wrapperDir}` });
+
+      assert.equal(fs.existsSync(path.join(wrapperDir, 'merge-role-guard.js')), true, 'merge-role-guard.js was staged into the wrapper dir');
+      assert.equal(fs.existsSync(path.join(wrapperDir, 'tmux-guard.js')), true, 'tmux-guard.js was staged into the wrapper dir');
+
+      const ghContent = fs.readFileSync(path.join(wrapperDir, 'gh'), 'utf8');
+      const curlContent = fs.readFileSync(path.join(wrapperDir, 'curl'), 'utf8');
+      const tmuxContent = fs.readFileSync(path.join(wrapperDir, 'tmux'), 'utf8');
+      assert.match(ghContent, /require\("\.\/merge-role-guard\.js"\)/);
+      assert.match(curlContent, /require\("\.\/merge-role-guard\.js"\)/);
+      assert.match(tmuxContent, /require\("\.\/tmux-guard\.js"\)/);
+      assert.doesNotMatch(ghContent, /Documents/, 'the checkout\'s ~/Documents path no longer appears anywhere in the rewritten script');
+    } finally {
+      fs.rmSync(stagingRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('createSessionWithTccBootstrap stages the wrapper modules for a protected cwd, with options.env passed through', () => {
+    const cwd = fakeProtectedCwd('Documents/stage-wrapper-proj');
+    const realStage = tmux._stageTccSafeWrapperModules;
+    let stagedWithEnv;
+    tmux._stageTccSafeWrapperModules = (env) => { stagedWithEnv = env; };
+    try {
+      withContentionRetry(() => {
+        const name = uniqueSessionName('tcc_stage_wrapper');
+        createdDefault.push(name);
+        startAuthorizedAnchor();
+        const env = { TC_TEST_MARKER: 'yes' };
+        withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
+          assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd, env }), true);
+        });
+        assert.equal(stagedWithEnv, env, 'staging ran with the exact options.env this call was given');
+      });
+    } finally {
+      tmux._stageTccSafeWrapperModules = realStage;
+    }
+  });
+
+  it('createSessionWithTccBootstrap also stages for an UNPROTECTED cwd, as long as options.env is given (PRR-A R1 BLOCKING 2) — the wrapper directory is shared across every session, not per-session', () => {
+    const name = uniqueSessionName('tcc_stage_unprotected_with_env');
+    createdDefault.push(name);
+    const realStage = tmux._stageTccSafeWrapperModules;
+    let stagedWithEnv;
+    const env = { TC_TEST_MARKER: 'yes' };
+    tmux._stageTccSafeWrapperModules = (e) => { stagedWithEnv = e; };
+    try {
+      assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd: os.tmpdir(), env }), true);
+      assert.equal(stagedWithEnv, env, 'staging ran for an unprotected cwd too, with the exact options.env given');
+    } finally {
+      tmux._stageTccSafeWrapperModules = realStage;
+    }
+  });
+
+  it('_stageTccSafeWrapperModules is a true no-op — never even reads the homedir — when no env object is given at all (PRR-A R1 BLOCKING 2)', () => {
+    // Now that createSessionWithTccBootstrap calls this unconditionally, a
+    // bare test call with no options.env (the shape dozens of existing
+    // tests use) must never reach for the host's real
+    // ~/.tangleclaw/merge-role-guard-wrapper. Proven by making homedir()
+    // throw: if this function read it at all, the call below would throw.
+    const realHomedir = tmux._tccSeams.homedir;
+    tmux._tccSeams.homedir = () => { throw new Error('must not read homedir() when no env object was given'); };
+    try {
+      assert.doesNotThrow(() => tmux._stageTccSafeWrapperModules(undefined));
+      assert.doesNotThrow(() => tmux._stageTccSafeWrapperModules(null));
+      assert.doesNotThrow(() => tmux._stageTccSafeWrapperModules('not an object'));
+    } finally {
+      tmux._tccSeams.homedir = realHomedir;
+    }
+  });
+
+});
+
+describe('_isAntigravitySurveyPrompt / capturePane auto-dismiss (#3111)', () => {
+  it('detects the Antigravity CLI survey banner across the tail of a capture, trailing pane-width padding included', () => {
+    assert.equal(tmux._isAntigravitySurveyPrompt([
+      '',
+      'some earlier scrollback text                                        ',
+      "How's the CLI experience so far?                                    ",
+      'Help us improve: [1] Good [2] Fine [3] Bad [0] Skip                 ',
+      ''
+    ]), true);
+  });
+
+  it('returns false for an ordinary prompt, or no lines at all', () => {
+    assert.equal(tmux._isAntigravitySurveyPrompt(['$ ', '']), false);
+    assert.equal(tmux._isAntigravitySurveyPrompt([]), false);
+    assert.equal(tmux._isAntigravitySurveyPrompt(null), false);
+  });
+
+  it('capturePane sends "0" (Skip) and re-captures exactly once when the survey banner is showing, returning the post-dismissal pane', () => {
+    const name = uniqueSessionName('tcc_agy_survey_dismiss');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-survey-shim-'));
+    const captureCountFile = path.join(binDir, 'capture-count');
+    const sendKeysLogFile = path.join(binDir, 'send-keys-log');
+    const bannerFile = path.join(binDir, 'banner.txt');
+    fs.writeFileSync(captureCountFile, '0');
+    fs.writeFileSync(bannerFile, "Help us improve: [1] Good [2] Fine [3] Bad [0] Skip\nHow's the CLI experience so far?\n");
+    fs.writeFileSync(path.join(binDir, 'tmux'), [
+      '#!/bin/sh',
+      'case "$*" in',
+      '  *has-session*) exit 0 ;;',
+      '  *alternate_on*) echo 0; exit 0 ;;',
+      '  *capture-pane*)',
+      `    n=$(cat ${captureCountFile})`,
+      '    n=$((n+1))',
+      `    echo $n > ${captureCountFile}`,
+      '    if [ "$n" = "1" ]; then',
+      `      cat ${bannerFile}`,
+      '    else',
+      '      printf "%s\\n" "$ "',
+      '    fi',
+      '    exit 0 ;;',
+      '  *send-keys*)',
+      `    echo "$*" >> ${sendKeysLogFile}`,
+      '    exit 0 ;;',
+      '  *) exit 0 ;;',
+      'esac'
+    ].join('\n'), { mode: 0o755 });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    let result;
+    try {
+      result = tmux.capturePane(name, { lines: 5 });
+    } finally {
+      process.env.PATH = realPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+    // The real `_exec` trims the whole captured string, so a trailing space
+    // on the LAST line of output (as a real shell prompt draws) is gone by
+    // the time it reaches `.split('\n')` — expected, not a defect here.
+    assert.deepEqual(result.lines, ['$']);
+  });
+
+  it('capturePane never auto-dismisses, and never re-captures, when options.dismissSurvey is false', () => {
+    const name = uniqueSessionName('tcc_agy_survey_disabled');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-survey-shim-off-'));
+    const captureCountFile = path.join(binDir, 'capture-count');
+    const sendKeysLogFile = path.join(binDir, 'send-keys-log');
+    const bannerFile = path.join(binDir, 'banner.txt');
+    fs.writeFileSync(captureCountFile, '0');
+    fs.writeFileSync(bannerFile, "Help us improve: [1] Good [2] Fine [3] Bad [0] Skip\nHow's the CLI experience so far?\n");
+    fs.writeFileSync(path.join(binDir, 'tmux'), [
+      '#!/bin/sh',
+      'case "$*" in',
+      '  *has-session*) exit 0 ;;',
+      '  *alternate_on*) echo 0; exit 0 ;;',
+      '  *capture-pane*)',
+      `    n=$(cat ${captureCountFile})`,
+      '    n=$((n+1))',
+      `    echo $n > ${captureCountFile}`,
+      `    cat ${bannerFile}`,
+      '    exit 0 ;;',
+      '  *send-keys*)',
+      `    echo "$*" >> ${sendKeysLogFile}`,
+      '    exit 0 ;;',
+      '  *) exit 0 ;;',
+      'esac'
+    ].join('\n'), { mode: 0o755 });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    let result;
+    let captureCount;
+    let sendKeysLogExists;
+    try {
+      result = tmux.capturePane(name, { lines: 5, dismissSurvey: false });
+      // Read these BEFORE the directory is cleaned up below — not after.
+      captureCount = fs.readFileSync(captureCountFile, 'utf8').trim();
+      sendKeysLogExists = fs.existsSync(sendKeysLogFile);
+    } finally {
+      process.env.PATH = realPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+    assert.match(result.lines.join('\n'), /How's the CLI experience so far\?/);
+    assert.equal(captureCount, '1', 'captured exactly once — the disabled flag skipped the dismiss-and-recapture path');
+    assert.equal(sendKeysLogExists, false, 'never sent the dismiss keypress');
+  });
+
+  /**
+   * A `tmux` shim for `readPaneAsync`'s own command sequence: `has-session`,
+   * `display-message` (the combined alt-screen/cursor facts probe), and
+   * `capture-pane` — never the `-e` cursor-line variant, since the facts
+   * probe below always answers with empty cursor coordinates, which
+   * `readPaneAsync` reads as `NaN` and therefore never pursues. The banner
+   * is served on the first `capture-pane` call and an ordinary prompt on
+   * every call after, so a dismiss-and-re-read is observable the same way
+   * the synchronous `capturePane` shims above prove it.
+   * @param {string} binDir - Where to write the shim
+   * @param {{captureCountFile: string, sendKeysLogFile: string, bannerFile: string}} files
+   * @returns {void}
+   */
+  function writeAsyncSurveyShim(binDir, { captureCountFile, sendKeysLogFile, bannerFile }) {
+    fs.writeFileSync(path.join(binDir, 'tmux'), [
+      '#!/bin/sh',
+      'case "$*" in',
+      '  *has-session*) exit 0 ;;',
+      '  *display-message*) printf "%s\\n" "0,,,0"; exit 0 ;;',
+      '  *capture-pane*)',
+      `    n=$(cat ${captureCountFile})`,
+      '    n=$((n+1))',
+      `    echo $n > ${captureCountFile}`,
+      '    if [ "$n" = "1" ]; then',
+      `      cat ${bannerFile}`,
+      '    else',
+      '      printf "%s\\n" "$ "',
+      '    fi',
+      '    exit 0 ;;',
+      '  *send-keys*)',
+      `    echo "$*" >> ${sendKeysLogFile}`,
+      '    exit 0 ;;',
+      '  *) exit 0 ;;',
+      'esac'
+    ].join('\n'), { mode: 0o755 });
+  }
+
+  it('readPaneAsync sends "0" (Skip) and re-reads exactly once when the survey banner is showing (PRR-A R1 BLOCKING 1) — the live medusa-wake path, not just capturePane', async () => {
+    const name = uniqueSessionName('tcc_agy_survey_async_dismiss');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-survey-async-shim-'));
+    const captureCountFile = path.join(binDir, 'capture-count');
+    const sendKeysLogFile = path.join(binDir, 'send-keys-log');
+    const bannerFile = path.join(binDir, 'banner.txt');
+    fs.writeFileSync(captureCountFile, '0');
+    fs.writeFileSync(bannerFile, "Help us improve: [1] Good [2] Fine [3] Bad [0] Skip\nHow's the CLI experience so far?\n");
+    writeAsyncSurveyShim(binDir, { captureCountFile, sendKeysLogFile, bannerFile });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    let result;
+    let sendKeysLog;
+    try {
+      result = await tmux.readPaneAsync(name, { lines: 5, timeout: 5000 });
+      sendKeysLog = fs.existsSync(sendKeysLogFile) ? fs.readFileSync(sendKeysLogFile, 'utf8') : '';
+    } finally {
+      process.env.PATH = realPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+    assert.deepEqual(result.cap.lines, ['$']);
+    assert.match(sendKeysLog, /send-keys .*\b0\b/, 'sent the literal "0" keypress to dismiss the survey (Skip)');
+  });
+
+  it('readPaneAsync never auto-dismisses, and never re-reads, when options.dismissSurvey is false', async () => {
+    const name = uniqueSessionName('tcc_agy_survey_async_disabled');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-survey-async-shim-off-'));
+    const captureCountFile = path.join(binDir, 'capture-count');
+    const sendKeysLogFile = path.join(binDir, 'send-keys-log');
+    const bannerFile = path.join(binDir, 'banner.txt');
+    fs.writeFileSync(captureCountFile, '0');
+    fs.writeFileSync(bannerFile, "Help us improve: [1] Good [2] Fine [3] Bad [0] Skip\nHow's the CLI experience so far?\n");
+    writeAsyncSurveyShim(binDir, { captureCountFile, sendKeysLogFile, bannerFile });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    let result;
+    let captureCount;
+    let sendKeysLogExists;
+    try {
+      result = await tmux.readPaneAsync(name, { lines: 5, timeout: 5000, dismissSurvey: false });
+      captureCount = fs.readFileSync(captureCountFile, 'utf8').trim();
+      sendKeysLogExists = fs.existsSync(sendKeysLogFile);
+    } finally {
+      process.env.PATH = realPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+    assert.match(result.cap.lines.join('\n'), /How's the CLI experience so far\?/);
+    assert.equal(captureCount, '1', 'read exactly once — the disabled flag skipped the dismiss-and-re-read path');
+    assert.equal(sendKeysLogExists, false, 'never sent the dismiss keypress');
   });
 });
