@@ -74,8 +74,13 @@
    * @param {{innerHTML?: string}|null} container - A DOM element to write
    *   into, or `null`/omit to only get the HTML string back.
    * @param {{waves?: string[][], dispatch?: Object<string, {stage: string, laneName?: (string|null),
-   *   openPrNumber?: (number|null), headSha?: string, gates?: object}>}} data -
-   *   `GET /api/sprint-waves`'s response shape; `headSha` and `gates` are read when a producer adds them.
+   *   openPrNumber?: (number|null), headSha?: string, gates?: object, pill?: object,
+   *   files?: string[], reviewers?: object, issues?: object[]}>}} data -
+   *   `GET /api/sprint-waves`'s response shape; `headSha`/`gates` are read when a producer adds
+   *   them, and `pill`/`files`/`reviewers`/`issues` the same way (#3112,
+   *   `lib/native-sprint-tracker.js#syncWaveDispatchState` already adds `pill` to every row and
+   *   the rest when the underlying car carries them, with zero change needed here or in
+   *   `public/v6-shell.js`, which passes this whole response straight through).
    * @returns {string} The rendered HTML.
    */
   function renderSprintWaveBoard(container, data) {
@@ -89,6 +94,7 @@
         + (row.laneName ? `<span class="sprint-wave-lane">${_escapeHtml(row.laneName)}</span>` : '')
         + (row.openPrNumber !== null && row.openPrNumber !== undefined
           ? `<span class="sprint-wave-pr">#${_escapeHtml(row.openPrNumber)}</span>` : '')
+        + (row.pill ? _sixStagePillBadge(row.pill) : '')
         + '</li>'
       )).join('');
       return (
@@ -97,7 +103,18 @@
         + `<ul class="sprint-wave-column-list">${items}</ul></div>`
       );
     }).join('');
-    const html = `<div class="sprint-wave-board">${columns}</div>${_gateMatrix(data)}`;
+    // #3112 (PRR-B I-Gate R1 BLOCKING 2): composed, never duplicated with, the board/matrix
+    // above -- only when a row carries metadata neither of those already shows (file scope,
+    // reviewers, or per-issue pills), so a plain dispatch (no producer has added this yet)
+    // renders exactly as before #3112.
+    const enrichedRows = rows.filter((row) => row.files || row.reviewers || row.issues);
+    const extraCards = enrichedRows.length ? renderSprintCarCards({
+      cars: enrichedRows.map((row) => ({
+        id: row.carId, lane: row.laneName, reviewers: row.reviewers, files: row.files,
+        prNumber: row.openPrNumber, pill: row.pill, issues: row.issues
+      }))
+    }) : '';
+    const html = `<div class="sprint-wave-board">${columns}</div>${_gateMatrix(data)}${extraCards}`;
     if (container && typeof container === 'object') container.innerHTML = html;
     return html;
   }
@@ -347,8 +364,13 @@
    * Render the Charter & Gate 0 Readiness panel (#3087, Rulings A760/A761).
    * Every field is optional and every interpolated value is escaped here.
    * @param {{charter?: object, activeVersion?: object, approvals?: object[],
-   *   startupSummary?: object, disjointness?: object}} charterData -
-   *   `GET /api/v6/projects/:id/charter*` and the disjointness check's shapes.
+   *   startupSummary?: object, disjointness?: object, roadmapSnapshot?: object}} charterData -
+   *   `GET /api/v6/projects/:id/charter*` and the disjointness check's shapes, plus (#3112,
+   *   PRR-B I-Gate R1 BLOCKING 2) an optional `roadmapSnapshot`
+   *   (`lib/native-sprint-tracker.js#buildSprintWaveSnapshot`'s own return shape) -- NOT yet
+   *   something `public/v6-shell.js`'s charter panel call site supplies (it passes exactly
+   *   `{charter, activeVersion, startupSummary, approvals}` today), so this composes the
+   *   Release-First Roadmap only once a caller starts passing one.
    * @param {{innerHTML?: string}|null} [container] - A DOM element to write
    *   into, or omit to only get the HTML string back.
    * @returns {string} The rendered HTML.
@@ -361,6 +383,7 @@
     const version = d.activeVersion || {};
     const approvals = Array.isArray(d.approvals) ? d.approvals : [];
     const disjoint = d.disjointness || null;
+    const roadmapSnapshot = d.roadmapSnapshot && typeof d.roadmapSnapshot === 'object' ? d.roadmapSnapshot : null;
     const title = _field(summary, 'title') || _field(charter, 'title');
     const approvalItems = approvals.map((a) => {
       const revoked = _field(a, 'revoked_at', 'revokedAt');
@@ -384,7 +407,8 @@
       + _row('Constraints', _field(summary, 'activeConstraints'))
       + (approvalItems ? `<ul class="sprint-panel-approvals">${approvalItems}</ul>` : '<div class="sprint-panel-empty">No approvals recorded</div>')
       + disjointHtml
-      + '</section>';
+      + '</section>'
+      + (roadmapSnapshot ? renderReleaseRoadmap(roadmapSnapshot) : '');
     if (container && typeof container === 'object') container.innerHTML = html;
     return html;
   }
@@ -393,9 +417,15 @@
    * Render the Kaizen & Reports panel (#3087, Rulings A760/A761). Every field
    * is optional and every interpolated value is escaped here; a report link
    * is rendered only for an http(s) URL.
-   * @param {{items?: object[], gate0Feed?: object[], reportSummary?: object}} kaizenData -
+   * @param {{items?: object[], gate0Feed?: object[], reportSummary?: object,
+   *   heroKpis?: object, reports?: object[]}} kaizenData -
    *   Kaizen ledger rows (`kaizen_items`), the Gate 0 feed, and a sprint
-   *   report summary (`buildNativeSprintReportSummary`).
+   *   report summary (`buildNativeSprintReportSummary`) -- OR, since
+   *   `public/v6-shell.js`'s `workspacePanelContent('kaizen', ...)` already
+   *   passes `data.report || data` straight through, `heroKpis` and
+   *   `reports` directly from {@link module:lib/native-sprint-tracker.buildNativeSprintReportSummary}'s
+   *   own return shape (#3112, PRR-B I-Gate R1 BLOCKING 2) -- composed with,
+   *   never replacing, the ledger/feed/single-report rendering above.
    * @param {{innerHTML?: string}|null} [container] - A DOM element to write
    *   into, or omit to only get the HTML string back.
    * @returns {string} The rendered HTML.
@@ -406,6 +436,8 @@
     const items = Array.isArray(d.items) ? d.items : [];
     const feed = Array.isArray(d.gate0Feed) ? d.gate0Feed : [];
     const report = d.reportSummary || null;
+    const heroKpis = d.heroKpis && typeof d.heroKpis === 'object' ? d.heroKpis : null;
+    const reportsCatalog = Array.isArray(d.reports) && d.reports.length ? d.reports : null;
     const itemHtml = items.map((it) => (
       `<li class="sprint-kaizen-item" data-state="${_escapeHtml(_field(it, 'lifecycle_state', 'lifecycleState') || '')}">`
       + `<span class="sprint-kaizen-category">${_escapeHtml(_field(it, 'defect_category', 'defectCategory') || '')}</span>`
@@ -430,9 +462,11 @@
     }
     const html = '<section class="sprint-panel sprint-kaizen-panel">'
       + `<div class="sprint-panel-title">Kaizen ledger (${_escapeHtml(items.length)})</div>`
+      + (heroKpis ? renderSprintKpiCards(null, heroKpis) : '')
       + (itemHtml ? `<ul class="sprint-kaizen-items">${itemHtml}</ul>` : '<div class="sprint-panel-empty">No Kaizen items</div>')
       + (feedHtml ? `<ul class="sprint-kaizen-gate0-feed">${feedHtml}</ul>` : '')
       + reportHtml
+      + (reportsCatalog ? renderSprintReportsCatalog({ reports: reportsCatalog }) : '')
       + '</section>';
     if (container && typeof container === 'object') container.innerHTML = html;
     return html;

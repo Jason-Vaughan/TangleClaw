@@ -216,6 +216,28 @@ describe('merge-role-guard: multi-fleet Integrators & standalone merge methods (
     assert.equal(guard._resolveRoleCategory({ lane: 'Sprint-INT-Thing' }), null);
   });
 
+  it('_resolveRoleCategory resolves "TiLT v2" (a space, the real stored project name) the same as "TiLT-v2"', () => {
+    // PRR-B I-Gate R1 BLOCKING 2 (PR #3118): lib/routes/sessions.js resolves this module's
+    // `lane` from store.projects' own `name` column, which holds the space, not the
+    // tmux-session-name form a hyphen would be.
+    assert.equal(guard._resolveRoleCategory({ lane: 'TiLT v2' }), 'integrator');
+  });
+
+  for (const [lane, category] of [
+    ['Medusa-PM', 'pm'], ['TV-PM', 'pm'], ['Zig-PM', 'pm'],
+    ['Medusa-Arc', 'architect'],
+    ['Medusa-PRR', 'reviewer'], ['TC-Lane-Obsr', 'reviewer'], ['TV-Obsr', 'reviewer'], ['Medusa-Obsr', 'reviewer'],
+    ['TV-Lane-A', 'builder'], ['Medusa-Lane-A', 'builder']
+  ]) {
+    it(`_resolveRoleCategory resolves the multi-fleet lane "${lane}" as '${category}' (#3110, PRR-B I-Gate R1 BLOCKING 2)`, () => {
+      assert.equal(guard._resolveRoleCategory({ lane }), category);
+    });
+  }
+
+  it('_resolveRoleCategory does not generalize the builder pattern to a bare "<fleet>-<letter>" with no "Lane"', () => {
+    assert.equal(guard._resolveRoleCategory({ lane: 'TV-A' }), null);
+  });
+
   for (const lane of ['TC-Lane-INT', 'TV-INT', 'TiLT-v2', 'Monad-1']) {
     it(`allows lane "${lane}" to merge with --merge`, () => {
       const r = guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 --merge', lane });

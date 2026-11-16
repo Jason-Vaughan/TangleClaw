@@ -240,6 +240,43 @@ describe('native-sprint-tracker: syncWaveDispatchState', () => {
   it('throws without an input.cars array', () => {
     assert.throws(() => tracker.syncWaveDispatchState({}), TypeError);
   });
+
+  it('always carries a 6-stage pill, computed from stage alone (#3112, PRR-B I-Gate R1 BLOCKING 2)', () => {
+    const result = tracker.syncWaveDispatchState({ cars: baseCars });
+    assert.deepEqual(result['car-a'].pill, { code: 'open', label: 'Not started' });
+  });
+
+  it('a bare car (no files/reviewers/headSha/issues) produces exactly {stage, laneName, openPrNumber, pill} -- no extra keys', () => {
+    const result = tracker.syncWaveDispatchState({ cars: [{ id: 'car-a' }] });
+    assert.deepEqual(Object.keys(result['car-a']).sort(), ['laneName', 'openPrNumber', 'pill', 'stage']);
+  });
+
+  it('passes through files, reviewers and headSha only when the car carries them', () => {
+    const result = tracker.syncWaveDispatchState({
+      cars: [{ id: 'car-a', files: ['lib/a.js'], reviewers: { oGate: 'TC-Lane-Obsr' }, headSha: 'abcdef1' }]
+    });
+    assert.deepEqual(result['car-a'].files, ['lib/a.js']);
+    assert.deepEqual(result['car-a'].reviewers, { oGate: 'TC-Lane-Obsr' });
+    assert.equal(result['car-a'].headSha, 'abcdef1');
+  });
+
+  it('gives each issue its own pill, inheriting the car\'s stage unless the issue itself is closed', () => {
+    const result = tracker.syncWaveDispatchState({
+      cars: [{ id: 'car-a', issues: [{ id: 1, state: 'open' }, { id: 2, state: 'closed' }] }],
+      lanes: [{ carId: 'car-a', status: 'committed' }]
+    });
+    assert.deepEqual(result['car-a'].issues, [
+      { id: 1, pill: { code: 'in-progress', label: 'In progress' } },
+      { id: 2, pill: { code: 'closed', label: 'Completed' } }
+    ]);
+  });
+
+  it('a closed car marked deployedNotConfirmed reads "Deployed, awaiting a check" in its pill', () => {
+    const result = tracker.syncWaveDispatchState({
+      cars: [{ id: 'car-a', deployedNotConfirmed: true, issues: [{ id: 1, state: 'closed' }] }]
+    });
+    assert.deepEqual(result['car-a'].pill, { code: 'deployed', label: 'Deployed, awaiting a check' });
+  });
 });
 
 describe('native-sprint-tracker: buildNativeSprintReportSummary', () => {
@@ -309,6 +346,16 @@ describe('native-sprint-tracker: buildNativeSprintReportSummary', () => {
     assert.equal(summary.version, null);
     assert.equal(summary.heroKpis.builderPRs, 0);
     assert.equal(summary.guardrailLedger.length, 12);
+    assert.deepEqual(summary.reports, []);
+  });
+
+  it('normalizes a reports catalog when the caller supplies one (#3112, PRR-B I-Gate R1 BLOCKING 2)', () => {
+    const summary = tracker.buildNativeSprintReportSummary({
+      reports: [{ id: 'v6.4.0', version: 'v6.4.0', title: 'v6.4.0 live report', url: 'https://example.test/v6.4.0' }]
+    });
+    assert.deepEqual(summary.reports, [
+      { id: 'v6.4.0', version: 'v6.4.0', title: 'v6.4.0 live report', url: 'https://example.test/v6.4.0', kind: 'report' }
+    ]);
   });
 });
 
@@ -359,12 +406,12 @@ describe('native-sprint-tracker: buildSprintWaveSnapshot (#3112)', () => {
     },
     cars: [
       {
-        id: 'W1-A', lane: 'TC-Lane-A', reviewers: { oGate: 'TC-Lane-Obsr', prr: 'TC-Lane-PRR-A' },
+        id: 'W1-A', version: 'v6.4.1', lane: 'TC-Lane-A', reviewers: { oGate: 'TC-Lane-Obsr', prr: 'TC-Lane-PRR-A' },
         files: ['public/v6-shell.js'],
         issues: [{ id: 3105, state: 'closed' }, { id: 3106, state: 'closed' }]
       },
       {
-        id: 'W1-B', reviewers: { oGate: 'TC-Lane-Obsr', prr: 'TC-Lane-PRR-B' },
+        id: 'W1-B', version: 'v6.4.1', reviewers: { oGate: 'TC-Lane-Obsr', prr: 'TC-Lane-PRR-B' },
         files: ['lib/usage-windows.js'],
         issues: [{ id: 3109, state: 'open' }, { id: 3110, state: 'open' }]
       }
@@ -491,6 +538,34 @@ describe('native-sprint-tracker: buildSprintWaveSnapshot (#3112)', () => {
     });
     assert.deepEqual(snapshot.releases.shipped.map((r) => r.version), ['v6.4.0', 'v6.3.0', 'v6.2.10', 'v6.2.9']);
     assert.deepEqual(snapshot.releases.planned.map((r) => r.version), ['v6.5.0', 'v6.6.0']);
+  });
+
+  it('synthesizes a fallback car row from roadmap trains for a release with no matching input car (#3112, PRR-B I-Gate R1 WARNING 1)', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot(baseInput);
+    // v6.4.0 (shipped) and v6.5.0 (planned) have no car in baseInput.cars -- both must still
+    // show their roadmap-placed issues, not an empty table.
+    const shipped = snapshot.cars.find((c) => c.version === 'v6.4.0');
+    const planned = snapshot.cars.find((c) => c.version === 'v6.5.0');
+    assert.deepEqual(shipped.issues.map((i) => i.id), [1, 2]);
+    assert.deepEqual(shipped.pill, { code: 'open', label: 'Not started' });
+    assert.deepEqual(planned.issues.map((i) => i.id), [6]);
+    // v6.4.1 (active) DOES have matching cars (W1-A, W1-B) -- no fallback row for it.
+    assert.equal(snapshot.cars.filter((c) => c.version === 'v6.4.1').length, 2);
+  });
+
+  it('does not count a fallback car\'s placeholder issues toward activeSprintProgress', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot(baseInput);
+    // Only W1-A's 2 closed + W1-B's 2 open issues (4 total, 2 closed) -- not the 3 extra
+    // placeholder issues the v6.4.0/v6.5.0 fallback rows carry.
+    assert.deepEqual(snapshot.summary.activeSprintProgress, { closed: 2, total: 4, pct: 50 });
+  });
+
+  it('synthesizes one fallback row per train, and skips a train with no cars', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({
+      roadmapData: { releases: [{ version: '6.5.0', trains: [{ cars: [1] }, { cars: [] }, { cars: [2, 3] }] }] }
+    });
+    const rows = snapshot.cars.filter((c) => c.version === 'v6.5.0');
+    assert.deepEqual(rows.map((r) => r.issues.map((i) => i.id)), [[1], [2, 3]]);
   });
 });
 
@@ -764,6 +839,32 @@ describe('public/sprint-wave-ui', () => {
     assert.doesNotMatch(html, /<script>/);
   });
 
+  it('renders a pill badge inside a card only when the row carries one (#3112, PRR-B I-Gate R1 BLOCKING 2)', () => {
+    const withPill = sprintWaveUi.renderSprintWaveBoard(null, {
+      dispatch: { 'car-a': { stage: 'claimed', laneName: null, openPrNumber: null, pill: { code: 'open', label: 'Not started' } } }
+    });
+    assert.match(withPill, /sprint-stage-pill is-open">Not started</);
+    const withoutPill = sprintWaveUi.renderSprintWaveBoard(null, { dispatch: { 'car-a': { stage: 'claimed', laneName: null, openPrNumber: null } } });
+    assert.doesNotMatch(withoutPill, /sprint-stage-pill/);
+  });
+
+  it('composes enriched car cards after the board/matrix, only when a row carries files, reviewers or issues', () => {
+    const plain = sprintWaveUi.renderSprintWaveBoard(null, { dispatch: { 'car-a': { stage: 'claimed', laneName: null, openPrNumber: null } } });
+    assert.doesNotMatch(plain, /sprint-car-cards/);
+    const enriched = sprintWaveUi.renderSprintWaveBoard(null, {
+      dispatch: {
+        'car-a': {
+          stage: 'in-review', laneName: 'TC-Lane-A', openPrNumber: 42,
+          pill: { code: 'in-review', label: 'In review' },
+          files: ['lib/a.js'], reviewers: { oGate: 'TC-Lane-Obsr' }
+        }
+      }
+    });
+    assert.ok(enriched.indexOf('class="sprint-wave-board"') < enriched.indexOf('class="sprint-car-cards"'), 'cards come after the board/matrix');
+    assert.match(enriched, /data-car-id="car-a"[\s\S]*Builder: TC-Lane-A/);
+    assert.match(enriched, /<code>lib\/a\.js<\/code>/);
+  });
+
   it('filterSprintWaveRows filters by stage, lane name and case-insensitive search', () => {
     const rows = [
       { carId: 'car-a', stage: 'claimed', laneName: 'TC-Lane-A' },
@@ -848,6 +949,33 @@ describe('public/sprint-wave-ui: Charter & Kaizen panels (#3087, Rulings A760/A7
   it('refuses a container passed first, so a swapped call fails loudly instead of rendering an empty panel', () => {
     assert.throws(() => sprintWaveUi.renderCharterReadinessPanel({ innerHTML: '' }), /data comes first/);
     assert.throws(() => sprintWaveUi.renderKaizenLedgerPanel({ innerHTML: '' }, {}), /data comes first/);
+  });
+
+  it('renderKaizenLedgerPanel composes the hero KPI cards and reports catalog when given heroKpis/reports (#3112, PRR-B I-Gate R1 BLOCKING 2)', () => {
+    // The exact shape `GET /api/sprint-reports/:version` -> `data.report || data` already
+    // passes straight through to this function (buildNativeSprintReportSummary's own return).
+    const html = sprintWaveUi.renderKaizenLedgerPanel({
+      heroKpis: { issuesClosed: 3, builderPRs: 1 },
+      reports: [{ id: 'v6.4.0', title: 'v6.4.0 live report', url: 'https://x.example/r' }]
+    });
+    assert.match(html, /Issues Closed/);
+    assert.match(html, /<a href="https:\/\/x\.example\/r"[^>]*>v6\.4\.0 live report<\/a>/);
+  });
+
+  it('renderKaizenLedgerPanel renders neither when heroKpis/reports are absent, unchanged from before #3112', () => {
+    const html = sprintWaveUi.renderKaizenLedgerPanel({ items: [{ rootCause: 'x' }] });
+    assert.doesNotMatch(html, /sprint-kpi-row/);
+    assert.doesNotMatch(html, /sprint-report-cards/);
+  });
+
+  it('renderCharterReadinessPanel composes the Release-First Roadmap only when given a roadmapSnapshot (#3112, PRR-B I-Gate R1 BLOCKING 2)', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({
+      roadmapData: { releases: [{ version: '6.4.1', trains: [{ cars: [1] }] }] }, currentVersion: 'v6.4.1'
+    });
+    const html = sprintWaveUi.renderCharterReadinessPanel({ charter: { title: 'T' }, roadmapSnapshot: snapshot });
+    assert.match(html, /sprint-roadmap-panel/);
+    const without = sprintWaveUi.renderCharterReadinessPanel({ charter: { title: 'T' } });
+    assert.doesNotMatch(without, /sprint-roadmap-panel/);
   });
 });
 
@@ -1014,8 +1142,41 @@ describe('native-sprint-tracker: sprintDataFromWaveRuns (#3087, Ruling A774)', (
 
   it('answers an empty sprint for "current" when no run is persisted, and null for an unknown version', () => {
     assert.deepEqual(tracker.sprintDataFromWaveRuns({}, 'current'),
-      { cars: [], lanes: [], pullRequests: [], waves: [], learnings: [], releaseCommit: null });
+      { version: null, cars: [], lanes: [], pullRequests: [], waves: [], learnings: [], releaseCommit: null });
     assert.equal(tracker.sprintDataFromWaveRuns({}, '9.9.9'), null);
+  });
+
+  it('resolves the sprint version from metadata.version, falling back to the run id (#3112, PRR-B I-Gate R1 BLOCKING 2)', () => {
+    const runs = {
+      old: run('old', 1, 'active', { a: {} }, { version: '6.3.0' }),
+      v640: run('v6.4.0', 4, 'complete', { d: {} })
+    };
+    assert.equal(tracker.sprintDataFromWaveRuns(runs, 'v6.3.0').version, 'v6.3.0');
+    assert.equal(tracker.sprintDataFromWaveRuns(runs, '6.4.0').version, 'v6.4.0');
+  });
+
+  it('carries forward a car\'s fileScope, reviewers, headSha and lane, and synthesizes an open PR from openPrNumber (#3112, PRR-B I-Gate R1 BLOCKING 2)', () => {
+    const data = tracker.sprintDataFromWaveRuns({
+      r: run('r', 1, 'active', {
+        rich: {
+          status: 'running',
+          fileScope: ['lib/a.js', 'lib/b.js'],
+          payload: {
+            lane: 'TC-Lane-A', reviewers: { oGate: 'TC-Lane-Obsr', prr: 'TC-Lane-PRR-A' },
+            headSha: 'abcdef1234567890', openPrNumber: 42
+          }
+        }
+      })
+    }, 'current');
+    const car = data.cars.find((c) => c.id === 'rich');
+    assert.deepEqual(car.files, ['lib/a.js', 'lib/b.js']);
+    assert.deepEqual(car.reviewers, { oGate: 'TC-Lane-Obsr', prr: 'TC-Lane-PRR-A' });
+    assert.equal(car.headSha, 'abcdef1234567890');
+    assert.equal(car.lane, 'TC-Lane-A');
+    assert.deepEqual(data.pullRequests, [{ carId: 'rich', number: 42, state: 'open' }]);
+    const dispatch = tracker.syncWaveDispatchState({ cars: data.cars, lanes: data.lanes, pullRequests: data.pullRequests });
+    assert.equal(dispatch.rich.openPrNumber, 42);
+    assert.equal(dispatch.rich.stage, 'in-review');
   });
 
   it('reads the newest ACTIVE run as current, and a version by metadata.version or id', () => {
