@@ -4622,9 +4622,37 @@ describe('the unified 3-category Waiting-on panel (#3105)', () => {
       assert.deepEqual(plain(G.tcV6ExtractOperatorTodo('YOUR TURN:\n- Do X.\nSAFE TO CLEAR: yes')), ['Do X.']);
     });
 
-    it('ignores a line with no header, and a non-imperative line with no trailing period', () => {
+    it('ignores a line with no header entirely', () => {
       assert.deepEqual(plain(G.tcV6ExtractOperatorTodo('No header here.\n- Do X.')), []);
-      assert.deepEqual(plain(G.tcV6ExtractOperatorTodo('YOUR TURN:\n- no period here')), []);
+    });
+
+    it('does not require trailing punctuation (PRR-A R1 C3): the real-world examples end in "#171", a backtick, ")", "?" or nothing', () => {
+      assert.deepEqual(plain(G.tcV6ExtractOperatorTodo('YOUR TURN:\n1. Merge PR #171\n2. Read `the plan`')), ['Merge PR #171', 'Read `the plan`']);
+    });
+
+    it('extracts inline numbered items written on the header line itself (#3105\'s own Monad-1 example)', () => {
+      const text = "YOUR TURN: 1. Merge #171... 2. Read the testament plan... 3. Optionally confirm with Brooks...";
+      assert.deepEqual(plain(G.tcV6ExtractOperatorTodo(text)), ['Merge #171...', 'Read the testament plan...', 'Optionally confirm with Brooks...']);
+    });
+
+    it('keeps a non-numbered inline header continuation as its own single item', () => {
+      assert.deepEqual(plain(G.tcV6ExtractOperatorTodo('Next step: ask your friend to review')), ['ask your friend to review']);
+    });
+
+    it('stops at a blank line followed by non-list concluding prose, but not at a blank line between items', () => {
+      assert.deepEqual(plain(G.tcV6ExtractOperatorTodo('YOUR TURN:\n- Do X.\n\n- Do Y.')), ['Do X.', 'Do Y.']);
+      assert.deepEqual(plain(G.tcV6ExtractOperatorTodo('YOUR TURN:\n- Do X.\n\nThanks for your patience.')), ['Do X.']);
+    });
+  });
+
+  describe('tcV6ExtractMultiChoice does not false-positive on a Your ToDo list (PRR-A R1 C3)', () => {
+    it('a numbered YOUR TURN list is not also a multi-choice question', () => {
+      assert.equal(G.tcV6ExtractMultiChoice('YOUR TURN:\n1. Review the PR.\n2. Merge it.'), null);
+    });
+
+    it('a genuine multi-choice question with no ToDo header still matches', () => {
+      const out = G.tcV6ExtractMultiChoice('Which approach?\n1. Branch from main\n2. Branch from the sprint branch');
+      assert.notEqual(out, null);
     });
   });
 
@@ -4668,8 +4696,10 @@ describe('the unified 3-category Waiting-on panel (#3105)', () => {
         live: { turns: [{ role: 'assistant', text: 'YOUR TURN:\n1. Review the PR.\n2. Merge it.' }] }
       }));
       assert.match(html, /Waiting on: Your ToDo \(2\)/);
-      assert.match(html, /<ol id="v6ChatTodo"[^>]*><li><span class="v6-chat-question-badge" aria-hidden="true">\(1\)<\/span> Review the PR\.<\/li>/);
+      assert.match(html, /<ol id="v6ChatTodo"[^>]*><li><span class="v6-chat-question-badge" aria-hidden="true">\(1\)<\/span> <span class="v6-chat-question-text">Review the PR\.<\/span>/);
+      assert.match(html, /<button type="button" class="v6-waiting-on-todo-dismiss" data-text="Review the PR\."/);
       assert.match(html, /<button type="button" id="v6WaitingOnTodoClear"/);
+      assert.doesNotMatch(html, /v6-chat-choice-card/, 'the ToDo list itself must not also render as a multi-choice question (PRR-A R1 C3)');
     });
 
     it('shows an AI section with Force and dismiss for each queued prompt', () => {
@@ -5951,6 +5981,26 @@ describe('Force Send (#3082 item 3, Ruling A757)', () => {
     await m.settle();
   });
 
+  it('a plain send while busy also surfaces in Waiting on: AI (#3105, PRR-A R1 C2), and never auto-fires once idle', async () => {
+    const m = mountForce({ hold: true });
+    await m.settle();
+    m.type('first');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    m.type('queued one');
+    m.doc.getElementById('v6ChatForm').dispatch('submit');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(m.commands.length, 1, 'still just the first — the second queued instead of warning-and-dropping');
+    assert.match(m.root.innerHTML, /Waiting on: AI \(1\)/);
+    assert.match(m.root.innerHTML, /<span class="v6-chat-question-text">queued one<\/span>/);
+    // Releasing the held first send must NOT auto-fire the queued one.
+    m.release();
+    await m.settle();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(m.commands.length, 1, 'the queued prompt stayed queued; it is not sent until Force or dismiss');
+    assert.match(m.root.innerHTML, /Waiting on: AI \(1\)/);
+  });
+
   it('the keyboard shortcut forces too, and a forced send leaves the next plain one plain', async () => {
     const m = mountForce();
     await m.settle();
@@ -6053,6 +6103,16 @@ describe('Force Send (#3082 item 3, Ruling A757)', () => {
     assert.match(m.dismissed() || '', /Which branch\?/, 'the ignored press dismissed nothing');
     m.release();
     await m.settle();
+  });
+
+  it('a CLI gate in the live pane tail surfaces in Waiting on: YOU through the real liveView wiring (#3105, PRR-A R1 C1)', async () => {
+    const o = { ask: true, pane: ['Do you want to proceed?'] };
+    const m = mountForce(o);
+    await m.settle();
+    await m.timers[m.timers.length - 1]();
+    assert.match(m.root.innerHTML, /Waiting on: YOU/);
+    assert.match(m.root.innerHTML, /class="v6-chat-gate-card"><span class="v6-chat-question-text">Do you want to proceed\?/);
+    assert.match(m.root.innerHTML, /<button type="button" class="v6-chat-gate-action" data-gate-key="1">1 \/ Allow<\/button>/);
   });
 
   it('a refusal the server still makes (an engine startup dialog) shows its reason and puts the text back', async () => {

@@ -4875,8 +4875,16 @@ p.v6-history-secret {
 .v6-chat-gate-hood:hover {
   border-color: #56d364;
 }
+/* #3105 (PRR-A R1 C3): per-item dismiss on a 1-item Your ToDo, same shape
+   as the AI queue's own per-item controls. */
+.v6-waiting-on-todo-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .v6-waiting-on-ai-force,
-.v6-waiting-on-ai-dismiss {
+.v6-waiting-on-ai-dismiss,
+.v6-waiting-on-todo-dismiss {
   flex: 0 0 auto;
   min-width: 32px;
   min-height: 32px;
@@ -4889,7 +4897,9 @@ p.v6-history-secret {
 .v6-waiting-on-ai-force:hover,
 .v6-waiting-on-ai-force:focus-visible,
 .v6-waiting-on-ai-dismiss:hover,
-.v6-waiting-on-ai-dismiss:focus-visible {
+.v6-waiting-on-ai-dismiss:focus-visible,
+.v6-waiting-on-todo-dismiss:hover,
+.v6-waiting-on-todo-dismiss:focus-visible {
   border-color: #56d364;
 }
 /* #3076: Medusa traffic in the chat header — the inbound (left) and

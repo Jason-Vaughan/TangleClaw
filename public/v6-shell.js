@@ -1273,9 +1273,11 @@
         + `<span class="v6-usage-value">${escapeHtml(reading)}</span></span>`;
     };
     const summary = model.engines.map((e) => `${e.name} ${e.remainingPct === null ? 'no reading' : `${Math.round(e.remainingPct)}% left`}`).join(', ');
+    // #3113 (PRR-A R1 WARNING): a context-fallback reading looks identical
+    // to a weekly quota reading unless the row says which one it is.
     const row = (e) => `<tr data-engine="${e.key}"><th scope="row">${e.name}</th>`
       + `<td>${formatTokens(e.tokens.fiveHour)}</td><td>${formatTokens(e.tokens.weekly)}</td><td>${formatTokens(e.tokens.sprint)}</td><td>${e.sessions}</td>`
-      + `<td>${e.remainingPct === null ? '—' : `${Math.round(e.remainingPct)}%`}</td>`
+      + `<td>${e.remainingPct === null ? '—' : `${Math.round(e.remainingPct)}%${e.source === 'context' ? ' (context)' : ''}`}</td>`
       + `<td><span class="v6-usage-calibrate"><label><span class="sr-only">${e.name} weekly % left</span><input type="number" min="0" max="100" step="1" id="v6UsageWeekly-${e.key}" class="filter-input v6-usage-input" placeholder="wk %"></label>`
       + `<label><span class="sr-only">${e.name} 5-hour % left</span><input type="number" min="0" max="100" step="1" id="v6UsageFiveHour-${e.key}" class="filter-input v6-usage-input" placeholder="5h %"></label>`
       + `<button type="button" id="v6UsageSave-${e.key}" class="btn btn-secondary btn-small" data-engine="${e.key}">Set</button></span></td></tr>`;
@@ -1492,7 +1494,7 @@
       </details>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session.
         <button type="button" id="v6ChatStartBanner" class="btn btn-primary btn-small" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>
         <a class="v6-chat-classic-launch" href="#/">Open Classic View to launch ${escapeHtml(name)}</a></p>`}
-      ${waitingOnMarkup(waitingOnModel(live, chat))}
+      ${waitingOnMarkup(waitingOnModel(live, chat, v.events, liveTurns))}
       ${chatActivityMarkup(chatBusyLabel(chat), chat.activityElapsed)}
       <form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form" aria-label="Message ${escapeHtml(name)}">
         <div id="v6ChatAttachments" class="v6-chat-attachments" aria-live="polite">${attachmentChipsMarkup(chat.attachments)}</div>
@@ -2250,11 +2252,19 @@
     }
     if (choices.length < 2) return null;
     const question = lines.slice(0, start).map((l) => l.trim()).filter(Boolean).pop() || '';
+    // #3105 (PRR-A R1 C3): a numbered Your ToDo list reads identically to
+    // a multi-choice prompt syntactically — only the preceding header
+    // tells them apart, so a ToDo list never also renders as a question.
+    if (TODO_HEADER.test(question)) return null;
     return { question, choices };
   }
 
-  /** Headers that open a "Your ToDo" block (#3105). */
-  const TODO_HEADER = /^(?:YOUR TURN|Next steps?|Your ToDo|Action required|Operator action):\s*$/i;
+  /**
+   * Headers that open a "Your ToDo" block (#3105), capturing anything
+   * written inline after the colon on the SAME line (`YOUR TURN: 1. Merge
+   * #171... 2. Read the testament plan...`) in group 1.
+   */
+  const TODO_HEADER = /^(?:YOUR TURN|Next steps?|Your ToDo|Action required|Operator action):\s*(.*)$/i;
   /** The two purely structural markers that close a "Your ToDo" block (#3105). */
   const TODO_STOP = /^(?:STATE:|---|※\s*recap:)/i;
   // The closing standing-block marker this repo spells with the word
@@ -2266,15 +2276,35 @@
   // the repo's static scanner bans the phrase+parsing-construct combination
   // outright, so this stays a plain string compare on purpose.
   const TODO_STOP_PREFIX = 'SAFE TO CLEAR:';
-  /** One imperative, numbered or bulleted ToDo line, ending in a period (#3105). */
-  const TODO_ITEM = /^(?:[-*•]|\d+[.)])\s*(.+\.)\s*$/;
+  /**
+   * One imperative, numbered or bulleted ToDo line (#3105). No trailing-
+   * punctuation requirement — PRR-A R1 C3: the issue's own real-world
+   * examples end in `#171`, a backtick, `)`, `?`, or nothing at all.
+   */
+  const TODO_ITEM = /^(?:[-*•]|\d+[.)])\s*(.+)$/;
+
+  /**
+   * Split a header's inline continuation into its own numbered items
+   * (#3105): `1. Merge #171... 2. Read the plan...` → each segment's text,
+   * number stripped. A header with no numbering of its own (`Next step:
+   * ask your friend to review`) is kept whole, as the one item it is.
+   * @param {string} inline
+   * @returns {string[]}
+   */
+  function splitInlineTodoItems(inline) {
+    const text = String(inline || '').trim();
+    if (!text) return [];
+    if (!/^\d+[.)]\s/.test(text)) return [text];
+    return text.split(/(?=\d+[.)]\s)/).map((s) => s.replace(/^\d+[.)]\s*/, '').trim()).filter(Boolean);
+  }
 
   /**
    * The operator's own handoff list in the latest reply (#3105): items
    * under `YOUR TURN:`/`Next step(s):`/`Your ToDo:`/`Action required:`/
-   * `Operator action:`, stopping before the standing block's own closing
-   * markers (`STATE:`, `---`, a recap line, or the one spelled with
-   * "clear" above).
+   * `Operator action:` (inline continuation on the header line included),
+   * stopping before the standing block's own closing markers (`STATE:`,
+   * `---`, a recap line, or the one spelled with "clear" above), or a
+   * blank line followed by prose that isn't another list item.
    * @param {string} text - {@link latestReplyText}'s result.
    * @returns {string[]}
    */
@@ -2282,13 +2312,25 @@
     const lines = String(text || '').split(/\r?\n/);
     const items = [];
     let collecting = false;
-    for (const raw of lines) {
-      const line = raw.trim();
-      if (TODO_HEADER.test(line)) { collecting = true; continue; }
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      const header = line.match(TODO_HEADER);
+      if (header) {
+        collecting = true;
+        items.push(...splitInlineTodoItems(header[1]));
+        continue;
+      }
       if (!collecting) continue;
       if (TODO_STOP.test(line) || line.slice(0, TODO_STOP_PREFIX.length) === TODO_STOP_PREFIX) break;
       const m = line.match(TODO_ITEM);
-      if (m) items.push(m[1].trim());
+      if (m) {
+        items.push(m[1].trim());
+        continue;
+      }
+      if (line === '') {
+        const next = (lines[i + 1] || '').trim();
+        if (next && !TODO_ITEM.test(next) && !TODO_HEADER.test(next)) break;
+      }
     }
     return items;
   }
@@ -2296,17 +2338,26 @@
   /**
    * The AI queue's open items (#3105): prompts the operator queued to fire
    * once the chat is free, less any whose text has already reached the
-   * stream some other way (smart auto-clear).
+   * stream some other way (smart auto-clear) — as an in-flight send, a
+   * recorded user event, or a user turn the live pane now shows.
    * @param {Array<{id?: *, text?: string}>|null} queued - `chat.queuedPrompts`.
    * @param {Array<{text?: string}>|null} pending - `chat.pending`/in-flight sends.
+   * @param {Array<{role?: string, content?: string}>|null} [events] - Recorded conversation events.
+   * @param {Array<{role?: string, text?: string}>|null} [liveTurns] - `live.turns`.
    * @returns {Array<{id: *, text: string}>}
    */
-  function openQueuedPrompts(queued, pending) {
+  function openQueuedPrompts(queued, pending, events, liveTurns) {
     const list = (Array.isArray(queued) ? queued : [])
       .filter((p) => p && typeof p.text === 'string' && p.text.trim())
       .map((p, i) => ({ id: p.id != null ? p.id : i, text: p.text }));
     const sent = new Set((Array.isArray(pending) ? pending : [])
       .filter((p) => p && typeof p.text === 'string').map((p) => p.text.trim()));
+    (Array.isArray(events) ? events : []).forEach((e) => {
+      if (e && e.role === 'user' && typeof e.content === 'string') sent.add(e.content.trim());
+    });
+    (Array.isArray(liveTurns) ? liveTurns : []).forEach((t) => {
+      if (t && t.role === 'user' && typeof t.text === 'string') sent.add(t.text.trim());
+    });
     return list.filter((p) => !sent.has(p.text.trim()));
   }
 
@@ -2418,23 +2469,33 @@
    * categories — YOU, Your ToDo, AI — currently has to show.
    * @param {object|null} live - A conversation view's `chat.live`.
    * @param {object|null} chat - A conversation view's `chat`.
+   * @param {Array<object>|null} [events] - The view's recorded events (AI auto-clear).
+   * @param {Array<object>|null} [liveTurns] - `live.turns` (AI auto-clear).
    * @returns {{direct: string[], gate: ReturnType<typeof extractCliGates>,
    *   choice: ReturnType<typeof extractMultiChoice>, todo: string[],
    *   ai: Array<{id: *, text: string}>}}
    */
-  function waitingOnModel(live, chat) {
+  function waitingOnModel(live, chat, events, liveTurns) {
     const c = chat || {};
     const reply = latestReplyText(live);
     const rawTodo = extractOperatorTodo(reply);
-    // #3105: "Clear" remembers the exact list it cleared; the same still-
-    // latest reply's list stays hidden until a new reply changes it.
-    const todo = c.dismissedTodoSnapshot != null && c.dismissedTodoSnapshot === rawTodo.join('\u0000') ? [] : rawTodo;
+    // #3105 (PRR-A R1 C3): dismissed by TEXT, not by a whole-list snapshot
+    // — a per-item ✕ removes just that one item, while Clear dismisses
+    // every item currently shown in one call. The same still-latest reply
+    // keeps whatever of its items were dismissed until it genuinely changes.
+    const dismissedTodo = new Set(Array.isArray(c.dismissedTodoItems) ? c.dismissedTodoItems : []);
+    const todo = rawTodo.filter((t) => !dismissedTodo.has(t));
+    // #3105 (PRR-A R1 C1): `live.rawLines` wins when the pane just answered;
+    // `chat.peek.lines` (Under the Hood's own raw tail) is the fallback the
+    // gate still needs between polls or before a live read has landed.
+    const rawLines = live && Array.isArray(live.rawLines) ? live.rawLines
+      : (c.peek && Array.isArray(c.peek.lines) ? c.peek.lines : []);
     return {
       direct: openQuestions(live, Array.isArray(c.dismissedQuestions) ? c.dismissedQuestions : []),
-      gate: extractCliGates(live && Array.isArray(live.rawLines) ? live.rawLines : []),
+      gate: extractCliGates(rawLines),
       choice: extractMultiChoice(reply),
       todo,
-      ai: openQueuedPrompts(c.queuedPrompts, c.pending)
+      ai: openQueuedPrompts(c.queuedPrompts, c.pending, events, liveTurns)
     };
   }
 
@@ -2446,7 +2507,8 @@
    */
   function todoListMarkup(todo) {
     return todo.map((t, i) => (
-      `<li>${todo.length > 1 ? `<span class="v6-chat-question-badge" aria-hidden="true">(${i + 1})</span> ` : ''}${escapeHtml(t)}</li>`
+      `<li>${todo.length > 1 ? `<span class="v6-chat-question-badge" aria-hidden="true">(${i + 1})</span> ` : ''}<span class="v6-chat-question-text">${escapeHtml(t)}</span>
+        <button type="button" class="v6-waiting-on-todo-dismiss" data-text="${escapeHtml(t)}" title="Dismiss this item" aria-label="Dismiss this ToDo item"><span aria-hidden="true">✕</span></button></li>`
     )).join('');
   }
 
@@ -3204,7 +3266,7 @@
       const sidebarCollapsed = Boolean(extras && extras.sidebarCollapsed);
       const activityElapsed = (extras && extras.activityElapsed) || '';
       const dismissedQuestions = (extras && extras.dismissedQuestions) || [];
-      const dismissedTodoSnapshot = extras && 'dismissedTodoSnapshot' in extras ? extras.dismissedTodoSnapshot : null;
+      const dismissedTodoItems = (extras && extras.dismissedTodoItems) || [];
       const queuedPrompts = (extras && extras.queuedPrompts) || [];
       const pending = (extras && extras.pending) || null;
       const verbosity = (extras && extras.verbosity) || VERBOSITY_DEFAULT;
@@ -3214,7 +3276,7 @@
       return conversationViewMarkup(Object.assign({}, v, {
         chat: Object.assign({}, v.chat, {
           draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename,
-          dismissedQuestions, dismissedTodoSnapshot, queuedPrompts, pending, verbosity
+          dismissedQuestions, dismissedTodoItems, queuedPrompts, pending, verbosity
         })
       }));
     }
@@ -3683,6 +3745,10 @@
         // The whole of each long message sent, so its pane echo is known in full.
         said.push(...(sentWhole.get(key) || []));
         live = extractLiveTurns(res.lines, engine, said);
+        // #3105: the raw pane tail, for extractCliGates — the CLI gate text
+        // itself is chrome extractLiveTurns throws away, so it needs the
+        // lines as the pane actually sent them.
+        live.rawLines = res.lines;
         // Once the pane shows it, it is placed by the pane.
         if (sent && live.turns.some((t) => t.role === 'user' && t.recorded && (sameMessage(sent.text, t.text) || sameMessage(sent.full, t.text)))) {
           lastSentByProject.delete(key);
@@ -4078,6 +4144,9 @@
       const forced = Boolean(given && given.priority === true);
       if (!chat || !shell) return;
       if (inFlight(chat) && !forced) {
+        // #3105 (PRR-A R1 C2): surface it in Waiting on: AI too, not only
+        // the warning line — the operator can Force or dismiss it from there.
+        if (typed && typeof shell.queuePrompt === 'function') shell.queuePrompt(chat.project.id, typed);
         showSend({ kind: 'warning', message: `Not sent yet: the last message to ${chat.project.name} is still on its way. Use ⚡ Force to send this one now.` });
         return;
       }
@@ -5172,13 +5241,16 @@
     // so a poll that reads the same reply again, or the same reply grown by a
     // wake or more text, does not bring them back, and a later reply's do show.
     const dismissedQuestions = new Map();
-    // #3105: each chat's "Your ToDo" Clear remembers the exact todo list it
-    // cleared (joined), so the same still-latest reply's list stays hidden
-    // until a genuinely new reply produces a different one.
-    const dismissedTodoSnapshot = new Map();
-    // #3105: each chat's AI queue — prompts submitted while busy, waiting
-    // to fire once it goes idle, or to be Forced/dismissed by hand.
+    // #3105 (PRR-A R1 C3): each chat's "Your ToDo" dismissals, by item
+    // text — a per-item ✕ removes one, Clear dismisses every item shown
+    // at once; the same still-latest reply keeps whichever stay dismissed.
+    const dismissedTodoItems = new Map();
+    // #3105: each chat's AI queue — prompts submitted while busy, surfaced
+    // in Waiting on: AI to be Forced or dismissed by hand. Never fired
+    // automatically (PRR-A R1 C2): that would bypass the Force-Send gate
+    // the moment the chat goes idle, defeating the point of showing it.
     const chatQueues = new Map();
+    let queueSeq = 0;
     // What the question slot and the Medusa slot were last drawn with, so
     // a poll redraws them only when that changes.
     let paintedQuestions = null;
@@ -5570,6 +5642,28 @@
     }
 
     /**
+     * @param {string|null} key - A chat target.
+     * @returns {string[]} The "Your ToDo" item texts dismissed in that chat (#3105).
+     */
+    function dismissedTodoFor(key) {
+      return key != null && dismissedTodoItems.has(key) ? dismissedTodoItems.get(key).slice() : [];
+    }
+
+    /**
+     * Dismiss one or more "Your ToDo" items in the chat on screen by text
+     * (#3105, PRR-A R1 C3) and redraw.
+     * @param {string[]} texts
+     */
+    function dismissTodoItems(texts) {
+      const key = chatTargetKey();
+      if (key == null || !texts.length) return;
+      const set = dismissedTodoItems.get(key) || [];
+      texts.forEach((t) => { if (!set.includes(t)) set.push(t); });
+      dismissedTodoItems.set(key, set);
+      render();
+    }
+
+    /**
      * The questions the chat on screen still shows (#3079). Once the live
      * view asks nothing, the chat's dismissals are spent and forgotten.
      * @returns {string[]}
@@ -5582,6 +5676,18 @@
       // read says nothing about the question.
       if (key != null && live && Array.isArray(live.questions) && !live.questions.length) dismissedQuestions.delete(key);
       return openQuestions(chat && chat.live, dismissedFor(key));
+    }
+
+    /**
+     * The "Your ToDo" items the chat on screen still shows (#3105), less
+     * what's been dismissed from this exact still-latest reply.
+     * @returns {string[]}
+     */
+    function todoNow() {
+      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      const key = chatTargetKey();
+      const dismissed = new Set(dismissedTodoFor(key));
+      return extractOperatorTodo(latestReplyText(chat && chat.live)).filter((t) => !dismissed.has(t));
     }
 
     /**
@@ -5624,15 +5730,17 @@
      * shows, so it cannot wait for the operator to trigger a full render.
      */
     function paintWaitingOnExtras() {
-      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
+      const view = detail && detail.kind === 'conversation' ? detail.view : null;
+      const chat = view ? view.chat : null;
       if (!chat) return;
       const key = chatTargetKey();
+      const liveTurns = chat.live && Array.isArray(chat.live.turns) ? chat.live.turns : [];
       const model = waitingOnModel(chat.live, Object.assign({}, chat, {
         dismissedQuestions: dismissedFor(key),
-        dismissedTodoSnapshot: dismissedTodoSnapshot.has(key) ? dismissedTodoSnapshot.get(key) : null,
+        dismissedTodoItems: dismissedTodoFor(key),
         queuedPrompts: chatQueues.get(key) || [],
         pending: pendingSends.filter((p) => p.key === key)
-      }));
+      }), view && view.events, liveTurns);
       const setSectionState = (el, cls, has) => {
         const section = el && el.parentNode ? el.parentNode : null;
         if (section) section.className = `v6-waiting-on-section ${cls}${has ? ' has-items' : ''}`;
@@ -5719,16 +5827,11 @@
       });
       const clearYou = doc.getElementById('v6WaitingOnYouClear');
       if (clearYou) clearYou.addEventListener('click', () => dismissQuestions(questionsNow()));
+      each('.v6-waiting-on-todo-dismiss', (btn) => {
+        btn.addEventListener('click', () => dismissTodoItems([btn.getAttribute('data-text')]));
+      });
       const clearTodo = doc.getElementById('v6WaitingOnTodoClear');
-      if (clearTodo) {
-        clearTodo.addEventListener('click', () => {
-          const key = chatTargetKey();
-          const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
-          const reply = latestReplyText(chat && chat.live);
-          if (key != null) dismissedTodoSnapshot.set(key, extractOperatorTodo(reply).join('\u0000'));
-          render();
-        });
-      }
+      if (clearTodo) clearTodo.addEventListener('click', () => dismissTodoItems(todoNow()));
       const clearAi = doc.getElementById('v6WaitingOnAiClear');
       if (clearAi) {
         clearAi.addEventListener('click', () => {
@@ -6041,9 +6144,19 @@
         if (!stream.style) return;
         stream.style.maxHeight = coupledStreamMaxHeight(input.offsetHeight, baseInput);
       };
+      // #3106 (PRR-A R1 C4): the stream's `offsetHeight` also grows when
+      // new content arrives — reacting to THAT would snap the input back
+      // down mid-typing. Only a genuine resize-handle drag sets the
+      // stream's own inline `style.height`, so that is the signal this
+      // direction watches, not the observed box size.
+      let lastStreamInlineHeight = (stream.style && stream.style.height) || '';
       const applyToInput = () => {
-        if (!input.style) return;
-        const h = coupledInputHeight(stream.offsetHeight, baseStream, baseInput);
+        if (!input.style || !stream.style) return;
+        const inlineNow = stream.style.height || '';
+        if (inlineNow === lastStreamInlineHeight) return;
+        lastStreamInlineHeight = inlineNow;
+        if (!inlineNow) return;
+        const h = coupledInputHeight(parseFloat(inlineNow) || 0, baseStream, baseInput);
         if (h) input.style.height = h;
       };
       applyToStream();
@@ -6115,21 +6228,6 @@
       const list = chatQueues.get(key) || [];
       chatQueues.set(key, list.filter((p) => String(p.id) !== String(id)));
       render();
-    }
-
-    /**
-     * Fire the oldest queued prompt for the chat on screen, once it is no
-     * longer busy (#3105). A no-op with nothing queued or still busy.
-     */
-    function fireNextQueuedIfIdle() {
-      const key = chatTargetKey();
-      const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
-      if (key == null || !chat || chat.inFlight || typeof options.onSendChat !== 'function') return;
-      const list = chatQueues.get(key) || [];
-      if (!list.length) return;
-      const [nextItem, ...rest] = list;
-      chatQueues.set(key, rest);
-      options.onSendChat(nextItem.text);
     }
 
     /**
@@ -6254,7 +6352,7 @@
             rename: renameOpenKey != null && renameOpenKey === chatTargetKey()
               ? { open: true, draft: renameDraft, warning: renameWarning } : null,
             sidebarCollapsed, activityElapsed, telemetry, dismissedQuestions: dismissedFor(chatTargetKey()),
-            dismissedTodoSnapshot: dismissedTodoSnapshot.has(chatTargetKey()) ? dismissedTodoSnapshot.get(chatTargetKey()) : null,
+            dismissedTodoItems: dismissedTodoFor(chatTargetKey()),
             queuedPrompts: chatQueues.get(chatTargetKey()) || [],
             pending: pendingSends.filter((p) => p.key === chatTargetKey()),
             verbosity
@@ -6273,7 +6371,6 @@
       restoreViewState(saved);
       if (typeof options.onRender === 'function') options.onRender(currentRoute);
       syncDockedHeader();
-      fireNextQueuedIfIdle();
     }
 
     function toggleDrawer(force) {
@@ -6556,6 +6653,24 @@
        * @returns {{priority: boolean, startupIntervention: boolean}|null}
        */
       takeSendFlags() { const f = sendFlags; sendFlags = null; return f; },
+      /**
+       * Queue a prompt for `Waiting on: AI` (#3105): called by the page's
+       * own `sendChat` when a plain (non-forced) submit lands while that
+       * project's chat is already busy — the operator can then ⚡ Force it
+       * or ✕ dismiss it from the panel rather than only seeing the
+       * "Not sent yet" warning line.
+       * @param {*} projectId
+       * @param {string} text
+       */
+      queuePrompt(projectId, text) {
+        const key = projectId != null ? String(projectId) : null;
+        const trimmed = String(text || '').trim();
+        if (key == null || !trimmed) return;
+        const list = chatQueues.get(key) || [];
+        list.push({ id: `${key}-${now()}-${++queueSeq}`, text: trimmed });
+        chatQueues.set(key, list);
+        if (chatTargetKey() === key) render();
+      },
       /**
        * The usage routes' latest answers (#3085): redraws the meter.
        * @param {{windows: object|null, sessions: object|null}|null} data
