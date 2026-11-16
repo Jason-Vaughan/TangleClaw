@@ -1626,17 +1626,22 @@ async function renderUsagePanel() {
     return;
   }
   const providers = Object.keys(data.byProviderModel);
+  // Every known provider key is always present (#3085, A753), so "no
+  // providers" never happens — the real "nothing parsed" signal is every
+  // provider's own model map being empty (#3092).
+  const nothingParsed = providers.every((provider) => Object.keys(data.byProviderModel[provider]).length === 0);
   let html = '';
-  if (providers.length === 0) {
+  if (nothingParsed) {
     html = '<div class="usage-empty">No usage parsed from any local transcript log.</div>';
-  }
-  for (const provider of providers) {
-    html += `<div class="usage-provider-name">${esc(provider)}</div>`;
-    for (const [model, windows] of Object.entries(data.byProviderModel[provider])) {
-      html += `<div class="usage-model-row">
-        <span>${esc(model)}</span>
-        <span>5h ${windows.fiveHour.totalTokens} · weekly ${windows.weekly.totalTokens} · monthly ${windows.monthly.totalTokens}</span>
-      </div>`;
+  } else {
+    for (const provider of providers) {
+      html += `<div class="usage-provider-name">${esc(provider)}</div>`;
+      for (const [model, windows] of Object.entries(data.byProviderModel[provider])) {
+        html += `<div class="usage-model-row">
+          <span>${esc(model)}</span>
+          <span>5h ${windows.fiveHour.totalTokens} · weekly ${windows.weekly.totalTokens} · monthly ${windows.monthly.totalTokens}</span>
+        </div>`;
+      }
     }
   }
   const p = data.recommendedPolicy;
