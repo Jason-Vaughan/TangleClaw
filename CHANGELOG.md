@@ -4,6 +4,57 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.4.1] - 2026-11-16
+
+### Added
+- The v6 PM Workspace's `🚂 Sprint & Cars`, `📈 Kaizen & Reports` and `📜 Charter & Roadmap` tabs can now show the Release-First Roadmap, 6-stage pills, reviewers and disjoint file scope natively, through their existing live endpoints (#3112). `lib/native-sprint-tracker.js` gains `buildSprintWaveSnapshot`, a pure model classifying each roadmap release as active, planned or shipped and mapping every car's and issue's dispatch stage onto the canonical 6-stage pill (`Not started`, `In progress`, `In review`, `Blocked`, `Deployed, awaiting a check`, `Completed`); `sprintDataFromWaveRuns` and `syncWaveDispatchState` now carry forward a car's file scope, lane, reviewers and head commit instead of dropping them, and `buildNativeSprintReportSummary` gains a normalized reports/retrospectives catalog. `public/sprint-wave-ui.js`'s existing `renderSprintWaveBoard` and `renderKaizenLedgerPanel` compose the new 6-stage pills, per-car execution cards (`renderSprintCarCards`) and reports catalog cards (`renderSprintReportsCatalog`) automatically whenever `GET /api/sprint-waves` or `GET /api/sprint-reports/:version` returns the richer data — no route or shell change needed for those two tabs. `renderCharterReadinessPanel` composes the new Release-First Roadmap (`renderReleaseRoadmap`: summary metrics, expandable release cards, a workstream/car table per release) the same way when given a `roadmapSnapshot`, which `public/v6-shell.js`'s Charter & Roadmap call site does not supply yet — wiring that one tab's live fetch is tracked separately.
+
+### Fixed
+- `tc usage windows` and the dashboard's Usage panel now show "No usage parsed from any local transcript log." when nothing was parsed, instead of never — every provider key is always present in the response, so the old "zero providers" check could never fire. The v83→v84 usage-calibration migration also now verifies its rebuilt table before committing, so a failed postcondition rolls back cleanly instead of leaving a broken table already committed (#3092).
+- A Medusa send to an unmapped workspace now says why when it's refused because a project registry outside the sender's fleet could not be read, instead of a bare "not in your fleet" — matching the wording the same case already got for broadcasts. No other fleet's projects are ever named (#3103).
+- v6 chat: the "Waiting on you" slot is now a unified 3-category panel — **YOU**
+  (CLI trust/permission/selector prompts and multi-choice questions detected in
+  the live pane, merged with the existing direct-question list), **Your ToDo**
+  (the operator's own handoff items extracted from the latest reply), and
+  **AI** (queued follow-up prompts, Force/dismiss per item) — each numbered,
+  dismissible, and with a Clear button once it holds more than one item.
+  (#3105)
+- v6 chat composer: an idle Waiting-on panel or activity line no longer
+  charges a flex gap it never visually occupies; the attach control moved to
+  a compact chip pinned over the message box's top-right corner; the message
+  box and the conversation stream now resize against each other (growing one
+  shrinks the other, down to a readable floor). (#3106)
+- Route a protected `~/Documents` tmux session unconditionally to the
+  TCC-authorized server, never the default server, even when the default
+  server transiently passes a readability probe — macOS can revoke the
+  default server's access ~20-30 minutes later while the TCC-authorized
+  server's own grant never lapses. Also stage `merge-role-guard.js` and
+  `tmux-guard.js` into the session's PATH-wrapper directory so the generated
+  `gh`/`curl`/`tmux` wrapper scripts there never `require()` a path under
+  `~/Documents` either (#3108).
+- `GET /api/usage/windows` no longer throws `RangeError: Maximum call stack size exceeded` on a large transcript history (#3109). `lib/usage-windows.js` accumulated every scanned provider's records, and every scanned file's records, by spreading each batch into a single `.push(...)` call — past roughly 65,000 records in one pass, V8's call-argument limit overflowed the stack. Both accumulation points now push one record at a time in a plain loop, so a scan of any size reads cleanly.
+- The `gh pr merge` role guard now recognizes multi-fleet Integrators, Reviewers, Architects, PMs and Builders, and a standalone repo's own merge convention (#3110). `lib/merge-role-guard.js` previously resolved only `TC-Lane-*` lane ids and allowed only `--merge` for everyone; it now resolves any `<fleet>-INT`/`<fleet>-Lane-INT` (for example `TV-INT`), `<fleet>-PRR`/`<fleet>-Obsr`, `<fleet>-Arc`, `<fleet>-PM`, and `<fleet>-Lane-<letter>` lane, plus `TiLT v2` (matching the real stored project name, with a space, not only its tmux-session-name hyphenated form) and `Monad-1` by name, and lets `Monad-1` merge with `--squash` (its own repo convention) while every other fleet, including `TC-Lane-INT`, stays restricted to `--merge`. A new `allowedMergeMethods` option generalizes the same per-caller exception for any other repo's own convention.
+- Auto-dismiss the Antigravity CLI's inline feedback-survey prompt
+  ("How's the CLI experience so far?") by sending the Skip keystroke and
+  re-capturing the pane, so it no longer wedges Medusa wake delivery with
+  `pane-no-prompt` (#3111).
+- v6 chat: a refresh (or a conversation still loading) now reliably jumps to
+  the latest line instead of sometimes staying stuck mid-scroll; the Usage
+  Meter falls back to a live session's own context-remaining reading when
+  neither the pane nor a saved calibration has a weekly/5-hour percentage to
+  show. (#3113)
+- v6 Wizard: the `🧙 Wizard` tab now runs 3 real end-to-end workflows —
+  create a standalone workspace project, convert an existing standalone
+  project into a multi-seat fleet, and provision a new fleet from a
+  template with a live plan preview — none of which clobber the active
+  chat the way picking a template used to. (#3114)
+- The roadmap publisher's `gh-pages` pushes no longer trigger Vercel's "Root Directory 'website' does not exist" failed-deploy emails: `lib/roadmap-vercel-guard.js` can now stage a deterministic skip-build `vercel.json` into a `gh-pages` checkout and mark its commits `[skip ci] [vercel skip]` (#3116).
+- v6 shell: the mobile `☰` menu is now a proper slide-over drawer with a
+  backdrop and a styled toggle, instead of an unstyled full-width bar; the
+  top bar no longer wraps into 4-9 left-aligned rows on Galaxy Fold and
+  iPhone widths; the "Workspace Projects" sidebar entry no longer repeats
+  itself as its own redundant child fleet. (#3117)
+
 ## [6.4.0] - 2026-11-15
 
 ### Added
