@@ -4493,6 +4493,12 @@ p.v6-history-secret {
 /* #3052: Above the Hood — the conversation as bubbles, the raw pane folded away. */
 .v6-chat-stream {
   max-height: 55vh;
+  /* #3106: the floor the composer/stream two-way resize coupling never
+     shrinks past — min-height overrides a smaller max-height. */
+  min-height: 120px;
+  /* #3106: the other half of the two-way coupling — the operator can drag
+     this edge directly too, which then shrinks the composer back down. */
+  resize: vertical;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -4522,11 +4528,26 @@ p.v6-history-secret {
   background: rgba(212, 167, 44, 0.1);
   overflow-wrap: anywhere;
 }
+/* #3106: `.v6-chat` is a flex column with its own `gap` between every
+   direct child, charged whether or not a child itself takes up space — so
+   an empty/idle slot must be removed from flow, not just emptied.
+   #v6ChatWaitingOn's 3 sections (and #v6ChatQuestion inside YOU) are
+   always present in the DOM so #3079's direct lookups still find them;
+   `has-items` (set in script, not :empty) is what actually hides one. */
+.v6-chat-question:not(.is-asking),
+.v6-waiting-on-panel:not(.has-items),
+.v6-waiting-on-section:not(.has-items) {
+  display: none;
+}
 .v6-chat-question-label {
   font-weight: 600;
 }
 .v6-chat-activity {
   margin: 0;
+}
+/* #3106: idle, this slot is empty — take it out of the flex-column gap. */
+.v6-chat-activity:not(.is-busy) {
+  display: none;
 }
 .v6-chat-activity.is-busy {
   /* #3057: a row, so a long label truncates and the dots and time stay. */
@@ -4645,14 +4666,21 @@ p.v6-history-secret {
   flex-direction: column;
   gap: 6px;
 }
-.v6-chat-input {
+/* #3106: the attach chip sits inside this wrapper, pinned to the
+   textarea's top-right corner, instead of taking its own row in
+   `.v6-chat-composer-actions`. */
+.v6-chat-input-wrap {
+  position: relative;
   flex: 1;
   min-width: 0;
+}
+.v6-chat-input {
+  width: 100%;
   min-height: 64px;
   resize: vertical;
   box-sizing: border-box;
   font: inherit;
-  padding: 8px;
+  padding: 8px 34px 8px 8px;
   border-radius: 4px;
   border: 2px solid var(--v6-outline, #3d444d);
   background: var(--v6-surface, #0d0d0d);
@@ -4664,6 +4692,29 @@ p.v6-history-secret {
   outline: none;
   border-color: #56d364;
   box-shadow: 0 0 0 2px rgba(86, 211, 100, 0.35);
+}
+.v6-chat-attach-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  border-radius: 999px;
+  border: 1px solid var(--v6-outline, #3d444d);
+  background: var(--v6-surface, #0d0d0d);
+  color: inherit;
+  font-size: 0.95em;
+  line-height: 1;
+  cursor: pointer;
+}
+.v6-chat-attach-btn:hover,
+.v6-chat-attach-btn:focus-visible {
+  border-color: #56d364;
 }
 .v6-chat-send-status {
   margin: 0;
@@ -4751,6 +4802,105 @@ p.v6-history-secret {
 .v6-chat-question-dismiss:hover,
 .v6-chat-question-dismiss:focus-visible {
   border-color: #d4a72c;
+}
+/* #3105: the unified Waiting-on panel — YOU, Your ToDo and AI, each its
+   own bordered section once it has something to show. */
+.v6-waiting-on-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.v6-waiting-on-section {
+  padding: 8px 10px;
+  border: 1px solid var(--v6-outline, #3d444d);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+.v6-waiting-on-you.has-items { border-color: #d4a72c; background: rgba(212, 167, 44, 0.1); }
+.v6-waiting-on-todo.has-items { border-color: #58a6ff; background: rgba(56, 139, 253, 0.08); }
+.v6-waiting-on-ai.has-items { border-color: #56d364; background: rgba(86, 211, 100, 0.08); }
+.v6-waiting-on-title {
+  margin: 0 0 4px;
+  font-size: 0.9em;
+  font-weight: 600;
+}
+.v6-waiting-on-todo-list,
+.v6-waiting-on-ai-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.v6-waiting-on-ai-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.v6-waiting-on-clear {
+  margin-top: 6px;
+  background: none;
+  border: 1px solid var(--v6-outline, #3d444d);
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 8px;
+  font-size: 0.85em;
+}
+.v6-chat-gate-choice:empty { display: none; }
+.v6-chat-gate-card,
+.v6-chat-choice-card {
+  margin: 0 0 4px;
+}
+.v6-chat-gate-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: 6px;
+}
+.v6-chat-gate-action,
+.v6-chat-choice-option,
+.v6-chat-gate-hood {
+  background: none;
+  border: 1px solid var(--v6-outline, #3d444d);
+  border-radius: 999px;
+  color: inherit;
+  cursor: pointer;
+  padding: 1px 8px;
+  font-size: 0.85em;
+}
+.v6-chat-gate-action:hover,
+.v6-chat-choice-option:hover,
+.v6-chat-gate-hood:hover {
+  border-color: #56d364;
+}
+/* #3105 (PRR-A R1 C3): per-item dismiss on a 1-item Your ToDo, same shape
+   as the AI queue's own per-item controls. */
+.v6-waiting-on-todo-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.v6-waiting-on-ai-force,
+.v6-waiting-on-ai-dismiss,
+.v6-waiting-on-todo-dismiss {
+  flex: 0 0 auto;
+  min-width: 32px;
+  min-height: 32px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+}
+.v6-waiting-on-ai-force:hover,
+.v6-waiting-on-ai-force:focus-visible,
+.v6-waiting-on-ai-dismiss:hover,
+.v6-waiting-on-ai-dismiss:focus-visible,
+.v6-waiting-on-todo-dismiss:hover,
+.v6-waiting-on-todo-dismiss:focus-visible {
+  border-color: #56d364;
 }
 /* #3076: Medusa traffic in the chat header — the inbound (left) and
    outbound (right) heads blink when traffic moves; the badge is @ or the
