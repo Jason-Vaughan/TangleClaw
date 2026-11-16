@@ -715,6 +715,10 @@ describe('sprint-wave-routes: createSprintWaveRouter', () => {
     assert.equal(await router.handle(req, res), true);
     assert.equal(status(), 200);
     assert.equal(json().dispatch['car-a'].stage, 'in-progress');
+    // #3112: the same cars/lanes/pullRequests feed buildSprintWaveSnapshot too,
+    // so the v6 PM Workspace tabs render this car without a second round-trip.
+    assert.equal(json().snapshot.cars.length, 1);
+    assert.equal(json().snapshot.cars[0].id, 'car-a');
   });
 
   it('POST /api/sprint-waves/validate-disjointness runs the real validator', async () => {
@@ -1279,7 +1283,14 @@ describe('the live server mounts the sprint wave routes (#3087, Ruling A774)', (
   it('GET /api/sprint-waves answers an empty board with no run, and the scheduler\'s run once one exists', async () => {
     const empty = await request('GET', '/api/sprint-waves');
     assert.equal(empty.status, 200, JSON.stringify(empty.data));
-    assert.deepEqual(empty.data, { ok: true, waves: [], dispatch: {} });
+    assert.deepEqual(empty.data, {
+      ok: true, waves: [], dispatch: {},
+      snapshot: {
+        releases: { active: [], planned: [], shipped: [] },
+        summary: { plannedVersions: 0, releasedVersions: 0, activeSprintProgress: { closed: 0, total: 0, pct: 0 }, scheduledItems: 0 },
+        cars: [], reports: []
+      }
+    });
     const c3 = require('../lib/v6/c3-wave-scheduler');
     new c3.WaveScheduler({ store: new c3.SqliteSchedulerStore(store.getDb()) }).createRun({
       id: 'run1', fleetId: 'f', cars: [{ id: 'car-a', fileScope: ['lib/a.js'], payload: { lane: 'TC-Lane-B' } }, { id: 'car-b', fileScope: ['lib/b.js'] }]
@@ -1290,6 +1301,9 @@ describe('the live server mounts the sprint wave routes (#3087, Ruling A774)', (
     assert.equal(live.data.dispatch['car-a'].stage, 'claimed');
     assert.equal(live.data.dispatch['car-a'].laneName, 'TC-Lane-B');
     assert.equal(live.data.dispatch['car-b'].stage, 'unassigned');
+    // #3112: a real run's cars are enriched into the snapshot too, not just dispatch.
+    assert.equal(live.data.snapshot.cars.length, 2);
+    assert.deepEqual(live.data.snapshot.cars.map((c) => c.id).sort(), ['car-a', 'car-b']);
   });
 
   it('GET /api/sprint-reports/:version: current answers, an unknown version 404s, anything else 400s before any lookup', async () => {
