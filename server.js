@@ -11801,6 +11801,26 @@ const V6_UNFURL_MAX_BYTES = 512 * 1024;
  * @param {string} url - Already confirmed safe by {@link module:lib/v6/b2-conversation-layer.evaluateUnfurlTargetSafety}.
  * @returns {Promise<{ok: true, html: string}|{ok: false, reason: string}>}
  */
+/**
+ * A `http.request`/`https.request` custom `lookup` option that always
+ * answers with one already-validated, pinned address — factored out so
+ * its `opts.all` branch is directly unit-testable (PRR-A R1 WARNING):
+ * Node 20+'s `net.autoSelectFamily` defaults to `true` (confirmed live on
+ * this runtime) and calls a custom `lookup` with `{all: true}`, which
+ * REQUIRES the array callback form (`cb(null, [{address, family}])`) — the
+ * plain 3-arg form (`cb(null, address, family)`) throws
+ * `ERR_INVALID_IP_ADDRESS` on literally every request otherwise, confirmed
+ * by calling the old form directly against a real `https.request` before
+ * writing this fix, not assumed from the Node docs alone.
+ * @param {{address: string, family: number}} pinned
+ * @returns {(hostname: string, opts: object, cb: Function) => void}
+ */
+function _v6PinnedLookup(pinned) {
+  return (_hostname, opts, cb) => (opts && opts.all
+    ? cb(null, [{ address: pinned.address, family: pinned.family }])
+    : cb(null, pinned.address, pinned.family));
+}
+
 async function _v6SafeUnfurlFetch(url) {
   const parsed = new URL(url);
   let addresses;
@@ -11825,7 +11845,7 @@ async function _v6SafeUnfurlFetch(url) {
       headers: { Host: parsed.host, 'User-Agent': 'TangleClaw-LinkUnfurl/1.0', Accept: 'text/html' },
       // Always answers with the single address already validated above —
       // never re-resolves, which is the whole point of pinning.
-      lookup: (_hostname, _opts, cb) => cb(null, pinned.address, pinned.family),
+      lookup: _v6PinnedLookup(pinned),
       timeout: 8000
     }, (fres) => {
       if (fres.statusCode == null || fres.statusCode < 200 || fres.statusCode >= 400) {
@@ -12717,4 +12737,4 @@ if (require.main === module) {
 }
 
 
-module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller, _checkPublicAssets, _setPublicDir, _resetTailscaleOriginCacheForTest, _sanitizeOpenclawDirectHeaders, OPENCLAW_DIRECT_CF_HEADERS };
+module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller, _checkPublicAssets, _setPublicDir, _resetTailscaleOriginCacheForTest, _sanitizeOpenclawDirectHeaders, OPENCLAW_DIRECT_CF_HEADERS, _v6PinnedLookup };

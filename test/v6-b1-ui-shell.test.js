@@ -981,10 +981,17 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
         }
         if (/^\/api\/projects\/[^/]+$/.test(url) && method === 'PATCH') {
           const name = decodeURIComponent(url.split('/').pop());
-          const row = live.projects.find((p) => p.name === name);
-          if (!row) return null;
-          row.name = body.name;
-          return { id: row.id, name: row.name };
+          const idx = live.projects.findIndex((p) => p.name === name);
+          if (idx === -1) return null;
+          // Replace with a new object rather than mutating the row in
+          // place: PROJECTS.slice() above only shallow-copies the ARRAY,
+          // so mutating a row here used to rename the SHARED element
+          // PROJECTS itself still references, permanently (for the rest
+          // of this file's run, since PROJECTS is declared once at module
+          // scope) renaming it for every OTHER test that mounts afterward.
+          const renamed = Object.assign({}, live.projects[idx], { name: body.name });
+          live.projects[idx] = renamed;
+          return { id: renamed.id, name: renamed.name };
         }
         if (/\/plan$/.test(url) && method === 'POST') return plan || null;
         return null;
@@ -1176,7 +1183,13 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     };
 
     function mountFleetSpec(extraMap) {
-      const live = { projects: PROJECTS.slice() };
+      // A real, per-element copy (not PROJECTS.slice(), which shares every
+      // element OBJECT by reference) — mountWizard's own mutate() renames
+      // projects by mutating a row IN PLACE, and since node:test runs every
+      // it() in this file's declaration order, an EARLIER Workflow B test
+      // renaming TangleClaw would otherwise leak into every later test here
+      // that still expects its original name.
+      const live = { projects: PROJECTS.map((p) => Object.assign({}, p)) };
       const map = baseMap(Object.assign({
         '/api/projects': () => ({ projects: live.projects }),
         '/api/v6/fleet-templates/bundled-specs': bundled
@@ -1293,9 +1306,9 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
       assert.equal(calls.some((c) => c.includes('validate-spec')), false);
     });
 
-    it('exports an existing workspace as a .fleet.json and shows it, read-only', async () => {
+    it('exports an existing standalone workspace as a .fleet.json and shows it, read-only', async () => {
       const { win, doc, root, settle } = mountFleetSpec({
-        '/api/v6/projects/30/fleet-spec': { ok: true, spec: { metadata: { name: 'TangleClaw' }, seats: [] } }
+        '/api/v6/projects/30/fleet-spec?members=TangleClaw': { ok: true, spec: { metadata: { name: 'TangleClaw' }, seats: [] } }
       });
       win.location.hash = '#/projects/tc-lane';
       await settle();
@@ -1303,15 +1316,38 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
       await settle();
       doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
       await settle();
-      // The export dropdown's value is the project's numeric seatId — the
-      // same convention convertToFleet's own source dropdown uses (its own
-      // existing test picks TangleClaw the identical way: value '30').
-      assert.match(root.innerHTML, /id="v6WizardFleetSpecExportProject"[^>]*><option value=""[^>]*>Choose…<\/option><option value="30">/);
+      // #3115 (PRR-A R1 C2): the export picker now lists every exportable
+      // fleet from the whole tree, not only standalone workspaces — the
+      // PROJECTS fixture's TC-Lane-A/TC-Lane-B group as "TC-Lane Fleet"
+      // (value '10'), listed before the standalone TangleClaw (value '30',
+      // the project's own name as its label — a 1-member "fleet" is really
+      // just a standalone project, and showing the catch-all's own generic
+      // "Workspace Projects" label there would make every standalone
+      // project in the picker look identical).
+      assert.match(root.innerHTML, /id="v6WizardFleetSpecExportProject"[^>]*><option value=""[^>]*>Choose…<\/option><option value="10">TC-Lane Fleet<\/option><option value="30">TangleClaw<\/option>/);
       doc.getElementById('v6WizardFleetSpecExportProject').value = '30';
       doc.getElementById('v6WizardFleetSpecExportProject').dispatch('change');
       doc.getElementById('v6WizardFleetSpecExportForm').dispatch('submit');
       await settle();
       assert.match(root.innerHTML, /id="v6WizardFleetSpecExported"[^>]* readonly[^>]*>[^<]*&quot;name&quot;: &quot;TangleClaw&quot;/);
+    });
+
+    it('exports a real multi-seat fleet, passing every member’s name via ?members= (PRR-A R1 C2)', async () => {
+      const { win, doc, root, calls, settle } = mountFleetSpec({
+        '/api/v6/projects/10/fleet-spec?members=TC-Lane-A%2CTC-Lane-B': { ok: true, spec: { metadata: { name: 'TC-Lane' }, seats: [{}, {}] } }
+      });
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-fleetSpec').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardFleetSpecExportProject').value = '10';
+      doc.getElementById('v6WizardFleetSpecExportProject').dispatch('change');
+      doc.getElementById('v6WizardFleetSpecExportForm').dispatch('submit');
+      await settle();
+      assert.ok(calls.includes('/api/v6/projects/10/fleet-spec?members=TC-Lane-A%2CTC-Lane-B'), 'both fleet members were named, not only the picked id');
+      assert.match(root.innerHTML, /id="v6WizardFleetSpecExported"[^>]* readonly[^>]*>[^<]*&quot;name&quot;: &quot;TC-Lane&quot;/);
     });
   });
   });
@@ -6017,6 +6053,79 @@ describe('rich link unfurling & local reference cards (#3107, Rulings A809/A811)
   // assignment (v6ChatLive, same as every other message redraw) is never
   // actually represented as a queryable node in this harness. The markup
   // tests above cover every rendered state directly and precisely instead.
+
+  describe('wireRichPreviews re-wires after EVERY targeted (non-render()) message-list redraw (PRR-A R1 C1/C2)', () => {
+    /**
+     * Mount a real shell with a spy on doc.querySelectorAll, so a call
+     * wireRichPreviews() itself makes (the one thing that function does
+     * that THIS test can observe through withIdParsingInnerHTML's
+     * class-only-element blind spot — see the note above) is countable,
+     * independent of whether the harness can represent the resulting
+     * listeners as queryable nodes.
+     */
+    function mountWithSpy() {
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      root.id = 'v6ShellRoot';
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      let calls = 0;
+      const realQSA = doc.body.querySelectorAll.bind(doc.body);
+      doc.querySelectorAll = (sel) => {
+        if (sel === '.v6-chat-local-ref-copy' || sel === '.v6-chat-unfurl-btn') calls += 1;
+        return realQSA(sel);
+      };
+      doc.querySelector = (sel) => doc.body.querySelector(sel);
+      const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+      shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+        chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'See https://blog.example/post' }] } } } });
+      return { shell, calls: () => calls, resetCalls: () => { calls = 0; } };
+    }
+
+    it('setLive (every live poll) re-wires rich previews, not only the initial render', () => {
+      const { shell, calls, resetCalls } = mountWithSpy();
+      assert.ok(calls() > 0, 'the initial render already wired it at least once');
+      resetCalls();
+      shell.setLive({ live: { turns: [{ role: 'assistant', text: 'See https://blog.example/post' }] } });
+      assert.ok(calls() > 0, 'setLive (a live poll) re-wired it too — this is the exact bug PRR-A found: it did not, before this fix');
+    });
+
+    it('setThumbs, setUnfurl, and the verbosity checkboxes\' targeted redraw all re-wire too', () => {
+      const { shell, calls, resetCalls } = mountWithSpy();
+      resetCalls();
+      shell.setThumbs({});
+      assert.ok(calls() > 0, 'setThumbs re-wired it');
+      resetCalls();
+      shell.setUnfurl('https://blog.example/post', { state: 'done', preview: { title: 'T' } });
+      assert.ok(calls() > 0, 'setUnfurl re-wired it');
+    });
+  });
+
+  it('setDetail preserves unfurls across a same-chat redraw (showChat/sendChat own replacement), but not across switching to a different chat (PRR-A R1 C1/C2)', () => {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    root.id = 'v6ShellRoot';
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    doc.querySelector = (sel) => doc.body.querySelector(sel);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+    const chatOf = (id) => ({ kind: 'conversation', view: { project: { id, name: `P${id}` }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'See https://blog.example/post' }] } } } });
+    shell.setDetail(chatOf(1));
+    shell.setUnfurl('https://blog.example/post', { state: 'done', preview: { title: 'Already Fetched' } });
+    // setUnfurl is a TARGETED redraw (#v6ChatLive alone), unlike setDetail's
+    // full render() — root.innerHTML's getter only reflects what was last
+    // assigned directly to root itself, so this checks the real element.
+    assert.match(doc.getElementById('v6ChatLive').innerHTML, /Already Fetched/, 'unfurled right after setUnfurl');
+    // showChat/sendChat's own replacement: the SAME project, a fresh view
+    // object built by the controller (which never carries unfurls at all).
+    // setDetail always calls render() -- root.innerHTML reflects it fully.
+    shell.setDetail(chatOf(1));
+    assert.match(root.innerHTML, /Already Fetched/, 'survived a same-chat setDetail replacement — the controller-side rebuild never has this field, so without the fix it reverts to the unclicked Preview button');
+    // A genuinely different chat must NOT inherit project 1's unfurled cards.
+    shell.setDetail(chatOf(2));
+    assert.doesNotMatch(root.innerHTML, /Already Fetched/, 'a different project\'s chat starts with no inherited unfurl state');
+  });
 });
 
 describe('attachment thumbnails through the controller (#3082, A752-2)', () => {

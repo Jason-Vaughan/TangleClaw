@@ -7,7 +7,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { DatabaseSync } = require('node:sqlite');
 const store = require('../lib/store');
-const { handleRequest } = require('../server');
+const { handleRequest, _v6PinnedLookup } = require('../server');
 
 // v6 Train 2 (BRIDGE-2b, Car V60-T2-W2-ROUTES): live HTTP wiring for
 // lib/v6/b2-conversation-layer.js (#2982), lib/v6/b4-telemetry-header.js
@@ -635,6 +635,23 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
         return { on() {}, end() {}, destroy() {} };
       };
     }
+
+    it('_v6PinnedLookup answers the array form when asked opts.all, and the plain form otherwise (PRR-A R1 WARNING)', () => {
+      // Confirmed live (not just from the Node docs) before writing this
+      // test: Node 20+'s net.autoSelectFamily defaults to true, and an
+      // http(s).request's own socket connection calls a custom `lookup`
+      // with {all: true} by default — the plain 3-arg callback form threw
+      // ERR_INVALID_IP_ADDRESS on every single real request on this exact
+      // runtime (verified with a standalone https.request before fixing).
+      const lookup = _v6PinnedLookup({ address: '93.184.216.34', family: 4 });
+      let got;
+      lookup('irrelevant.example', { all: true, hints: 1024 }, (err, result) => { got = { err, result }; });
+      assert.equal(got.err, null);
+      assert.deepEqual(got.result, [{ address: '93.184.216.34', family: 4 }]);
+      let got2;
+      lookup('irrelevant.example', {}, (err, address, family) => { got2 = { err, address, family }; });
+      assert.deepEqual(got2, { err: null, address: '93.184.216.34', family: 4 });
+    });
 
     it('refuses with no url query param, before any DNS lookup', async () => {
       const res = await get('/api/v6/unfurl');

@@ -1231,10 +1231,12 @@
    * @param {{marketplaceUrl: string, description: string}|null} ecosystem
    * @param {{ok: boolean, preview?: object, errors?: Array<{path:string,message:string}>}|null} preview - A validated import, or its errors.
    * @param {{ok: boolean, spec?: object}|null} exported - A completed export.
-   * @param {Array<{seatId: string}>} standaloneProjects - For the export dropdown.
+   * @param {Array<{id: string, label: string, memberSeatIds: string[]}>} exportableFleets -
+   *   `exportableFleetsNow()`'s result (#3115, PRR-A R1 C2) — every real
+   *   multi-seat fleet AND every standalone workspace, never standalone-only.
    * @returns {string} HTML.
    */
-  function wizardFleetSpecMarkup(form, bundled, ecosystem, preview, exported, standaloneProjects) {
+  function wizardFleetSpecMarkup(form, bundled, ecosystem, preview, exported, exportableFleets) {
     const f = form || {};
     const bundledCards = bundled ? Object.keys(bundled).map((id) => {
       const spec = bundled[id];
@@ -1253,10 +1255,10 @@
             <p>${preview.preview.immediateSeatCount} immediate, ${preview.preview.onDemandSeatCount} on-demand; ${preview.preview.rulesCount} rule(s)</p></div>`
         : `<ul class="v6-wizard-fleetspec-errors">${preview.errors.map((e) => `<li>${escapeHtml(e.path)}: ${escapeHtml(e.message)}</li>`).join('')}</ul>`)
       : '';
-    // Same value/label split as wizardConvertMarkup's own source dropdown
-    // (#3114) — seatId is the project's numeric id, role is its readable
-    // name here (a standalone project is a 1-member pseudo-fleet).
-    const exportOptions = (standaloneProjects || []).map((p) => `<option value="${escapeHtml(p.seatId)}">${escapeHtml(p.role)}</option>`).join('');
+    // #3115 (PRR-A R1 C2): every real multi-seat fleet, not only standalone
+    // workspaces — exportableFleetsNow() walks the whole tree, not just the
+    // "workspace" catch-all wizardConvertMarkup's own source dropdown uses.
+    const exportOptions = (exportableFleets || []).map((f) => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.label)}</option>`).join('');
     const exportedHtml = exported
       ? (exported.ok
         ? `<textarea id="v6WizardFleetSpecExported" class="v6-wizard-fleetspec-json" readonly rows="10">${escapeHtml(JSON.stringify(exported.spec, null, 2))}</textarea>`
@@ -1309,7 +1311,7 @@
     if (tab === 'standalone') body = wizardStandaloneMarkup(form.standalone);
     else if (tab === 'convert') body = wizardConvertMarkup(form.convert, standaloneProjects);
     else if (tab === 'fleetSpec') {
-      body = wizardFleetSpecMarkup(form.fleetSpec, w.bundledFleetSpecs, w.ecosystemDirectory, w.fleetSpecPreview, w.fleetSpecExport, standaloneProjects);
+      body = wizardFleetSpecMarkup(form.fleetSpec, w.bundledFleetSpecs, w.ecosystemDirectory, w.fleetSpecPreview, w.fleetSpecExport, w.exportableFleets);
     } else body = wizardTemplatesMarkup(templates, w.templateId, w.plan, form.templates);
     return `<div class="v6-wizard">${tabs}${status}${body}</div>`;
   }
@@ -5676,15 +5678,25 @@
      *   same convention `convertToFleet`'s source dropdown already uses.
      * @returns {Promise<void>}
      */
+    /**
+     * @param {{projectId: string, members?: string[]}} args - `projectId` and
+     *   each of `members` are the export picker's own values — numeric
+     *   seat ids (#3115, PRR-A R1 C2: `exportableFleetsNow`'s
+     *   `memberSeatIds`), not names; the route's own `?members=` wants
+     *   names, resolved here from `projects`.
+     */
     async function exportFleetSpec(args) {
       const shell = getShell();
       if (!shell || typeof shell.setWizardFleetSpecExport !== 'function') return;
-      // args.projectId is the export dropdown's own value — the project's
-      // numeric id (seatId), the same convention wizardConvertMarkup's
-      // source dropdown already uses, not its name.
       const row = (projects || []).find((p) => String(p.id) === String(args.projectId));
       if (!row) return shell.setWizardFleetSpecExport({ ok: false });
-      const res = await api(`/api/v6/projects/${encodeURIComponent(row.id)}/fleet-spec`);
+      const memberIds = Array.isArray(args.members) && args.members.length ? args.members : [args.projectId];
+      const memberNames = memberIds.map((id) => {
+        const m = (projects || []).find((p) => String(p.id) === String(id));
+        return m ? m.name : null;
+      }).filter(Boolean);
+      const qs = memberNames.length ? `?members=${encodeURIComponent(memberNames.join(','))}` : '';
+      const res = await api(`/api/v6/projects/${encodeURIComponent(row.id)}/fleet-spec${qs}`);
       shell.setWizardFleetSpecExport(res || { ok: false });
     }
 
@@ -6532,11 +6544,17 @@
           if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
           const projectId = wizardForm.fleetSpec && wizardForm.fleetSpec.exportProjectId;
           if (!projectId) {
-            wizardStatus = { kind: 'error', message: 'Choose a workspace to export.' };
+            wizardStatus = { kind: 'error', message: 'Choose a workspace or fleet to export.' };
             render();
             return;
           }
-          if (typeof options.onExportFleetSpec === 'function') options.onExportFleetSpec({ projectId });
+          // #3115 (PRR-A R1 C2): a multi-seat fleet's OTHER members never
+          // reach the export route without this — exportableFleetsNow()
+          // re-derived fresh at submit time, matched by the id the picker
+          // actually offered as this option's value.
+          const picked = exportableFleetsNow().find((fl) => String(fl.id) === String(projectId));
+          const members = picked ? picked.memberSeatIds : [projectId];
+          if (typeof options.onExportFleetSpec === 'function') options.onExportFleetSpec({ projectId, members });
         });
       }
     }
@@ -6932,6 +6950,7 @@
       const view = detail.view;
       const liveEl = doc.getElementById('v6ChatLive');
       if (liveEl) liveEl.innerHTML = liveTurnsMarkup(view.chat.live ? view.chat.live.turns : [], String((view.project && view.project.name) || ''), verbosity, thumbsNow(), unfurlsNow());
+      wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): paintTucked/paintRecorded below also re-wire (global, not scoped), but this covers #v6ChatLive explicitly even if that ever changes.
       paintTucked(view.chat.live);
       paintRecorded();
     }
@@ -6947,6 +6966,13 @@
       if (list) list.innerHTML = tuckedMarkup(tucked, thumbsNow(), unfurlsNow());
       const count = doc.getElementById('v6ChatTuckedCount');
       if (count) count.innerHTML = escapeHtml(tuckedCountText(tucked.length));
+      // #3107 (PRR-A R1 C1/C2): this innerHTML assignment destroys whatever
+      // listeners wireControls()'s last full render attached to any
+      // .v6-chat-unfurl-btn/.v6-chat-local-ref-copy inside #v6ChatTucked —
+      // every targeted (non-render()) redraw of a rich-preview region must
+      // re-wire them itself, the same way wireControls() always does after
+      // a full render.
+      wireRichPreviews();
     }
 
     /**
@@ -6967,6 +6993,7 @@
           const live = view && view.chat ? view.chat.live : null;
           const liveEl = doc.getElementById('v6ChatLive');
           if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], String((view && view.project && view.project.name) || ''), verbosity, thumbsNow(), unfurlsNow());
+          wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): #v6ChatLive's own listeners, same reason as paintTucked's.
           paintTucked(live);
         });
       });
@@ -6988,6 +7015,7 @@
       if (tailEl) tailEl.innerHTML = recordedEventsMarkup(parts.tail, name, chat.thumbs, chat.unfurls);
       const pendingEl = doc.getElementById('v6ChatPending');
       if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSends.filter((p) => p.key === chatTargetKey()), chat.lastSent, chat.thumbs, chat.unfurls);
+      wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): same reason as paintTucked's own call.
     }
 
     /**
@@ -7055,6 +7083,37 @@
       const workspace = tree.find((p) => p && p.id === 'workspace');
       const fleet = workspace && Array.isArray(workspace.fleets) ? workspace.fleets[0] : null;
       return fleet && Array.isArray(fleet.members) ? fleet.members : [];
+    }
+
+    /**
+     * Every exportable fleet or standalone workspace in `tree` (#3115,
+     * PRR-A R1 C1/C2): unlike {@link standaloneProjectsNow}, this walks
+     * every logical project's fleets, not only the "workspace" catch-all —
+     * #3115's own Deliverable 2 names exporting "any existing logical
+     * project/fleet", and a real multi-seat fleet (`TC-Lane-*`, `Monad-*`)
+     * was unreachable from the Export dropdown without this. `id` is the
+     * fleet's first member (the `GET /api/v6/projects/:id/fleet-spec`
+     * route's own `:id`); `memberSeatIds` is the full roster, passed as
+     * that route's `?members=` so a multi-seat fleet exports every seat,
+     * not just the one named in the URL.
+     * @returns {Array<{id: string, label: string, memberSeatIds: string[]}>}
+     */
+    function exportableFleetsNow() {
+      const out = [];
+      tree.forEach((p) => {
+        (p && Array.isArray(p.fleets) ? p.fleets : []).forEach((f) => {
+          const members = Array.isArray(f.members) ? f.members : [];
+          if (!members.length || !members[0].seatId) return;
+          // A single-member fleet is a standalone project, not a real named
+          // fleet — its own member's role (the project's actual name) is
+          // the readable label; the "Workspace Projects" catch-all's own
+          // displayName would otherwise show on EVERY standalone project
+          // identically, indistinguishable from one another in the picker.
+          const label = members.length > 1 ? (f.displayName || p.displayName) : members[0].role;
+          out.push({ id: members[0].seatId, label, memberSeatIds: members.map((m) => m.seatId) });
+        });
+      });
+      return out;
     }
 
     /** @returns {string|null} What the chat on screen is busy with, if anything (#3057). */
@@ -7379,7 +7438,7 @@
           <div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard"${shown.wizard ? '' : ' hidden'}>${wizardMarkup(templates, standaloneProjectsNow(), {
             tab: wizardTab, form: wizardForm, templateId: wizardTemplateId, plan: wizardPlan, status: wizardStatus,
             bundledFleetSpecs: bundledFleetSpecs && bundledFleetSpecs.specs, ecosystemDirectory: bundledFleetSpecs && bundledFleetSpecs.ecosystemDirectory,
-            fleetSpecPreview: wizardFleetSpecPreview, fleetSpecExport: wizardFleetSpecExport
+            fleetSpecPreview: wizardFleetSpecPreview, fleetSpecExport: wizardFleetSpecExport, exportableFleets: exportableFleetsNow()
           })}</div>
           <div id="v6ShellAttestation"${shown.attestation ? '' : ' hidden'}>${modelAttestationMarkup(attestation)}</div>
           <section id="v6WorkspacePanel" class="v6-workspace-panel" role="tabpanel"
@@ -7567,6 +7626,19 @@
       },
       setAttestation(nextAttestation) { attestation = nextAttestation || null; render(); },
       setDetail(nextDetail) {
+        // #3107 (PRR-A R1 C1/C2): the controller's own current.view (what
+        // showChat/showSend/sendChat pass here) never carries unfurls — that
+        // state lives only in this shell's detail, set via setUnfurl. A
+        // bare replacement would silently revert every already-unfurled
+        // card back to its unclicked Preview button on the NEXT send or
+        // attachment change in the SAME chat. Carry it forward when both
+        // the old and new detail name the same project's conversation.
+        const oldProjectId = detail && detail.kind === 'conversation' && detail.view && detail.view.project ? detail.view.project.id : null;
+        const newProjectId = nextDetail && nextDetail.kind === 'conversation' && nextDetail.view && nextDetail.view.project ? nextDetail.view.project.id : null;
+        if (nextDetail && nextDetail.kind === 'conversation' && nextDetail.view && oldProjectId != null && String(oldProjectId) === String(newProjectId)
+          && !nextDetail.view.chat.unfurls && detail.view.chat.unfurls) {
+          nextDetail = Object.assign({}, nextDetail, { view: Object.assign({}, nextDetail.view, { chat: Object.assign({}, nextDetail.view.chat, { unfurls: detail.view.chat.unfurls }) }) });
+        }
         detail = nextDetail || null;
         // #3066: an open history panel follows the chat to another member (or
         // this one renamed); a reload of the same chat, which passes through a
@@ -7620,6 +7692,7 @@
         const streamAtBottom = isAtBottom(stream);
         const liveEl = doc.getElementById('v6ChatLive');
         if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name, verbosity, thumbsNow(), unfurlsNow());
+        wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): setLive runs on every live poll — the bug this finding is actually about.
         paintTucked(live);
         paintRecorded();
         if (streamAtBottom) pinToBottom(stream);
@@ -7709,6 +7782,7 @@
         const view = detail.view;
         const liveEl = doc.getElementById('v6ChatLive');
         if (liveEl) liveEl.innerHTML = liveTurnsMarkup(view.chat.live ? view.chat.live.turns : [], String((view.project && view.project.name) || ''), verbosity, thumbsNow(), unfurlsNow());
+        wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): same targeted-redraw gap as setLive's.
         paintTucked(view.chat.live);
         paintRecorded();
       },
