@@ -206,6 +206,34 @@ describe('tcV6SidebarMarkup (#2981 deliverable 2) — escaping and structure', (
     assert.doesNotMatch(html, /v6-shell-fleets/);
   });
 
+  it('flattens a single fleet that repeats the project\'s own name — "Workspace Projects" shows once, not twice (#3117)', () => {
+    const tree = G.tcV6BuildHierarchyTree([{
+      id: 'workspace', displayName: 'Workspace Projects',
+      fleets: [{ id: 'workspace', displayName: 'Workspace Projects', members: [{ seatId: '7', role: 'JasonVaughanComPortfolio' }] }]
+    }]);
+    const html = G.tcV6SidebarMarkup(tree);
+    // Counted in the visible link text only — the toggle's own aria-label
+    // legitimately restates the node name once for accessibility, same as
+    // it always did; that is not the duplication this flatten removes.
+    const visible = [...html.matchAll(/class="v6-shell-(?:project|fleet)[^"]*"[^>]*>([^<]*)</g)].map((m) => m[1]);
+    assert.deepEqual(visible, ['Workspace Projects'], 'the name appears once, not for both levels');
+    assert.doesNotMatch(html, /v6-shell-fleet"/, 'no separate fleet row/toggle was rendered');
+    assert.match(html, /<ul class="v6-shell-members"><li class="v6-shell-member">/);
+    assert.match(html, /JasonVaughanComPortfolio/);
+  });
+
+  it('does not flatten when a project genuinely has 2+ fleets, or a differently-named single fleet', () => {
+    const twoFleets = G.tcV6BuildHierarchyTree([{
+      id: 1, displayName: 'Monad',
+      fleets: [{ id: 10, displayName: 'Monad', members: [] }, { id: 11, displayName: 'Monad B', members: [] }]
+    }]);
+    assert.equal((G.tcV6SidebarMarkup(twoFleets).match(/>Monad</g) || []).length, 2, 'both fleet rows still render their own name');
+    const differentName = G.tcV6BuildHierarchyTree([{
+      id: 2, displayName: 'Alpha', fleets: [{ id: 20, displayName: 'Alpha Fleet', members: [{ seatId: '9', role: 'PM' }] }]
+    }]);
+    assert.match(G.tcV6SidebarMarkup(differentName), /v6-shell-fleet"/, 'a genuinely different fleet name keeps its own row');
+  });
+
   it('never uses role="tree"/"treeitem" without the roving-tabindex interaction model behind it', () => {
     const html = G.tcV6SidebarMarkup([]);
     assert.doesNotMatch(html, /role="tree/);
@@ -395,8 +423,11 @@ describe('tcCreateV6Shell (#2981 deliverable 1 — mount and route sync)', () =>
   });
 
   it('respects showWatermark: false', () => {
+    // #3117: #v6ShellStatusBar (the empty pre-telemetry container) now
+    // always renders once the shell is active, so this checks the
+    // watermark MARK specifically, not the whole status-bar concept.
     const { root } = mount({ showWatermark: false });
-    assert.doesNotMatch(root.innerHTML, /v6-shell-watermark/);
+    assert.doesNotMatch(root.innerHTML, /v6-shell-watermark-mark|aria-hidden="true">TangleClaw/);
   });
 
   it('destroy() stops reacting to further hashchange events', () => {
@@ -936,6 +967,156 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     assert.match(root.innerHTML, /Could not plan template/);
   });
 
+  describe('the 3 Wizard workflows never clobber the active chat detail (#3114)', () => {
+    /** A `/api/projects` + `apiMutate` pair that actually creates projects, for these workflow tests. */
+    function mountWizard(extraMap, plan) {
+      const live = { projects: PROJECTS.slice() };
+      const map = baseMap(Object.assign({ '/api/projects': () => ({ projects: live.projects }) }, extraMap || {}));
+      let nextId = 100;
+      const mutate = (url, method, body) => {
+        if (url === '/api/projects' && method === 'POST') {
+          const created = { id: nextId++, name: body.name, engine: body.engine || null };
+          live.projects.push(created);
+          return created;
+        }
+        if (/^\/api\/projects\/[^/]+$/.test(url) && method === 'PATCH') {
+          const name = decodeURIComponent(url.split('/').pop());
+          const row = live.projects.find((p) => p.name === name);
+          if (!row) return null;
+          row.name = body.name;
+          return { id: row.id, name: row.name };
+        }
+        if (/\/plan$/.test(url) && method === 'POST') return plan || null;
+        return null;
+      };
+      const m = mountLiveWithMutate(map, mutate);
+      m.live2 = live;
+      return m;
+    }
+
+    /** Like {@link mountLive}, but `apiMutate` sees `(url, method, body)`. */
+    function mountLiveWithMutate(map, mutate) {
+      const G = loadV6Shell();
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const win = makeFakeWindow('');
+      const { api, calls } = makeApi(map);
+      const mutateCalls = [];
+      const apiMutate = async (url, method, body) => {
+        mutateCalls.push({ url, method, body });
+        return mutate(url, method, body);
+      };
+      let shell = null;
+      const pending = [];
+      const liveCtl = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate });
+      shell = G.tcCreateV6Shell(doc, {
+        root, window: win,
+        onLaunchTemplate: (id) => pending.push(liveCtl.launchTemplate(id)),
+        onCreateWorkspaceProject: (form) => pending.push(liveCtl.createWorkspaceProject(form)),
+        onConvertToFleet: (form) => pending.push(liveCtl.convertToFleet(form)),
+        onProvisionFleet: (args) => pending.push(liveCtl.provisionFleet(args)),
+        onRender: (route) => pending.push(liveCtl.handleRoute(route))
+      });
+      pending.push(liveCtl.handleRoute(shell.getRoute()));
+      const settle = async () => { while (pending.length) await pending.shift(); };
+      return { shell, root, win, doc, live: liveCtl, calls, mutateCalls, settle };
+    }
+
+    it('Workflow A creates a standalone project, refreshes the sidebar, and navigates to it', async () => {
+      const { win, doc, root, settle } = mountWizard();
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-standalone').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardStandaloneName').value = 'Brand New Co';
+      doc.getElementById('v6WizardStandaloneName').dispatch('input');
+      doc.getElementById('v6WizardStandaloneForm').dispatch('submit');
+      await settle();
+      assert.match(win.location.hash, /#\/resources\/\d+\/conversation/, 'navigated to the new project');
+      assert.match(root.innerHTML, /Brand New Co/);
+    });
+
+    it('rejects an empty or invalid standalone project name without calling the server', async () => {
+      const { doc, mutateCalls, settle } = mountWizard();
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-standalone').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardStandaloneForm').dispatch('submit');
+      await settle();
+      assert.deepEqual(mutateCalls, []);
+    });
+
+    it('Workflow B renames the source project and creates lettered seats for a multi-count role', async () => {
+      const { win, doc, root, mutateCalls, settle } = mountWizard();
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-convert').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardConvertSource').value = '30'; // TangleClaw, the standalone project
+      doc.getElementById('v6WizardConvertSource').dispatch('change');
+      doc.getElementById('v6WizardConvertFleetName').value = 'Monad';
+      doc.getElementById('v6WizardConvertFleetName').dispatch('input');
+      doc.getElementById('v6WizardConvertRole-Builder').value = '2';
+      doc.getElementById('v6WizardConvertRole-Builder').dispatch('change');
+      doc.getElementById('v6WizardConvertForm').dispatch('submit');
+      await settle();
+      assert.deepEqual(mutateCalls.map((c) => [c.url, c.method, c.body && c.body.name]), [
+        ['/api/projects/TangleClaw', 'PATCH', 'Monad-PM'],
+        ['/api/projects', 'POST', 'Monad-Builder-a'],
+        ['/api/projects', 'POST', 'Monad-Builder-b']
+      ]);
+      assert.match(win.location.hash, /#\/resources\/30\/conversation/, 'navigated to the renamed source project');
+      assert.match(root.innerHTML, /Monad-PM|Monad/);
+    });
+
+    it('Workflow C provisions one project per seat in the fetched plan, immediate and deferred alike', async () => {
+      const plan = {
+        templateId: 'small-4-seat',
+        immediateSeats: [{ role: 'PM', seatId: 'pm' }],
+        deferredSeats: [{ role: 'Builder', seatId: 'builder-a' }, { role: 'Builder', seatId: 'builder-b' }]
+      };
+      const { win, doc, root, mutateCalls, settle } = mountWizard(null, plan);
+      win.location.hash = '#/projects/tc-lane';
+      await settle();
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6ShellWizardLaunch-small-4-seat').dispatch('click');
+      await settle();
+      assert.match(root.innerHTML, /1 seat\(s\) start immediately, 2 deferred/, 'the plan preview rendered');
+      doc.getElementById('v6WizardFleetName').value = 'Monad';
+      doc.getElementById('v6WizardFleetName').dispatch('input');
+      doc.getElementById('v6WizardProvisionForm').dispatch('submit');
+      await settle();
+      assert.deepEqual(mutateCalls.filter((c) => c.method === 'POST' && c.url === '/api/projects').map((c) => c.body.name), [
+        'Monad-PM', 'Monad-Builder-a', 'Monad-Builder-b'
+      ]);
+      assert.match(win.location.hash, /#\/resources\/\d+\/conversation/, 'navigated to the first seat');
+      assert.match(root.innerHTML, /Monad-PM/);
+    });
+
+    it('switching to the Wizard and interacting never clobbers the active chat #v6ShellDetail', async () => {
+      const { win, doc, root, settle } = mountWizard();
+      win.location.hash = '#/resources/11/conversation';
+      await settle();
+      assert.match(root.innerHTML, /ship it/, 'the chat detail loaded');
+      doc.getElementById('v6WorkspaceMode-wizard').dispatch('click');
+      await settle();
+      doc.getElementById('v6WizardTab-standalone').dispatch('click');
+      await settle();
+      doc.getElementById('v6WorkspaceMode-chat').dispatch('click');
+      await settle();
+      assert.match(root.innerHTML, /ship it/, 'the chat detail survived the round trip through the Wizard');
+    });
+  });
+
   it('enterHash names the first logical project, loading the projects if needed', async () => {
     const { live } = mountLive(baseMap());
     assert.equal(await live.enterHash(), '#/projects/tc-lane');
@@ -1016,6 +1197,13 @@ describe('page wiring (#3022 deliverable a) — index.html and ui.js', () => {
     assert.match(block, /getElementById\('v6ViewToggleBtn'\)/);
     assert.match(block, /v6Shell\.navigate\('#\/'\)/);
     assert.match(block, /v6Shell\.navigate\(await v6Live\.enterHash\(\)\)/);
+  });
+
+  it('ui.js wires the 3 Wizard workflows to the live controller (#3114)', () => {
+    const block = UI.slice(UI.indexOf("if (typeof window.tcCreateV6Shell === 'function')"));
+    assert.match(block, /onCreateWorkspaceProject\(form\) \{ v6Live\.createWorkspaceProject\(form\); \}/);
+    assert.match(block, /onConvertToFleet\(form\) \{ v6Live\.convertToFleet\(form\); \}/);
+    assert.match(block, /onProvisionFleet\(args\) \{ v6Live\.provisionFleet\(args\); \}/);
   });
 });
 
@@ -4853,11 +5041,18 @@ describe('the footer status bar (#3079)', () => {
     assert.doesNotMatch(html, /<footer[^>]*aria-hidden/);
   });
 
-  it('with the watermark off it is the status bar alone; with no readings it is the old watermark or nothing', () => {
+  it('with the watermark off it is the status bar alone; with no readings yet (bar: null) the empty status container still exists (#3117)', () => {
     assert.doesNotMatch(G.tcV6WatermarkFooterMarkup(false, bar), /v6-shell-watermark-mark|>TangleClaw</);
     assert.match(G.tcV6WatermarkFooterMarkup(false, bar), /id="v6ShellStatusBar"/);
-    assert.equal(G.tcV6WatermarkFooterMarkup(true, null), '<footer class="v6-shell-watermark" aria-hidden="true">TangleClaw</footer>');
-    assert.equal(G.tcV6WatermarkFooterMarkup(false, null), '');
+    // #3117: an EXPLICIT null (the v6 shell's own pre-telemetry render) still
+    // gets #v6ShellStatusBar, empty, so #dashStats always has somewhere to
+    // move into — unlike omitting `bar` entirely (a caller with no status concept).
+    assert.equal(G.tcV6WatermarkFooterMarkup(true, null),
+      '<footer class="v6-shell-watermark has-status"><div id="v6ShellStatusBar" class="v6-shell-status-bar" role="status" aria-label="Server status"></div><span class="v6-shell-watermark-mark" aria-hidden="true">TangleClaw</span></footer>');
+    assert.equal(G.tcV6WatermarkFooterMarkup(false, null),
+      '<footer class="v6-shell-watermark has-status"><div id="v6ShellStatusBar" class="v6-shell-status-bar" role="status" aria-label="Server status"></div></footer>');
+    assert.equal(G.tcV6WatermarkFooterMarkup(true), '<footer class="v6-shell-watermark" aria-hidden="true">TangleClaw</footer>', 'omitting bar entirely keeps the old no-status-concept behavior');
+    assert.equal(G.tcV6WatermarkFooterMarkup(false), '');
   });
 
   it('the header bar no longer carries them, in a chat or outside one', () => {
@@ -6787,7 +6982,8 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
 
   it('renders in the footer even before telemetry, in chat and outside it, and opens in place', () => {
     const m = mountMeter();
-    assert.match(m.root.innerHTML, /<footer class="v6-shell-watermark has-status"><div id="v6EngineUsageSlot" class="v6-usage-slot"><button type="button" id="v6EngineUsageMeter"/);
+    // #3117: the (empty, pre-telemetry) #v6ShellStatusBar now precedes the usage slot.
+    assert.match(m.root.innerHTML, /<footer class="v6-shell-watermark has-status"><div id="v6ShellStatusBar"[^>]*><\/div><div id="v6EngineUsageSlot" class="v6-usage-slot"><button type="button" id="v6EngineUsageMeter"/);
     m.doc.getElementById('v6EngineUsageMeter').dispatch('click');
     assert.match(m.doc.getElementById('v6EngineUsageSlot').innerHTML, /aria-expanded="true"/);
     assert.doesNotMatch(m.doc.getElementById('v6EngineUsageSlot').innerHTML, /v6EngineUsagePopover"[^>]*hidden/);

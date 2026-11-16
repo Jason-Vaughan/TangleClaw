@@ -296,36 +296,45 @@
       const projectActive = activeProjectId === String(project.id);
       const projectHash = routeHash({ view: 'project', projectId: project.id });
       const projectFolded = collapsed.has(projectNodeKey(project));
-      const fleetItems = projectFolded ? '' : project.fleets.map((fleet, fi) => {
-        const fleetActive = projectActive && activeFleetId === String(fleet.id);
-        const fleetHash = routeHash({ view: 'fleet', projectId: project.id, fleetId: fleet.id });
-        const fleetFolded = collapsed.has(fleetNodeKey(project, fleet));
-        // #3022: a member with a seat id is a real resource — link it to its
-        // B2 Conversation View; one without stays plain text.
-        const memberItems = fleetFolded ? '' : fleet.members.map((m, mi) => {
-          const label = `${escapeHtml(m.role)} (${escapeHtml(m.seatId)})`;
-          if (!m.seatId) return `<li class="v6-shell-member">${label}</li>`;
-          const memberActive = activeResourceId === String(m.seatId);
-          const memberHash = routeHash({ view: 'conversation', resourceId: m.seatId });
-          // #3053 item 4: the member's status, when its project row is known.
-          const info = typeof options.memberInfo === 'function' ? options.memberInfo(m.seatId) : null;
-          const stateClass = info ? ` is-${info.state}` : '';
-          const title = info ? ` title="${escapeHtml(info.title)}"` : '';
-          const glyph = info ? `<span class="v6-member-glyph" aria-hidden="true">${info.glyph}</span>` : '';
-          return `<li class="v6-shell-member"><a class="v6-shell-member-link${stateClass}${memberActive ? ' is-active' : ''}"
-            aria-current="${memberActive ? 'page' : 'false'}" id="v6TreeLink-m${pi}-${fi}-${mi}"${title}
-            href="${escapeHtml(memberHash)}" data-route="${escapeHtml(memberHash)}">${glyph}${label}</a>${info ? memberIndicatorsMarkup(info) : ''}</li>`;
-        }).join('');
-        const fleetToggle = fleet.members.length
-          ? treeToggleMarkup(`v6TreeToggle-f${pi}-${fi}`, fleetNodeKey(project, fleet), fleet.displayName, fleetFolded)
-          : '';
-        return `<li>
-          <div class="v6-tree-row">${fleetToggle}<a class="v6-shell-fleet${fleetActive ? ' is-active' : ''}" id="v6TreeLink-f${pi}-${fi}"
-             aria-current="${fleetActive ? 'page' : 'false'}"
-             href="${escapeHtml(fleetHash)}" data-route="${escapeHtml(fleetHash)}">${escapeHtml(fleet.displayName)}</a></div>
-          ${memberItems ? `<ul class="v6-shell-members">${memberItems}</ul>` : ''}
-        </li>`;
+      // #3117: a single fleet whose name repeats the project's own
+      // ("Workspace Projects" -> "Workspace Projects") wastes a whole
+      // nesting level and its indentation on Galaxy Fold widths — skip
+      // that fleet's own row/toggle and show its members directly under
+      // the project, exactly as if there were no intermediate fleet at all.
+      const flattenFleet = project.fleets.length === 1 && project.fleets[0].displayName === project.displayName;
+      // #3022: a member with a seat id is a real resource — link it to its
+      // B2 Conversation View; one without stays plain text.
+      const memberItemsFor = (fleet, fi) => fleet.members.map((m, mi) => {
+        const label = `${escapeHtml(m.role)} (${escapeHtml(m.seatId)})`;
+        if (!m.seatId) return `<li class="v6-shell-member">${label}</li>`;
+        const memberActive = activeResourceId === String(m.seatId);
+        const memberHash = routeHash({ view: 'conversation', resourceId: m.seatId });
+        // #3053 item 4: the member's status, when its project row is known.
+        const info = typeof options.memberInfo === 'function' ? options.memberInfo(m.seatId) : null;
+        const stateClass = info ? ` is-${info.state}` : '';
+        const title = info ? ` title="${escapeHtml(info.title)}"` : '';
+        const glyph = info ? `<span class="v6-member-glyph" aria-hidden="true">${info.glyph}</span>` : '';
+        return `<li class="v6-shell-member"><a class="v6-shell-member-link${stateClass}${memberActive ? ' is-active' : ''}"
+          aria-current="${memberActive ? 'page' : 'false'}" id="v6TreeLink-m${pi}-${fi}-${mi}"${title}
+          href="${escapeHtml(memberHash)}" data-route="${escapeHtml(memberHash)}">${glyph}${label}</a>${info ? memberIndicatorsMarkup(info) : ''}</li>`;
       }).join('');
+      const fleetItems = projectFolded ? '' : (flattenFleet
+        ? memberItemsFor(project.fleets[0], 0)
+        : project.fleets.map((fleet, fi) => {
+          const fleetActive = projectActive && activeFleetId === String(fleet.id);
+          const fleetHash = routeHash({ view: 'fleet', projectId: project.id, fleetId: fleet.id });
+          const fleetFolded = collapsed.has(fleetNodeKey(project, fleet));
+          const memberItems = fleetFolded ? '' : memberItemsFor(fleet, fi);
+          const fleetToggle = fleet.members.length
+            ? treeToggleMarkup(`v6TreeToggle-f${pi}-${fi}`, fleetNodeKey(project, fleet), fleet.displayName, fleetFolded)
+            : '';
+          return `<li>
+            <div class="v6-tree-row">${fleetToggle}<a class="v6-shell-fleet${fleetActive ? ' is-active' : ''}" id="v6TreeLink-f${pi}-${fi}"
+               aria-current="${fleetActive ? 'page' : 'false'}"
+               href="${escapeHtml(fleetHash)}" data-route="${escapeHtml(fleetHash)}">${escapeHtml(fleet.displayName)}</a></div>
+            ${memberItems ? `<ul class="v6-shell-members">${memberItems}</ul>` : ''}
+          </li>`;
+        }).join(''));
       const projectToggle = project.fleets.length
         ? treeToggleMarkup(`v6TreeToggle-p${pi}`, projectNodeKey(project), project.displayName, projectFolded)
         : '';
@@ -333,7 +342,7 @@
         <div class="v6-tree-row">${projectToggle}<a class="v6-shell-project${projectActive ? ' is-active' : ''}" id="v6TreeLink-p${pi}"
            aria-current="${projectActive ? 'page' : 'false'}"
            href="${escapeHtml(projectHash)}" data-route="${escapeHtml(projectHash)}">${escapeHtml(project.displayName)}</a></div>
-        ${fleetItems ? `<ul class="v6-shell-fleets">${fleetItems}</ul>` : ''}
+        ${fleetItems ? `<ul class="${flattenFleet ? 'v6-shell-members' : 'v6-shell-fleets'}">${fleetItems}</ul>` : ''}
       </li>`;
     }).join('');
     return `<ul class="v6-shell-tree">${items}</ul>`;
@@ -1118,6 +1127,124 @@
     return `<ul class="v6-wizard-list" aria-label="Starter fleet templates">${items}</ul>`;
   }
 
+  /** The AI engines every Wizard workflow offers (#3114). */
+  const WIZARD_ENGINES = Object.freeze(['claude', 'codex', 'antigravity', 'aider']);
+
+  /** Workflow B's fixed additional-role picker (#3114) — PM is the source project's own role, not a new seat. */
+  const WIZARD_FLEET_ROLES = Object.freeze(['Architect', 'Builder', 'PRR', 'Integrator', 'Observer']);
+
+  /**
+   * Workflow A's form (#3114): a standalone single-session workspace
+   * project, created fresh or attached from an existing path.
+   * @param {{name?: string, engine?: string, path?: string}} [form]
+   * @returns {string} HTML.
+   */
+  function wizardStandaloneMarkup(form) {
+    const f = form || {};
+    const engineOptions = WIZARD_ENGINES.map((e) => `<option value="${e}"${(f.engine || 'claude') === e ? ' selected' : ''}>${e}</option>`).join('');
+    return `<form id="v6WizardStandaloneForm" class="v6-wizard-form" aria-label="Create a standalone workspace project">
+      <label class="v6-wizard-field">Project name<input type="text" id="v6WizardStandaloneName" class="filter-input" value="${escapeHtml(f.name || '')}" maxlength="64" required></label>
+      <label class="v6-wizard-field">AI Engine<select id="v6WizardStandaloneEngine" class="filter-input">${engineOptions}</select></label>
+      <label class="v6-wizard-field">Workspace path <span class="v6-wizard-hint">(optional — attaches an existing directory instead of creating one)</span><input type="text" id="v6WizardStandalonePath" class="filter-input" value="${escapeHtml(f.path || '')}" placeholder="/path/to/existing/repo"></label>
+      <button type="submit" id="v6WizardStandaloneSubmit" class="btn btn-primary btn-small">Create Workspace Project</button>
+    </form>`;
+  }
+
+  /**
+   * Workflow B's form (#3114): upgrade an existing standalone project into
+   * a fleet by giving it a role alongside newly provisioned role seats,
+   * all sharing one dash-prefixed name so {@link synthesizeTreeFromProjects}
+   * groups them together.
+   * @param {{sourceId?: string, roleForSource?: string, fleetName?: string,
+   *   engine?: string, roles?: Record<string, number>}} [form]
+   * @param {Array<{seatId: string, role: string}>} standaloneProjects - the
+   *   "Workspace Projects" catch-all fleet's own members (#3117).
+   * @returns {string} HTML.
+   */
+  function wizardConvertMarkup(form, standaloneProjects) {
+    const f = form || {};
+    const list = Array.isArray(standaloneProjects) ? standaloneProjects : [];
+    const sourceOptions = list.map((p) => (
+      `<option value="${escapeHtml(p.seatId)}"${String(f.sourceId || '') === String(p.seatId) ? ' selected' : ''}>${escapeHtml(p.role)}</option>`
+    )).join('');
+    const engineOptions = WIZARD_ENGINES.map((e) => `<option value="${e}"${(f.engine || 'claude') === e ? ' selected' : ''}>${e}</option>`).join('');
+    const roles = f.roles && typeof f.roles === 'object' ? f.roles : {};
+    const roleRows = WIZARD_FLEET_ROLES.map((role) => (
+      `<label class="v6-wizard-role">${escapeHtml(role)}<input type="number" min="0" max="9" step="1" id="v6WizardConvertRole-${escapeHtml(role)}" class="filter-input v6-wizard-role-count" data-role="${escapeHtml(role)}" value="${Number(roles[role]) || 0}"></label>`
+    )).join('');
+    if (!list.length) {
+      return '<p class="v6-workspace-empty">No standalone workspace projects to convert yet — create one first.</p>';
+    }
+    return `<form id="v6WizardConvertForm" class="v6-wizard-form" aria-label="Convert a standalone workspace project to a fleet">
+      <label class="v6-wizard-field">Source workspace<select id="v6WizardConvertSource" class="filter-input" required>
+        <option value="">Choose a project…</option>${sourceOptions}</select></label>
+      <label class="v6-wizard-field">Its role in the new fleet<input type="text" id="v6WizardConvertSourceRole" class="filter-input" value="${escapeHtml(f.roleForSource || 'PM')}" maxlength="32"></label>
+      <label class="v6-wizard-field">Fleet name<input type="text" id="v6WizardConvertFleetName" class="filter-input" value="${escapeHtml(f.fleetName || '')}" maxlength="48" required></label>
+      <label class="v6-wizard-field">Default engine for new seats<select id="v6WizardConvertEngine" class="filter-input">${engineOptions}</select></label>
+      <fieldset class="v6-wizard-roles"><legend>Additional role seats</legend>${roleRows}</fieldset>
+      <p class="v6-wizard-hint">Live plan preview: the source project becomes <strong>&lt;Fleet name&gt;-&lt;its role&gt;</strong>; each additional seat becomes <strong>&lt;Fleet name&gt;-&lt;role&gt;</strong> (lettered when there is more than one of a role).</p>
+      <button type="submit" id="v6WizardConvertSubmit" class="btn btn-primary btn-small">Convert to Fleet</button>
+    </form>`;
+  }
+
+  /**
+   * Workflow C's view (#3114): the existing starter-template list, plus —
+   * once a template is picked — its live plan preview and a Provision
+   * Fleet action. Clicking a template only sets the Wizard's OWN state
+   * (`shell.setWizardPlan`/`setWizardTemplate`); it never touches `detail`.
+   * @param {Array<object>} templates
+   * @param {string|null} templateId - The selected template, if any.
+   * @param {object|null} plan - `POST /api/v6/fleet-templates/:id/plan`'s result.
+   * @param {{fleetName?: string, engine?: string}} [form]
+   * @returns {string} HTML.
+   */
+  function wizardTemplatesMarkup(templates, templateId, plan, form) {
+    const f = form || {};
+    const list = fleetWizardMarkup(templates);
+    if (!templateId) return list;
+    const engineOptions = WIZARD_ENGINES.map((e) => `<option value="${e}"${(f.engine || 'claude') === e ? ' selected' : ''}>${e}</option>`).join('');
+    const planHtml = plan ? fleetPlanMarkup(plan) : '<p class="v6-workspace-empty">Loading plan…</p>';
+    return `${list}
+      <form id="v6WizardProvisionForm" class="v6-wizard-form" aria-label="Provision this fleet">
+        <label class="v6-wizard-field">Fleet name<input type="text" id="v6WizardFleetName" class="filter-input" value="${escapeHtml(f.fleetName || '')}" maxlength="48" required></label>
+        <label class="v6-wizard-field">Default engine<select id="v6WizardFleetEngine" class="filter-input">${engineOptions}</select></label>
+        <button type="submit" id="v6WizardProvisionBtn" class="btn btn-primary btn-small"${plan ? '' : ' disabled'}>Provision Fleet</button>
+      </form>
+      ${planHtml}`;
+  }
+
+  /**
+   * The interactive Wizard panel inside `#v6ShellWizard` (#3114): 3 tabs —
+   * Template (the default, so the starter-fleet list the existing
+   * `#v6ShellWizardLaunch-*` tests expect is always visible on first
+   * open), New Workspace, and Convert to Fleet. None of them touch
+   * `detail` — the Wizard keeps entirely its own state, so switching back
+   * to 💬 Chat finds the active conversation exactly as it was.
+   * @param {Array<object>} templates - `/api/v6/fleet-templates`'s list.
+   * @param {Array<{seatId: string, role: string}>} standaloneProjects
+   * @param {{tab?: string, form?: object, templateId?: string|null,
+   *   plan?: object|null, status?: {kind: string, message: string}|null}} [wizard]
+   * @returns {string} HTML.
+   */
+  function wizardMarkup(templates, standaloneProjects, wizard) {
+    const w = wizard || {};
+    const tab = ['templates', 'standalone', 'convert'].includes(w.tab) ? w.tab : 'templates';
+    const status = w.status
+      ? `<p class="v6-wizard-status is-${escapeHtml(w.status.kind)}" role="status">${escapeHtml(w.status.message)}</p>` : '';
+    const tabBtn = (id, label) => (
+      `<button type="button" id="v6WizardTab-${id}" class="btn btn-secondary btn-small v6-wizard-tab${tab === id ? ' is-active' : ''}"
+        aria-pressed="${tab === id ? 'true' : 'false'}" data-wizard-tab="${id}">${escapeHtml(label)}</button>`
+    );
+    const tabs = `<div class="v6-wizard-tabs" role="tablist" aria-label="New Project / Fleet Wizard workflow">
+      ${tabBtn('templates', '📁 Template')}${tabBtn('standalone', '🆕 New Workspace')}${tabBtn('convert', '🔀 Convert to Fleet')}</div>`;
+    const form = w.form || {};
+    let body;
+    if (tab === 'standalone') body = wizardStandaloneMarkup(form.standalone);
+    else if (tab === 'convert') body = wizardConvertMarkup(form.convert, standaloneProjects);
+    else body = wizardTemplatesMarkup(templates, w.templateId, w.plan, form.templates);
+    return `<div class="v6-wizard">${tabs}${status}${body}</div>`;
+  }
+
   /**
    * Render a D1 model-attestation indicator (#2981 D1 render hook) — the
    * exact row shape `lib/v6/d1-model-attestation.js`'s table carries
@@ -1153,8 +1280,15 @@
    * @returns {string} HTML, or `''` with neither a watermark nor readings.
    */
   function watermarkFooterMarkup(showWatermark, bar, usage) {
-    const status = bar && bar.metrics
-      ? `<div id="v6ShellStatusBar" class="v6-shell-status-bar" role="status" aria-label="Server status">${TELEMETRY_FOOTER_KEYS.map((key) => telemetryChipMarkup(bar, key)).join('')}</div>`
+    // #3117 (PRR-A/Observer-facing: Galaxy Fold header void): the v6 shell's
+    // own render always passes a `bar` argument (`null` before telemetry
+    // loads, the reading after), so #v6ShellStatusBar — the only place
+    // #dashStats can move into — exists from the shell's very first render,
+    // not only once metrics arrive. A caller that omits `bar` entirely
+    // (bar === undefined) keeps the old "no status concept" behavior.
+    const chips = bar && bar.metrics ? TELEMETRY_FOOTER_KEYS.map((key) => telemetryChipMarkup(bar, key)).join('') : '';
+    const status = bar !== undefined
+      ? `<div id="v6ShellStatusBar" class="v6-shell-status-bar" role="status" aria-label="Server status">${chips}</div>`
       : '';
     // #3085: the 3-engine usage meter, in its own slot so a refresh can
     // redraw it alone.
@@ -3323,6 +3457,7 @@
     // actions, which never move, not before a header that comes and goes.
     moveDashStats(doc, active);
     dockChatHeader(doc, active);
+    dockDrawerToggle(doc, active);
     if (!active) {
       // Last first: each control's recorded next node is then back in place.
       ADMIN_TUCK_IDS.slice().reverse().forEach((id) => {
@@ -3392,6 +3527,26 @@
     if (actions && actions.parentNode === bar) bar.insertBefore(drawn, actions);
     else bar.appendChild(drawn);
     if (focus && focus.id && typeof drawn.contains === 'function' && drawn.contains(focus) && typeof focus.focus === 'function') focus.focus();
+  }
+
+  /**
+   * Dock the mobile `☰` drawer toggle at the leading edge of `.dash-bar`,
+   * next to `.dash-brand` (#3117) — same move-not-copy pattern as
+   * {@link dockChatHeader}, so the button keeps its own listeners and
+   * focus. CSS (`@media (max-width: 760px)`) decides when it is actually
+   * visible; this only decides WHERE it lives in the DOM, every width.
+   * @param {Document} doc
+   * @param {boolean} active
+   */
+  function dockDrawerToggle(doc, active) {
+    if (typeof doc.querySelector !== 'function') return;
+    const bar = doc.querySelector('.dash-bar');
+    if (!bar) return;
+    const docked = typeof bar.querySelector === 'function' ? bar.querySelector('.v6-shell-drawer-toggle') : null;
+    const drawn = active ? doc.getElementById('v6ShellDrawerToggle') : null;
+    if (docked && docked !== drawn && (drawn || !active)) docked.remove();
+    if (!drawn || typeof bar.prepend !== 'function') return;
+    if (bar.firstElementChild !== drawn) bar.prepend(drawn);
   }
 
   /**
@@ -4957,16 +5112,153 @@
       await refresh();
     }
 
+    /**
+     * Fetch a template's live plan preview (#3114). Lands in the Wizard's
+     * OWN state (`shell.setWizardPlan`/`setWizardStatus`), never `detail`
+     * — the #3114 bug this replaces clobbered the active chat by routing
+     * the plan through `shell.setDetail({kind: 'plan', ...})` instead.
+     * @param {string} templateId
+     */
     async function launchTemplate(templateId) {
       const mine = ++seq;
       const shell = getShell();
       if (!shell) return;
-      shell.setDetail({ kind: 'loading' });
       const plan = await apiMutate(`/api/v6/fleet-templates/${encodeURIComponent(templateId)}/plan`, 'POST', {});
       if (mine !== seq) return;
-      shell.setDetail(plan
-        ? { kind: 'plan', plan }
-        : { kind: 'error', message: `Could not plan template “${templateId}”.` });
+      if (plan) shell.setWizardPlan(plan);
+      else if (typeof shell.setWizardStatus === 'function') shell.setWizardStatus({ kind: 'error', message: `Could not plan template “${templateId}”.` });
+    }
+
+    /** `a`, `b`, ..., `z` — the suffix a multi-seat role's Nth seat gets (#3114). */
+    function wizardLetterSuffix(index) {
+      const letters = 'abcdefghijklmnopqrstuvwxyz';
+      return letters[index] || String(index + 1);
+    }
+
+    /**
+     * After any Wizard workflow provisions/converts a project (#3114):
+     * refresh the sidebar tree, land back in Chat, reset the Wizard's own
+     * state, and navigate to the project/seat the operator should now see.
+     * @param {object} shell
+     * @param {string|null} firstName - The newly-created/renamed project's
+     *   name to navigate to, once `loadProjects` has it, or null to skip.
+     */
+    async function afterWizardAction(shell, firstName) {
+      await loadProjects();
+      showProjects(shell);
+      if (typeof shell.resetWizard === 'function') shell.resetWizard();
+      if (typeof shell.setWorkspaceMode === 'function') shell.setWorkspaceMode('chat');
+      const found = firstName ? (projects || []).find((p) => p.name === firstName) : null;
+      if (found) shell.navigate(routeHash({ view: 'conversation', resourceId: found.id }));
+    }
+
+    /**
+     * Workflow A (#3114): a standalone single-session workspace project,
+     * created fresh (`POST /api/projects`) or attached from an existing
+     * path (`POST /api/projects/attach`).
+     * @param {{name: string, engine: string, path: string}} form
+     */
+    async function createWorkspaceProject(form) {
+      const shell = getShell();
+      if (!shell) return;
+      const name = String((form && form.name) || '').trim();
+      const path = String((form && form.path) || '').trim();
+      const engine = (form && form.engine) || 'claude';
+      const res = path
+        ? await apiMutate('/api/projects/attach', 'POST', { name, path })
+        : await apiMutate('/api/projects', 'POST', { name, engine });
+      if (!res) {
+        if (typeof shell.setWizardStatus === 'function') {
+          shell.setWizardStatus({ kind: 'error', message: `Not created: ${api.lastError || 'the server refused it'}` });
+        }
+        return;
+      }
+      await afterWizardAction(shell, name);
+    }
+
+    /**
+     * Workflow B (#3114): rename the existing standalone project to
+     * `<FleetName>-<its role>` and provision one new project per
+     * additional role seat, named `<FleetName>-<Role>` (lettered when more
+     * than one of a role), so every seat shares one dash-prefix and
+     * {@link synthesizeTreeFromProjects} groups them as a fleet.
+     * @param {{sourceId: string, roleForSource: string, fleetName: string,
+     *   engine: string, roles: Record<string, number>}} form
+     */
+    async function convertToFleet(form) {
+      const shell = getShell();
+      if (!shell) return;
+      const fleetName = String(form.fleetName || '').trim();
+      const sourceProject = (projects || []).find((p) => String(p.id) === String(form.sourceId));
+      if (!sourceProject) {
+        if (typeof shell.setWizardStatus === 'function') {
+          shell.setWizardStatus({ kind: 'error', message: 'Not converted: that source workspace is no longer on the list.' });
+        }
+        return;
+      }
+      const sourceRole = String(form.roleForSource || 'PM').trim() || 'PM';
+      const sourceNewName = `${fleetName}-${sourceRole}`;
+      const renamed = await apiMutate(`/api/projects/${encodeURIComponent(sourceProject.name)}`, 'PATCH', { name: sourceNewName });
+      if (!renamed) {
+        if (typeof shell.setWizardStatus === 'function') {
+          shell.setWizardStatus({ kind: 'error', message: `Not converted: ${api.lastError || 'the rename was refused'}` });
+        }
+        return;
+      }
+      const engine = form.engine || 'claude';
+      const roles = form.roles && typeof form.roles === 'object' ? form.roles : {};
+      const warnings = [];
+      for (const role of Object.keys(roles)) {
+        const count = Number(roles[role]) || 0;
+        for (let i = 0; i < count; i++) {
+          const seatName = count > 1 ? `${fleetName}-${role}-${wizardLetterSuffix(i)}` : `${fleetName}-${role}`;
+          // Sequential on purpose: a batch of sibling POSTs would race the
+          // same projects-dir scaffold and each other's directory creation.
+          const created = await apiMutate('/api/projects', 'POST', { name: seatName, engine }); // eslint-disable-line no-await-in-loop
+          if (!created) warnings.push(`${seatName}: ${api.lastError || 'the server refused it'}`);
+        }
+      }
+      if (warnings.length && typeof shell.setWizardStatus === 'function') {
+        shell.setWizardStatus({ kind: 'warning', message: `Converted, but some seats failed: ${warnings.join('; ')}` });
+      }
+      await afterWizardAction(shell, sourceNewName);
+    }
+
+    /**
+     * Workflow C (#3114): create one real project per seat in the
+     * already-fetched plan — both immediate and deferred, since a seat's
+     * project row exists from the start regardless of when its session
+     * first starts — named `<FleetName>-<Role>` (lettered when more than
+     * one of a role shares the fleet).
+     * @param {{templateId: string, plan: {immediateSeats: Array<object>,
+     *   deferredSeats: Array<object>}, fleetName: string, engine: string}} args
+     */
+    async function provisionFleet(args) {
+      const shell = getShell();
+      if (!shell) return;
+      const a = args || {};
+      const fleetName = String(a.fleetName || '').trim();
+      const engine = a.engine || 'claude';
+      const seats = [].concat((a.plan && a.plan.immediateSeats) || [], (a.plan && a.plan.deferredSeats) || []);
+      const byRole = new Map();
+      seats.forEach((s) => { const r = s && s.role; byRole.set(r, (byRole.get(r) || 0) + 1); });
+      const seenCount = new Map();
+      const warnings = [];
+      let firstName = null;
+      for (const seat of seats) {
+        const role = seat && seat.role;
+        const total = byRole.get(role) || 1;
+        const i = seenCount.get(role) || 0;
+        seenCount.set(role, i + 1);
+        const seatName = total > 1 ? `${fleetName}-${role}-${wizardLetterSuffix(i)}` : `${fleetName}-${role}`;
+        if (!firstName) firstName = seatName;
+        const created = await apiMutate('/api/projects', 'POST', { name: seatName, engine }); // eslint-disable-line no-await-in-loop
+        if (!created) warnings.push(`${seatName}: ${api.lastError || 'the server refused it'}`);
+      }
+      if (warnings.length && typeof shell.setWizardStatus === 'function') {
+        shell.setWizardStatus({ kind: 'warning', message: `Provisioned, but some seats failed: ${warnings.join('; ')}` });
+      }
+      await afterWizardAction(shell, firstName);
     }
 
     async function enterHash() {
@@ -4978,6 +5270,7 @@
     return {
       handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, attachFiles, removeAttachment,
       startSession, startFleet, treeLinkClicked, renameProject, loadHistory, openHistorySession,
+      createWorkspaceProject, convertToFleet, provisionFleet,
       getProjects() { return projects; }
     };
   }
@@ -5024,6 +5317,14 @@
     let tree = buildHierarchyTree(options.tree || []);
     let telemetry = options.telemetry || null;
     let templates = Array.isArray(options.templates) ? options.templates : [];
+    // #3114: the Wizard's own state, entirely separate from `detail` — the
+    // active chat survives switching to 🧙 Wizard and back, since nothing
+    // here ever calls setDetail.
+    let wizardTab = 'templates';
+    let wizardForm = { standalone: {}, convert: {}, templates: {} };
+    let wizardTemplateId = null;
+    let wizardPlan = null;
+    let wizardStatus = null;
     let attestation = options.attestation || null;
     let detail = options.detail || null;
     const showWatermark = options.showWatermark !== false;
@@ -5323,13 +5624,18 @@
         });
       }
       const toggle = doc.getElementById('v6ShellDrawerToggle');
-      if (toggle) toggle.addEventListener('click', () => toggleDrawer());
+      if (toggle) toggle.addEventListener('click', () => { toggleDrawer(); focusById('v6ShellDrawerClose'); });
       const sidebar = doc.getElementById('v6ShellSidebar');
       if (sidebar) {
         sidebar.addEventListener('keydown', (evt) => {
-          if (evt && (evt.key === 'Escape' || evt.key === 'Esc')) toggleDrawer(false);
+          if (evt && (evt.key === 'Escape' || evt.key === 'Esc')) { toggleDrawer(false); focusById('v6ShellDrawerToggle'); }
         });
       }
+      // #3117: the mobile slide-over drawer's own close button and backdrop.
+      const drawerClose = doc.getElementById('v6ShellDrawerClose');
+      if (drawerClose) drawerClose.addEventListener('click', () => { toggleDrawer(false); focusById('v6ShellDrawerToggle'); });
+      const backdrop = doc.getElementById('v6ShellDrawerBackdrop');
+      if (backdrop) backdrop.addEventListener('click', () => { toggleDrawer(false); focusById('v6ShellDrawerToggle'); });
       // Each moves focus to the control that undoes it: the one clicked is
       // hidden or gone after the re-render, which would drop focus to the page.
       const collapseBtn = doc.getElementById('v6SidebarCollapse');
@@ -5377,13 +5683,21 @@
           if (fToggle) fToggle.addEventListener('click', () => toggleNode(fleetNodeKey(project, fleet)));
         });
       });
-      if (typeof options.onLaunchTemplate === 'function') {
-        templates.forEach((t) => {
-          const templateId = t && t.id;
-          const button = templateId != null ? doc.getElementById(`v6ShellWizardLaunch-${templateId}`) : null;
-          if (button) button.addEventListener('click', () => options.onLaunchTemplate(templateId));
+      templates.forEach((t) => {
+        const templateId = t && t.id;
+        const button = templateId != null ? doc.getElementById(`v6ShellWizardLaunch-${templateId}`) : null;
+        if (!button) return;
+        button.addEventListener('click', () => {
+          // #3114: picking a template only moves the Wizard's OWN state —
+          // never `shell.setDetail`, which would clobber the active chat.
+          wizardTemplateId = templateId;
+          wizardPlan = null;
+          wizardStatus = null;
+          render();
+          if (typeof options.onLaunchTemplate === 'function') options.onLaunchTemplate(templateId);
         });
-      }
+      });
+      wireWizard();
     }
 
     /** @param {string} id */
@@ -5555,11 +5869,16 @@
 
     /** Report every sidebar link click, with its hash, so the page can refresh (#3053). */
     function wireTreeLinks() {
-      if (typeof options.onTreeLinkClick !== 'function') return;
       shownTree.forEach((project, pi) => {
         const report = (id, hash) => {
           const link = doc.getElementById(id);
-          if (link) link.addEventListener('click', () => options.onTreeLinkClick(hash));
+          if (!link) return;
+          link.addEventListener('click', () => {
+            if (typeof options.onTreeLinkClick === 'function') options.onTreeLinkClick(hash);
+            // #3117: picking anything in the mobile slide-over drawer
+            // closes it so the selected conversation is visible right away.
+            if (drawerOpen) toggleDrawer(false);
+          });
         };
         report(`v6TreeLink-p${pi}`, routeHash({ view: 'project', projectId: project.id }));
         project.fleets.forEach((fleet, fi) => {
@@ -5569,6 +5888,104 @@
           });
         });
       });
+    }
+
+    /**
+     * The Wizard panel's own controls (#3114): tab switching, live form
+     * field tracking (so a re-render — a tab switch, a plan arriving —
+     * never drops what the operator already typed), and the 3 workflow
+     * submit actions. None of this ever calls `shell.setDetail`.
+     */
+    function wireWizard() {
+      ['templates', 'standalone', 'convert'].forEach((id) => {
+        const btn = doc.getElementById(`v6WizardTab-${id}`);
+        if (btn) btn.addEventListener('click', () => { wizardTab = id; wizardStatus = null; render(); });
+      });
+      const track = (fieldId, group, key) => {
+        const el = doc.getElementById(fieldId);
+        if (!el) return;
+        const update = () => { wizardForm[group] = Object.assign({}, wizardForm[group], { [key]: el.value }); };
+        // Both, not a tagName-based choice of one: a <select>/number input
+        // fires 'change' (never a bare 'input' in every environment this
+        // runs in), a text input fires 'input'; listening for both is a
+        // harmless no-op for whichever one a given field never actually fires.
+        el.addEventListener('input', update);
+        el.addEventListener('change', update);
+      };
+      track('v6WizardStandaloneName', 'standalone', 'name');
+      track('v6WizardStandaloneEngine', 'standalone', 'engine');
+      track('v6WizardStandalonePath', 'standalone', 'path');
+      track('v6WizardConvertSource', 'convert', 'sourceId');
+      track('v6WizardConvertSourceRole', 'convert', 'roleForSource');
+      track('v6WizardConvertFleetName', 'convert', 'fleetName');
+      track('v6WizardConvertEngine', 'convert', 'engine');
+      track('v6WizardFleetName', 'templates', 'fleetName');
+      track('v6WizardFleetEngine', 'templates', 'engine');
+      WIZARD_FLEET_ROLES.forEach((role) => {
+        const el = doc.getElementById(`v6WizardConvertRole-${role}`);
+        if (!el) return;
+        el.addEventListener('change', () => {
+          const roles = Object.assign({}, wizardForm.convert.roles, { [role]: Number(el.value) || 0 });
+          wizardForm.convert = Object.assign({}, wizardForm.convert, { roles });
+        });
+      });
+      const standaloneForm = doc.getElementById('v6WizardStandaloneForm');
+      if (standaloneForm) {
+        standaloneForm.addEventListener('submit', (evt) => {
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          const f = wizardForm.standalone || {};
+          const name = String(f.name || '').trim();
+          if (!name || !PROJECT_NAME_CHARS.test(name)) {
+            wizardStatus = { kind: 'error', message: 'Project name is required and may only use letters, digits, spaces, dashes and underscores.' };
+            render();
+            return;
+          }
+          wizardStatus = { kind: 'pending', message: `Creating ${name}…` };
+          render();
+          if (typeof options.onCreateWorkspaceProject === 'function') {
+            options.onCreateWorkspaceProject({ name, engine: f.engine || 'claude', path: String(f.path || '').trim() });
+          }
+        });
+      }
+      const convertForm = doc.getElementById('v6WizardConvertForm');
+      if (convertForm) {
+        convertForm.addEventListener('submit', (evt) => {
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          const f = wizardForm.convert || {};
+          const fleetName = String(f.fleetName || '').trim();
+          if (!f.sourceId || !fleetName || !PROJECT_NAME_CHARS.test(fleetName)) {
+            wizardStatus = { kind: 'error', message: 'Choose a source workspace and give the fleet a valid name.' };
+            render();
+            return;
+          }
+          wizardStatus = { kind: 'pending', message: `Converting to ${fleetName}…` };
+          render();
+          if (typeof options.onConvertToFleet === 'function') {
+            options.onConvertToFleet({
+              sourceId: f.sourceId, roleForSource: String(f.roleForSource || 'PM').trim() || 'PM',
+              fleetName, engine: f.engine || 'claude', roles: f.roles || {}
+            });
+          }
+        });
+      }
+      const provisionForm = doc.getElementById('v6WizardProvisionForm');
+      if (provisionForm) {
+        provisionForm.addEventListener('submit', (evt) => {
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          const f = wizardForm.templates || {};
+          const fleetName = String(f.fleetName || '').trim();
+          if (!fleetName || !PROJECT_NAME_CHARS.test(fleetName) || !wizardPlan) {
+            wizardStatus = { kind: 'error', message: 'Give the fleet a valid name and wait for the plan to load.' };
+            render();
+            return;
+          }
+          wizardStatus = { kind: 'pending', message: `Provisioning ${fleetName}…` };
+          render();
+          if (typeof options.onProvisionFleet === 'function') {
+            options.onProvisionFleet({ templateId: wizardTemplateId, plan: wizardPlan, fleetName, engine: f.engine || 'claude' });
+          }
+        });
+      }
     }
 
     /** The chat view's own controls (#3047), when the detail pane shows one. */
@@ -6047,6 +6464,19 @@
       return project && project.id != null ? String(project.id) : null;
     }
 
+    /**
+     * Workflow B's source picker (#3114): the "Workspace Projects" catch-all
+     * logical project's own members — the standalone single-session
+     * projects {@link synthesizeTreeFromProjects} found no dash-prefix
+     * sibling for.
+     * @returns {Array<{seatId: string, role: string}>}
+     */
+    function standaloneProjectsNow() {
+      const workspace = tree.find((p) => p && p.id === 'workspace');
+      const fleet = workspace && Array.isArray(workspace.fleets) ? workspace.fleets[0] : null;
+      return fleet && Array.isArray(fleet.members) ? fleet.members : [];
+    }
+
     /** @returns {string|null} What the chat on screen is busy with, if anything (#3057). */
     function busyLabelNow() {
       return detail && detail.kind === 'conversation' && detail.view ? chatBusyLabel(detail.view.chat) : null;
@@ -6316,9 +6746,11 @@
       }
       root.innerHTML = `
         <a id="v6ShellSkipLink" class="v6-shell-skip-link" href="#v6ShellMain">Skip to main content</a>
-        <button type="button" id="v6ShellDrawerToggle" class="v6-shell-drawer-toggle"
-          aria-expanded="${drawerOpen ? 'true' : 'false'}" aria-controls="v6ShellSidebar">☰ Menu</button>
+        <button type="button" id="v6ShellDrawerToggle" class="btn btn-secondary btn-small v6-shell-drawer-toggle"
+          aria-expanded="${drawerOpen ? 'true' : 'false'}" aria-controls="v6ShellSidebar" aria-label="Open fleet navigation menu" title="Menu"><span aria-hidden="true">☰</span></button>
+        ${drawerOpen ? '<div id="v6ShellDrawerBackdrop" class="v6-shell-drawer-backdrop"></div>' : ''}
         <nav id="v6ShellSidebar" class="v6-shell-sidebar${drawerOpen ? ' is-open' : ''}" aria-label="Fleet navigation">
+          <button type="button" id="v6ShellDrawerClose" class="btn btn-secondary btn-small v6-shell-drawer-close" aria-label="Close menu" title="Close"><span aria-hidden="true">✕</span></button>
           ${sidebarIconBarMarkup(searchOpen(), historyOpen)}
           <button type="button" id="v6ShellWizardOpenBtn" class="btn btn-secondary v6-wizard-open" data-workspace-mode="wizard"><span aria-hidden="true">＋</span> New Project / Fleet Wizard</button>
           ${historyOpen ? historyPanelMarkup({ form: historyForm, chatOpen: chatTargetKey() != null, data: historyData }) : ''}
@@ -6357,7 +6789,9 @@
             pending: pendingSends.filter((p) => p.key === chatTargetKey()),
             verbosity
           })}</div>
-          <div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard"${shown.wizard ? '' : ' hidden'}>${fleetWizardMarkup(templates)}</div>
+          <div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard"${shown.wizard ? '' : ' hidden'}>${wizardMarkup(templates, standaloneProjectsNow(), {
+            tab: wizardTab, form: wizardForm, templateId: wizardTemplateId, plan: wizardPlan, status: wizardStatus
+          })}</div>
           <div id="v6ShellAttestation"${shown.attestation ? '' : ' hidden'}>${modelAttestationMarkup(attestation)}</div>
           <section id="v6WorkspacePanel" class="v6-workspace-panel" role="tabpanel"
             aria-labelledby="v6WorkspaceMode-${shown.panel ? workspaceMode : 'sprint'}"${shown.panel ? '' : ' hidden'}>${shown.panel ? panelMarkupNow(workspaceMode) : ''}</section>
@@ -6494,6 +6928,34 @@
       setTree(nextTree) { tree = buildHierarchyTree(nextTree || []); render(); },
       setTelemetry(bar) { telemetry = bar || null; render(); },
       setTemplates(nextTemplates) { templates = Array.isArray(nextTemplates) ? nextTemplates : []; render(); },
+      /**
+       * The live controller's answer to `POST /api/v6/fleet-templates/:id/plan`
+       * (#3114), landing in the Wizard's own state — never `detail`. Also
+       * sets `wizardTemplateId` from the plan's own field, so a caller
+       * that calls this directly (skipping the launch-button click that
+       * otherwise sets it first) still gets the plan preview shown.
+       * @param {object|null} plan
+       */
+      setWizardPlan(plan) {
+        wizardPlan = plan || null;
+        if (plan && plan.templateId != null) wizardTemplateId = String(plan.templateId);
+        render();
+      },
+      /**
+       * Feedback for the Wizard's active action (#3114): pending while a
+       * create/convert/provision call is in flight, then its outcome.
+       * @param {{kind: string, message: string}|null} status
+       */
+      setWizardStatus(status) { wizardStatus = status && typeof status === 'object' ? status : null; render(); },
+      /**
+       * Reset the Wizard back to its landing tab once a workflow finishes
+       * (#3114) — called after a successful create/convert/provision, right
+       * before navigating away to the new project/fleet.
+       */
+      resetWizard() {
+        wizardTab = 'templates'; wizardForm = { standalone: {}, convert: {}, templates: {} };
+        wizardTemplateId = null; wizardPlan = null; wizardStatus = null;
+      },
       setAttestation(nextAttestation) { attestation = nextAttestation || null; render(); },
       setDetail(nextDetail) {
         detail = nextDetail || null;
@@ -6739,6 +7201,10 @@
   global.tcV6FilterTree = filterTree;
   global.tcV6TelemetryHeaderMarkup = telemetryHeaderMarkup;
   global.tcV6FleetWizardMarkup = fleetWizardMarkup;
+  global.tcV6WizardMarkup = wizardMarkup;
+  global.tcV6WizardStandaloneMarkup = wizardStandaloneMarkup;
+  global.tcV6WizardConvertMarkup = wizardConvertMarkup;
+  global.tcV6WizardTemplatesMarkup = wizardTemplatesMarkup;
   global.tcV6ModelAttestationMarkup = modelAttestationMarkup;
   global.tcV6WatermarkFooterMarkup = watermarkFooterMarkup;
   global.tcV6SynthesizeTreeFromProjects = synthesizeTreeFromProjects;

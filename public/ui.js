@@ -8236,6 +8236,12 @@ if (typeof window.tcCreateV6Shell === 'function') {
     // #3066: the sidebar's chat history and recents panel.
     onHistoryLoad(form) { v6Live.loadHistory(form); },
     onHistoryOpenSession(pick) { v6Live.openHistorySession(pick); },
+    // #3114: the 3 Wizard workflows — standalone workspace, convert to
+    // fleet, and template provisioning — none of them touch `onRender`'s
+    // own `detail`; each lands its outcome in the Wizard's own state.
+    onCreateWorkspaceProject(form) { v6Live.createWorkspaceProject(form); },
+    onConvertToFleet(form) { v6Live.convertToFleet(form); },
+    onProvisionFleet(args) { v6Live.provisionFleet(args); },
     onRender(route) {
       const active = Boolean(route && route.view);
       if (v6ShellRoot) v6ShellRoot.classList.toggle('hidden', !active);
