@@ -7725,6 +7725,12 @@ function setMasterStatus(status, text, showRetry) {
   // id from here would be the second implementation #768 exists to remove, and
   // it is the copy that would quietly stop matching the session's.
   if (masterBar) masterBar.setStatus(status, text, showRetry);
+  // The injected Relaunch button (#3130 PRR-A R1 BLOCKING 1) is not part of
+  // that shared bar, so it is not covered by the line above — mirrors Kill's
+  // own visibility rule (`public/api-helper.js#setStatus`): shown whenever
+  // Kill is, hidden when the Master is confirmed down.
+  const relaunchBtn = document.getElementById('masterPanelRelaunchBtn');
+  if (relaunchBtn) relaunchBtn.classList.toggle('hidden', status === 'down');
 }
 
 /**
@@ -7771,6 +7777,70 @@ async function ensureMasterAttached() {
   // the level is actually in force.
   if (masterBar) masterBar.loadAccess();
   attachMasterFrame();
+}
+
+/**
+ * Relaunch the Master: stop the current session and start a fresh one, as
+ * one action (#3130 PRR-A R1 BLOCKING 1) — composed entirely from the same
+ * two routes Kill and Launch already call, in sequence, client-side. The
+ * server gained no atomic relaunch SURFACE of its own this chunk: wiring one
+ * into `POST /api/master/ensure`'s body would touch `server.js`, which this
+ * car's exclusive scope this wave leaves to `TC-Lane-C`'s own in-progress
+ * car. This does exactly what the panel's existing "Reopening the drawer
+ * starts it again" Kill confirmation already tells the operator to do by
+ * hand (`docs/runbooks/activate-the-operator-bridge.md` step 7), just
+ * without the second click.
+ */
+function relaunchMaster() {
+  if (state.masterEnsuring) return;
+  if (!window.confirm(
+    'Relaunch the Project Master?\n\n'
+    + 'This stops the current session and starts a fresh one in its place, in one step. '
+    + 'Its durable notes under memory/ survive; the conversation it is holding does not.'
+  )) return;
+  state.masterEnsuring = true;
+  setMasterStatus('pending', 'Relaunching master session…');
+  api('/api/master/kill', { method: 'POST' })
+    .then(() => api('/api/master/ensure', { method: 'POST' }))
+    .then((result) => {
+      state.masterEnsuring = false;
+      if (!result) {
+        const unknown = api.lastErrorCode === 'MASTER_LIVENESS_UNKNOWN';
+        setMasterStatus(unknown ? '' : 'down',
+          api.lastError || 'Failed to relaunch the master session', true);
+        return;
+      }
+      setMasterStatus('live', 'Master session relaunched');
+      if (masterBar) masterBar.loadAccess();
+    });
+}
+
+/**
+ * Insert a "Relaunch" button as a plain DOM sibling of the shared control
+ * bar's own Kill button (#3130 PRR-A R1 BLOCKING 1).
+ *
+ * The shared bar component (`tcCreateMasterControlBar`, `public/api-helper.js`)
+ * has no Relaunch button of its own, and that file sits outside this car's
+ * exclusive file scope this wave — so this reaches into the bar's already-
+ * rendered DOM from here instead of adding a button to the component itself.
+ * Styled identically (`banner-btn`, the same class every other plain-action
+ * button in the bar carries) so it reads as part of the bar, not a bolt-on.
+ * @param {string} prefix - The mounted bar's id prefix (`masterPanel` on the
+ *   dashboard, `masterDrawer` on a session page) — this file only mounts the
+ *   dashboard one, but the helper takes it rather than hardcoding it.
+ * @returns {void}
+ */
+function addMasterRelaunchButton(prefix) {
+  const killBtn = document.getElementById(`${prefix}KillBtn`);
+  if (!killBtn || !killBtn.parentNode) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = `${prefix}RelaunchBtn`;
+  btn.className = 'banner-btn';
+  btn.title = 'Stop and immediately restart the Master session — for one that is wedged or has run out of context.';
+  btn.textContent = 'Relaunch';
+  btn.addEventListener('click', relaunchMaster);
+  killBtn.parentNode.insertBefore(btn, killBtn);
 }
 
 /**
@@ -8030,6 +8100,7 @@ masterBar = window.tcCreateMasterControlBar({
   onOpenSettings: () => { masterBar.setError(''); masterSettings.open(); }
 });
 masterBar.mount();
+addMasterRelaunchButton('masterPanel');
 
 // The Advisor control bar (#2819). Same component the session drawer mounts.
 advisorBar = window.tcCreateAdvisorControlBar({

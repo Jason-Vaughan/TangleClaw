@@ -104,6 +104,49 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
     });
   });
 
+  describe('relaunch (#3130 PRR-A R1 BLOCKING 1)', () => {
+    it('is composed from the same two routes Kill and Launch already call, in sequence, behind a confirm', () => {
+      const fn = masterSection.slice(
+        masterSection.indexOf('function relaunchMaster'),
+        masterSection.indexOf('function addMasterRelaunchButton')
+      );
+      assert.match(fn, /window\.confirm\(/);
+      assert.match(fn, /api\('\/api\/master\/kill', \{ method: 'POST' \}\)/);
+      assert.match(fn, /\.then\(\(\) => api\('\/api\/master\/ensure', \{ method: 'POST' \}\)\)/);
+      // Kill is issued and its promise chained before ensure ever runs.
+      const killIdx = fn.indexOf("api('/api/master/kill'");
+      const ensureIdx = fn.indexOf("api('/api/master/ensure'");
+      assert.ok(killIdx > -1 && ensureIdx > killIdx, 'kill must be issued, and chained, before ensure');
+      assert.match(fn, /if \(state\.masterEnsuring\) return;/, 're-entrant-guarded like ensureMasterAttached');
+    });
+
+    it('a failed relaunch surfaces the real server message, same as a failed ensure', () => {
+      const fn = masterSection.slice(
+        masterSection.indexOf('function relaunchMaster'),
+        masterSection.indexOf('function addMasterRelaunchButton')
+      );
+      assert.match(fn, /api\.lastErrorCode === 'MASTER_LIVENESS_UNKNOWN'/);
+      assert.match(fn, /api\.lastError \|\| 'Failed to relaunch the master session'/);
+    });
+
+    it('the button is inserted as a sibling of Kill, outside the shared bar component, and wired after mount', () => {
+      assert.match(masterSection, /function addMasterRelaunchButton\(prefix\)/);
+      assert.match(masterSection, /document\.getElementById\(`\$\{prefix\}KillBtn`\)/);
+      assert.match(masterSection, /btn\.addEventListener\('click', relaunchMaster\);/);
+      assert.match(masterSection, /killBtn\.parentNode\.insertBefore\(btn, killBtn\);/);
+      assert.match(js, /masterBar\.mount\(\);\s*\n\s*addMasterRelaunchButton\('masterPanel'\);/);
+    });
+
+    it('setMasterStatus hides the injected button exactly when it hides Kill — status "down"', () => {
+      const fn = masterSection.slice(
+        masterSection.indexOf('function setMasterStatus'),
+        masterSection.indexOf('async function ensureMasterAttached')
+      );
+      assert.match(fn, /masterPanelRelaunchBtn/);
+      assert.match(fn, /relaunchBtn\.classList\.toggle\('hidden', status === 'down'\);/);
+    });
+  });
+
   describe('terminal parity with the session page', () => {
     it('delegates frame wiring to the shared pipeline (theme + #431 + #443 + #445)', () => {
       // Since UI-4C7R the pane carries no wiring of its own: api-helper.js's

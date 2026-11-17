@@ -50,6 +50,44 @@ describe('tmux — a timed-out command says so (#894)', () => {
   });
 });
 
+describe('tmux — _defaultChildEnv strips TMUX for default-socket calls (#3130, PRR-A R1 BLOCKING 2a)', () => {
+  it('removes TMUX but leaves every other env var untouched', () => {
+    const saved = process.env.TMUX;
+    process.env.TMUX = '/tmp/tmux-501/tangleclaw-tcc-authorized,99999,0';
+    try {
+      const env = tmux._defaultChildEnv();
+      assert.equal(env.TMUX, undefined);
+      assert.equal(env.PATH, process.env.PATH, 'every other var passes through unchanged');
+      assert.notEqual(env, process.env, 'a copy, never the live process.env object itself');
+    } finally {
+      if (saved === undefined) delete process.env.TMUX; else process.env.TMUX = saved;
+    }
+  });
+
+  it('is a harmless no-op when TMUX was never set', () => {
+    const saved = process.env.TMUX;
+    delete process.env.TMUX;
+    try {
+      assert.equal(tmux._defaultChildEnv().TMUX, undefined);
+    } finally {
+      if (saved !== undefined) process.env.TMUX = saved;
+    }
+  });
+
+  it('_exec passes it as the child env, so a default-socket call never inherits this process\'s own TMUX', () => {
+    const saved = process.env.TMUX;
+    process.env.TMUX = '/tmp/tmux-501/tangleclaw-tcc-authorized,99999,0';
+    try {
+      // `env -u` would exit non-zero with the var still set; a deliberately
+      // wrong expectation here would catch this test asserting nothing.
+      assert.equal(tmux._exec('env -u TMUX >/dev/null 2>&1; echo $?'), '0');
+      assert.equal(tmux._exec('echo "TMUX=[$TMUX]"'), 'TMUX=[]');
+    } finally {
+      if (saved === undefined) delete process.env.TMUX; else process.env.TMUX = saved;
+    }
+  });
+});
+
 describe('tmux — one session probe, two questions (#900)', () => {
   it('reports that tmux never answered, where hasSession can only say "not live"', () => {
     // A REAL stalling `tmux`, for the reason the file's other timeout guards use
