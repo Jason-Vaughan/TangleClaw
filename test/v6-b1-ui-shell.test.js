@@ -2011,6 +2011,47 @@ describe('tcV6ChatKeyAction (#3047)', () => {
   });
 });
 
+describe('tcV6HoodKeyAction — Interactive CLI Mode\'s keystroke mapping (#3135)', () => {
+  const G = loadV6Shell();
+  const act = (evt, buffered) => plain(G.tcV6HoodKeyAction(evt, buffered));
+
+  it('sends every named navigation/control key straight to the pane, unbuffered', () => {
+    assert.deepEqual(act({ key: 'ArrowUp' }, ''), { type: 'rawKey', value: 'Up' });
+    assert.deepEqual(act({ key: 'ArrowDown' }, ''), { type: 'rawKey', value: 'Down' });
+    assert.deepEqual(act({ key: 'ArrowLeft' }, ''), { type: 'rawKey', value: 'Left' });
+    assert.deepEqual(act({ key: 'ArrowRight' }, ''), { type: 'rawKey', value: 'Right' });
+    assert.deepEqual(act({ key: 'Tab' }, ''), { type: 'rawKey', value: 'Tab' });
+    assert.deepEqual(act({ key: 'Escape' }, ''), { type: 'rawKey', value: 'Escape' });
+  });
+
+  it('Ctrl+C (or Cmd+C) always sends C-c, even with text held, and clears nothing itself', () => {
+    assert.deepEqual(act({ key: 'c', ctrlKey: true }, 'partial'), { type: 'rawKey', value: 'C-c' });
+    assert.deepEqual(act({ key: 'c', metaKey: true }, ''), { type: 'rawKey', value: 'C-c' });
+  });
+
+  it('a plain printable character is buffered, never sent on its own', () => {
+    assert.deepEqual(act({ key: 'y' }, ''), { type: 'buffer', text: 'y' });
+    assert.deepEqual(act({ key: '2' }, 'y'), { type: 'buffer', text: 'y2' });
+  });
+
+  it('Backspace edits the held buffer locally; with nothing held, it sends BSpace to the pane', () => {
+    assert.deepEqual(act({ key: 'Backspace' }, 'yes'), { type: 'buffer', text: 'ye' });
+    assert.deepEqual(act({ key: 'Backspace' }, ''), { type: 'rawKey', value: 'BSpace' });
+  });
+
+  it('Enter with text held sends it as literal text; with nothing held, it sends raw Enter', () => {
+    assert.deepEqual(act({ key: 'Enter' }, 'yes'), { type: 'send', text: 'yes' });
+    assert.deepEqual(act({ key: 'Enter' }, ''), { type: 'rawKey', value: 'Enter' });
+  });
+
+  it('a real modifier chord this mode does not name, and a malformed event, are left alone', () => {
+    assert.equal(act({ key: 'v', ctrlKey: true }, ''), null);
+    assert.equal(act({ key: 'Shift' }, ''), null);
+    assert.equal(G.tcV6HoodKeyAction(null, ''), null);
+    assert.equal(G.tcV6HoodKeyAction({}, ''), null);
+  });
+});
+
 describe('Project Delegate Chat, end to end through the shell and live controller (#3047)', () => {
   /**
    * A shell wired to a live controller the way public/ui.js wires them, with
@@ -2088,6 +2129,18 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     assert.match(m.root.innerHTML, /Talking to: <\/span><strong>TC-Lane-PM<\/strong> \(#1592\)/);
     assert.match(m.root.innerHTML, /pm line 1/);
     assert.match(m.root.innerHTML, /earlier/);
+  });
+
+  it('reads deep scrollback (#3135) only once Under the Hood opens — a closed drawer still reads the pane\'s own shallow depth, every poll', async () => {
+    const m = mountChat({ map: { '/api/sessions/TC-Lane-PM/peek?lines=2000': () => ({ lines: ['deep history'] }) } });
+    await m.settle();
+    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=80'), 'closed by default');
+    assert.ok(!m.calls.some((c) => /peek\?lines=2000$/.test(c)), 'never 2000 lines while the drawer is closed');
+    const hood = m.doc.getElementById('v6ChatUnderHood');
+    hood.open = true;
+    hood.dispatch('toggle');
+    await m.timers[0].fn(); // the very next poll, with no separate "refresh now" trip
+    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=2000'), 'the next poll after opening reads the deep depth');
   });
 
   it('a remembered delegate is used', async () => {
@@ -2579,7 +2632,7 @@ describe('Above-the-Hood chat view (#3052)', () => {
     // Restated by #3076: the switchboard's traffic list sits above the raw output, inside the drawer.
     // Restated by #3082: the summary carries the tucked count, and the verbosity filter and the
     // tucked list come first.
-    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count"><\/span><\/summary>\s*<fieldset class="v6-chat-verbosity">[\s\S]*?<\/fieldset>\s*<section class="v6-chat-tucked"[\s\S]*?<\/section>\s*<section class="v6-chat-switchboard"[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
+    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count"><\/span>\s*<button type="button" id="v6ChatHoodFullScreen"[\s\S]*?<\/button>\s*<button type="button" id="v6ChatHoodInteractive"[\s\S]*?<\/button>\s*<\/summary>\s*<fieldset class="v6-chat-verbosity">[\s\S]*?<\/fieldset>\s*<section class="v6-chat-tucked"[\s\S]*?<\/section>\s*<section class="v6-chat-switchboard"[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
     assert.match(G.tcV6ConversationViewMarkup(view({ peek: { lines: [] }, hoodOpen: true })), /<details id="v6ChatUnderHood" class="v6-chat-under-hood" open>/);
   });
 
@@ -2673,6 +2726,88 @@ describe('Above-the-Hood chat, live in the shell (#3052)', () => {
       chat: { status: 'active', peek: { lines: ['x'] } } } });
     assert.equal(doc.getElementById('v6ChatStream').scrollTop, 900);
     assert.equal(doc.getElementById('v6ChatPeek').scrollTop, 900);
+  });
+});
+
+describe('the chat stream stays pinned to its newest line (#3135)', () => {
+  /** A mounted shell whose #v6ChatStream reports real-looking scroll geometry. */
+  function mountStream() {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const realGet = doc.getElementById;
+    doc.getElementById = (id) => {
+      const el = realGet(id);
+      if (el && id === 'v6ChatStream' && el.scrollHeight === undefined) {
+        el.scrollHeight = 900; el.clientHeight = 300; el.scrollTop = 0;
+      }
+      return el;
+    };
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/tc-lane'), storage: null });
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [],
+      chat: { status: 'active', peek: { lines: ['x'] } } } });
+    return { doc, root, shell };
+  }
+
+  it('scrolling up more than a few pixels shows the ↓ Newest pill and stops auto-following', () => {
+    const { doc } = mountStream();
+    const stream = doc.getElementById('v6ChatStream');
+    assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true, 'pinned by default, so the pill starts hidden');
+    stream.scrollTop = 500; // scrollHeight(900) - scrollTop(500) - clientHeight(300) = 100 > 24
+    stream.dispatch('scroll');
+    assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false);
+  });
+
+  it('scrolling back within 24px of the bottom by hand re-pins and hides the pill again', () => {
+    const { doc } = mountStream();
+    const stream = doc.getElementById('v6ChatStream');
+    stream.scrollTop = 500;
+    stream.dispatch('scroll');
+    assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false);
+    stream.scrollTop = 890; // 900 - 890 - 300 is negative: within the 24px band
+    stream.dispatch('scroll');
+    assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true);
+  });
+
+  it('clicking the pill jumps straight to the newest line and re-pins', () => {
+    const { doc } = mountStream();
+    const stream = doc.getElementById('v6ChatStream');
+    stream.scrollTop = 200;
+    stream.dispatch('scroll');
+    assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false);
+    doc.getElementById('v6ChatJumpLatest').dispatch('click');
+    assert.equal(stream.scrollTop, 900);
+    assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true);
+  });
+
+  it('a poll-time re-render keeps the stream pinned even though it scrolled up earlier, once scrolled back down manually', () => {
+    const { doc, shell } = mountStream();
+    const stream = doc.getElementById('v6ChatStream');
+    // Scrolled away, then the operator comes back near the bottom by hand —
+    // the render a poll triggers builds a BRAND NEW #v6ChatStream element
+    // (starting at scrollTop 0, same as the mount helper's own first one),
+    // so only `streamPinned` surviving the render proves this, not the
+    // element's own leftover position.
+    stream.scrollTop = 500;
+    stream.dispatch('scroll');
+    stream.scrollTop = 895;
+    stream.dispatch('scroll');
+    shell.setLive({ peek: null, live: { turns: [{ role: 'assistant', text: 'new line' }] } });
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 900, 'still pinned, so the new render re-pinned it');
+  });
+
+  it('switching to a different chat always starts pinned, even if the last one was scrolled away', () => {
+    const { doc, shell } = mountStream();
+    const stream = doc.getElementById('v6ChatStream');
+    stream.scrollTop = 500;
+    stream.dispatch('scroll');
+    assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false);
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 99, name: 'Other' }, sessionId: 2, events: [],
+      chat: { status: 'active', peek: { lines: ['y'] } } } });
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 900);
+    assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true);
   });
 });
 
@@ -4296,6 +4431,229 @@ describe('renaming through the mounted shell (#3071)', () => {
   });
 });
 
+describe('Under the Hood: Full Screen and Interactive CLI Mode (#3135)', () => {
+  const liveChatView = { project: { id: 12, name: 'TC-Lane-A' }, sessionId: 1, events: [],
+    chat: { mode: 'direct', status: 'active', members: [] } };
+
+  /**
+   * A mounted shell whose every element's 'keydown' listener is captured
+   * by id as it is wired, since the mini-dom's `dispatch` carries no key —
+   * the same trick the chat-header rename tests above use.
+   */
+  function mountLiveHood(opts) {
+    const m = mountShell(Object.assign({ tree: TWO_GROUP_TREE, storage: null, detail: { kind: 'conversation', view: liveChatView } }, opts || {}));
+    const keydowns = new Map();
+    const register = m.doc._register.bind(m.doc);
+    m.doc._register = (el) => {
+      const add = el.addEventListener.bind(el);
+      el.addEventListener = (type, fn) => { if (type === 'keydown') keydowns.set(el.id, fn); return add(type, fn); };
+      return register(el);
+    };
+    // The mount above already rendered once, with the UNpatched _register;
+    // force a fresh render now so every element's listeners are captured.
+    m.shell.setDetail({ kind: 'conversation', view: liveChatView });
+    return Object.assign(m, { keydowns });
+  }
+
+  it('the Full Screen button toggles the dark overlay, never the <details> open state, and Escape closes it', () => {
+    const { doc, root, keydowns } = mountLiveHood();
+    assert.doesNotMatch(root.innerHTML, /id="v6ChatUnderHood" class="v6-chat-under-hood" style="position:fixed/);
+    doc.getElementById('v6ChatHoodFullScreen').dispatch('click');
+    assert.match(root.innerHTML, /id="v6ChatUnderHood" class="v6-chat-under-hood" style="position:fixed[^"]*"/);
+    assert.doesNotMatch(root.innerHTML, /<details id="v6ChatUnderHood"[^>]* open/, 'the click never also opened/closed the drawer');
+    assert.match(root.innerHTML, /id="v6ChatHoodFullScreen"[^>]*title="Exit Full Screen"/);
+    keydowns.get('v6ChatUnderHood')({ key: 'Escape' });
+    assert.doesNotMatch(root.innerHTML, /style="position:fixed/);
+  });
+
+  it('a click, or a double-click on the pane, activates Interactive Mode — the live-CLI border and indicator', () => {
+    const { doc, root } = mountLiveHood();
+    assert.doesNotMatch(root.innerHTML, /v6ChatHoodLiveIndicator/);
+    doc.getElementById('v6ChatHoodInteractive').dispatch('click');
+    assert.match(root.innerHTML, /<pre id="v6ChatPeek" class="v6-chat-peek" tabindex="0" style="border:2px solid #9CF732;">/);
+    assert.match(root.innerHTML, /id="v6ChatHoodLiveIndicator"[^>]*>LIVE CLI — Type directly into pane/);
+    doc.getElementById('v6ChatHoodInteractive').dispatch('click');
+    assert.doesNotMatch(root.innerHTML, /v6ChatHoodLiveIndicator/);
+    doc.getElementById('v6ChatPeek').dispatch('dblclick');
+    assert.match(root.innerHTML, /v6ChatHoodLiveIndicator/);
+  });
+
+  it('dispatches a named key as { rawKey }, and typed text — flushed on Enter — as { command, enter: true } (#3135)', () => {
+    const calls = [];
+    const { doc, keydowns } = mountLiveHood({ onHoodCommand: (name, body) => calls.push([name, body]) });
+    doc.getElementById('v6ChatHoodInteractive').dispatch('click');
+    const peekKeydown = keydowns.get('v6ChatPeek');
+    peekKeydown({ key: 'ArrowDown' });
+    assert.deepEqual(plain(calls), [['TC-Lane-A', { rawKey: 'Down' }]]);
+    peekKeydown({ key: 'y' });
+    peekKeydown({ key: 'e' });
+    peekKeydown({ key: 's' });
+    assert.deepEqual(plain(calls), [['TC-Lane-A', { rawKey: 'Down' }]], 'typed characters are held, not sent one at a time');
+    peekKeydown({ key: 'Enter' });
+    assert.deepEqual(plain(calls), [['TC-Lane-A', { rawKey: 'Down' }], ['TC-Lane-A', { command: 'yes', enter: true }]]);
+  });
+
+  it('never dispatches anything while Interactive Mode is off', () => {
+    const calls = [];
+    const { keydowns } = mountLiveHood({ onHoodCommand: (name, body) => calls.push([name, body]) });
+    keydowns.get('v6ChatPeek')({ key: 'ArrowDown' });
+    keydowns.get('v6ChatPeek')({ key: 'y' });
+    assert.deepEqual(calls, []);
+  });
+
+  it('with no onHoodCommand wired yet, literal text falls back to the existing onSendChat (#3135)', () => {
+    const sent = [];
+    const { doc, keydowns } = mountLiveHood({ onSendChat: (text) => sent.push(text) });
+    doc.getElementById('v6ChatHoodInteractive').dispatch('click');
+    const peekKeydown = keydowns.get('v6ChatPeek');
+    peekKeydown({ key: 'y' });
+    peekKeydown({ key: 'e' });
+    peekKeydown({ key: 's' });
+    assert.deepEqual(sent, [], 'held, not sent, until Enter');
+    peekKeydown({ key: 'Enter' });
+    assert.deepEqual(sent, ['yes']);
+  });
+
+  it('with no onHoodCommand wired yet, a raw key falls back to a direct fetch of the same route (#3135)', () => {
+    const fetchCalls = [];
+    const fakeFetch = (url, init) => { fetchCalls.push([url, init]); return Promise.resolve({ ok: true }); };
+    const { doc, keydowns } = mountLiveHood({ fetch: fakeFetch });
+    doc.getElementById('v6ChatHoodInteractive').dispatch('click');
+    keydowns.get('v6ChatPeek')({ key: 'Tab' });
+    assert.equal(fetchCalls.length, 1);
+    assert.equal(fetchCalls[0][0], '/api/sessions/TC-Lane-A/command');
+    assert.equal(fetchCalls[0][1].method, 'POST');
+    assert.deepEqual(JSON.parse(fetchCalls[0][1].body), { rawKey: 'Tab' });
+  });
+
+  it('a poll preserves the live-CLI indicator while Interactive Mode is on (PRR-B R1 blocking 2a)', () => {
+    const { doc, root, shell } = mountLiveHood();
+    doc.getElementById('v6ChatHoodInteractive').dispatch('click');
+    assert.match(root.innerHTML, /v6ChatHoodLiveIndicator/);
+    // The 4s poll path (#3047) — a targeted repaint, never a full render.
+    shell.setLive({ peek: { lines: ['new output'] }, live: null });
+    const peekHtml = doc.getElementById('v6ChatPeek').innerHTML;
+    assert.match(peekHtml, /v6ChatHoodLiveIndicator/, 'the poll must not wipe it');
+    assert.match(peekHtml, /new output/);
+  });
+
+  it('a poll leaves the indicator out once Interactive Mode is off', () => {
+    const { doc, shell } = mountLiveHood();
+    shell.setLive({ peek: { lines: ['new output'] }, live: null });
+    assert.doesNotMatch(doc.getElementById('v6ChatPeek').innerHTML, /v6ChatHoodLiveIndicator/);
+  });
+
+  it('a poll keeps the stream pinned via the live streamPinned state, not a one-shot isAtBottom read (PRR-B R1 blocking 2b)', () => {
+    const { doc, shell } = mountLiveHood();
+    const stream = doc.getElementById('v6ChatStream');
+    stream.scrollHeight = 900; stream.clientHeight = 300; stream.scrollTop = 900;
+    // Simulate async content (an unfurl, a thumbnail) growing the stream
+    // earlier in the SAME poll, before this read — scrollTop now reads far
+    // from the bottom, exactly what the OLD one-shot isAtBottom(stream)
+    // check would have read as "scrolled away" and left alone.
+    stream.scrollTop = 0;
+    shell.setLive({ peek: null, live: { turns: [{ role: 'assistant', text: 'new line' }] } });
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 900, 'streamPinned (never touched by the scroll above) re-pinned it regardless');
+  });
+});
+
+describe('sidebar inline rename for Fleets, Fleet Members and Solo Work (#3136)', () => {
+  it('shows a ✎ rename button on every Fleet and member row, and gives their forms the row\'s own current name', () => {
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    assert.match(root.innerHTML, /id="v6TreeRename-p0"/, 'the TC-Lane fleet header');
+    assert.match(root.innerHTML, /id="v6TreeRename-m0-0-0"/, 'TC-Lane-A');
+    assert.match(root.innerHTML, /id="v6TreeRename-m0-0-1"/, 'TC-Lane-PM');
+    doc.getElementById('v6TreeRename-p0').dispatch('click');
+    assert.match(root.innerHTML, /<input id="v6TreeRenameInput-p0"[^>]*value="TC-Lane"/);
+    doc.getElementById('v6TreeRenameCancel-p0').dispatch('click');
+    doc.getElementById('v6TreeRename-m0-0-0').dispatch('click');
+    assert.match(root.innerHTML, /<input id="v6TreeRenameInput-m0-0-0"[^>]*value="TC-Lane-A"/);
+  });
+
+  it('never shows a rename button for the catch-all "Workspace Projects" group, only for its Solo Work members', () => {
+    const tree = [{ id: 'workspace', displayName: 'Workspace Projects', fleets: [{ id: 'workspace', displayName: 'Workspace Projects',
+      members: [{ seatId: '31', role: 'Solo-One' }] }] }];
+    const { doc, root } = mountShell({ tree, storage: null });
+    assert.doesNotMatch(root.innerHTML, /id="v6TreeRename-p0"/);
+    assert.match(root.innerHTML, /id="v6TreeRename-m0-0-0"/, 'the Solo Work member itself is still renamable');
+    doc.getElementById('v6TreeLink-p0').dispatch('dblclick');
+    assert.doesNotMatch(root.innerHTML, /id="v6TreeRenameForm-p0"/, 'double-clicking the group label does nothing');
+  });
+
+  it('double-clicking a member\'s label opens the same form as its ✎ button, and Escape/Cancel close it', () => {
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    const keydowns = new Map();
+    const register = doc._register.bind(doc);
+    doc._register = (el) => {
+      const add = el.addEventListener.bind(el);
+      el.addEventListener = (type, fn) => { if (type === 'keydown') keydowns.set(el.id, fn); return add(type, fn); };
+      return register(el);
+    };
+    doc.getElementById('v6TreeLink-m0-0-0').dispatch('dblclick');
+    assert.match(root.innerHTML, /id="v6TreeRenameForm-m0-0-0"/);
+    keydowns.get('v6TreeRenameInput-m0-0-0')({ key: 'Escape' });
+    assert.doesNotMatch(root.innerHTML, /id="v6TreeRenameForm-m0-0-0"/);
+    doc.getElementById('v6TreeRename-m0-0-0').dispatch('click');
+    doc.getElementById('v6TreeRenameCancel-m0-0-0').dispatch('click');
+    assert.doesNotMatch(root.innerHTML, /id="v6TreeRenameForm-m0-0-0"/);
+  });
+
+  it('renames a Fleet Member (or Solo Work row, the same mechanism) through the single-project route (#3136)', () => {
+    const calls = [];
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null,
+      onRenameProject: (from, to, opts) => calls.push([from, to, opts]) });
+    doc.getElementById('v6TreeRename-m0-0-0').dispatch('click');
+    doc.getElementById('v6TreeRenameInput-m0-0-0').value = '  TC-Lane-Alpha  ';
+    doc.getElementById('v6TreeRenameForm-m0-0-0').dispatch('submit');
+    assert.deepEqual(calls, [['TC-Lane-A', 'TC-Lane-Alpha', undefined]]);
+    assert.match(root.innerHTML, /id="v6TreeRenameForm-m0-0-0"/, 'still open while the rename is in flight');
+    shell.renameResult({ ok: true });
+    assert.doesNotMatch(root.innerHTML, /id="v6TreeRenameForm-m0-0-0"/);
+  });
+
+  it('an orphan-risk refusal on a member shows the warning and a Rename anyway that resends with confirmOrphanRisk', () => {
+    const calls = [];
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null,
+      onRenameProject: (from, to, opts) => calls.push([from, to, opts]) });
+    doc.getElementById('v6TreeRename-m0-0-0').dispatch('click');
+    doc.getElementById('v6TreeRenameInput-m0-0-0').value = 'New';
+    doc.getElementById('v6TreeRenameForm-m0-0-0').dispatch('submit');
+    shell.renameResult({ ok: false, warning: 'engine state would be orphaned' });
+    assert.match(root.innerHTML, /<p id="v6TreeRenameWarning-m0-0-0"[^>]*>engine state would be orphaned<\/p>/);
+    doc.getElementById('v6TreeRenameConfirm-m0-0-0').dispatch('click');
+    assert.deepEqual(plain(calls[1]), ['TC-Lane-A', 'New', { confirmOrphanRisk: true }]);
+  });
+
+  it('renames every Fleet member with the new shared prefix, one HTTP rename at a time (#3136)', async () => {
+    const calls = [];
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null,
+      onRenameProject: (from, to, opts) => calls.push([from, to, opts]) });
+    doc.getElementById('v6TreeRename-p0').dispatch('click');
+    doc.getElementById('v6TreeRenameInput-p0').value = 'TC-Lane-Beta';
+    doc.getElementById('v6TreeRenameForm-p0').dispatch('submit');
+    assert.deepEqual(calls, [['TC-Lane-A', 'TC-Lane-Beta-A', undefined]], 'the SECOND member must not be touched until the first settles');
+    shell.renameResult({ ok: true });
+    await Promise.resolve();
+    assert.deepEqual(calls, [['TC-Lane-A', 'TC-Lane-Beta-A', undefined], ['TC-Lane-PM', 'TC-Lane-Beta-PM', undefined]]);
+    shell.renameResult({ ok: true });
+    await Promise.resolve();
+    assert.doesNotMatch(root.innerHTML, /id="v6TreeRenameForm-p0"/, 'the form closed once every member was renamed');
+  });
+
+  it('stops at the first Fleet member it cannot rename, naming it, and never attempts the rest (#3136)', async () => {
+    const calls = [];
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null,
+      onRenameProject: (from, to, opts) => calls.push([from, to, opts]) });
+    doc.getElementById('v6TreeRename-p0').dispatch('click');
+    doc.getElementById('v6TreeRenameInput-p0').value = 'TC-Lane-Beta';
+    doc.getElementById('v6TreeRenameForm-p0').dispatch('submit');
+    shell.renameResult({ ok: false, warning: 'engine state would be orphaned' });
+    await Promise.resolve();
+    assert.deepEqual(calls, [['TC-Lane-A', 'TC-Lane-Beta-A', undefined]], 'TC-Lane-PM is never attempted');
+    assert.match(root.innerHTML, /Renamed 0 of 2\. TC-Lane-A was not: engine state would be orphaned — rename it from its own row\./);
+  });
+});
+
 describe('the live controller renames the chat\'s target (#3071)', () => {
   /**
    * A controller over one offline project, with a scripted PATCH outcome.
@@ -4883,12 +5241,52 @@ describe('the Waiting on you queue (#3079)', () => {
     assert.deepEqual(run(lines, []).questions, []);
   });
 
+  it('only the trailing paragraph of the reply is read for questions (#3131): an earlier one is superseded', () => {
+    const out = run(['> go', '⏺ Does this seem right? Let me explain why.', '', '  Should I proceed with the merge?']);
+    assert.deepEqual(out.questions, ['Should I proceed with the merge?']);
+  });
+
+  it('a question asked before a wake still counts in full (#3082), only the CURRENT reply is trimmed to its trailing paragraph', () => {
+    const wake = '> [TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.';
+    const out = run(['> fix it', '⏺ Shall I push?', wake, '⏺ First, a rhetorical one: did that help?', '', '  Also, should I open the PR now?']);
+    assert.deepEqual(out.questions, ['Shall I push?', 'Also, should I open the PR now?']);
+  });
+
+  it('never reads a markdown-blockquoted line as the assistant asking a question (#3131)', () => {
+    const asked = run(['> Should I deploy to prod?', '⏺ > Should I deploy to prod?', '  Yes, go ahead.']);
+    assert.deepEqual(asked.questions, []);
+    const quoted = run(['> go', '⏺ > Should I branch from main?', '  No — branch from the sprint branch instead.']);
+    assert.deepEqual(quoted.questions, []);
+  });
+
+  it('never reads the operator\'s own words, echoed back without blockquote formatting, as a NEW question (#3131)', () => {
+    const out = run(['> Should I deploy to prod?', '⏺ Should I deploy to prod? Yes, let\'s do it.', '  Should I also tag the release?'],
+      ['Should I deploy to prod?']);
+    assert.deepEqual(out.questions, ['Should I also tag the release?']);
+  });
+
+  it('a prompt typed live but never recorded still suppresses the assistant echoing it back later in the same read (PRR-B R1 blocking 3a)', () => {
+    // No second argument to `run` — "Should I deploy to staging first?" is
+    // never in knownUserTexts, the way a prompt typed straight into the
+    // terminal (not through this chat) never is.
+    const out = run(['> Should I deploy to staging first?', '⏺ Should I deploy to staging first? Sure, let\'s do that.',
+      '  Should I tag the release after?']);
+    assert.deepEqual(out.questions, ['Should I tag the release after?']);
+  });
+
+  it('matches a TRAILING fragment of a long recorded message, not just a prefix (PRR-B R1 blocking 3b)', () => {
+    const out = run(['> review', '⏺ does the migration look safe to merge?', '  Also, should I run the smoke tests first?'],
+      ['Please review the attached diff carefully — does the migration look safe to merge?']);
+    assert.deepEqual(out.questions, ['Also, should I run the smoke tests first?'],
+      'the echoed trailing fragment is excluded even though it is not a PREFIX of the recorded message');
+  });
+
   it('numbers several questions, escapes each, and gives each a dismiss button', () => {
     const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
       chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'x' }], questions: ['A <b>?', 'B?'] } } });
     assert.match(html, /<div id="v6ChatQuestion" class="v6-chat-question is-asking"/);
-    assert.match(html, /<span class="v6-chat-question-badge" aria-hidden="true">\(1\)<\/span> <span class="v6-chat-question-text">A &lt;b&gt;\?<\/span>/);
-    assert.match(html, /<span class="v6-chat-question-badge" aria-hidden="true">\(2\)<\/span> <span class="v6-chat-question-text">B\?<\/span>/);
+    assert.match(html, /<span class="v6-chat-question-badge" aria-hidden="true">1-<\/span> <span class="v6-chat-question-text">A &lt;b&gt;\?<\/span>/);
+    assert.match(html, /<span class="v6-chat-question-badge" aria-hidden="true">2-<\/span> <span class="v6-chat-question-text">B\?<\/span>/);
     assert.match(html, /id="v6ChatQuestionDismiss0" data-index="0" title="Dismiss this question" aria-label="Dismiss question 1"/);
     assert.match(html, /id="v6ChatQuestionDismiss1"/);
     assert.doesNotMatch(html, /<b>/);
@@ -5102,6 +5500,7 @@ describe('the unified 3-category Waiting-on panel (#3105)', () => {
     it('renders nothing visible (no has-items anywhere) when all 3 categories are empty', () => {
       const html = G.tcV6ConversationViewMarkup(v({ live: { turns: [] } }));
       assert.match(html, /<div id="v6ChatWaitingOn" class="v6-waiting-on-panel">/);
+      assert.match(html, /<h3 class="v6-waiting-on-heading">Waiting on:<\/h3>/, 'one outer header (#3131), not one per category');
       assert.doesNotMatch(html, /has-items/);
       assert.match(html, /<div id="v6ChatQuestion" class="v6-chat-question" role="status"/, '#v6ChatQuestion still exists for #3079 direct lookups');
     });
@@ -5110,7 +5509,7 @@ describe('the unified 3-category Waiting-on panel (#3105)', () => {
       const html = G.tcV6ConversationViewMarkup(v({
         live: { turns: [{ role: 'assistant', text: 'Pick one:\n1. A\n2. B' }], rawLines: ['Do you want to proceed?'], questions: ['Also, is this urgent?'] }
       }));
-      assert.match(html, /Waiting on: YOU \(<span id="v6ChatWaitingOnYouCount">3<\/span>\)/);
+      assert.match(html, /YOU \(<span id="v6ChatWaitingOnYouCount">3<\/span>\)/);
       assert.match(html, /class="v6-chat-gate-card"><span class="v6-chat-question-text">Do you want to proceed\?/);
       assert.match(html, /<button type="button" class="v6-chat-gate-action" data-gate-key="1">1 \/ Allow<\/button>/);
       assert.match(html, /class="v6-chat-choice-card"><span class="v6-chat-question-text">Pick one:<\/span>/);
@@ -5119,12 +5518,18 @@ describe('the unified 3-category Waiting-on panel (#3105)', () => {
       assert.match(html, /Also, is this urgent\?/);
     });
 
-    it('shows a Your ToDo section with numbering and a Clear button once it has more than one item', () => {
+    it('never repeats a second "Waiting on you:" label inside the YOU section (PRR-B R1 warning 1)', () => {
+      const html = G.tcV6ConversationViewMarkup(v({ live: { turns: [], questions: ['One?'] } }));
+      assert.doesNotMatch(html, /Waiting on you:/);
+    });
+
+    it('folds the operator ToDo into the YOU group (#3131), with its own numbering and Clear button once it has more than one item', () => {
       const html = G.tcV6ConversationViewMarkup(v({
         live: { turns: [{ role: 'assistant', text: 'YOUR TURN:\n1. Review the PR.\n2. Merge it.' }] }
       }));
-      assert.match(html, /Waiting on: Your ToDo \(2\)/);
-      assert.match(html, /<ol id="v6ChatTodo"[^>]*><li><span class="v6-chat-question-badge" aria-hidden="true">\(1\)<\/span> <span class="v6-chat-question-text">Review the PR\.<\/span>/);
+      assert.match(html, /YOU \(<span id="v6ChatWaitingOnYouCount">2<\/span>\)/, 'the ToDo items count toward the one YOU total');
+      assert.match(html, /<span class="v6-waiting-on-subhead">Your ToDo<\/span>/);
+      assert.match(html, /<ol id="v6ChatTodo"[^>]*><li><span class="v6-chat-question-badge" aria-hidden="true">1-<\/span> <span class="v6-chat-question-text">Review the PR\.<\/span>/);
       assert.match(html, /<button type="button" class="v6-waiting-on-todo-dismiss" data-text="Review the PR\."/);
       assert.match(html, /<button type="button" id="v6WaitingOnTodoClear"/);
       assert.doesNotMatch(html, /v6-chat-choice-card/, 'the ToDo list itself must not also render as a multi-choice question (PRR-A R1 C3)');
@@ -5132,10 +5537,74 @@ describe('the unified 3-category Waiting-on panel (#3105)', () => {
 
     it('shows an AI section with Force and dismiss for each queued prompt', () => {
       const html = G.tcV6ConversationViewMarkup(v({ live: { turns: [] }, queuedPrompts: [{ id: 'q1', text: 'follow up' }] }));
-      assert.match(html, /Waiting on: AI \(1\)/);
+      assert.match(html, /AI \(1\)/);
       assert.match(html, /<span class="v6-chat-question-text">follow up<\/span>/);
       assert.match(html, /class="v6-waiting-on-ai-force" data-id="q1"/);
       assert.match(html, /class="v6-waiting-on-ai-dismiss" data-id="q1"/);
+    });
+
+    it('shows a Fleet Member section for an outstanding outbound Medusa send, resolved to its display name (#3131)', () => {
+      const html = G.tcV6ConversationViewMarkup(v({
+        live: { turns: [], switchboard: [{ dir: 'out', text: 'tc message send tc-lane-pm-80246dee "status?"', to: 'tc-lane-pm-80246dee' }] },
+        knownProjects: [{ name: 'TC-Lane-PM' }]
+      }));
+      assert.match(html, /<section class="v6-waiting-on-section v6-waiting-on-fleet has-items"[^>]*aria-label="Waiting on TC-Lane-PM"/);
+      assert.match(html, /TC-Lane-PM \(1\)/);
+      assert.match(html, /<span class="v6-chat-question-text">tc message send tc-lane-pm-80246dee &quot;status\?&quot;<\/span>/);
+      assert.match(html, /class="v6-waiting-on-fleet-dismiss" data-key="tc-lane-pm-80246dee::tc message send tc-lane-pm-80246dee &quot;status\?&quot;"/);
+    });
+
+    it('falls back to the raw target id when no known project matches it (#3131)', () => {
+      const html = G.tcV6ConversationViewMarkup(v({
+        live: { turns: [], switchboard: [{ dir: 'out', text: 'tc message send mystery-workspace-abc123 "ping"', to: 'mystery-workspace-abc123' }] }
+      }));
+      assert.match(html, /mystery-workspace-abc123 \(1\)/);
+    });
+
+    it('auto-clears a Fleet Member section the instant an inbound reply follows the send (#3131)', () => {
+      const html = G.tcV6ConversationViewMarkup(v({
+        live: {
+          turns: [],
+          switchboard: [{ dir: 'out', text: 'tc message send tc-lane-pm-80246dee "status?"', to: 'tc-lane-pm-80246dee' },
+            { dir: 'in', text: 'reply text' }]
+        }
+      }));
+      assert.doesNotMatch(html, /v6-waiting-on-section v6-waiting-on-fleet/);
+    });
+
+    it('keeps only the latest outstanding send per target (#3131): a second send supersedes the first', () => {
+      const html = G.tcV6ConversationViewMarkup(v({
+        live: {
+          turns: [],
+          switchboard: [{ dir: 'out', text: 'first ask', to: 'tc-lane-pm-80246dee' },
+            { dir: 'out', text: 'second ask', to: 'tc-lane-pm-80246dee' }]
+        }
+      }));
+      // The fleet item's own markup, not the unrelated raw switchboard-log
+      // entry elsewhere on the page (Under the Hood's traffic log shows
+      // every raw send, not just the one still outstanding — a different,
+      // unrelated marker, `v6-chat-switchboard-text`).
+      assert.doesNotMatch(html, /v6-chat-question-text">first ask</);
+      assert.match(html, /v6-chat-question-text">second ask</);
+    });
+
+    it('does not surface a Fleet Member section for a send with no parseable target', () => {
+      const html = G.tcV6ConversationViewMarkup(v({
+        live: { turns: [], switchboard: [{ dir: 'out', text: 'tc message send', to: null }] }
+      }));
+      assert.doesNotMatch(html, /v6-waiting-on-section v6-waiting-on-fleet/);
+    });
+
+    it('folds a section when its key is in the collapsed set, hiding its body and flipping the caret (#3131)', () => {
+      const model = G.tcV6WaitingOnModel({ turns: [] }, { queuedPrompts: [{ id: 'q1', text: 'follow up' }] });
+      const expanded = G.tcV6WaitingOnMarkup(model, new Set());
+      assert.match(expanded, /<section class="v6-waiting-on-section v6-waiting-on-ai has-items"/);
+      assert.match(expanded, /aria-expanded="true"[^>]*>\s*<span class="v6-waiting-on-caret" aria-hidden="true">▾<\/span> AI/);
+      assert.doesNotMatch(expanded, /<div class="v6-waiting-on-body" hidden>/);
+      const folded = G.tcV6WaitingOnMarkup(model, new Set(['ai']));
+      assert.match(folded, /<section class="v6-waiting-on-section v6-waiting-on-ai has-items is-collapsed"/);
+      assert.match(folded, /aria-expanded="false"[^>]*>\s*<span class="v6-waiting-on-caret" aria-hidden="true">▸<\/span> AI/);
+      assert.match(folded, /<div class="v6-waiting-on-body" hidden>/);
     });
 
     it('a Clear on Your ToDo hides the same still-latest list, through the shell controller', () => {
@@ -5160,6 +5629,80 @@ describe('the unified 3-category Waiting-on panel (#3105)', () => {
       // not re-parsed, so reading it back directly is reliable now).
       shell.setLive({ peek: null, live });
       assert.equal(doc.getElementById('v6ChatTodo').innerHTML, '');
+    });
+
+    it('a poll never double-wires the YOU/AI fold toggle, which would otherwise flip it right back off (PRR-B R1 blocking 1a)', () => {
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+      const live = { turns: [], queuedPrompts: [{ id: 'q1', text: 'follow up' }] };
+      shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'P' }, sessionId: 1, events: [], chat: { status: 'active', members: [], live } } });
+      // Two polls in a row — a 4s setLive() -> paintWaitingOnExtras() ->
+      // wireWaitingOn() cycle, exactly what the real symptom needs, and
+      // never a full render in between.
+      shell.setLive({ peek: null, live });
+      shell.setLive({ peek: null, live });
+      assert.doesNotMatch(root.innerHTML, /v6-waiting-on-ai is-collapsed/, 'not folded yet');
+      doc.getElementById('v6WaitingOnToggle-ai').dispatch('click');
+      assert.match(root.innerHTML, /v6-waiting-on-ai is-collapsed/, 'exactly one toggle landed, not two that cancelled out');
+    });
+
+    // The mini-dom's innerHTML parsing is flat and deliberately not a real
+    // parser (_mini-dom.js's own doc): a full render's `root.innerHTML =
+    // …` populates `root.innerHTML` (the STRING) correctly, but each
+    // id-bearing descendant it registers is a BARE marker with no children
+    // of its own — its `.innerHTML` reads '' until something explicitly
+    // assigns it, which only a TARGETED poll-time update (paintWaitingOnExtras)
+    // ever does. So the state right after a full render is read from
+    // `root.innerHTML`; only the state after a poll is read from the
+    // wrap's own node — the same reason the "Clear on Your ToDo" test
+    // above reads #v6ChatTodo directly only after its own poll.
+    it('a poll adds the Your ToDo Clear button and subhead the instant it crosses 1 to 2 items, and removes them going back (PRR-B R1 blocking 1b)', () => {
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+      const oneItem = { turns: [{ role: 'assistant', text: 'YOUR TURN:\n1. Review the PR.' }] };
+      shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'P' }, sessionId: 1, events: [], chat: { status: 'active', members: [], live: oneItem } } });
+      assert.match(root.innerHTML, /v6-waiting-on-subhead/, 'the subhead shows with just 1 item too (full render)');
+      assert.doesNotMatch(root.innerHTML, /id="v6WaitingOnTodoClear"/, 'Clear needs more than 1 item (full render)');
+      const todoWrap = () => doc.getElementById('v6ChatTodoWrap').innerHTML;
+      const twoItems = { turns: [{ role: 'assistant', text: 'YOUR TURN:\n1. Review the PR.\n2. Merge it.' }] };
+      shell.setLive({ peek: null, live: twoItems }); // a poll, not a full render
+      assert.match(todoWrap(), /id="v6WaitingOnTodoClear"/, 'the poll added it once the count crossed to >1');
+      shell.setLive({ peek: null, live: oneItem }); // back down to 1
+      assert.doesNotMatch(todoWrap(), /id="v6WaitingOnTodoClear"/, 'and removed it going back');
+    });
+
+    it('a poll removes the AI Clear button the instant the queue\'s own auto-clear drops it from 2 to 1 item (PRR-B R1 blocking 1b)', () => {
+      const { doc, root, shell } = mountShell({ tree: [], storage: null });
+      shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'P' }, sessionId: 1, events: [], chat: { status: 'active', members: [], live: { turns: [] } } } });
+      shell.queuePrompt(12, 'one'); // a full render each — fine, this just sets up the starting state
+      shell.queuePrompt(12, 'two');
+      assert.match(root.innerHTML, /id="v6WaitingOnAiClear"/, '2 items, Clear shown (full render)');
+      // openQueuedPrompts auto-clears a queued item once its text shows as
+      // already sent — a poll whose live turns now include "one" drops the
+      // queue from 2 to 1 PURELY through setLive(), never queuePrompt's own
+      // full render.
+      shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'one' }] } });
+      assert.doesNotMatch(doc.getElementById('v6ChatAiWrap').innerHTML, /id="v6WaitingOnAiClear"/, 'the poll removed it once auto-clear dropped the count to 1');
+    });
+
+    it('a poll adds the YOU Clear button once direct questions cross 1 to 2 (PRR-B R1 blocking 1b)', () => {
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+      const one = { turns: [], questions: ['One?'] };
+      shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'P' }, sessionId: 1, events: [], chat: { status: 'active', members: [], live: one } } });
+      assert.doesNotMatch(root.innerHTML, /id="v6WaitingOnYouClear"/, '1 question, no Clear yet (full render)');
+      const two = { turns: [], questions: ['One?', 'Two?'] };
+      shell.setLive({ peek: null, live: two });
+      assert.match(doc.getElementById('v6WaitingOnYouClearWrap').innerHTML, /id="v6WaitingOnYouClear"/, 'the poll added it once direct questions crossed to >1');
     });
   });
 });
@@ -6572,14 +7115,14 @@ describe('Force Send (#3082 item 3, Ruling A757)', () => {
     m.doc.getElementById('v6ChatForm').dispatch('submit');
     await new Promise((r) => setImmediate(r));
     assert.equal(m.commands.length, 1, 'still just the first — the second queued instead of warning-and-dropping');
-    assert.match(m.root.innerHTML, /Waiting on: AI \(1\)/);
+    assert.match(m.root.innerHTML, /AI \(1\)/);
     assert.match(m.root.innerHTML, /<span class="v6-chat-question-text">queued one<\/span>/);
     // Releasing the held first send must NOT auto-fire the queued one.
     m.release();
     await m.settle();
     await new Promise((r) => setImmediate(r));
     assert.equal(m.commands.length, 1, 'the queued prompt stayed queued; it is not sent until Force or dismiss');
-    assert.match(m.root.innerHTML, /Waiting on: AI \(1\)/);
+    assert.match(m.root.innerHTML, /AI \(1\)/);
   });
 
   it('the keyboard shortcut forces too, and a forced send leaves the next plain one plain', async () => {
@@ -6691,7 +7234,7 @@ describe('Force Send (#3082 item 3, Ruling A757)', () => {
     const m = mountForce(o);
     await m.settle();
     await m.timers[m.timers.length - 1]();
-    assert.match(m.root.innerHTML, /Waiting on: YOU/);
+    assert.match(m.root.innerHTML, /YOU \(/);
     assert.match(m.root.innerHTML, /class="v6-chat-gate-card"><span class="v6-chat-question-text">Do you want to proceed\?/);
     assert.match(m.root.innerHTML, /<button type="button" class="v6-chat-gate-action" data-gate-key="1">1 \/ Allow<\/button>/);
   });
