@@ -1680,4 +1680,130 @@ describe('api-sessions', () => {
       }
     });
   });
+
+  describe('POST /api/master/wrap (#3137)', () => {
+    it('is refused without operator proof', async () => {
+      const res = await request(server, 'POST', '/api/master/wrap', {});
+      assert.equal(res.status, 403);
+    });
+
+    it('captures and persists a continuity capsule, without ever touching a real tmux session', async () => {
+      const tmux = require('../lib/tmux');
+      const realProbe = tmux.probeSession;
+      const realKill = tmux.killSession;
+      // `answered: true, live: false` is the ordinary "no Master running"
+      // reading — ensureMasterSession's relaunch path then falls straight
+      // into the plain launch branch (no kill), which this sandboxed store
+      // has no installed engine for, so it errors out before any
+      // tmux.createSession call. The throwing killSession stub is a
+      // tripwire: if that reasoning is ever wrong, the test fails loudly
+      // instead of silently touching this machine's real `tangleclaw-master`
+      // session (same discipline test/master.test.js's own top comment states).
+      tmux.probeSession = () => ({ live: false, answered: true, cause: null });
+      tmux.killSession = () => { throw new Error('must never attempt to kill a real tmux session in this test'); };
+      try {
+        const res = await operatorRequest(server, 'POST', '/api/master/wrap', {});
+        assert.ok(res.body.capsule, 'the capsule must be reported regardless of how the relaunch half resolves');
+        assert.equal(res.body.capsule.schema, 'tangleclaw-continuity/v1');
+        assert.match(res.body.capsule.digest, /^[0-9a-f]{64}$/);
+        assert.ok(fs.existsSync(res.body.capsule.path), 'the capsule file must actually be on disk');
+        const onDisk = JSON.parse(fs.readFileSync(res.body.capsule.path, 'utf8'));
+        assert.equal(onDisk.generation, res.body.capsule.generation);
+        assert.equal(onDisk.lifecycle.transition, 'finalize-relaunch');
+      } finally {
+        tmux.probeSession = realProbe;
+        tmux.killSession = realKill;
+      }
+    });
+  });
+
+  describe('Admin-PM attachments (#3137)', () => {
+    // A minimal, real, valid 1x1 PNG — `readImageFile` checks the byte
+    // signature, not just the extension, so a fixture has to actually be one.
+    const TINY_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==';
+
+    after(async () => {
+      // Best-effort cleanup so a failed assertion mid-suite does not leak a
+      // pending attachment into a later test in this same file.
+      await operatorRequest(server, 'DELETE', '/api/master/attachments/w2c-test.png');
+    });
+
+    it('every route is refused without operator proof', async () => {
+      const post = await request(server, 'POST', '/api/master/attachments', { filename: 'x.png', content: TINY_PNG_BASE64 });
+      assert.equal(post.status, 403);
+      const get = await request(server, 'GET', '/api/master/attachments');
+      assert.equal(get.status, 403);
+      const img = await request(server, 'GET', '/api/master/attachments/x.png');
+      assert.equal(img.status, 403);
+      const del = await request(server, 'DELETE', '/api/master/attachments/x.png');
+      assert.equal(del.status, 403);
+    });
+
+    it('rejects a missing filename or empty content before ever writing anything', async () => {
+      const noFilename = await operatorRequest(server, 'POST', '/api/master/attachments', { content: TINY_PNG_BASE64 });
+      assert.equal(noFilename.status, 400);
+      const noContent = await operatorRequest(server, 'POST', '/api/master/attachments', { filename: 'w2c-test.png', content: '' });
+      assert.equal(noContent.status, 400);
+    });
+
+    it('saves a photo, lists it, previews it, and deletes it — the full lifecycle', async () => {
+      // The route's un-stubbed notify path calls `master.injectMasterCommand`,
+      // which probes the REAL `tangleclaw-master` tmux session — on a machine
+      // where that session genuinely happens to be live, an un-stubbed probe
+      // here would risk a real `sendKeys` into the operator's actual Admin-PM
+      // pane. Same discipline as the wrap test above: answered-but-absent,
+      // never the real tmux state.
+      const tmux = require('../lib/tmux');
+      const realProbe = tmux.probeSession;
+      const realSendKeys = tmux.sendKeys;
+      tmux.probeSession = () => ({ live: false, answered: true, cause: null });
+      tmux.sendKeys = () => { throw new Error('must never type into a real tmux session in this test'); };
+      let saved;
+      try {
+        saved = await operatorRequest(server, 'POST', '/api/master/attachments', {
+          filename: 'w2c-test.png', content: TINY_PNG_BASE64
+        });
+      } finally {
+        tmux.probeSession = realProbe;
+        tmux.sendKeys = realSendKeys;
+      }
+      assert.equal(saved.status, 200);
+      assert.equal(saved.body.ok, true);
+      assert.equal(saved.body.relPath, 'secrets/w2c-test.png');
+      // Admin-PM's pane notification is best-effort (no real Master runs in
+      // this suite), so only its SHAPE is asserted — never whether it
+      // actually reached a pane.
+      assert.equal(typeof saved.body.notified, 'boolean');
+      assert.equal(saved.body.notified, false, 'the Master is not running in this test, so the notify attempt must report failure, not silently succeed');
+
+      const listed = await operatorRequest(server, 'GET', '/api/master/attachments');
+      assert.equal(listed.status, 200);
+      assert.ok(listed.body.files.some((f) => f.filename === 'w2c-test.png'));
+
+      const previewed = await operatorRequest(server, 'GET', '/api/master/attachments/w2c-test.png');
+      assert.equal(previewed.status, 200);
+
+      const deleted = await operatorRequest(server, 'DELETE', '/api/master/attachments/w2c-test.png');
+      assert.equal(deleted.status, 200);
+      assert.equal(deleted.body.deleted, true);
+
+      const listedAfter = await operatorRequest(server, 'GET', '/api/master/attachments');
+      assert.ok(!listedAfter.body.files.some((f) => f.filename === 'w2c-test.png'));
+    });
+
+    it('a second write with notify:false is not announced to the pane', async () => {
+      const res = await operatorRequest(server, 'POST', '/api/master/attachments', {
+        filename: 'w2c-test.png', content: TINY_PNG_BASE64, notify: false
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.notified, false);
+    });
+
+    it('404s a preview or delete of a name that was never saved', async () => {
+      const previewed = await operatorRequest(server, 'GET', '/api/master/attachments/never-saved.png');
+      assert.equal(previewed.status, 404);
+      const deleted = await operatorRequest(server, 'DELETE', '/api/master/attachments/never-saved.png');
+      assert.equal(deleted.status, 404);
+    });
+  });
 });

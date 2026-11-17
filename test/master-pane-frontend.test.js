@@ -147,6 +147,84 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
     });
   });
 
+  describe('Admin Fleet rename, governed Wrap & Relaunch, attachments (#3137)', () => {
+    it('relabels the static Master surfaces from script rather than editing index.html', () => {
+      assert.match(masterSection, /function renameMasterSurfacesToAdminFleet\(\)/);
+      assert.match(masterSection, /document\.getElementById\('masterToggle'\)/);
+      assert.match(masterSection, /node\.textContent\.replace\('Master', 'Admin Fleet'\)/);
+      assert.match(masterSection, /panel\.setAttribute\('aria-label', 'Admin Fleet'\)/);
+      assert.match(js, /addMasterRelaunchButton\('masterPanel'\);[\s\S]*renameMasterSurfacesToAdminFleet\(\);/);
+    });
+
+    it('the shared bar\'s own (newly un-pended) Wrap/Upload buttons are wired to this page\'s handlers via deps', () => {
+      // #3137 — the look (the button, the file input) lives in the shared
+      // `tcCreateMasterControlBar` component now (public/api-helper.js), same
+      // "shared NOW" rule Kill/Launch already follow; this page supplies only
+      // the behaviour, through `onWrap`/`onUpload`, same delegation shape
+      // `onRetry` already has for Launch.
+      assert.match(js, /onWrap: wrapAndRelaunchMaster,/);
+      assert.match(js, /onUpload: uploadMasterAttachment/);
+    });
+
+    it('wrapAndRelaunchMaster POSTs /api/master/wrap behind a confirm, re-entrant-guarded', () => {
+      const fn = masterSection.slice(
+        masterSection.indexOf('function wrapAndRelaunchMaster'),
+        masterSection.indexOf('async function fetchMasterAttachmentThumb')
+      );
+      assert.match(fn, /if \(state\.masterEnsuring\) return;/);
+      assert.match(fn, /window\.confirm\(/);
+      assert.match(fn, /api\('\/api\/master\/wrap', \{ method: 'POST' \}\)/);
+      assert.match(fn, /api\.lastError \|\| 'Failed to wrap and relaunch Admin-PM'/);
+      // Repaints the banner from fresh state after a successful wrap, rather
+      // than assuming the critical reading cleared.
+      assert.match(fn, /refreshMasterDot\(\);/);
+    });
+
+    it('the low-context banner reads continuity.status from the SAME /api/master/status fetch refreshMasterDot already makes — no new poll', () => {
+      const fn = masterSection.slice(
+        masterSection.indexOf('async function refreshMasterDot'),
+        masterSection.length
+      );
+      assert.match(fn, /setMasterLowContextBanner\(status\.continuity \|\| null\);/);
+      assert.ok(!/setInterval/.test(fn), 'no timer-driven polling added (no-UI-timers rule)');
+      assert.match(masterSection, /const critical = Boolean\(continuity && continuity\.status === 'critical'\);/);
+    });
+
+    it('utility seats paint from status.adminFleet.utilitySeats; Admin-Advisor links to the real Advisor panel', () => {
+      assert.match(masterSection, /function renderMasterUtilitySeats\(seats\)/);
+      assert.match(masterSection, /if \(status\.adminFleet\) renderMasterUtilitySeats\(status\.adminFleet\.utilitySeats\);/);
+      assert.match(masterSection, /if \(!state\.advisorOpen\) toggleAdvisor\(\);/);
+    });
+
+    it('attachments: uploadMasterAttachment base64-encodes the file and POSTs it', () => {
+      // The file PICKER itself (#3137) is the shared bar's own un-pended
+      // Upload button (`public/api-helper.js`); this page owns what happens
+      // once a file is chosen, reached via `deps.onUpload`.
+      const fn = masterSection.slice(
+        masterSection.indexOf('async function uploadMasterAttachment'),
+        masterSection.indexOf('function addMasterAttachmentStrip')
+      );
+      assert.match(fn, /apiMutate\('\/api\/master\/attachments', 'POST', \{/);
+      assert.match(fn, /readAsDataURL\(file\)/);
+    });
+
+    it('paste and drag-and-drop on the panel both route through uploadMasterAttachment', () => {
+      assert.match(masterSection, /panel\.addEventListener\('drop', /);
+      assert.match(masterSection, /panel\.addEventListener\('paste', /);
+      assert.match(masterSection, /item\.kind === 'file' && item\.type\.startsWith\('image\/'\)/);
+    });
+
+    it('deleting a thumbnail uses apiMutate\'s (url, method) signature, not a fetch-options object', () => {
+      assert.match(masterSection, /apiMutate\(`\/api\/master\/attachments\/\$\{encodeURIComponent\(file\.filename\)\}`, 'DELETE'\)/);
+    });
+
+    it('thumbnails are fetched as blob: URLs with operator-proof headers, never a bare <img src>', () => {
+      assert.match(masterSection, /window\.tcOperatorProofHeaders\(api\)/);
+      assert.match(masterSection, /window\.tcFetch\(`\/api\/master\/attachments\/\$\{encodeURIComponent\(filename\)\}`, \{ headers \}\)/);
+      assert.match(masterSection, /URL\.createObjectURL\(await res\.blob\(\)\)/);
+    });
+  });
+
   describe('terminal parity with the session page', () => {
     it('delegates frame wiring to the shared pipeline (theme + #431 + #443 + #445)', () => {
       // Since UI-4C7R the pane carries no wiring of its own: api-helper.js's
