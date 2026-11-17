@@ -343,9 +343,16 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       // ...and the default server has a same-named proxy, attach-only, with its
       // own status line off.
       assert.equal(tmux.hasSession(name), true);
-      const proxyCommand = execFileSync('tmux', ['list-panes', '-t', name, '-F', '#{pane_start_command}'], { encoding: 'utf8' }).trim();
+      // #3130 — a raw `execFileSync` here, unlike `tmux.hasSession` above,
+      // does not go through `lib/tmux.js`'s own `TMUX`-stripping `_exec`, so
+      // it must strip it itself to target the same TRUE default server a
+      // default-socket production call now does — otherwise, run from
+      // inside ANY tmux pane (this suite's own, included), it would silently
+      // check a DIFFERENT server than the one the proxy actually landed on.
+      const defaultEnv = tmux._defaultChildEnv();
+      const proxyCommand = execFileSync('tmux', ['list-panes', '-t', name, '-F', '#{pane_start_command}'], { encoding: 'utf8', env: defaultEnv }).trim();
       assert.match(proxyCommand, new RegExp(`tmux -L '?${tmux.TCC_SOCKET}'? -u attach -t`));
-      const statusOption = execFileSync('tmux', ['show-option', '-t', name, 'status'], { encoding: 'utf8' }).trim();
+      const statusOption = execFileSync('tmux', ['show-option', '-t', name, 'status'], { encoding: 'utf8', env: defaultEnv }).trim();
       assert.equal(statusOption, 'status off');
       // Cleanup: the proxy (afterEach), and the TCC-authorized server itself
       // (afterEach's own kill-server) since the anchor session keeps it alive
@@ -430,7 +437,10 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
         assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
       });
-      const proxyCommand = execFileSync('tmux', ['list-panes', '-t', name, '-F', '#{pane_start_command}'], { encoding: 'utf8' }).trim();
+      // #3130 — see the sibling test above: this must target the TRUE
+      // default server too, not whatever socket this suite's own pane's
+      // ambient `$TMUX` happens to name.
+      const proxyCommand = execFileSync('tmux', ['list-panes', '-t', name, '-F', '#{pane_start_command}'], { encoding: 'utf8', env: tmux._defaultChildEnv() }).trim();
       assert.match(proxyCommand, /-u/, 'the proxy attaches with -u so the real session\'s UTF-8 content survives the hop');
     });
   });
@@ -1077,5 +1087,108 @@ describe('_isAntigravitySurveyPrompt / capturePane auto-dismiss (#3111)', () => 
     assert.match(result.cap.lines.join('\n'), /How's the CLI experience so far\?/);
     assert.equal(captureCount, '1', 'read exactly once — the disabled flag skipped the dismiss-and-re-read path');
     assert.equal(sendKeysLogExists, false, 'never sent the dismiss keypress');
+  });
+});
+
+describe('ensureTccAnchorAlive (#3130, PRR-A R1 BLOCKING 2b)', () => {
+  it('is a no-op when the anchor is already alive', () => {
+    startAuthorizedAnchor();
+    assert.equal(tmux.ensureTccAnchorAlive(), true);
+    assert.doesNotThrow(() => execFileSync(
+      'tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', tmux.TCC_ANCHOR_SESSION], { stdio: 'ignore' }
+    ));
+  });
+
+  it('recreates the anchor directly (no Terminal.app) when it has died but the server is still up', () => {
+    startAuthorizedAnchor();
+    execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'kill-session', '-t', tmux.TCC_ANCHOR_SESSION], { stdio: 'ignore' });
+    assert.throws(() => execFileSync(
+      'tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', tmux.TCC_ANCHOR_SESSION], { stdio: 'ignore' }
+    ), 'the anchor must genuinely be gone before this test proves anything');
+    tmux.bootstrapTccAuthorizedServer = () => {
+      throw new Error('must not bootstrap via Terminal.app for an already-running server');
+    };
+    assert.equal(tmux.ensureTccAnchorAlive(), true);
+    assert.doesNotThrow(() => execFileSync(
+      'tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', tmux.TCC_ANCHOR_SESSION], { stdio: 'ignore' }
+    ), 'the anchor must have been recreated');
+  });
+
+  it('reports false, rather than throwing, when even the recreate attempt fails', () => {
+    startAuthorizedAnchor();
+    execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'kill-session', '-t', tmux.TCC_ANCHOR_SESSION], { stdio: 'ignore' });
+    const failingExecFn = (command) => {
+      if (command.includes('has-session')) throw new Error("can't find session: tc-tcc-anchor");
+      throw new Error('simulated new-session failure');
+    };
+    assert.equal(tmux.ensureTccAnchorAlive({ execFn: failingExecFn }), false);
+  });
+});
+
+describe('probeTccReadable targets the anchor explicitly, never untargeted, for a socket probe (#3130, PRR-A R1 BLOCKING 2c)', () => {
+  it("passes -t '=tc-tcc-anchor:' to run-shell when options.socket is set", () => {
+    const calls = [];
+    const fakeExecFn = (command) => { calls.push(command); return ''; };
+    tmux.probeTccReadable('/tmp', { socket: tmux.TCC_SOCKET, execFn: fakeExecFn });
+    assert.equal(calls.length, 1);
+    assert.match(calls[0], /run-shell -t '=tc-tcc-anchor:' /,
+      `expected an exact-match -t target at the anchor, got: ${calls[0]}`);
+  });
+
+  it('stays untargeted for a default-server probe (no socket) — there is no anchor to aim at there', () => {
+    const calls = [];
+    const fakeExecFn = (command) => { calls.push(command); return ''; };
+    tmux.probeTccReadable('/tmp', { execFn: fakeExecFn });
+    assert.equal(calls.length, 1);
+    assert.doesNotMatch(calls[0], /-t /);
+  });
+
+  it('end-to-end: an untargeted probe reaches the real anchor session, not whatever else is "current"', () => {
+    // #2735 — a real client-server round-trip against an already-running
+    // server, same contention exposure `withContentionRetry`'s own doc
+    // comment already names for this file's other real-tmux assertions.
+    withContentionRetry(() => {
+      startAuthorizedAnchor();
+      assert.equal(tmux.probeTccReadable(os.tmpdir(), { socket: tmux.TCC_SOCKET }), true);
+    });
+  });
+});
+
+describe('_cancelStrayCopyMode and sendKeys (#3130, PRR-A R1 BLOCKING 2d)', () => {
+  it('clears a real copy-mode overlay — #{pane_in_mode} flips from 1 to 0', () => {
+    const name = uniqueSessionName('tcc_copy_mode_direct');
+    createdDefault.push(name);
+    tmux.createSessionWithTccBootstrap(name, { cwd: os.tmpdir() });
+    const defaultEnv = tmux._defaultChildEnv();
+    execFileSync('tmux', ['copy-mode', '-t', `=${name}:`], { stdio: 'ignore', env: defaultEnv });
+    const before = execFileSync(
+      'tmux', ['display-message', '-p', '-t', `=${name}:`, '#{pane_in_mode}'], { encoding: 'utf8', env: defaultEnv }
+    ).trim();
+    assert.equal(before, '1', 'the fixture must actually be in copy-mode before this proves anything');
+    tmux._cancelStrayCopyMode(name);
+    const after = execFileSync(
+      'tmux', ['display-message', '-p', '-t', `=${name}:`, '#{pane_in_mode}'], { encoding: 'utf8', env: defaultEnv }
+    ).trim();
+    assert.equal(after, '0');
+  });
+
+  it('is a harmless no-op on a pane that is not in any mode', () => {
+    const name = uniqueSessionName('tcc_copy_mode_noop');
+    createdDefault.push(name);
+    tmux.createSessionWithTccBootstrap(name, { cwd: os.tmpdir() });
+    assert.doesNotThrow(() => tmux._cancelStrayCopyMode(name));
+  });
+
+  it('runs at the very start of sendKeys, before the startup-dialog read or the prompt clear', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tmux.js'), 'utf8');
+    const fnStart = src.indexOf('function sendKeys(session, text, options = {}) {');
+    assert.ok(fnStart > -1, 'sendKeys must exist');
+    const fnBody = src.slice(fnStart, src.indexOf('\nfunction ', fnStart + 1));
+    const cancelIdx = fnBody.indexOf('_cancelStrayCopyMode(session);');
+    const dialogIdx = fnBody.indexOf('_startupDialogOn(session');
+    const clearIdx = fnBody.indexOf('_clearPromptLine(session');
+    assert.ok(cancelIdx > -1, '_cancelStrayCopyMode must be called inside sendKeys');
+    assert.ok(cancelIdx < dialogIdx, 'must run before the startup-dialog read');
+    assert.ok(cancelIdx < clearIdx, 'must run before the prompt clear');
   });
 });

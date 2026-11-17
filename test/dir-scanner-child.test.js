@@ -267,6 +267,54 @@ describe('dir-scanner child — listUnregistered (the dashboard walk)', () => {
       fsp.readdir = realReaddir;
     }
   });
+
+  test('one unresponsive directory among many healthy ones is bounded to its own share of the budget, not the whole walk\'s (#3130)', async () => {
+    // Before #3130, the deadline check ran only BETWEEN iterations, and
+    // `_exists` had no timeout of its own — so a single directory whose
+    // `.tangleclaw/project.json` probe never answers (a TCC-protected or
+    // stalled mount, same shape as this fixture's `realAccess` never-resolving
+    // promise) consumed the ENTIRE remaining walk budget by itself, silently
+    // dropping every entry listed after it. This proves the straggler is now
+    // bounded to roughly its own timeout, not the walk's.
+    const realAccess = fsp.access;
+    const realReaddir = fsp.readdir;
+    const fakeDir = '/tc-fake-straggler-root';
+    const dirents = Array.from({ length: 20 }, (_, i) => ({
+      name: `proj-${i}`, isDirectory: () => true
+    }));
+    const strandedName = 'proj-5';
+
+    fsp.readdir = (p, ...rest) => (p === fakeDir
+      ? Promise.resolve(dirents)
+      : realReaddir(p, ...rest));
+    fsp.access = (p, ...rest) => {
+      if (String(p).startsWith(fakeDir)) {
+        // The straggler never answers at all; every other entry answers
+        // instantly — the exact "one slow/unresponsive directory among many
+        // healthy ones" shape the issue describes.
+        if (String(p).includes(strandedName)) return new Promise(() => {});
+        return Promise.resolve();
+      }
+      return realAccess(p, ...rest);
+    };
+
+    try {
+      const start = Date.now();
+      const { unregistered, truncated } = await HANDLERS.listUnregistered({
+        dir: fakeDir, skipNames: [], budgetMs: 10000
+      });
+      const elapsed = Date.now() - start;
+      assert.equal(truncated, false,
+        'one unresponsive directory, well within a 10s budget, must not exhaust it');
+      assert.deepEqual(unregistered.map(u => u.name), dirents.map(d => d.name),
+        'every entry must still be listed, including every one AFTER the straggler');
+      assert.ok(elapsed < 2000,
+        `the straggler must be bounded to roughly its own timeout, not the whole walk; took ${elapsed}ms`);
+    } finally {
+      fsp.access = realAccess;
+      fsp.readdir = realReaddir;
+    }
+  });
 });
 
 describe('dir-scanner child — createDir', () => {

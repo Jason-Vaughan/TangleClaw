@@ -44,6 +44,13 @@ describe('store', () => {
       assert.equal(config.defaultEngine, 'claude');
     });
 
+    it('sets a busy_timeout so a concurrent writer waits instead of failing immediately with SQLITE_BUSY (#3130)', () => {
+      store.init();
+
+      const db = store.getDb();
+      assert.equal(db.prepare('PRAGMA busy_timeout').get().timeout, 5000);
+    });
+
     it('should not overwrite existing config.json', () => {
       const configPath = path.join(tmpDir, 'config.json');
       fs.mkdirSync(tmpDir, { recursive: true });
