@@ -4520,6 +4520,36 @@ describe('Under the Hood: Full Screen and Interactive CLI Mode (#3135)', () => {
     assert.equal(fetchCalls[0][1].method, 'POST');
     assert.deepEqual(JSON.parse(fetchCalls[0][1].body), { rawKey: 'Tab' });
   });
+
+  it('a poll preserves the live-CLI indicator while Interactive Mode is on (PRR-B R1 blocking 2a)', () => {
+    const { doc, root, shell } = mountLiveHood();
+    doc.getElementById('v6ChatHoodInteractive').dispatch('click');
+    assert.match(root.innerHTML, /v6ChatHoodLiveIndicator/);
+    // The 4s poll path (#3047) — a targeted repaint, never a full render.
+    shell.setLive({ peek: { lines: ['new output'] }, live: null });
+    const peekHtml = doc.getElementById('v6ChatPeek').innerHTML;
+    assert.match(peekHtml, /v6ChatHoodLiveIndicator/, 'the poll must not wipe it');
+    assert.match(peekHtml, /new output/);
+  });
+
+  it('a poll leaves the indicator out once Interactive Mode is off', () => {
+    const { doc, shell } = mountLiveHood();
+    shell.setLive({ peek: { lines: ['new output'] }, live: null });
+    assert.doesNotMatch(doc.getElementById('v6ChatPeek').innerHTML, /v6ChatHoodLiveIndicator/);
+  });
+
+  it('a poll keeps the stream pinned via the live streamPinned state, not a one-shot isAtBottom read (PRR-B R1 blocking 2b)', () => {
+    const { doc, shell } = mountLiveHood();
+    const stream = doc.getElementById('v6ChatStream');
+    stream.scrollHeight = 900; stream.clientHeight = 300; stream.scrollTop = 900;
+    // Simulate async content (an unfurl, a thumbnail) growing the stream
+    // earlier in the SAME poll, before this read — scrollTop now reads far
+    // from the bottom, exactly what the OLD one-shot isAtBottom(stream)
+    // check would have read as "scrolled away" and left alone.
+    stream.scrollTop = 0;
+    shell.setLive({ peek: null, live: { turns: [{ role: 'assistant', text: 'new line' }] } });
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 900, 'streamPinned (never touched by the scroll above) re-pinned it regardless');
+  });
 });
 
 describe('sidebar inline rename for Fleets, Fleet Members and Solo Work (#3136)', () => {
@@ -5230,6 +5260,22 @@ describe('the Waiting on you queue (#3079)', () => {
     assert.deepEqual(out.questions, ['Should I also tag the release?']);
   });
 
+  it('a prompt typed live but never recorded still suppresses the assistant echoing it back later in the same read (PRR-B R1 blocking 3a)', () => {
+    // No second argument to `run` — "Should I deploy to staging first?" is
+    // never in knownUserTexts, the way a prompt typed straight into the
+    // terminal (not through this chat) never is.
+    const out = run(['> Should I deploy to staging first?', '⏺ Should I deploy to staging first? Sure, let\'s do that.',
+      '  Should I tag the release after?']);
+    assert.deepEqual(out.questions, ['Should I tag the release after?']);
+  });
+
+  it('matches a TRAILING fragment of a long recorded message, not just a prefix (PRR-B R1 blocking 3b)', () => {
+    const out = run(['> review', '⏺ does the migration look safe to merge?', '  Also, should I run the smoke tests first?'],
+      ['Please review the attached diff carefully — does the migration look safe to merge?']);
+    assert.deepEqual(out.questions, ['Also, should I run the smoke tests first?'],
+      'the echoed trailing fragment is excluded even though it is not a PREFIX of the recorded message');
+  });
+
   it('numbers several questions, escapes each, and gives each a dismiss button', () => {
     const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
       chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'x' }], questions: ['A <b>?', 'B?'] } } });
@@ -5467,6 +5513,11 @@ describe('the unified 3-category Waiting-on panel (#3105)', () => {
       assert.match(html, /Also, is this urgent\?/);
     });
 
+    it('never repeats a second "Waiting on you:" label inside the YOU section (PRR-B R1 warning 1)', () => {
+      const html = G.tcV6ConversationViewMarkup(v({ live: { turns: [], questions: ['One?'] } }));
+      assert.doesNotMatch(html, /Waiting on you:/);
+    });
+
     it('folds the operator ToDo into the YOU group (#3131), with its own numbering and Clear button once it has more than one item', () => {
       const html = G.tcV6ConversationViewMarkup(v({
         live: { turns: [{ role: 'assistant', text: 'YOUR TURN:\n1. Review the PR.\n2. Merge it.' }] }
@@ -5573,6 +5624,80 @@ describe('the unified 3-category Waiting-on panel (#3105)', () => {
       // not re-parsed, so reading it back directly is reliable now).
       shell.setLive({ peek: null, live });
       assert.equal(doc.getElementById('v6ChatTodo').innerHTML, '');
+    });
+
+    it('a poll never double-wires the YOU/AI fold toggle, which would otherwise flip it right back off (PRR-B R1 blocking 1a)', () => {
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+      const live = { turns: [], queuedPrompts: [{ id: 'q1', text: 'follow up' }] };
+      shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'P' }, sessionId: 1, events: [], chat: { status: 'active', members: [], live } } });
+      // Two polls in a row — a 4s setLive() -> paintWaitingOnExtras() ->
+      // wireWaitingOn() cycle, exactly what the real symptom needs, and
+      // never a full render in between.
+      shell.setLive({ peek: null, live });
+      shell.setLive({ peek: null, live });
+      assert.doesNotMatch(root.innerHTML, /v6-waiting-on-ai is-collapsed/, 'not folded yet');
+      doc.getElementById('v6WaitingOnToggle-ai').dispatch('click');
+      assert.match(root.innerHTML, /v6-waiting-on-ai is-collapsed/, 'exactly one toggle landed, not two that cancelled out');
+    });
+
+    // The mini-dom's innerHTML parsing is flat and deliberately not a real
+    // parser (_mini-dom.js's own doc): a full render's `root.innerHTML =
+    // …` populates `root.innerHTML` (the STRING) correctly, but each
+    // id-bearing descendant it registers is a BARE marker with no children
+    // of its own — its `.innerHTML` reads '' until something explicitly
+    // assigns it, which only a TARGETED poll-time update (paintWaitingOnExtras)
+    // ever does. So the state right after a full render is read from
+    // `root.innerHTML`; only the state after a poll is read from the
+    // wrap's own node — the same reason the "Clear on Your ToDo" test
+    // above reads #v6ChatTodo directly only after its own poll.
+    it('a poll adds the Your ToDo Clear button and subhead the instant it crosses 1 to 2 items, and removes them going back (PRR-B R1 blocking 1b)', () => {
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+      const oneItem = { turns: [{ role: 'assistant', text: 'YOUR TURN:\n1. Review the PR.' }] };
+      shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'P' }, sessionId: 1, events: [], chat: { status: 'active', members: [], live: oneItem } } });
+      assert.match(root.innerHTML, /v6-waiting-on-subhead/, 'the subhead shows with just 1 item too (full render)');
+      assert.doesNotMatch(root.innerHTML, /id="v6WaitingOnTodoClear"/, 'Clear needs more than 1 item (full render)');
+      const todoWrap = () => doc.getElementById('v6ChatTodoWrap').innerHTML;
+      const twoItems = { turns: [{ role: 'assistant', text: 'YOUR TURN:\n1. Review the PR.\n2. Merge it.' }] };
+      shell.setLive({ peek: null, live: twoItems }); // a poll, not a full render
+      assert.match(todoWrap(), /id="v6WaitingOnTodoClear"/, 'the poll added it once the count crossed to >1');
+      shell.setLive({ peek: null, live: oneItem }); // back down to 1
+      assert.doesNotMatch(todoWrap(), /id="v6WaitingOnTodoClear"/, 'and removed it going back');
+    });
+
+    it('a poll removes the AI Clear button the instant the queue\'s own auto-clear drops it from 2 to 1 item (PRR-B R1 blocking 1b)', () => {
+      const { doc, root, shell } = mountShell({ tree: [], storage: null });
+      shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'P' }, sessionId: 1, events: [], chat: { status: 'active', members: [], live: { turns: [] } } } });
+      shell.queuePrompt(12, 'one'); // a full render each — fine, this just sets up the starting state
+      shell.queuePrompt(12, 'two');
+      assert.match(root.innerHTML, /id="v6WaitingOnAiClear"/, '2 items, Clear shown (full render)');
+      // openQueuedPrompts auto-clears a queued item once its text shows as
+      // already sent — a poll whose live turns now include "one" drops the
+      // queue from 2 to 1 PURELY through setLive(), never queuePrompt's own
+      // full render.
+      shell.setLive({ peek: null, live: { turns: [{ role: 'user', text: 'one' }] } });
+      assert.doesNotMatch(doc.getElementById('v6ChatAiWrap').innerHTML, /id="v6WaitingOnAiClear"/, 'the poll removed it once auto-clear dropped the count to 1');
+    });
+
+    it('a poll adds the YOU Clear button once direct questions cross 1 to 2 (PRR-B R1 blocking 1b)', () => {
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage: null });
+      const one = { turns: [], questions: ['One?'] };
+      shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'P' }, sessionId: 1, events: [], chat: { status: 'active', members: [], live: one } } });
+      assert.doesNotMatch(root.innerHTML, /id="v6WaitingOnYouClear"/, '1 question, no Clear yet (full render)');
+      const two = { turns: [], questions: ['One?', 'Two?'] };
+      shell.setLive({ peek: null, live: two });
+      assert.match(doc.getElementById('v6WaitingOnYouClearWrap').innerHTML, /id="v6WaitingOnYouClear"/, 'the poll added it once direct questions crossed to >1');
     });
   });
 });

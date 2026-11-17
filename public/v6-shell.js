@@ -1994,8 +1994,12 @@
     if (/^>/.test(trimmed)) return true;
     const squashed = trimmed.replace(/\s+/g, ' ').trim();
     if (knownLines.has(trimmed)) return true;
-    return squashed.length >= 8 && (Array.isArray(sentTexts) ? sentTexts : [])
-      .some((m) => m === squashed || m.startsWith(squashed) || squashed.startsWith(m));
+    const texts = Array.isArray(sentTexts) ? sentTexts : [];
+    if (squashed.length >= 8 && texts.some((m) => m === squashed || m.startsWith(squashed) || squashed.startsWith(m))) return true;
+    // #3131 (PRR-B R1 blocking 3b): a long operator message can wrap across
+    // several pane lines, so the assistant's own echo of it can be a
+    // MIDDLE or TRAILING fragment, never a prefix of either side.
+    return squashed.length >= 12 && texts.some((m) => m.length >= 12 && (m.includes(squashed) || squashed.includes(m)));
   }
 
   /**
@@ -2051,6 +2055,16 @@
     const original = (m) => known[sent.indexOf(m)] || m;
     const knownLines = new Set((Array.isArray(knownUserTexts) ? knownUserTexts : [])
       .flatMap((t) => String(t).split('\n')).map((t) => t.trim()).filter(Boolean));
+    // #3131 (PRR-B R1 blocking 3a): a prompt the pane shows live but that
+    // was never recorded as a B2 event (typed straight into the terminal,
+    // not through this chat) is still the operator's own words — filled in
+    // as each one is seen below, so a LATER line in this SAME read that
+    // echoes an EARLIER, unrecorded one is still caught, not just a
+    // recorded message's own echo. Kept apart from `knownLines`/`sent`
+    // above, which `recordedAs` also reads to decide what to mark
+    // `recorded: true` — that decision must stay about the real record.
+    const liveKnownLines = new Set();
+    const liveSent = [];
     // The longest known text that fits, so a long message's whole text wins
     // over its record cut short (#3079).
     const longest = (list) => list.reduce((best, m) => (best && best.length >= m.length ? best : m), null);
@@ -2160,6 +2174,15 @@
           // #3079 item 6: a recorded prompt keeps its place among the
           // replies, marked so the recorded copy is not drawn again.
           turns.push(echo ? { role: 'user', text: original(echo), recorded: true } : { role: 'user', text: said });
+          // #3131 (PRR-B R1 blocking 3a): an unrecorded prompt is still the
+          // operator's own words, from here on in this same read.
+          if (!echo) {
+            const squashedSaid = squash(said);
+            if (squashedSaid) {
+              liveSent.push(squashedSaid);
+              said.split('\n').forEach((l) => { const t = l.trim(); if (t) liveKnownLines.add(t); });
+            }
+          }
         }
         return;
       }
@@ -2211,12 +2234,16 @@
     const trailingBlock = last && last.role === 'assistant' && !answered ? lastReplyTrailingBlock.split('\n') : [];
     const tail = last && last.role === 'assistant' && !answered ? last.text.split('\n').pop() : '';
     // Any line that is the operator's own words, echoed or quoted back
-    // (#3131), is never read as the assistant asking a question.
+    // (#3131), is never read as the assistant asking a question — recorded
+    // or not (#3131 PRR-B R1 blocking 3a: `liveKnownLines`/`liveSent` are
+    // filled in by now, every unrecorded prompt this same read has shown).
+    const allKnownLines = new Set([...knownLines, ...liveKnownLines]);
+    const allSent = sent.concat(liveSent);
     const questions = openPrior.flatMap((t) => t.split('\n')).concat(trailingBlock)
-      .filter((l) => !isOperatorEcho(l, knownLines, sent))
+      .filter((l) => !isOperatorEcho(l, allKnownLines, allSent))
       .map((l) => l.trim().replace(QUESTION_PREFIX, '').trim())
       .filter(asksQuestion);
-    const question = !isOperatorEcho(tail, knownLines, sent) && asksQuestion(tail) ? tail : null;
+    const question = !isOperatorEcho(tail, allKnownLines, allSent) && asksQuestion(tail) ? tail : null;
     return { turns, question, questions, activity, switchboard };
   }
 
@@ -3053,8 +3080,10 @@
   function chatQuestionInner(questions) {
     const list = questionList(questions);
     if (!list.length) return '';
-    return `<span class="v6-chat-question-label">Waiting on you:</span>
-      <ol class="v6-chat-question-list">${list.map((q, i) => (
+    // #3131 (PRR-B R1 warning 1): the outer YOU (x) section already labels
+    // this; a second "Waiting on you:" inside it was left over from before
+    // that header existed.
+    return `<ol class="v6-chat-question-list">${list.map((q, i) => (
         `<li class="v6-chat-question-item">${itemNumberMarkup(i, list.length)}<span class="v6-chat-question-text">${escapeHtml(q)}</span>
           <button type="button" class="v6-chat-question-dismiss" id="v6ChatQuestionDismiss${i}" data-index="${i}" title="Dismiss this question" aria-label="Dismiss question ${i + 1}"><span aria-hidden="true">✕</span></button></li>`
       )).join('')}</ol>`;
@@ -3203,6 +3232,43 @@
   }
 
   /**
+   * The YOU group's Clear button alone (#3131 PRR-B R1 blocking 1b),
+   * wrapped so a poll can replace it in one piece as `model.direct.length`
+   * crosses the 0/1-vs->1 boundary — kept OUT of `#v6ChatQuestion` itself,
+   * which has its own separate, focus-preserving poll-time update (#3079).
+   * @param {number} directCount
+   * @returns {string} HTML for inside `#v6WaitingOnYouClearWrap`.
+   */
+  function youClearMarkup(directCount) {
+    return directCount > 1 ? '<button type="button" id="v6WaitingOnYouClear" class="v6-waiting-on-clear">Clear</button>' : '';
+  }
+
+  /**
+   * The "Your ToDo" sub-block — subhead, list and Clear — as one piece
+   * (#3131 PRR-B R1 blocking 1b): shared between the full render and the
+   * poll-time repaint so a poll that crosses the 0/1-vs->1 boundary never
+   * leaves the subhead or the Clear button stale.
+   * @param {string[]} todo
+   * @returns {string} HTML for inside `#v6ChatTodoWrap`.
+   */
+  function todoWrapMarkup(todo) {
+    return `${todo.length ? '<span class="v6-waiting-on-subhead">Your ToDo</span>' : ''}
+        <ol id="v6ChatTodo" class="v6-waiting-on-todo-list">${todoListMarkup(todo)}</ol>
+        ${todo.length > 1 ? '<button type="button" id="v6WaitingOnTodoClear" class="v6-waiting-on-clear">Clear</button>' : ''}`;
+  }
+
+  /**
+   * The AI queue's list and Clear, as one piece (#3131 PRR-B R1 blocking
+   * 1b) — the same reason {@link todoWrapMarkup} is one piece.
+   * @param {Array<{id: *, text: string}>} ai
+   * @returns {string} HTML for inside `#v6ChatAiWrap`.
+   */
+  function aiWrapMarkup(ai) {
+    return `<ol id="v6ChatAi" class="v6-waiting-on-ai-list">${aiListMarkup(ai)}</ol>
+        ${ai.length > 1 ? '<button type="button" id="v6WaitingOnAiClear" class="v6-waiting-on-clear">Clear</button>' : ''}`;
+  }
+
+  /**
    * One Fleet Member's outstanding-send `<li>`s alone (#3131) — shared the
    * same way as {@link todoListMarkup}/{@link aiListMarkup}.
    * @param {Array<{text: string, key: string}>} items
@@ -3238,8 +3304,9 @@
    * @returns {string} HTML.
    */
   function waitingOnSectionMarkup(sectionKey, labelHtml, collapsed, bodyHtml, cssKey, hasItems, ariaLabel) {
+    const toggleId = `v6WaitingOnToggle-${sectionKey.replace(/[^a-zA-Z0-9]/g, '-')}`;
     return `<section class="v6-waiting-on-section v6-waiting-on-${escapeHtml(cssKey)}${hasItems ? ' has-items' : ''}${collapsed ? ' is-collapsed' : ''}" aria-label="Waiting on ${escapeHtml(ariaLabel || '')}">
-        <button type="button" class="v6-waiting-on-title" data-waiting-section="${escapeHtml(sectionKey)}" aria-expanded="${collapsed ? 'false' : 'true'}">
+        <button type="button" id="${escapeHtml(toggleId)}" class="v6-waiting-on-title" data-waiting-section="${escapeHtml(sectionKey)}" aria-expanded="${collapsed ? 'false' : 'true'}">
           <span class="v6-waiting-on-caret" aria-hidden="true">${collapsed ? '▸' : '▾'}</span> ${labelHtml}
         </button>
         <div class="v6-waiting-on-body"${collapsed ? ' hidden' : ''}>${bodyHtml}</div>
@@ -3271,15 +3338,11 @@
     const youCount = waitingOnYouCount(model);
     const youBody = `<div id="v6ChatGateChoice" class="v6-chat-gate-choice">${cliGateMarkup(model.gate)}${multiChoiceMarkup(model.choice)}</div>
         ${chatQuestionMarkup(model.direct)}
-        ${model.direct.length > 1 ? '<button type="button" id="v6WaitingOnYouClear" class="v6-waiting-on-clear">Clear</button>' : ''}
-        <div class="v6-waiting-on-todo">${model.todo.length ? '<span class="v6-waiting-on-subhead">Your ToDo</span>' : ''}
-          <ol id="v6ChatTodo" class="v6-waiting-on-todo-list">${todoListMarkup(model.todo)}</ol>
-          ${model.todo.length > 1 ? '<button type="button" id="v6WaitingOnTodoClear" class="v6-waiting-on-clear">Clear</button>' : ''}
-        </div>`;
+        <span id="v6WaitingOnYouClearWrap">${youClearMarkup(model.direct.length)}</span>
+        <div id="v6ChatTodoWrap" class="v6-waiting-on-todo">${todoWrapMarkup(model.todo)}</div>`;
     const you = waitingOnSectionMarkup('you', `YOU (<span id="v6ChatWaitingOnYouCount">${youCount}</span>)`,
       folded.has('you'), youBody, 'you', youCount > 0, 'you');
-    const aiBody = `<ol id="v6ChatAi" class="v6-waiting-on-ai-list">${aiListMarkup(model.ai)}</ol>
-        ${model.ai.length > 1 ? '<button type="button" id="v6WaitingOnAiClear" class="v6-waiting-on-clear">Clear</button>' : ''}`;
+    const aiBody = `<div id="v6ChatAiWrap">${aiWrapMarkup(model.ai)}</div>`;
     const ai = waitingOnSectionMarkup('ai', `AI (${model.ai.length})`, folded.has('ai'), aiBody,
       'ai', model.ai.length > 0, 'AI');
     const fleetSections = fleetSectionsMarkup(model.fleet, folded);
@@ -7444,11 +7507,18 @@
       if (gc) gc.innerHTML = cliGateMarkup(model.gate) + multiChoiceMarkup(model.choice);
       const countEl = doc.getElementById('v6ChatWaitingOnYouCount');
       if (countEl) countEl.innerHTML = String(waitingOnYouCount(model));
+      // #3131 (PRR-B R1 blocking 1b): each of these three replaces its
+      // WHOLE wrap — the Clear button and (for Todo) the subhead included
+      // — so a poll that crosses the 0/1-vs->1 boundary never leaves
+      // either stale; before this they lived outside the list element
+      // this function used to update alone.
+      const youClearWrap = doc.getElementById('v6WaitingOnYouClearWrap');
+      if (youClearWrap) youClearWrap.innerHTML = youClearMarkup(model.direct.length);
       setSectionClass('you', waitingOnYouCount(model) > 0);
-      const todoEl = doc.getElementById('v6ChatTodo');
-      if (todoEl) todoEl.innerHTML = todoListMarkup(model.todo);
-      const aiEl = doc.getElementById('v6ChatAi');
-      if (aiEl) aiEl.innerHTML = aiListMarkup(model.ai);
+      const todoWrap = doc.getElementById('v6ChatTodoWrap');
+      if (todoWrap) todoWrap.innerHTML = todoWrapMarkup(model.todo);
+      const aiWrap = doc.getElementById('v6ChatAiWrap');
+      if (aiWrap) aiWrap.innerHTML = aiWrapMarkup(model.ai);
       setSectionClass('ai', model.ai.length > 0);
       const fleetWrap = doc.getElementById('v6ChatWaitingOnFleet');
       if (fleetWrap) fleetWrap.innerHTML = fleetSectionsMarkup(model.fleet, folded);
@@ -7535,12 +7605,34 @@
       // #3131: each actor section's header folds/unfolds it, remembered per
       // chat; a plain re-render is fine here — unlike the gate card above,
       // folding is not something that must survive a poll mid-keystroke.
-      each('[data-waiting-section]', (btn) => {
-        btn.addEventListener('click', () => {
-          const sectionKey = btn.getAttribute('data-waiting-section');
-          if (sectionKey) { toggleWaitingOnSection(sectionKey); render(); }
-        });
-      });
+      // #3131 (PRR-B R1 blocking 1a): this button is NEVER recreated by
+      // paintWaitingOnExtras (it is the section's own header, a sibling of
+      // the body that function updates) — unlike the Clear buttons above,
+      // which now live inside a wrap that function fully replaces, a fresh
+      // element on every poll is not available here, so a once-per-element
+      // dataset marker (wireUsage()'s own pattern) is what stops a 4s
+      // setLive() -> paintWaitingOnExtras() -> wireWaitingOn() poll from
+      // doubling this listener — two clicks per press toggled the fold
+      // state straight back off. Both wiring paths below share the SAME
+      // marker, so whichever runs first wins and the other is a no-op.
+      // `sectionKey` is taken as a PARAMETER, never re-read from the
+      // button's own `data-waiting-section` attribute inside the handler:
+      // a test's minimal DOM parses only `id=` out of a markup string, not
+      // arbitrary attributes, so a round trip through `getAttribute` here
+      // would make this exact fix untestable, not just inconvenient.
+      const wireFoldToggle = (btn, sectionKey) => {
+        if (!btn || (btn.dataset && btn.dataset.waitingSectionWired)) return;
+        if (btn.dataset) btn.dataset.waitingSectionWired = '1';
+        btn.addEventListener('click', () => { toggleWaitingOnSection(sectionKey); render(); });
+      };
+      each('[data-waiting-section]', (btn) => wireFoldToggle(btn, btn.getAttribute('data-waiting-section')));
+      // The two always-present toggles, by their own stable id and known
+      // key — `each` above already covers them (and every Fleet Member
+      // one, dynamic by nature) through `doc.querySelectorAll`, which a
+      // test's minimal DOM does not implement; this id-based lookup is
+      // what makes THIS exact fix provable in test/v6-b1-ui-shell.test.js.
+      wireFoldToggle(doc.getElementById('v6WaitingOnToggle-you'), 'you');
+      wireFoldToggle(doc.getElementById('v6WaitingOnToggle-ai'), 'ai');
       each('.v6-waiting-on-fleet-dismiss', (btn) => {
         btn.addEventListener('click', () => dismissFleetTargets([btn.getAttribute('data-key')]));
       });
@@ -8426,17 +8518,30 @@
         const peekEl = doc.getElementById('v6ChatPeek');
         if (peekEl) {
           const atBottom = isAtBottom(peekEl);
-          peekEl.innerHTML = chatPeekMarkup(peek);
+          // #3135 (PRR-B R1 blocking 2a): a plain innerHTML replace here
+          // dropped the live-CLI indicator every 4s poll while Interactive
+          // Mode was on — it is not part of `chatPeekMarkup`'s own markup,
+          // the same way the full render draws it, so it is restored here too.
+          peekEl.innerHTML = (hoodInteractive
+            ? '<span id="v6ChatHoodLiveIndicator" style="color:#9CF732;display:block;">LIVE CLI — Type directly into pane</span>'
+            : '') + chatPeekMarkup(peek);
           if (atBottom) pinToBottom(peekEl);
         }
         const stream = doc.getElementById('v6ChatStream');
-        const streamAtBottom = isAtBottom(stream);
         const liveEl = doc.getElementById('v6ChatLive');
         if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name, verbosity, thumbsNow(), unfurlsNow());
         wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): setLive runs on every live poll — the bug this finding is actually about.
         paintTucked(live);
         paintRecorded();
-        if (streamAtBottom) pinToBottom(stream);
+        // #3135 (PRR-B R1 blocking 2b): `streamPinned` is the live state the
+        // operator's own scroll keeps current — a one-shot `isAtBottom`
+        // read here missed async content (an unfurl, a thumbnail) that
+        // grew the stream's height earlier in the SAME poll, unpinning a
+        // chat that was never actually scrolled away from by hand.
+        if (streamPinned) {
+          pinToBottom(stream);
+          if (raf) raf(() => { if (streamPinned) pinToBottom(stream); });
+        }
         paintQuestions();
         paintWaitingOnExtras();
         const a = doc.getElementById('v6ChatActivity');
