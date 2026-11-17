@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-16 — v6.5.1 release cut (Milestone #84), Car V651-W3-REL
+
+<!-- prawduct: type=internal | scope=v651-release -->
+
+- Compiled 12 accepted `changelog.d/` fragments (#3130 from PR #3142; #3131, #3135, #3136 from PR #3141; #3132, #3139 from PR #3140 and PR #3145; #3133 (`.changed.md` + `.resizable-persisted-layout.added.md`) from PR #3144 and PR #3145; #3134, #3138 (`.fixed.md` + `.version-plan-parallelism-validator.added.md`) from PR #3143; #3137 from PR #3146) into `CHANGELOG.md` section `[6.5.1]` via `compileFragments`/`spliceIntoUnreleased`/`_promoteUnreleased`, target version `6.5.1` (minor — the fragment set mixes `added`/`changed` with `fixed`, and a minor-tier subsection always wins per the version-bump precedence table). Bumped `version.json` (`6.5.0` → `6.5.1`), updated README pins/banner (prose hand-written here, not generated) and the released-section lock via `scripts/release-prepare.js`, and updated `FEATURES.md`, `ROADMAP.md`, `docs/releases/index.md` and `docs/releases/v6.5.1.md`.
+- Dispatched by `TC-Lane-PM` via Medusa after Wave 1 (4 PRs: #3140–#3143) and Wave 2 (3 PRs: #3144–#3146) all true-merged to `origin/main @ 54d7c4559186a68e575623910613dca6e56a62fa`, closing all 10 Milestone #84 issues (#3130–#3139). `LANE_QUEUE.md`'s `W3-REL (Car V651-W3-REL)` row carries the matching file-scope grant. No separate Architect ruling number was cited for this car at dispatch time; the PM dispatch and the verified milestone/SHA state are the record.
+
 ## 2026-11-16 — v6.5.0 release cut (Milestone #82)
 
 <!-- prawduct: type=internal | scope=v650-release -->
