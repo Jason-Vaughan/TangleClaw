@@ -251,6 +251,9 @@
   /** The persisted key for a fleet node, scoped by its project (fleet ids repeat across projects). */
   function fleetNodeKey(project, fleet) { return `f:${project.id}/${fleet.id}`; }
 
+  /** The sidebar rename key for a member row (#3136), by its own seat id. */
+  function memberNodeKey(m) { return `m:${m.seatId}`; }
+
   /**
    * One fold toggle (`▾` open / `▸` folded) for a project or fleet node.
    * @param {string} id - The button's element id.
@@ -263,6 +266,42 @@
     return `<button type="button" id="${escapeHtml(id)}" class="v6-tree-toggle" data-action="toggle-tree-node"
       data-node-id="${escapeHtml(nodeKey)}" aria-expanded="${folded ? 'false' : 'true'}"
       aria-label="${folded ? 'Expand' : 'Collapse'} ${escapeHtml(name)}">${folded ? '▸' : '▾'}</button>`;
+  }
+
+  /**
+   * One sidebar row's inline rename control (#3136): a ✎ button that
+   * turns the row into a compact Save/Cancel form (Enter submits as a
+   * form always does; Escape cancels, wired alongside the input), or —
+   * while open for this exact row — the form itself.
+   * @param {string} nodeKey - `projectNodeKey`/`fleetNodeKey`/`m:<seatId>`, matched against `rename.key`.
+   * @param {string} name - Current display name.
+   * @param {string} idSuffix - The row's own positional suffix (`p0`, `m0-0-1`, …), for stable element ids.
+   * @param {{key?: string|null, draft?: string|null, warning?: string|null}} [rename] - The sidebar's one open form, if any.
+   * @returns {string} HTML.
+   */
+  function sidebarRenameControlMarkup(nodeKey, name, idSuffix, rename) {
+    const r = rename || {};
+    const n = escapeHtml(name);
+    if (r.key === nodeKey) {
+      const value = escapeHtml(r.draft != null ? r.draft : name);
+      const warn = r.warning
+        ? `<p id="v6TreeRenameWarning-${idSuffix}" class="v6-sidebar-rename-warning" role="alert">${escapeHtml(r.warning)}</p>
+          <button type="button" id="v6TreeRenameConfirm-${idSuffix}" class="btn btn-primary btn-small v6-sidebar-rename-confirm"
+            data-rename-node="${escapeHtml(nodeKey)}" title="Rename even though the old folder's engine state stays behind">Rename anyway</button>`
+        : '';
+      return `<form id="v6TreeRenameForm-${idSuffix}" class="v6-sidebar-rename-form" data-action="sidebar-rename-form"
+          data-rename-node="${escapeHtml(nodeKey)}" aria-label="Rename ${n}">
+          <label class="sr-only" for="v6TreeRenameInput-${idSuffix}">New name for ${n}</label>
+          <input id="v6TreeRenameInput-${idSuffix}" class="filter-input v6-sidebar-rename-input" name="name" value="${value}"
+            maxlength="64" autocomplete="off" spellcheck="false" title="Letters, digits, spaces, dashes and underscores">
+          <button type="submit" id="v6TreeRenameSave-${idSuffix}" class="btn btn-primary btn-small v6-sidebar-rename-save">Save</button>
+          <button type="button" id="v6TreeRenameCancel-${idSuffix}" class="btn btn-secondary btn-small v6-sidebar-rename-cancel"
+            data-rename-node="${escapeHtml(nodeKey)}">Cancel</button>
+          ${warn}
+        </form>`;
+    }
+    return `<button type="button" id="v6TreeRename-${idSuffix}" class="v6-sidebar-rename-btn" data-rename-node="${escapeHtml(nodeKey)}"
+        title="Rename ${n}" aria-label="Rename ${n}"><span aria-hidden="true">✎</span></button>`;
   }
 
   /**
@@ -281,8 +320,10 @@
    * on `data-node-id`.
    * @param {ReturnType<typeof buildHierarchyTree>} tree
    * @param {{activeProjectId?: string, activeFleetId?: string, activeResourceId?: string,
-   *   collapsed?: Array<string>|Set<string>, memberInfo?: (seatId: string) => object|null}} [opts] -
-   *   `memberInfo` gives a member's status indicators (#3053), or null to draw it plain.
+   *   collapsed?: Array<string>|Set<string>, memberInfo?: (seatId: string) => object|null,
+   *   rename?: {key?: string|null, draft?: string|null, warning?: string|null}}} [opts] -
+   *   `memberInfo` gives a member's status indicators (#3053), or null to draw it plain. `rename`
+   *   is the sidebar's own open inline-rename form (#3136), at most one at a time.
    * @returns {string} HTML.
    */
   function sidebarMarkup(tree, opts) {
@@ -291,6 +332,7 @@
     const activeFleetId = options.activeFleetId != null ? String(options.activeFleetId) : null;
     const activeResourceId = options.activeResourceId != null ? String(options.activeResourceId) : null;
     const collapsed = new Set(options.collapsed || []);
+    const rename = options.rename || {};
     const list = Array.isArray(tree) ? tree : [];
     const items = list.map((project, pi) => {
       const projectActive = activeProjectId === String(project.id);
@@ -314,9 +356,16 @@
         const stateClass = info ? ` is-${info.state}` : '';
         const title = info ? ` title="${escapeHtml(info.title)}"` : '';
         const glyph = info ? `<span class="v6-member-glyph" aria-hidden="true">${info.glyph}</span>` : '';
+        // #3136: Fleet Member and Solo Work rename the same way — both are
+        // just a member row here, grouped under a real fleet or under the
+        // flattened catch-all "Workspace Projects" one.
+        const memberIdSuffix = `m${pi}-${fi}-${mi}`;
+        const memberKey = memberNodeKey(m);
+        if (rename.key === memberKey) return `<li class="v6-shell-member">${sidebarRenameControlMarkup(memberKey, m.role, memberIdSuffix, rename)}</li>`;
         return `<li class="v6-shell-member"><a class="v6-shell-member-link${stateClass}${memberActive ? ' is-active' : ''}"
-          aria-current="${memberActive ? 'page' : 'false'}" id="v6TreeLink-m${pi}-${fi}-${mi}"${title}
-          href="${escapeHtml(memberHash)}" data-route="${escapeHtml(memberHash)}">${glyph}${label}</a>${info ? memberIndicatorsMarkup(info) : ''}</li>`;
+          aria-current="${memberActive ? 'page' : 'false'}" id="v6TreeLink-m${pi}-${fi}-${mi}" data-rename-dblclick="${escapeHtml(memberKey)}"${title}
+          href="${escapeHtml(memberHash)}" data-route="${escapeHtml(memberHash)}">${glyph}${label}</a>${info ? memberIndicatorsMarkup(info) : ''}
+          ${sidebarRenameControlMarkup(memberKey, m.role, memberIdSuffix, rename)}</li>`;
       }).join('');
       const fleetItems = projectFolded ? '' : (flattenFleet
         ? memberItemsFor(project.fleets[0], 0)
@@ -338,10 +387,21 @@
       const projectToggle = project.fleets.length
         ? treeToggleMarkup(`v6TreeToggle-p${pi}`, projectNodeKey(project), project.displayName, projectFolded)
         : '';
-      return `<li>
-        <div class="v6-tree-row">${projectToggle}<a class="v6-shell-project${projectActive ? ' is-active' : ''}" id="v6TreeLink-p${pi}"
+      // #3136: a Fleet renames by its logical-project row — never the
+      // catch-all "Workspace Projects" bucket, which is not a fleet the
+      // operator made. Renaming it means giving every current member a
+      // new shared prefix (`renameFleetMembers`); there is no separate,
+      // independently-stored fleet name to rewrite instead (#3022: this
+      // whole tree is synthesized from project name prefixes).
+      const projectKey = projectNodeKey(project);
+      const isFleet = project.id !== WORKSPACE_PROJECT_ID;
+      const projectRow = rename.key === projectKey
+        ? sidebarRenameControlMarkup(projectKey, project.displayName, `p${pi}`, rename)
+        : `${projectToggle}<a class="v6-shell-project${projectActive ? ' is-active' : ''}" id="v6TreeLink-p${pi}" data-rename-dblclick="${isFleet ? escapeHtml(projectKey) : ''}"
            aria-current="${projectActive ? 'page' : 'false'}"
-           href="${escapeHtml(projectHash)}" data-route="${escapeHtml(projectHash)}">${escapeHtml(project.displayName)}</a></div>
+           href="${escapeHtml(projectHash)}" data-route="${escapeHtml(projectHash)}">${escapeHtml(project.displayName)}</a>${isFleet ? sidebarRenameControlMarkup(projectKey, project.displayName, `p${pi}`, rename) : ''}`;
+      return `<li>
+        <div class="v6-tree-row">${projectRow}</div>
         ${fleetItems ? `<ul class="${flattenFleet ? 'v6-shell-members' : 'v6-shell-fleets'}">${fleetItems}</ul>` : ''}
       </li>`;
     }).join('');
@@ -1011,6 +1071,16 @@
   const CHAT_POLL_MS = 4000;
 
   /**
+   * Under the Hood's deep-scrollback line count (#3135): read on every
+   * poll, not just once, so previous terminal history stays scrollable
+   * without leaving the v6 UI — `?full=true` would do the same at the
+   * cost of the whole tmux history buffer on EVERY poll (#3047's 4s
+   * cycle), which this avoids while still comfortably covering the
+   * issue's 500-2000+ line ask.
+   */
+  const PEEK_LINES_DEEP = 2000;
+
+  /**
    * The start of the server's refusal for a rename that would orphan engine
    * state (`lib/workspace-rename-check.js#renameWarningFor`, #2864); it
    * carries no code of its own, and the text is pinned by that module's tests.
@@ -1611,6 +1681,9 @@
       <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name, chat.verbosity, chat.thumbs, chat.unfurls)}</ol>
       <ol id="v6ChatRecordedTail" class="v6-conversation-stream v6-chat-recorded-tail">${tail}</ol>
       <ol id="v6ChatPending" class="v6-conversation-stream v6-chat-pending">${pendingMarkup(chat.pending, chat.lastSent, chat.thumbs, chat.unfurls)}</ol>
+      <button type="button" id="v6ChatJumpLatest" class="v6-chat-jump-latest"${chat.streamPinned === false ? '' : ' hidden'}
+        style="position:sticky;bottom:8px;left:100%;transform:translateX(-100%);z-index:5;white-space:nowrap;"
+        aria-label="Jump to newest messages">↓ Newest</button>
     </div>`;
     // A member reached directly is still the project's delegate when it is
     // the one the delegate resolution picks (#3053).
@@ -1684,8 +1757,20 @@
         </div>
       </header>
       ${stream}
-      ${liveSession ? `<details id="v6ChatUnderHood" class="v6-chat-under-hood"${chat.hoodOpen ? ' open' : ''}>
-        <summary>🔧 Under the Hood (Raw CLI &amp; Tool Activity) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count">${tuckedCountText(tuckedTurns(liveTurns, chat.verbosity).length)}</span></summary>
+      ${liveSession ? `<details id="v6ChatUnderHood" class="v6-chat-under-hood"${chat.hoodOpen ? ' open' : ''}${
+        // #3135: a dark-palette modal overlay, in lieu of a style.css rule
+        // (reserved for Wave 2's own Car) — inline, so it costs nothing when not active.
+        chat.hoodFullScreen ? ' style="position:fixed;inset:0;z-index:9000;width:100%;height:100%;max-width:none;max-height:none;'
+          + 'margin:0;background:#0b0f0c;color:#e8f0e2;overflow:auto;padding:16px;box-sizing:border-box;"' : ''
+      }>
+        <summary>🔧 Under the Hood (Raw CLI &amp; Tool Activity) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count">${tuckedCountText(tuckedTurns(liveTurns, chat.verbosity).length)}</span>
+          <button type="button" id="v6ChatHoodFullScreen" class="btn btn-secondary btn-small v6-chat-hood-fullscreen"
+            title="${chat.hoodFullScreen ? 'Exit Full Screen' : 'Full Screen'}" aria-label="${chat.hoodFullScreen ? 'Exit Full Screen' : 'Full Screen'}">
+            <span aria-hidden="true">${chat.hoodFullScreen ? '⤡ Exit Full Screen' : '⤢ Full Screen'}</span></button>
+          <button type="button" id="v6ChatHoodInteractive" class="btn btn-secondary btn-small v6-chat-hood-interactive"
+            aria-pressed="${chat.hoodInteractive ? 'true' : 'false'}" title="Interactive CLI: type directly into the live pane">
+            <span aria-hidden="true">⌨ Interactive</span></button>
+        </summary>
         ${verbosityMarkup(chat.verbosity)}
         <section class="v6-chat-tucked" aria-label="Replies tucked away">
           <h3 class="v6-chat-switchboard-title">Tucked away</h3>
@@ -1695,11 +1780,13 @@
           <h3 class="v6-chat-switchboard-title">Switchboard &amp; Medusa traffic</h3>
           <ol id="v6ChatSwitchboard" class="v6-chat-switchboard-list" tabindex="-1">${switchboardMarkup(switchboardItems(v.events, live))}</ol>
         </section>
-        <pre id="v6ChatPeek" class="v6-chat-peek" tabindex="0">${chatPeekMarkup(chat.peek)}</pre>
+        <pre id="v6ChatPeek" class="v6-chat-peek" tabindex="0"${chat.hoodInteractive ? ' style="border:2px solid #9CF732;"' : ''}>${
+          chat.hoodInteractive ? '<span id="v6ChatHoodLiveIndicator" style="color:#9CF732;display:block;">LIVE CLI — Type directly into pane</span>' : ''
+        }${chatPeekMarkup(chat.peek)}</pre>
       </details>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session.
         <button type="button" id="v6ChatStartBanner" class="btn btn-primary btn-small" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>
         <a class="v6-chat-classic-launch" href="#/">Open Classic View to launch ${escapeHtml(name)}</a></p>`}
-      ${waitingOnMarkup(waitingOnModel(live, chat, v.events, liveTurns))}
+      ${waitingOnMarkup(waitingOnModel(live, chat, v.events, liveTurns, chat.knownProjects), chat.collapsedWaitingOn)}
       ${chatActivityMarkup(chatBusyLabel(chat), chat.activityElapsed)}
       <form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form" aria-label="Message ${escapeHtml(name)}">
         <div id="v6ChatAttachments" class="v6-chat-attachments" aria-live="polite">${attachmentChipsMarkup(chat.attachments)}</div>
@@ -1892,6 +1979,49 @@
   }
 
   /**
+   * Whether a line is the operator's own words echoed or quoted back
+   * (#3131), never an open question: a markdown blockquote (`> \u2026`), or
+   * text that matches \u2014 whole, or as a fragment either direction \u2014 a
+   * message the operator themself already sent.
+   * @param {string} line
+   * @param {Set<string>} knownLines - Exact lines of recorded operator messages.
+   * @param {string[]} sentTexts - Recorded operator messages, squashed to one line each.
+   * @returns {boolean}
+   */
+  function isOperatorEcho(line, knownLines, sentTexts) {
+    const trimmed = String(line).trim();
+    if (!trimmed) return false;
+    if (/^>/.test(trimmed)) return true;
+    const squashed = trimmed.replace(/\s+/g, ' ').trim();
+    if (knownLines.has(trimmed)) return true;
+    return squashed.length >= 8 && (Array.isArray(sentTexts) ? sentTexts : [])
+      .some((m) => m === squashed || m.startsWith(squashed) || squashed.startsWith(m));
+  }
+
+  /**
+   * The target a pane's `tc message send [--priority <p>] [--in-reply-to
+   * <id>] <to> "\u2026"` line names (#3131): its first non-flag argument, the
+   * way `tc`'s own flags are declared \u2014 so a Fleet Member drill-down can
+   * group outbound Medusa traffic by who it actually went to, from the
+   * pane alone, no model call.
+   * @param {string} line
+   * @returns {string|null}
+   */
+  function medusaSendTarget(line) {
+    const m = /\btc\s+message\s+send\b(.*)$/.exec(String(line));
+    if (!m) return null;
+    const FLAGS_WITH_VALUE = new Set(['--priority', '--in-reply-to']);
+    const tokens = m[1].trim().split(/\s+/).filter(Boolean);
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      if (FLAGS_WITH_VALUE.has(tok)) { i++; continue; }
+      if (tok.startsWith('--')) continue;
+      return tok.replace(/^['"]|['"]$/g, '') || null;
+    }
+    return null;
+  }
+
+  /**
    * The conversation a session's live output shows (#3052): its assistant
    * replies, any operator prompt not already recorded, the question the
    * assistant is waiting on, and what it is busy doing. Display only — the
@@ -1937,6 +2067,20 @@
     let echoCut = false;
     const turns = [];
     let reply = [];
+    // Where the reply's own TRAILING paragraph starts within `reply`
+    // (#3131): a blank line mid-reply marks the next paragraph's start,
+    // without going INTO `reply` itself — `reply.join('\n')` still joins
+    // every paragraph with one plain newline, same as always, so a turn's
+    // own stored text is unaffected; only {@link lastReplyTrailingBlock}
+    // (read once this reply flushes) narrows to the last one.
+    let replyBlockStart = 0;
+    // The most recently flushed assistant turn's own trailing paragraph
+    // alone (#3131) — reassigned at every flush, so once the loop ends it
+    // holds the LAST turn's, which is what an open-question scan actually
+    // wants: an earlier turn (before a wake) is still read in full, since
+    // #3082 needs that question to keep waiting, but the current reply's
+    // own earlier, superseded prose never is.
+    let lastReplyTrailingBlock = '';
     let activity = null;
     const switchboard = [];
     // Whether the operator has spoken since the newest reply (#3079): their
@@ -1950,10 +2094,12 @@
     let woken = false;
     const flush = () => {
       if (reply.length) {
+        lastReplyTrailingBlock = reply.slice(replyBlockStart).join('\n');
         turns.push(woken ? { role: 'assistant', text: reply.join('\n'), trigger: 'switchboard' } : { role: 'assistant', text: reply.join('\n') });
         answered = false;
       }
       reply = [];
+      replyBlockStart = 0;
     };
     (Array.isArray(lines) ? lines : []).forEach((raw) => {
       if (typeof raw !== 'string') return;
@@ -1963,8 +2109,11 @@
       // A blank line decides nothing: tool output can hold blank lines, and
       // the next line's indent says whether it is still output (#3057).
       if (!text) {
-        // A blank line ends a wrapped notice.
+        // A blank line ends a wrapped notice, and marks a paragraph break
+        // within an ongoing reply (#3131) — never reached from inside tool
+        // output, which is dropped before this point regardless.
         if (block === 'wake') block = null;
+        if (block === 'reply') replyBlockStart = reply.length;
         return;
       }
       const indented = /^\s/.test(line);
@@ -2027,13 +2176,13 @@
       // output; Antigravity indents its reply prose by two spaces (#3057).
       if (indented && block === 'tool' && (/^[⎿└]/.test(text) || /^\s{4,}/.test(line))) return;
       if (tools.some((re) => re.test(text))) {
-        if (MEDUSA_SEND.test(text)) switchboard.push({ dir: 'out', text });
+        if (MEDUSA_SEND.test(text)) switchboard.push({ dir: 'out', text, to: medusaSendTarget(text) });
         block = 'tool';
         return;
       }
       // Chrome and boilerplate are dropped, but do not swallow what follows.
       if (LIVE_NOISE.some((re) => re.test(text))) {
-        if (MEDUSA_SEND.test(text)) switchboard.push({ dir: 'out', text });
+        if (MEDUSA_SEND.test(text)) switchboard.push({ dir: 'out', text, to: medusaSendTarget(text) });
         block = null;
         return;
       }
@@ -2052,11 +2201,23 @@
     // is still waiting (#3082).
     let since = turns.length;
     while (since > 0 && turns[since - 1].role === 'assistant') since--;
-    const open = last && last.role === 'assistant' && !answered ? turns.slice(since).map((t) => t.text).join('\n') : '';
+    // #3131: every turn since the operator last spoke is still read in
+    // full (#3082: a question asked before a wake keeps waiting through
+    // it) EXCEPT the current/last one, which contributes only its own
+    // trailing paragraph — so a rhetorical '?' in an earlier paragraph of
+    // the SAME reply, now superseded by the one that follows it, is never
+    // misread as still open.
+    const openPrior = last && last.role === 'assistant' && !answered ? turns.slice(since, -1).map((t) => t.text) : [];
+    const trailingBlock = last && last.role === 'assistant' && !answered ? lastReplyTrailingBlock.split('\n') : [];
     const tail = last && last.role === 'assistant' && !answered ? last.text.split('\n').pop() : '';
-    const questions = open.split('\n').map((l) => l.trim().replace(QUESTION_PREFIX, '').trim())
+    // Any line that is the operator's own words, echoed or quoted back
+    // (#3131), is never read as the assistant asking a question.
+    const questions = openPrior.flatMap((t) => t.split('\n')).concat(trailingBlock)
+      .filter((l) => !isOperatorEcho(l, knownLines, sent))
+      .map((l) => l.trim().replace(QUESTION_PREFIX, '').trim())
       .filter(asksQuestion);
-    return { turns, question: asksQuestion(tail) ? tail : null, questions, activity, switchboard };
+    const question = !isOperatorEcho(tail, knownLines, sent) && asksQuestion(tail) ? tail : null;
+    return { turns, question, questions, activity, switchboard };
   }
 
   /**
@@ -2873,18 +3034,28 @@
   }
 
   /**
-   * The question slot's contents (#3079): each question numbered `(1)`,
-   * `(2)` when there are several, each with a ✕ that dismisses it.
+   * An item's `1- `, `2- ` numbering prefix (#3131): deterministic text,
+   * not a parenthetical badge, and only once its list holds more than one.
+   * @param {number} i - Zero-based position.
+   * @param {number} total
+   * @returns {string} HTML, or '' for a single-item list.
+   */
+  function itemNumberMarkup(i, total) {
+    return total > 1 ? `<span class="v6-chat-question-badge" aria-hidden="true">${i + 1}-</span> ` : '';
+  }
+
+  /**
+   * The question slot's contents (#3079): each question numbered `1- `,
+   * `2- ` (#3131) when there are several, each with a ✕ that dismisses it.
    * @param {string[]|string|null} questions
    * @returns {string} HTML for inside the question slot.
    */
   function chatQuestionInner(questions) {
     const list = questionList(questions);
     if (!list.length) return '';
-    const many = list.length > 1;
     return `<span class="v6-chat-question-label">Waiting on you:</span>
       <ol class="v6-chat-question-list">${list.map((q, i) => (
-        `<li class="v6-chat-question-item">${many ? `<span class="v6-chat-question-badge" aria-hidden="true">(${i + 1})</span> ` : ''}<span class="v6-chat-question-text">${escapeHtml(q)}</span>
+        `<li class="v6-chat-question-item">${itemNumberMarkup(i, list.length)}<span class="v6-chat-question-text">${escapeHtml(q)}</span>
           <button type="button" class="v6-chat-question-dismiss" id="v6ChatQuestionDismiss${i}" data-index="${i}" title="Dismiss this question" aria-label="Dismiss question ${i + 1}"><span aria-hidden="true">✕</span></button></li>`
       )).join('')}</ol>`;
   }
@@ -2920,17 +3091,65 @@
   }
 
   /**
-   * The unified Waiting-on panel's model (#3105): what each of the 3
-   * categories — YOU, Your ToDo, AI — currently has to show.
+   * A fleet member's display name (#3131): a target workspace/session id
+   * resolved against the known projects list by the minted-id convention
+   * (`<project name, lowercased>-<hex>`), falling back to the raw id when
+   * no project matches — never a model call, just the same data the
+   * sidebar already loads.
+   * @param {string|null} target
+   * @param {Array<{name?: string}>|null} knownProjects
+   * @returns {string|null}
+   */
+  function medusaTargetDisplayName(target, knownProjects) {
+    if (!target) return target;
+    const slug = String(target).toLowerCase();
+    const hit = (Array.isArray(knownProjects) ? knownProjects : [])
+      .find((p) => p && typeof p.name === 'string' && slug.startsWith(`${p.name.toLowerCase()}-`));
+    return hit ? hit.name : target;
+  }
+
+  /**
+   * Live outbound Medusa requests still awaiting a peer's reply (#3131):
+   * every `tc message send <to> …` the pane shows, grouped by target and
+   * kept only until ANY inbound switchboard traffic follows it — the same
+   * pane-derived signal {@link switchboardItems} already keeps, never a
+   * model call. Only the latest outstanding send per target is kept: a
+   * later send to the same peer supersedes waiting on an earlier one.
+   * @param {Array<{dir: 'in'|'out', text: string, to?: string|null}>|null} switchboard
+   * @param {string[]} [dismissedKeys] - `target::text` keys already dismissed.
+   * @returns {Array<{target: string, text: string, key: string}>}
+   */
+  function fleetWaitingList(switchboard, dismissedKeys) {
+    const list = Array.isArray(switchboard) ? switchboard : [];
+    const dismissed = new Set(Array.isArray(dismissedKeys) ? dismissedKeys : []);
+    const byTarget = new Map();
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      if (!item || item.dir !== 'out' || !item.to) continue;
+      if (list.slice(i + 1).some((x) => x && x.dir === 'in')) continue;
+      const text = String(item.text || '').replace(/\s+/g, ' ').trim();
+      const key = `${item.to}::${text}`;
+      if (dismissed.has(key)) continue;
+      byTarget.set(item.to, { target: item.to, text: item.text, key });
+    }
+    return [...byTarget.values()];
+  }
+
+  /**
+   * The unified Waiting-on panel's model (#3131): what each actor group —
+   * YOU (CLI gates, multi-choice, direct questions and the operator's
+   * ToDo), AI, and every Fleet Member currently awaited — has to show.
    * @param {object|null} live - A conversation view's `chat.live`.
    * @param {object|null} chat - A conversation view's `chat`.
    * @param {Array<object>|null} [events] - The view's recorded events (AI auto-clear).
    * @param {Array<object>|null} [liveTurns] - `live.turns` (AI auto-clear).
+   * @param {Array<{name?: string}>|null} [knownProjects] - For Fleet Member display names.
    * @returns {{direct: string[], gate: ReturnType<typeof extractCliGates>,
    *   choice: ReturnType<typeof extractMultiChoice>, todo: string[],
-   *   ai: Array<{id: *, text: string}>}}
+   *   ai: Array<{id: *, text: string}>,
+   *   fleet: Array<{target: string, name: string, text: string, key: string}>}}
    */
-  function waitingOnModel(live, chat, events, liveTurns) {
+  function waitingOnModel(live, chat, events, liveTurns, knownProjects) {
     const c = chat || {};
     const reply = latestReplyText(live);
     const rawTodo = extractOperatorTodo(reply);
@@ -2945,12 +3164,15 @@
     // gate still needs between polls or before a live read has landed.
     const rawLines = live && Array.isArray(live.rawLines) ? live.rawLines
       : (c.peek && Array.isArray(c.peek.lines) ? c.peek.lines : []);
+    const fleet = fleetWaitingList(live && live.switchboard, Array.isArray(c.dismissedFleetTargets) ? c.dismissedFleetTargets : [])
+      .map((f) => Object.assign({}, f, { name: medusaTargetDisplayName(f.target, knownProjects) }));
     return {
       direct: openQuestions(live, Array.isArray(c.dismissedQuestions) ? c.dismissedQuestions : []),
       gate: extractCliGates(rawLines),
       choice: extractMultiChoice(reply),
       todo,
-      ai: openQueuedPrompts(c.queuedPrompts, c.pending, events, liveTurns)
+      ai: openQueuedPrompts(c.queuedPrompts, c.pending, events, liveTurns),
+      fleet
     };
   }
 
@@ -2962,7 +3184,7 @@
    */
   function todoListMarkup(todo) {
     return todo.map((t, i) => (
-      `<li>${todo.length > 1 ? `<span class="v6-chat-question-badge" aria-hidden="true">(${i + 1})</span> ` : ''}<span class="v6-chat-question-text">${escapeHtml(t)}</span>
+      `<li>${itemNumberMarkup(i, todo.length)}<span class="v6-chat-question-text">${escapeHtml(t)}</span>
         <button type="button" class="v6-waiting-on-todo-dismiss" data-text="${escapeHtml(t)}" title="Dismiss this item" aria-label="Dismiss this ToDo item"><span aria-hidden="true">✕</span></button></li>`
     )).join('');
   }
@@ -2974,53 +3196,113 @@
    */
   function aiListMarkup(ai) {
     return ai.map((p, i) => (
-      `<li>${ai.length > 1 ? `<span class="v6-chat-question-badge" aria-hidden="true">(${i + 1})</span> ` : ''}<span class="v6-chat-question-text">${escapeHtml(p.text)}</span>
+      `<li>${itemNumberMarkup(i, ai.length)}<span class="v6-chat-question-text">${escapeHtml(p.text)}</span>
         <button type="button" class="v6-waiting-on-ai-force" data-id="${escapeHtml(String(p.id))}" title="Force send now" aria-label="Force send now"><span aria-hidden="true">⚡</span></button>
         <button type="button" class="v6-waiting-on-ai-dismiss" data-id="${escapeHtml(String(p.id))}" title="Remove from queue" aria-label="Remove from queue"><span aria-hidden="true">✕</span></button></li>`
     )).join('');
   }
 
   /**
-   * @param {ReturnType<typeof waitingOnModel>} model
-   * @returns {number} The YOU category's combined count (#3105).
+   * One Fleet Member's outstanding-send `<li>`s alone (#3131) — shared the
+   * same way as {@link todoListMarkup}/{@link aiListMarkup}.
+   * @param {Array<{text: string, key: string}>} items
+   * @returns {string} HTML for inside a Fleet Member section's `<ol>`.
    */
-  function waitingOnYouCount(model) {
-    return model.direct.length + (model.gate ? 1 : 0) + (model.choice ? 1 : 0);
+  function fleetListMarkup(items) {
+    return items.map((f, i) => (
+      `<li>${itemNumberMarkup(i, items.length)}<span class="v6-chat-question-text">${escapeHtml(f.text)}</span>
+        <button type="button" class="v6-waiting-on-fleet-dismiss" data-key="${escapeHtml(f.key)}" title="Dismiss this item" aria-label="Dismiss this item"><span aria-hidden="true">✕</span></button></li>`
+    )).join('');
   }
 
   /**
-   * The unified 3-category Waiting-on panel (#3105): YOU (CLI gates,
-   * multi-choice, and the direct-question list merged under one header),
-   * Your ToDo, and AI, each with a Clear button once it holds more than one.
    * @param {ReturnType<typeof waitingOnModel>} model
+   * @returns {number} The YOU group's combined count (#3131): CLI gates,
+   *   multi-choice, direct questions and the operator's ToDo, as one.
+   */
+  function waitingOnYouCount(model) {
+    return model.direct.length + model.todo.length + (model.gate ? 1 : 0) + (model.choice ? 1 : 0);
+  }
+
+  /**
+   * A collapsible Waiting-on actor section's chrome (#3131): a caret and
+   * count in its header button (toggling `data-waiting-section`'s fold
+   * state), the body hidden while folded.
+   * @param {string} sectionKey - `'you'`, `'ai'`, or `fleet:<target>`.
+   * @param {string} labelHtml - Already-safe HTML for the header label (a count span, say).
+   * @param {boolean} collapsed
+   * @param {string} bodyHtml
+   * @param {string} cssKey - The section's class suffix (`'you'`, `'ai'`, `'fleet'`).
+   * @param {boolean} hasItems
+   * @param {string} ariaLabel - Plain text; this escapes it.
    * @returns {string} HTML.
    */
-  function waitingOnMarkup(model) {
-    // Each section — and #v6ChatQuestion/#v6ChatGateChoice inside YOU — is
-    // ALWAYS present (never conditionally omitted): #3079's callers look
-    // #v6ChatQuestion up directly and expect it there even with nothing to
-    // ask, and the poll-time repaint functions below need a stable target.
-    // `has-items` is what actually hides an empty section; `.v6-waiting-on-
-    // panel:empty` only ever catches the all-3-empty case.
+  function waitingOnSectionMarkup(sectionKey, labelHtml, collapsed, bodyHtml, cssKey, hasItems, ariaLabel) {
+    return `<section class="v6-waiting-on-section v6-waiting-on-${escapeHtml(cssKey)}${hasItems ? ' has-items' : ''}${collapsed ? ' is-collapsed' : ''}" aria-label="Waiting on ${escapeHtml(ariaLabel || '')}">
+        <button type="button" class="v6-waiting-on-title" data-waiting-section="${escapeHtml(sectionKey)}" aria-expanded="${collapsed ? 'false' : 'true'}">
+          <span class="v6-waiting-on-caret" aria-hidden="true">${collapsed ? '▸' : '▾'}</span> ${labelHtml}
+        </button>
+        <div class="v6-waiting-on-body"${collapsed ? ' hidden' : ''}>${bodyHtml}</div>
+      </section>`;
+  }
+
+  /**
+   * The unified Waiting-on panel (#3131): one outer `Waiting on:` header
+   * over collapsible per-actor sections — YOU (CLI gates, multi-choice,
+   * direct questions and the operator's ToDo, merged under one count),
+   * AI, and one section per Fleet Member this chat is still awaiting a
+   * reply from — each with `1- `, `2- ` numbering, per-item dismiss and a
+   * group Clear once it holds more than one item.
+   * @param {ReturnType<typeof waitingOnModel>} model
+   * @param {Set<string>|string[]} [collapsed] - Which sections are folded.
+   * @returns {string} HTML.
+   */
+  function waitingOnMarkup(model, collapsed) {
+    // Each section — and #v6ChatQuestion/#v6ChatGateChoice/#v6ChatTodo
+    // inside YOU — is ALWAYS present (never conditionally omitted): #3079's
+    // callers look #v6ChatQuestion up directly and expect it there even
+    // with nothing to ask, and the poll-time repaint functions below need a
+    // stable target. `has-items` is what actually hides an empty section;
+    // `.v6-waiting-on-panel:empty` only ever catches the all-empty case.
+    // Duck-typed, not `instanceof Set`: a caller across a VM realm (a test
+    // sandbox) hands over a real Set whose own constructor is not THIS
+    // realm's `Set`, and `instanceof` would wrongly say no.
+    const folded = collapsed && typeof collapsed.has === 'function' ? collapsed : new Set(Array.isArray(collapsed) ? collapsed : []);
     const youCount = waitingOnYouCount(model);
-    const you = `<section class="v6-waiting-on-section v6-waiting-on-you${youCount ? ' has-items' : ''}" aria-label="Waiting on you">
-        <h3 class="v6-waiting-on-title">Waiting on: YOU (<span id="v6ChatWaitingOnYouCount">${youCount}</span>)</h3>
-        <div id="v6ChatGateChoice" class="v6-chat-gate-choice">${cliGateMarkup(model.gate)}${multiChoiceMarkup(model.choice)}</div>
+    const youBody = `<div id="v6ChatGateChoice" class="v6-chat-gate-choice">${cliGateMarkup(model.gate)}${multiChoiceMarkup(model.choice)}</div>
         ${chatQuestionMarkup(model.direct)}
         ${model.direct.length > 1 ? '<button type="button" id="v6WaitingOnYouClear" class="v6-waiting-on-clear">Clear</button>' : ''}
-      </section>`;
-    const todo = `<section class="v6-waiting-on-section v6-waiting-on-todo${model.todo.length ? ' has-items' : ''}" aria-label="Your ToDo">
-        <h3 class="v6-waiting-on-title">Waiting on: Your ToDo (${model.todo.length})</h3>
-        <ol id="v6ChatTodo" class="v6-waiting-on-todo-list">${todoListMarkup(model.todo)}</ol>
-        ${model.todo.length > 1 ? '<button type="button" id="v6WaitingOnTodoClear" class="v6-waiting-on-clear">Clear</button>' : ''}
-      </section>`;
-    const ai = `<section class="v6-waiting-on-section v6-waiting-on-ai${model.ai.length ? ' has-items' : ''}" aria-label="Waiting on AI">
-        <h3 class="v6-waiting-on-title">Waiting on: AI (${model.ai.length})</h3>
-        <ol id="v6ChatAi" class="v6-waiting-on-ai-list">${aiListMarkup(model.ai)}</ol>
-        ${model.ai.length > 1 ? '<button type="button" id="v6WaitingOnAiClear" class="v6-waiting-on-clear">Clear</button>' : ''}
-      </section>`;
-    const anyItems = youCount > 0 || model.todo.length > 0 || model.ai.length > 0;
-    return `<div id="v6ChatWaitingOn" class="v6-waiting-on-panel${anyItems ? ' has-items' : ''}">${you}${todo}${ai}</div>`;
+        <div class="v6-waiting-on-todo">${model.todo.length ? '<span class="v6-waiting-on-subhead">Your ToDo</span>' : ''}
+          <ol id="v6ChatTodo" class="v6-waiting-on-todo-list">${todoListMarkup(model.todo)}</ol>
+          ${model.todo.length > 1 ? '<button type="button" id="v6WaitingOnTodoClear" class="v6-waiting-on-clear">Clear</button>' : ''}
+        </div>`;
+    const you = waitingOnSectionMarkup('you', `YOU (<span id="v6ChatWaitingOnYouCount">${youCount}</span>)`,
+      folded.has('you'), youBody, 'you', youCount > 0, 'you');
+    const aiBody = `<ol id="v6ChatAi" class="v6-waiting-on-ai-list">${aiListMarkup(model.ai)}</ol>
+        ${model.ai.length > 1 ? '<button type="button" id="v6WaitingOnAiClear" class="v6-waiting-on-clear">Clear</button>' : ''}`;
+    const ai = waitingOnSectionMarkup('ai', `AI (${model.ai.length})`, folded.has('ai'), aiBody,
+      'ai', model.ai.length > 0, 'AI');
+    const fleetSections = fleetSectionsMarkup(model.fleet, folded);
+    const anyItems = youCount > 0 || model.ai.length > 0 || (model.fleet || []).length > 0;
+    return `<div id="v6ChatWaitingOn" class="v6-waiting-on-panel${anyItems ? ' has-items' : ''}">
+        <h3 class="v6-waiting-on-heading">Waiting on:</h3>
+        ${you}${ai}<div id="v6ChatWaitingOnFleet" class="v6-waiting-on-fleet-wrap">${fleetSections}</div>
+      </div>`;
+  }
+
+  /**
+   * The Fleet Member sections alone (#3131) — shared between the full
+   * render and the poll-time repaint so the two never drift apart.
+   * @param {Array<{target: string, name: string, text: string, key: string}>} fleet
+   * @param {Set<string>} folded
+   * @returns {string} HTML for inside `#v6ChatWaitingOnFleet`.
+   */
+  function fleetSectionsMarkup(fleet, folded) {
+    return (Array.isArray(fleet) ? fleet : []).map((f) => {
+      const sectionKey = `fleet:${f.target}`;
+      const body = `<ol class="v6-waiting-on-fleet-list">${fleetListMarkup([f])}</ol>`;
+      return waitingOnSectionMarkup(sectionKey, `${escapeHtml(f.name)} (1)`, folded.has(sectionKey), body, 'fleet', true, f.name);
+    }).join('');
   }
 
   /**
@@ -3517,6 +3799,41 @@
   }
 
   /**
+   * The exact raw tmux key names Under the Hood's Interactive CLI Mode
+   * sends straight to the pane (#3135) — the backend's own
+   * `POST .../command` route (`{ rawKey }`, Car V651-W1-B) accepts only
+   * these, each delegated to `tmux.sendRawKey`.
+   */
+  const HOOD_NAV_RAW_KEYS = Object.freeze({
+    ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Tab: 'Tab', Escape: 'Escape'
+  });
+
+  /**
+   * What one keystroke does in Under the Hood's Interactive CLI Mode
+   * (#3135): a navigation or control key sends a raw tmux key straight to
+   * the pane; a plain printable character is held until Enter sends it,
+   * AS LITERAL TEXT, with Enter — the one-paste shape the chat composer's
+   * own send already uses, since the backend's text route pastes a whole
+   * buffer at once, never one keystroke at a time.
+   * @param {{key?: string, ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean}|null} evt
+   * @param {string} buffered - What Interactive Mode has typed but not sent yet.
+   * @returns {{type: 'rawKey', value: string}|{type: 'send', text: string}|
+   *   {type: 'buffer', text: string}|null} `null` for a key this mode leaves alone
+   *   (so the browser's own default — e.g. a real modifier chord it does not name — still runs).
+   */
+  function hoodKeyAction(evt, buffered) {
+    if (!evt || typeof evt.key !== 'string') return null;
+    const held = typeof buffered === 'string' ? buffered : '';
+    if ((evt.ctrlKey || evt.metaKey) && evt.key.length === 1 && evt.key.toLowerCase() === 'c') return { type: 'rawKey', value: 'C-c' };
+    if (evt.ctrlKey || evt.metaKey || evt.altKey) return null;
+    if (evt.key === 'Backspace') return held ? { type: 'buffer', text: held.slice(0, -1) } : { type: 'rawKey', value: 'BSpace' };
+    if (evt.key === 'Enter') return held ? { type: 'send', text: held } : { type: 'rawKey', value: 'Enter' };
+    if (Object.prototype.hasOwnProperty.call(HOOD_NAV_RAW_KEYS, evt.key)) return { type: 'rawKey', value: HOOD_NAV_RAW_KEYS[evt.key] };
+    if (evt.key.length === 1) return { type: 'buffer', text: `${held}${evt.key}` };
+    return null;
+  }
+
+  /**
    * The Settings & Profiles view (v6.1.0, Car V61-W2-ROUTES): the three
    * operating profiles with their shared safety floor (#2992), the
    * settings catalog (#2995), the walkthroughs (#3000), and links into the
@@ -3716,12 +4033,21 @@
       // passes only the draft for this chat's own project.
       const draft = (extras && extras.draft) || '';
       const hoodOpen = Boolean(extras && extras.hoodOpen);
+      const hoodFullScreen = Boolean(extras && extras.hoodFullScreen);
+      const hoodInteractive = Boolean(extras && extras.hoodInteractive);
+      // #3135: defaults pinned (true) until the operator's own scroll
+      // turns it off; `=== false` on the FAR side (the markup check
+      // above) is what distinguishes "explicitly off" from "unset".
+      const streamPinned = !(extras && extras.streamPinned === false);
       const fleetArmed = Boolean(extras && extras.fleetArmed);
       const rename = (extras && extras.rename) || null;
       const sidebarCollapsed = Boolean(extras && extras.sidebarCollapsed);
       const activityElapsed = (extras && extras.activityElapsed) || '';
       const dismissedQuestions = (extras && extras.dismissedQuestions) || [];
       const dismissedTodoItems = (extras && extras.dismissedTodoItems) || [];
+      const dismissedFleetTargets = (extras && extras.dismissedFleetTargets) || [];
+      const collapsedWaitingOn = (extras && extras.collapsedWaitingOn) || [];
+      const knownProjects = (extras && extras.knownProjects) || [];
       const queuedPrompts = (extras && extras.queuedPrompts) || [];
       const pending = (extras && extras.pending) || null;
       const verbosity = (extras && extras.verbosity) || VERBOSITY_DEFAULT;
@@ -3730,8 +4056,9 @@
       const telemetry = extras && 'telemetry' in extras ? extras.telemetry : undefined;
       return conversationViewMarkup(Object.assign({}, v, {
         chat: Object.assign({}, v.chat, {
-          draft, hoodOpen, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename,
-          dismissedQuestions, dismissedTodoItems, queuedPrompts, pending, verbosity
+          draft, hoodOpen, hoodFullScreen, hoodInteractive, streamPinned, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename,
+          dismissedQuestions, dismissedTodoItems, dismissedFleetTargets, collapsedWaitingOn, knownProjects,
+          queuedPrompts, pending, verbosity
         })
       }));
     }
@@ -4511,7 +4838,7 @@
         return;
       }
       const base = `/api/v6/projects/${encodeURIComponent(project.id)}/sessions/${encodeURIComponent(sessionId)}`;
-      const peekUrl = `/api/sessions/${name}/peek?lines=80`;
+      const peekUrl = `/api/sessions/${name}/peek?lines=${PEEK_LINES_DEEP}`;
       // #3076: the listener's state and unread count. Unlike opening the
       // inbox, this read marks nothing read and leaves the unread count
       // alone; while listening, the route also asks the Bridge for loops.
@@ -5728,7 +6055,15 @@
    *   onRenameProject?: (oldName: string, newName: string, opts?: {confirmOrphanRisk: boolean}) => void,
    *   onHistoryLoad?: (form: {scope: string, kind: string, q: string}) => void,
    *   onHistoryOpenSession?: (pick: {member: string, sid: string, q: string, kind: string}) => void,
-   *   now?: () => number, setInterval?: (fn: Function, ms: number) => *, clearInterval?: (id: *) => void}} opts - `storage`
+   *   onHoodCommand?: (name: string, body: {command: string, enter: true}|{rawKey: string}) => void,
+   *   now?: () => number, setInterval?: (fn: Function, ms: number) => *, clearInterval?: (id: *) => void,
+   *   requestAnimationFrame?: (fn: Function) => *, fetch?: Function}} opts - `onHoodCommand` is
+   *   Under the Hood's Interactive CLI Mode (#3135): literal typed text (with Enter) or one of the
+   *   named raw tmux keys, POSTed to `/api/sessions/:project/command` the same shape either way —
+   *   the page wires it directly, same as `onRenameProject` above, not through `onSendChat` (which
+   *   records a conversation message; typing into the live pane is not that). Until the page wires
+   *   it (planned for Wave 2), its fallback reuses `onSendChat` for literal text and a direct
+   *   `fetch` (this option, or the page's own) for a raw key — see `sendHoodCommand`. `storage`
    *   remembers the sidebar layout (#3046); defaults to the page's `localStorage`,
    *   and `null` keeps it for this page only. The `on*Chat`/delegate/settings
    *   callbacks are the chat view's controls (#3047). `now` and the interval pair
@@ -5794,6 +6129,14 @@
     // polls and visits; and which chat was last scrolled to its bottom, so a
     // chat opens at its newest line once and is then left where the operator puts it.
     let chatHoodOpen = prefs.get('tc_v6_chat_under_hood_open', false, isBoolean);
+    // #3135: Under the Hood's own Full-Screen toggle and Interactive CLI
+    // Mode — view-only state, never persisted, so a reload always starts
+    // with neither; what the operator typed into Interactive Mode but has
+    // not yet sent (Enter flushes it, as literal text, same shape as the
+    // composer's own send).
+    let hoodFullScreen = false;
+    let hoodInteractive = false;
+    let hoodBuffer = '';
     // #3082: which switchboard-triggered replies the chat shows, kept across visits.
     let verbosity = Object.assign({}, prefs.get('tc_v6_chat_verbosity', VERBOSITY_DEFAULT, isVerbosity));
     // The workspace mode (#3086): Chat on each route, until the operator picks another.
@@ -5995,6 +6338,14 @@
     // text — a per-item ✕ removes one, Clear dismisses every item shown
     // at once; the same still-latest reply keeps whichever stay dismissed.
     const dismissedTodoItems = new Map();
+    // #3131: each chat's Fleet-Member dismissals, by the outstanding send's
+    // `target::text` key — a new send to the same target clears it, same
+    // shape as {@link dismissedTodoItems}.
+    const dismissedFleetTargets = new Map();
+    // #3131: each chat's folded/unfolded Waiting-on sections ('you', 'ai',
+    // `fleet:<target>`) — in memory only, the same way dismissals above
+    // are: a chat switched away from and back keeps what it had folded.
+    const waitingOnCollapsed = new Map();
     // #3105: each chat's AI queue — prompts submitted while busy, surfaced
     // in Waiting on: AI to be Forced or dismissed by hand. Never fired
     // automatically (PRR-A R1 C2): that would bypass the Force-Send gate
@@ -6027,6 +6378,20 @@
     let renameOpenKey = null;
     let renameDraft = null;
     let renameWarning = null;
+    // #3136: the sidebar's OWN inline rename — a different form than the
+    // chat header's above, open against a tree node key (a member's `m:
+    // <seatId>` or a fleet's `p:<projectId>`) rather than the open chat, so
+    // any row can be renamed without opening its chat first.
+    let sidebarRenameKey = null;
+    let sidebarRenameDraft = null;
+    let sidebarRenameWarning = null;
+    // #3136: `options.onRenameProject`'s result always lands on
+    // `renameResult` below, whoever asked — this says which state it
+    // belongs to right now: the chat header's own form, the sidebar's
+    // single-row form, or one leg of a fleet's bulk rename (settled via
+    // `fleetRenameWait`, never rendered).
+    let renameResultFor = 'header';
+    let fleetRenameWait = null;
     // #3066: the history panel — open or not, its search form, and the last
     // results or snapshot the page handed back.
     let historyOpen = false;
@@ -6037,6 +6402,14 @@
     // renamed, reloads it.
     let historyFor = null;
     let scrolledChatKey = null;
+    // #3135: whether #v6ChatStream follows new lines (the default, reset
+    // the instant a DIFFERENT chat opens — restoreViewState's own
+    // `first`) or stays where the operator scrolled it; only their own
+    // upward scroll (the 'scroll' listener wireStreamPin wires) ever
+    // turns this off, never a poll or a redraw.
+    let streamPinned = true;
+    const raf = typeof options.requestAnimationFrame === 'function' ? options.requestAnimationFrame
+      : (win && typeof win.requestAnimationFrame === 'function' ? (fn) => win.requestAnimationFrame(fn) : null);
     // #3106: the composer/stream two-way resize coupling's live ResizeObservers
     // (one per direction), reattached to the fresh elements each render.
     let composerResizeObserver = null;
@@ -6107,6 +6480,8 @@
       wireUsage();
       wireStart();
       wireRename();
+      wireSidebarRename();
+      wireStreamPin();
       wireTreeLinks();
       wireRichPreviews();
       const search = doc.getElementById('v6FilterSearch');
@@ -6269,6 +6644,225 @@
     }
 
     /**
+     * Open the sidebar's one inline rename form (#3136) against a node key,
+     * replacing any other sidebar row's open form.
+     * @param {string} key - `projectNodeKey`/`m:<seatId>`.
+     * @param {string} idSuffix - The row's own positional suffix, to focus its input.
+     */
+    function openSidebarRename(key, idSuffix) {
+      sidebarRenameKey = key;
+      sidebarRenameDraft = null;
+      sidebarRenameWarning = null;
+      render();
+      focusById(`v6TreeRenameInput-${idSuffix}`);
+    }
+
+    /** Close the sidebar's rename form (#3136), whichever row it was open against. */
+    function closeSidebarRename() {
+      sidebarRenameKey = null;
+      sidebarRenameDraft = null;
+      sidebarRenameWarning = null;
+      render();
+    }
+
+    /**
+     * Rename every member of a fleet by giving each the SAME new shared
+     * prefix in place of its old one (#3136) — there is no independently
+     * stored fleet name to rewrite instead (#3022: the whole sidebar tree
+     * is synthesized from project name prefixes), so this is what renaming
+     * "the fleet" actually does. Sequential, one HTTP rename at a time
+     * (same shape as {@link startFleet} on the live controller), through
+     * the SAME `options.onRenameProject` a single member's own row already
+     * uses — `renameResultFor`/`fleetRenameWait` turn its fire-and-forget,
+     * single-result shape into something this can await leg by leg, with
+     * no separate wiring into the page's bootstrap.
+     *
+     * Stops at the first member it cannot rename (orphan-risk or any other
+     * server refusal) rather than guessing whether to force it: what
+     * already succeeded stays renamed (there is no undo across several
+     * independent project folders), and the one that needs a decision is
+     * named so the operator can confirm it individually from its own row.
+     * @param {Array<{name: string}>} members
+     * @param {string} oldPrefix
+     * @param {string} newPrefix
+     * @returns {Promise<void>}
+     */
+    async function renameFleetMembers(members, oldPrefix, newPrefix) {
+      if (typeof options.onRenameProject !== 'function') return;
+      let renamedCount = 0;
+      for (const m of members) {
+        const newName = `${newPrefix}${m.name.slice(oldPrefix.length)}`;
+        if (newName === m.name) { renamedCount += 1; continue; }
+        // eslint-disable-next-line no-await-in-loop -- sequential by design, same as startFleet() above
+        const result = await new Promise((resolve) => {
+          renameResultFor = 'fleet';
+          fleetRenameWait = resolve;
+          options.onRenameProject(m.name, newName, undefined);
+        });
+        if (!result || !result.ok) {
+          sidebarRenameWarning = `Renamed ${renamedCount} of ${members.length}. ${m.name} was not: `
+            + `${(result && result.warning) || 'the server refused it'} — rename it from its own row.`;
+          render();
+          return;
+        }
+        renamedCount += 1;
+      }
+      closeSidebarRename();
+    }
+
+    /**
+     * Wire one sidebar row's rename control (#3136) — the ✎/Escape/Cancel
+     * chrome every row shares; what Save actually does is the caller's.
+     * @param {string} idSuffix - The row's own positional suffix.
+     * @param {string} key - Its node key, matched against `sidebarRenameKey`.
+     * @param {string} currentName
+     * @param {(draft: string, confirmOrphanRisk: boolean) => void} onSubmit
+     */
+    function wireOneSidebarRenameRow(idSuffix, key, currentName, onSubmit) {
+      const btn = doc.getElementById(`v6TreeRename-${idSuffix}`);
+      if (btn) btn.addEventListener('click', () => openSidebarRename(key, idSuffix));
+      const input = doc.getElementById(`v6TreeRenameInput-${idSuffix}`);
+      if (input) {
+        input.addEventListener('keydown', (evt) => {
+          if (evt && (evt.key === 'Escape' || evt.key === 'Esc')) closeSidebarRename();
+        });
+        input.addEventListener('input', (evt) => {
+          sidebarRenameDraft = String((evt && evt.target && evt.target.value) || '');
+          sidebarRenameWarning = null;
+        });
+      }
+      const cancel = doc.getElementById(`v6TreeRenameCancel-${idSuffix}`);
+      if (cancel) cancel.addEventListener('click', closeSidebarRename);
+      const submit = (confirmOrphanRisk) => {
+        const draft = String((sidebarRenameDraft != null ? sidebarRenameDraft : (input && input.value)) || '').trim();
+        if (!draft || (!confirmOrphanRisk && draft === currentName)) { closeSidebarRename(); return; }
+        sidebarRenameDraft = draft;
+        onSubmit(draft, Boolean(confirmOrphanRisk));
+      };
+      const form = doc.getElementById(`v6TreeRenameForm-${idSuffix}`);
+      if (form) {
+        form.addEventListener('submit', (evt) => {
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          submit(false);
+        });
+      }
+      const confirm = doc.getElementById(`v6TreeRenameConfirm-${idSuffix}`);
+      if (confirm) confirm.addEventListener('click', () => submit(true));
+    }
+
+    /**
+     * Every sidebar row's rename control (#3136): a Fleet (a logical
+     * project's own row, never the catch-all "Workspace Projects" one)
+     * bulk-renames its members via {@link renameFleetMembers}; a Fleet
+     * Member or Solo Work row (the same member row either way) renames
+     * through the single-project route a chat header rename already uses.
+     */
+    function wireSidebarRename() {
+      shownTree.forEach((project, pi) => {
+        const isFleet = project.id !== WORKSPACE_PROJECT_ID;
+        if (isFleet) {
+          const pIdSuffix = `p${pi}`;
+          const projectKey = projectNodeKey(project);
+          wireOneSidebarRenameRow(pIdSuffix, projectKey, project.displayName, (draft) => {
+            const members = project.fleets[0].members.map((m) => ({ name: m.role }));
+            renameFleetMembers(members, project.displayName, draft);
+          });
+          const link = doc.getElementById(`v6TreeLink-p${pi}`);
+          if (link) {
+            link.addEventListener('dblclick', (evt) => {
+              if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+              openSidebarRename(projectKey, pIdSuffix);
+            });
+          }
+        }
+        project.fleets.forEach((fleet, fi) => {
+          fleet.members.forEach((m, mi) => {
+            if (!m.seatId) return;
+            const idSuffix = `m${pi}-${fi}-${mi}`;
+            const memberKey = memberNodeKey(m);
+            wireOneSidebarRenameRow(idSuffix, memberKey, m.role, (draft, confirmOrphanRisk) => {
+              if (typeof options.onRenameProject !== 'function') return;
+              renameResultFor = 'sidebar';
+              options.onRenameProject(m.role, draft, confirmOrphanRisk ? { confirmOrphanRisk: true } : undefined);
+            });
+            const link = doc.getElementById(`v6TreeLink-m${pi}-${fi}-${mi}`);
+            if (link) {
+              link.addEventListener('dblclick', (evt) => {
+                if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+                openSidebarRename(memberKey, idSuffix);
+              });
+            }
+          });
+        });
+      });
+    }
+
+    /**
+     * Show the "↓ Newest" pill (#3135) exactly while `streamPinned` is
+     * false — a direct DOM toggle, not a render, since this runs off a
+     * 'scroll' listener that can fire many times a second.
+     */
+    function paintStreamPinIndicator() {
+      const pill = doc.getElementById('v6ChatJumpLatest');
+      if (pill) pill.hidden = streamPinned;
+    }
+
+    /**
+     * The chat stream's own follow-bottom state (#3135): scrolling up more
+     * than a few pixels turns `streamPinned` off, and scrolling back down
+     * near the bottom (by hand, or via the pill below) turns it back on —
+     * never a poll or a redraw either way. The pill itself jumps straight
+     * to the newest line and re-pins.
+     */
+    function wireStreamPin() {
+      const streamEl = doc.getElementById('v6ChatStream');
+      if (streamEl) {
+        streamEl.addEventListener('scroll', () => {
+          streamPinned = streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight <= 24;
+          paintStreamPinIndicator();
+        });
+      }
+      const pill = doc.getElementById('v6ChatJumpLatest');
+      if (pill) {
+        pill.addEventListener('click', () => {
+          streamPinned = true;
+          pinToBottom(streamEl);
+          paintStreamPinIndicator();
+        });
+      }
+    }
+
+    /**
+     * Dispatch Under the Hood's Interactive CLI Mode (#3135): the page's
+     * own `options.onHoodCommand`, when it wires one, is the one true
+     * path. Until Wave 2 adds that 1-line callback to `public/ui.js` (PM
+     * ruling on #3135 req 4), this falls back to what is already wired —
+     * `options.onSendChat` for literal text (the same send the composer
+     * uses, since `sendChat` always POSTs `{ command, enter: true }`
+     * itself) — and, for a raw key, a direct `fetch` straight to the same
+     * route, the one case nothing existing already reaches. Never thrown
+     * on a failed fallback fetch: the pane just stays as it was, same as
+     * any other send that did not land.
+     * @param {string} name - The chat target's project name.
+     * @param {{command: string, enter: true}|{rawKey: string}} body
+     */
+    function sendHoodCommand(name, body) {
+      if (typeof options.onHoodCommand === 'function') { options.onHoodCommand(name, body); return; }
+      if (body && typeof body.command === 'string') {
+        if (typeof options.onSendChat === 'function') options.onSendChat(body.command);
+        return;
+      }
+      const fetchImpl = typeof options.fetch === 'function' ? options.fetch
+        : (typeof fetch === 'function' ? fetch : null);
+      if (!fetchImpl || !body || typeof body.rawKey !== 'string') return;
+      fetchImpl(`/api/sessions/${encodeURIComponent(name)}/command`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      }).catch(() => {
+        // prawduct:allow prawduct/broad-except -- a fallback raw-key send that fails leaves the live pane exactly as it was; nothing downstream depends on this outcome
+      });
+    }
+
+    /**
      * The chat target's rename control (#3071): the pencil opens the form,
      * Cancel or Escape closes it, and Save hands the new name to the page.
      */
@@ -6307,6 +6901,7 @@
         const project = detail && detail.view ? detail.view.project : null;
         if (!project || typeof options.onRenameProject !== 'function') return;
         if (!confirmOrphanRisk || renameDraft == null) renameDraft = String((input && input.value) || '');
+        renameResultFor = 'header';
         options.onRenameProject(String(project.name || ''), renameDraft.trim(), confirmOrphanRisk ? { confirmOrphanRisk: true } : undefined);
       };
       form.addEventListener('submit', (evt) => {
@@ -6591,6 +7186,67 @@
           chatHoodOpen = Boolean(evt && evt.target && evt.target.open);
           prefs.set('tc_v6_chat_under_hood_open', chatHoodOpen);
         });
+        // #3135: Escape closes Full Screen — UNLESS Interactive Mode just
+        // consumed it as a raw key instead (that handler, below, stops the
+        // event reaching here), since the live pane's own Escape takes
+        // priority over the view while it is the thing with focus.
+        hood.addEventListener('keydown', (evt) => {
+          if (hoodFullScreen && evt && (evt.key === 'Escape' || evt.key === 'Esc')) {
+            hoodFullScreen = false;
+            render();
+          }
+        });
+      }
+      const hoodFullScreenBtn = doc.getElementById('v6ChatHoodFullScreen');
+      if (hoodFullScreenBtn) {
+        hoodFullScreenBtn.addEventListener('click', (evt) => {
+          // Inside <summary>: stop a plain click from also toggling <details> open/closed.
+          if (evt && typeof evt.stopPropagation === 'function') evt.stopPropagation();
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          hoodFullScreen = !hoodFullScreen;
+          render();
+        });
+      }
+      const hoodInteractiveBtn = doc.getElementById('v6ChatHoodInteractive');
+      if (hoodInteractiveBtn) {
+        hoodInteractiveBtn.addEventListener('click', (evt) => {
+          if (evt && typeof evt.stopPropagation === 'function') evt.stopPropagation();
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          hoodInteractive = !hoodInteractive;
+          hoodBuffer = '';
+          render();
+          if (hoodInteractive) focusById('v6ChatPeek');
+        });
+      }
+      const peek = doc.getElementById('v6ChatPeek');
+      if (peek) {
+        // #3135: double-click activates it (the ✎-style "click to edit" a
+        // button also offers); a SECOND double-click does nothing new —
+        // there is no reason to leave it from the same gesture that enters it.
+        peek.addEventListener('dblclick', () => {
+          if (hoodInteractive) return;
+          hoodInteractive = true;
+          hoodBuffer = '';
+          render();
+          focusById('v6ChatPeek');
+        });
+        peek.addEventListener('keydown', (evt) => {
+          if (!hoodInteractive) return;
+          const project = detail && detail.kind === 'conversation' && detail.view ? detail.view.project : null;
+          const name = project ? String(project.name || '') : '';
+          const action = hoodKeyAction(evt, hoodBuffer);
+          if (!action) return;
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+          if (evt && typeof evt.stopPropagation === 'function') evt.stopPropagation();
+          if (action.type === 'buffer') { hoodBuffer = action.text; return; }
+          if (!name) return;
+          if (action.type === 'send') {
+            hoodBuffer = '';
+            sendHoodCommand(name, { command: action.text, enter: true });
+            return;
+          }
+          sendHoodCommand(name, { rawKey: action.value });
+        });
       }
       const chat = detail && detail.kind === 'conversation' && detail.view ? detail.view.chat : null;
       const picker = doc.getElementById('v6ChatDelegate');
@@ -6649,6 +7305,50 @@
       texts.forEach((t) => { if (!set.includes(t)) set.push(t); });
       dismissedTodoItems.set(key, set);
       render();
+    }
+
+    /**
+     * @param {string|null} key - A chat target.
+     * @returns {string[]} The Fleet-Member send keys dismissed in that chat (#3131).
+     */
+    function dismissedFleetFor(key) {
+      return key != null && dismissedFleetTargets.has(key) ? dismissedFleetTargets.get(key).slice() : [];
+    }
+
+    /**
+     * Dismiss one or more outstanding Fleet-Member sends in the chat on
+     * screen, by their `target::text` key (#3131), and redraw.
+     * @param {string[]} keys
+     */
+    function dismissFleetTargets(keys) {
+      const key = chatTargetKey();
+      if (key == null || !keys.length) return;
+      const set = dismissedFleetTargets.get(key) || [];
+      keys.forEach((k) => { if (!set.includes(k)) set.push(k); });
+      dismissedFleetTargets.set(key, set);
+      render();
+    }
+
+    /**
+     * @param {string|null} key - A chat target.
+     * @returns {string[]} The Waiting-on section keys folded in that chat (#3131).
+     */
+    function collapsedWaitingOnFor(key) {
+      return key != null && waitingOnCollapsed.has(key) ? waitingOnCollapsed.get(key).slice() : [];
+    }
+
+    /**
+     * Fold or unfold one Waiting-on section ('you', 'ai', `fleet:<target>`)
+     * in the chat on screen (#3131), remembered until the chat changes it
+     * again — no full redraw, since this only toggles a disclosure.
+     * @param {string} sectionKey
+     */
+    function toggleWaitingOnSection(sectionKey) {
+      const key = chatTargetKey();
+      if (key == null) return;
+      const set = new Set(collapsedWaitingOnFor(key));
+      if (set.has(sectionKey)) set.delete(sectionKey); else set.add(sectionKey);
+      waitingOnCollapsed.set(key, [...set]);
     }
 
     /**
@@ -6726,31 +7426,35 @@
       const model = waitingOnModel(chat.live, Object.assign({}, chat, {
         dismissedQuestions: dismissedFor(key),
         dismissedTodoItems: dismissedTodoFor(key),
+        dismissedFleetTargets: dismissedFleetFor(key),
         queuedPrompts: chatQueues.get(key) || [],
         pending: pendingSends.filter((p) => p.key === key)
-      }), view && view.events, liveTurns);
-      const setSectionState = (el, cls, has) => {
-        const section = el && el.parentNode ? el.parentNode : null;
-        if (section) section.className = `v6-waiting-on-section ${cls}${has ? ' has-items' : ''}`;
+      }), view && view.events, liveTurns, [...projectRows.values()]);
+      const folded = new Set(collapsedWaitingOnFor(key));
+      // #3131: each actor section's outer <section> carries its own
+      // has-items/is-collapsed classes now (the YOU body holds several
+      // nested lists, not one), so this sets the SECTION, not whichever
+      // list element's innerHTML is being refreshed below.
+      const setSectionClass = (sectionKey, has) => {
+        const section = doc.body && typeof doc.body.querySelector === 'function'
+          ? doc.body.querySelector(`.v6-waiting-on-${sectionKey}`) : null;
+        if (section) section.className = `v6-waiting-on-section v6-waiting-on-${sectionKey}${has ? ' has-items' : ''}${folded.has(sectionKey) ? ' is-collapsed' : ''}`;
       };
       const gc = doc.getElementById('v6ChatGateChoice');
       if (gc) gc.innerHTML = cliGateMarkup(model.gate) + multiChoiceMarkup(model.choice);
       const countEl = doc.getElementById('v6ChatWaitingOnYouCount');
       if (countEl) countEl.innerHTML = String(waitingOnYouCount(model));
-      setSectionState(gc, 'v6-waiting-on-you', waitingOnYouCount(model) > 0);
+      setSectionClass('you', waitingOnYouCount(model) > 0);
       const todoEl = doc.getElementById('v6ChatTodo');
-      if (todoEl) {
-        todoEl.innerHTML = todoListMarkup(model.todo);
-        setSectionState(todoEl, 'v6-waiting-on-todo', model.todo.length > 0);
-      }
+      if (todoEl) todoEl.innerHTML = todoListMarkup(model.todo);
       const aiEl = doc.getElementById('v6ChatAi');
-      if (aiEl) {
-        aiEl.innerHTML = aiListMarkup(model.ai);
-        setSectionState(aiEl, 'v6-waiting-on-ai', model.ai.length > 0);
-      }
+      if (aiEl) aiEl.innerHTML = aiListMarkup(model.ai);
+      setSectionClass('ai', model.ai.length > 0);
+      const fleetWrap = doc.getElementById('v6ChatWaitingOnFleet');
+      if (fleetWrap) fleetWrap.innerHTML = fleetSectionsMarkup(model.fleet, folded);
       const panel = doc.getElementById('v6ChatWaitingOn');
       if (panel) {
-        const anyItems = waitingOnYouCount(model) > 0 || model.todo.length > 0 || model.ai.length > 0;
+        const anyItems = waitingOnYouCount(model) > 0 || model.ai.length > 0 || model.fleet.length > 0;
         panel.className = `v6-waiting-on-panel${anyItems ? ' has-items' : ''}`;
       }
       wireWaitingOn();
@@ -6828,6 +7532,18 @@
           render();
         });
       }
+      // #3131: each actor section's header folds/unfolds it, remembered per
+      // chat; a plain re-render is fine here — unlike the gate card above,
+      // folding is not something that must survive a poll mid-keystroke.
+      each('[data-waiting-section]', (btn) => {
+        btn.addEventListener('click', () => {
+          const sectionKey = btn.getAttribute('data-waiting-section');
+          if (sectionKey) { toggleWaitingOnSection(sectionKey); render(); }
+        });
+      });
+      each('.v6-waiting-on-fleet-dismiss', (btn) => {
+        btn.addEventListener('click', () => dismissFleetTargets([btn.getAttribute('data-key')]));
+      });
     }
 
     /** @returns {string} The usage meter as it stands (#3085), or '' before the routes answer. */
@@ -7336,8 +8052,17 @@
         && ((Array.isArray(view.events) && view.events.length > 0) || Boolean(view.chat && view.chat.peek));
       const first = key != null && key !== scrolledChatKey;
       if (key != null && loaded) scrolledChatKey = key;
-      if (first || saved.streamAtBottom) pinToBottom(streamEl);
+      // #3135: a reload or a switch to a different chat always starts
+      // pinned — the OLD one-shot `saved.streamAtBottom` check never
+      // reapplied once the header docked out from under it or an async
+      // thumbnail grew the stream after this point; `streamPinned` is
+      // live state the 'scroll' listener keeps current, and render() (its
+      // caller) re-applies it again after `syncDockedHeader()` and once
+      // more next frame, which this single call here cannot.
+      if (first) streamPinned = true;
+      if (streamPinned) pinToBottom(streamEl);
       if (first || saved.peekAtBottom) pinToBottom(doc.getElementById('v6ChatPeek'));
+      paintStreamPinIndicator();
       if (!saved.focusId) return;
       const el = doc.getElementById(saved.focusId);
       if (!el || doc.activeElement === el || typeof el.focus !== 'function') return;
@@ -7410,6 +8135,7 @@
             // delegate, and that lane is the one marked in the sidebar.
             activeResourceId: currentRoute.resourceId || chatTargetKey(),
             collapsed: collapsedNodes,
+            rename: { key: sidebarRenameKey, draft: sidebarRenameDraft, warning: sidebarRenameWarning },
             memberInfo: (seatId) => {
               const row = projectRows.get(String(seatId));
               return row ? memberIndicators(row, engineHealth) : null;
@@ -7425,12 +8151,15 @@
             <h1 class="v6-shell-title">${escapeHtml(title)}</h1>
           </div>
           <div id="v6ShellDetail" role="tabpanel" aria-labelledby="v6WorkspaceMode-chat"${shown.detail ? '' : ' hidden'}>${detailMarkup(detail, {
-            draft: chatDrafts.get(chatTargetKey()) || '', hoodOpen: chatHoodOpen,
+            draft: chatDrafts.get(chatTargetKey()) || '', hoodOpen: chatHoodOpen, hoodFullScreen, hoodInteractive, streamPinned,
             fleetArmed: fleetArmedKey != null && fleetArmedKey === chatTargetKey(),
             rename: renameOpenKey != null && renameOpenKey === chatTargetKey()
               ? { open: true, draft: renameDraft, warning: renameWarning } : null,
             sidebarCollapsed, activityElapsed, telemetry, dismissedQuestions: dismissedFor(chatTargetKey()),
             dismissedTodoItems: dismissedTodoFor(chatTargetKey()),
+            dismissedFleetTargets: dismissedFleetFor(chatTargetKey()),
+            collapsedWaitingOn: collapsedWaitingOnFor(chatTargetKey()),
+            knownProjects: [...projectRows.values()],
             queuedPrompts: chatQueues.get(chatTargetKey()) || [],
             pending: pendingSends.filter((p) => p.key === chatTargetKey()),
             verbosity
@@ -7453,6 +8182,18 @@
       restoreViewState(saved);
       if (typeof options.onRender === 'function') options.onRender(currentRoute);
       syncDockedHeader();
+      // #3135: re-applied again here, AFTER the header is docked out of
+      // the stream's own flow (moving it can change the stream's
+      // scrollHeight) — restoreViewState's own pin ran before this and so
+      // cannot see that change — and once more on the next frame, by
+      // when a thumbnail or unfurl card still expanding the stream has
+      // usually settled.
+      if (streamPinned) pinToBottom(doc.getElementById('v6ChatStream'));
+      if (raf) {
+        raf(() => {
+          if (streamPinned) pinToBottom(doc.getElementById('v6ChatStream'));
+        });
+      }
     }
 
     function toggleDrawer(force) {
@@ -7714,10 +8455,32 @@
       /**
        * The outcome of a rename (#3071): done closes the form; a refusal keeps
        * it open with the typed name, and an orphan-risk refusal shows the
-       * server's warning with a Rename anyway button.
+       * server's warning with a Rename anyway button. `options.onRenameProject`
+       * always reports here whoever asked, so `renameResultFor` (#3136) says
+       * which of the three in-flight shapes this particular result is for —
+       * the chat header's own form, the sidebar's single-row form, or one
+       * leg of a fleet's bulk rename, settled through `fleetRenameWait`
+       * instead of touched here at all.
        * @param {{ok: boolean, warning?: string|null}} result
        */
       renameResult(result) {
+        if (renameResultFor === 'fleet') {
+          const resolve = fleetRenameWait;
+          fleetRenameWait = null;
+          if (typeof resolve === 'function') resolve(result);
+          return;
+        }
+        if (renameResultFor === 'sidebar') {
+          if (result && result.ok) {
+            sidebarRenameKey = null;
+            sidebarRenameDraft = null;
+            sidebarRenameWarning = null;
+          } else {
+            sidebarRenameWarning = (result && result.warning) || null;
+          }
+          render();
+          return;
+        }
         if (result && result.ok) {
           renameOpenKey = null;
           renameDraft = null;
@@ -7917,6 +8680,7 @@
   global.tcV6ResolveRouteProject = resolveRouteProject;
   global.tcV6ResolveDelegateProject = resolveDelegateProject;
   global.tcV6ChatKeyAction = chatKeyAction;
+  global.tcV6HoodKeyAction = hoodKeyAction;
   global.tcV6FormatElapsed = formatElapsed;
   global.tcV6ExtractLiveTurns = extractLiveTurns;
   global.tcV6MessageMarkup = messageMarkup;
