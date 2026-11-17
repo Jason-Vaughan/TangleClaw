@@ -264,6 +264,17 @@ describe('native-sprint-tracker: buildRoadmapDataFromFallbackSources (#3134)', (
     assert.deepEqual(tracker.buildRoadmapDataFromFallbackSources(), { releases: [] });
     assert.deepEqual(tracker.buildRoadmapDataFromFallbackSources({}), { releases: [] });
   });
+
+  it('also recovers cars named "Part of #N" / "Fixes #N", case-insensitively, de-duplicating repeats (#3138, PRR-A Warning 1)', () => {
+    const laneQueueText = [
+      '## Train 0 — `Sprint v6.5.1`',
+      '| **`W1-B`** | `Part of #3115`, `part of #3115` | ... |',
+      '| **`W1-D`** | `Fixes #3107` | ... |',
+      '| **`W1-A`** | `Closes #3130` | ... |'
+    ].join('\n');
+    assert.deepEqual(tracker.buildRoadmapDataFromFallbackSources({ laneQueueText }),
+      { releases: [{ version: '6.5.1', trains: [{ cars: [3115, 3107, 3130] }] }] });
+  });
 });
 
 describe('native-sprint-tracker: exported constants', () => {
@@ -381,6 +392,44 @@ describe('native-sprint-tracker: syncWaveDispatchState', () => {
       cars: [{ id: 'car-a', deployedNotConfirmed: true, issues: [{ id: 1, state: 'closed' }] }]
     });
     assert.deepEqual(result['car-a'].pill, { code: 'deployed', label: 'Deployed, awaiting a check' });
+  });
+
+  it('marks a closed row merged on a real merged PR, OR on confirmedComplete alone, never on "all issues closed" by itself (#3138, PRR-A R1)', () => {
+    const mergedPr = tracker.syncWaveDispatchState({
+      cars: baseCars, pullRequests: [{ carId: 'car-a', number: 42, state: 'merged' }]
+    });
+    assert.equal(mergedPr['car-a'].merged, true);
+
+    const confirmed = tracker.syncWaveDispatchState({
+      cars: [{ id: 'car-a', confirmedComplete: true, issues: [{ id: 1, state: 'closed' }] }]
+    });
+    assert.equal(confirmed['car-a'].merged, true);
+
+    const neither = tracker.syncWaveDispatchState({
+      cars: [{ id: 'car-a', issues: [{ id: 1, state: 'closed' }] }]
+    });
+    assert.equal(neither['car-a'].stage, 'closed');
+    assert.equal(neither['car-a'].merged, false);
+
+    // Never set at all for a non-closed stage.
+    assert.equal('merged' in tracker.syncWaveDispatchState({ cars: baseCars })['car-a'], false);
+  });
+
+  it('builds a PR link only with a repo slug AND a PR number, validating the slug shape', () => {
+    const withRepo = tracker.syncWaveDispatchState({
+      cars: baseCars, pullRequests: [{ carId: 'car-a', number: 42, state: 'open' }], repo: 'Jason-Vaughan/TangleClaw'
+    });
+    assert.equal(withRepo['car-a'].prUrl, 'https://github.com/Jason-Vaughan/TangleClaw/pull/42');
+
+    const noRepo = tracker.syncWaveDispatchState({
+      cars: baseCars, pullRequests: [{ carId: 'car-a', number: 42, state: 'open' }]
+    });
+    assert.equal('prUrl' in noRepo['car-a'], false);
+
+    const badRepo = tracker.syncWaveDispatchState({
+      cars: baseCars, pullRequests: [{ carId: 'car-a', number: 42, state: 'open' }], repo: 'not a slug'
+    });
+    assert.equal('prUrl' in badRepo['car-a'], false);
   });
 });
 
@@ -552,11 +601,17 @@ describe('native-sprint-tracker: buildSprintWaveSnapshot (#3112)', () => {
     assert.deepEqual(carA.files, ['public/v6-shell.js']);
     assert.equal(carA.prNumber, 3200);
     assert.deepEqual(carA.pill, { code: 'closed', label: 'Completed' });
+    // #3138 (PRR-A R1): merged carries through for renderSprintCarCards' own carGates() call.
+    assert.equal(carA.merged, true);
+    assert.equal(carA.headSha, null);
     // W1-B: an open PR -> dispatch stage 'in-review' -> pill 'in-review'; no explicit
     // car.lane given, so it falls back to the lane row's own name.
     assert.equal(carB.lane, 'TC-Lane-B');
     assert.equal(carB.prNumber, 3201);
     assert.deepEqual(carB.pill, { code: 'in-review', label: 'In review' });
+    // W1-B is not closed, so merged is deliberately false, not absent -- a
+    // stable boolean field every car carries, never a sometimes-present key.
+    assert.equal(carB.merged, false);
   });
 
   it('gives each issue its own pill: closed when the issue itself is closed, else the car\'s current stage', () => {
@@ -1048,6 +1103,32 @@ describe('public/sprint-wave-ui', () => {
     assert.match(html, /<span class="sprint-wave-car-id">car-a<\/span> · <span class="sprint-wave-lane">TC-Lane-D<\/span> · <span class="sprint-wave-pr">#3107<\/span> <span class="sprint-stage-pill is-closed">Completed<\/span>/);
   });
 
+  it('renders the gate-matrix PR cell as a link only when the row carries prUrl, else the exact original plain text (#3138, PRR-A R1)', () => {
+    const withUrl = sprintWaveUi.renderSprintWaveBoard(null, {
+      dispatch: { 'car-a': { stage: 'closed', laneName: 'TC-Lane-A', openPrNumber: 3200, prUrl: 'https://github.com/a/b/pull/3200' } }
+    });
+    assert.match(withUrl, /<td class="sprint-gate-pr"><a href="https:\/\/github\.com\/a\/b\/pull\/3200" target="_blank" rel="noopener noreferrer">#3200<\/a><\/td>/);
+
+    // No prUrl -- byte-identical to the pre-#3134 format test/v6-b1-ui-shell.test.js locks in.
+    const withoutUrl = sprintWaveUi.renderSprintWaveBoard(null, {
+      dispatch: { 'car-a': { stage: 'closed', laneName: 'TC-Lane-A', openPrNumber: 3200 } }
+    });
+    assert.match(withoutUrl, /<td class="sprint-gate-pr">#3200<\/td>/);
+  });
+
+  it('merged + headSha carried into carGates by renderSprintCarCards, reading all-pass once merged, and a stale SHA correctly (#3138, PRR-A R1)', () => {
+    const merged = sprintWaveUi.renderSprintCarCards({
+      cars: [{ id: 'car-a', pill: { code: 'closed', label: 'Completed' }, merged: true, headSha: 'abcdef1234567890' }]
+    });
+    assert.doesNotMatch(merged, /is-unknown/);
+    assert.equal((merged.match(/sprint-gate-pill is-pass is-inferred/g) || []).length, 6);
+
+    const notMerged = sprintWaveUi.renderSprintCarCards({
+      cars: [{ id: 'car-a', pill: { code: 'closed', label: 'Completed' }, merged: false }]
+    });
+    assert.match(notMerged, /is-unknown/);
+  });
+
   it('filterSprintWaveRows filters by stage, lane name and case-insensitive search', () => {
     const rows = [
       { carId: 'car-a', stage: 'claimed', laneName: 'TC-Lane-A' },
@@ -1414,6 +1495,29 @@ describe('native-sprint-tracker: sprintDataFromWaveRuns (#3087, Ruling A774)', (
     const dispatch = tracker.syncWaveDispatchState({ cars: data.cars, lanes: data.lanes, pullRequests: data.pullRequests });
     assert.equal(dispatch.rich.openPrNumber, 42);
     assert.equal(dispatch.rich.stage, 'in-review');
+  });
+
+  it('marks confirmedComplete only for a genuinely complete car, never a cancelled one, even with no PR number recorded (#3138, PRR-A R1)', () => {
+    const data = tracker.sprintDataFromWaveRuns({
+      r: run('r', 1, 'active', {
+        done: { status: 'complete' },
+        cancelled: { status: 'cancelled' },
+        running: { status: 'running' }
+      })
+    }, 'current');
+    assert.equal(data.cars.find((c) => c.id === 'done').confirmedComplete, true);
+    assert.equal(data.cars.find((c) => c.id === 'cancelled').confirmedComplete, undefined);
+    assert.equal(data.cars.find((c) => c.id === 'running').confirmedComplete, undefined);
+
+    // Feeding this through syncWaveDispatchState: both read `closed` (via the
+    // "all issues closed" marker both completion paths synthesize), but ONLY
+    // the genuinely complete one reads `merged: true` -- the gate-pill fix
+    // this car exists for, now covering a car with no PR info at all.
+    const dispatch = tracker.syncWaveDispatchState({ cars: data.cars, lanes: [], pullRequests: [] });
+    assert.equal(dispatch.done.stage, 'closed');
+    assert.equal(dispatch.done.merged, true);
+    assert.equal(dispatch.cancelled.stage, 'closed');
+    assert.equal(dispatch.cancelled.merged, false);
   });
 
   it('reads the newest ACTIVE run as current, and a version by metadata.version or id', () => {

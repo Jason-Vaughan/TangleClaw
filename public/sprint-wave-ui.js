@@ -278,7 +278,14 @@
         return `<tr class="sprint-gate-row" data-car-id="${_escapeHtml(id)}">`
           + `<th scope="row" class="sprint-gate-car">${_escapeHtml(id)}</th>`
           + `<td class="sprint-gate-lane">${_escapeHtml(row.laneName || '—')}</td>`
-          + `<td class="sprint-gate-pr">${row.openPrNumber !== null && row.openPrNumber !== undefined ? `#${_escapeHtml(row.openPrNumber)}` : '—'}</td>`
+          // #3138 (PRR-A R1): a clickable link when `row.prUrl` is known,
+          // else the exact original plain-text cell -- `row.prUrl` is a new,
+          // optional field, so a row without one (every existing caller,
+          // and every fixture in test/v6-b1-ui-shell.test.js) renders
+          // byte-identically to before.
+          + `<td class="sprint-gate-pr">${row.openPrNumber !== null && row.openPrNumber !== undefined
+            ? (row.prUrl ? `<a href="${_escapeHtml(row.prUrl)}" target="_blank" rel="noopener noreferrer">#${_escapeHtml(row.openPrNumber)}</a>` : `#${_escapeHtml(row.openPrNumber)}`)
+            : '—'}</td>`
           + `<td class="sprint-gate-head">${head ? `<code>${_escapeHtml(head)}</code>` : '—'}</td>`
           + gates.map((g) => `<td class="sprint-gate-cell">${_gatePill(g)}</td>`).join('')
           + '</tr>';
@@ -624,7 +631,9 @@
     }
     const cards = cars.map((car) => {
       const reviewers = car.reviewers && typeof car.reviewers === 'object' ? car.reviewers : {};
-      const gates = carGates({ stage: _pillToStage(car.pill) });
+      // #3138 (PRR-A R1): merged/headSha threaded through so a completed car
+      // reads all-pass gates here too, not just in the stage board/matrix.
+      const gates = carGates({ stage: _pillToStage(car.pill), merged: car.merged, headSha: car.headSha });
       const issuePills = (Array.isArray(car.issues) ? car.issues : [])
         .map((issue) => `<li class="sprint-car-issue" data-issue-id="${_escapeHtml(issue && issue.id)}">`
           + `<span class="sprint-car-issue-id">#${_escapeHtml(issue && issue.id)}</span>${_sixStagePillBadge(issue && issue.pill)}</li>`)
