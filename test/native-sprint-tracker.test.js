@@ -161,6 +161,111 @@ describe('native-sprint-tracker: validateWaveDisjointness', () => {
   });
 });
 
+describe('native-sprint-tracker: validateVersionPlanParallelism (#3138)', () => {
+  it('passes a plan declaring capacity, with its issues partitioned across disjoint parallel trains', () => {
+    const result = tracker.validateVersionPlanParallelism({
+      maxParallelLanes: 4,
+      trains: [
+        { wave: 1, cars: [1, 2], files: ['a.js'] },
+        { wave: 1, cars: [3, 4], files: ['b.js'] }
+      ]
+    });
+    assert.deepEqual(result, { ok: true, violations: [] });
+  });
+
+  it('flags a missing/invalid maxParallelLanes, checking against the 4-lane default instead of skipping', () => {
+    for (const bad of [{}, { maxParallelLanes: 0 }, { maxParallelLanes: 1.5 }, { maxParallelLanes: -1 }]) {
+      const result = tracker.validateVersionPlanParallelism({ ...bad, trains: [] });
+      assert.deepEqual(result.violations.map((v) => v.code), ['MISSING_PARALLEL_LANE_CAPACITY']);
+    }
+  });
+
+  it('refuses a single-bucket train with >= 4 issues against a >= 2 lane plan (UNPARALLELIZED_VERSION_PLAN)', () => {
+    const result = tracker.validateVersionPlanParallelism({ maxParallelLanes: 4, trains: [{ cars: [1, 2, 3, 4] }] });
+    assert.equal(result.ok, false);
+    assert.ok(result.violations.some((v) => v.code === 'UNPARALLELIZED_VERSION_PLAN'));
+  });
+
+  it('does not flag a single train under 4 issues, under 2 lanes, or marked runs_alone', () => {
+    assert.equal(tracker.validateVersionPlanParallelism({ maxParallelLanes: 4, trains: [{ cars: [1, 2, 3] }] }).ok, true);
+    assert.equal(tracker.validateVersionPlanParallelism({ maxParallelLanes: 1, trains: [{ cars: [1, 2, 3, 4] }] }).ok, true);
+    assert.equal(tracker.validateVersionPlanParallelism({
+      maxParallelLanes: 4, trains: [{ cars: [1, 2, 3, 4], runs_alone: true }]
+    }).ok, true);
+  });
+
+  it('refuses two parallel trains in the same wave sharing a file (WAVE_FILE_COLLISION), naming the wave and both trains', () => {
+    const result = tracker.validateVersionPlanParallelism({
+      maxParallelLanes: 4,
+      trains: [
+        { id: 'train-x', wave: 1, cars: [1], files: ['shared.js'] },
+        { id: 'train-y', wave: 1, cars: [2], files: ['shared.js'] },
+        { id: 'train-z', wave: 2, cars: [3], files: ['shared.js'] }
+      ]
+    });
+    assert.deepEqual(result.violations, [{
+      code: 'WAVE_FILE_COLLISION', wave: 1, carA: 'train-x', carB: 'train-y', files: ['shared.js'],
+      message: 'Wave 1: train-x and train-y are both parallel trains that share files: shared.js'
+    }]);
+  });
+
+  it('never checks disjointness across different waves, or against a single train with no sibling', () => {
+    const result = tracker.validateVersionPlanParallelism({
+      maxParallelLanes: 4,
+      trains: [{ wave: 1, cars: [1], files: ['x.js'] }, { wave: 2, cars: [2], files: ['x.js'] }]
+    });
+    assert.equal(result.ok, true);
+  });
+
+  it('exports every code it can report', () => {
+    assert.deepEqual([...tracker.PARALLELISM_VIOLATION_CODES],
+      ['UNPARALLELIZED_VERSION_PLAN', 'MISSING_PARALLEL_LANE_CAPACITY', 'WAVE_FILE_COLLISION']);
+  });
+});
+
+describe('native-sprint-tracker: buildRoadmapDataFromFallbackSources (#3134)', () => {
+  it('builds a release with no trains from a bare docs/releases version', () => {
+    assert.deepEqual(tracker.buildRoadmapDataFromFallbackSources({ docsReleaseVersions: ['6.5.0'] }),
+      { releases: [{ version: '6.5.0', trains: [] }] });
+  });
+
+  it('ignores a malformed docs/releases version rather than guessing', () => {
+    assert.deepEqual(tracker.buildRoadmapDataFromFallbackSources({ docsReleaseVersions: ['index', 'not-a-version'] }),
+      { releases: [] });
+  });
+
+  it('recovers the current sprint\'s real cars from LANE_QUEUE.md\'s Train headers and Closes rows', () => {
+    const laneQueueText = [
+      '## Train 0 — `Sprint v6.5.1` (Milestone `#84`)',
+      '',
+      '| **`W1-A`** | `Closes #3130`, `Closes #3137` | ... |',
+      '| **`W1-B`** | `Closes #3132` | ... |',
+      '',
+      '## Train 1 — `Sprint v6.4.1` (SHIPPED)',
+      '| **`W1-C`** | `Closes #3108` | ... |'
+    ].join('\n');
+    assert.deepEqual(tracker.buildRoadmapDataFromFallbackSources({ laneQueueText }), {
+      releases: [
+        { version: '6.5.1', trains: [{ cars: [3130, 3137, 3132] }] },
+        { version: '6.4.1', trains: [{ cars: [3108] }] }
+      ]
+    });
+  });
+
+  it('merges docs/releases and LANE_QUEUE.md onto the same release when both name it, never a duplicate entry', () => {
+    const result = tracker.buildRoadmapDataFromFallbackSources({
+      docsReleaseVersions: ['6.5.1'],
+      laneQueueText: '## Train 0 — `Sprint v6.5.1`\n| **`W1-A`** | `Closes #1` | ... |'
+    });
+    assert.deepEqual(result.releases, [{ version: '6.5.1', trains: [{ cars: [1] }] }]);
+  });
+
+  it('answers an empty releases list with no sources at all, never throwing', () => {
+    assert.deepEqual(tracker.buildRoadmapDataFromFallbackSources(), { releases: [] });
+    assert.deepEqual(tracker.buildRoadmapDataFromFallbackSources({}), { releases: [] });
+  });
+});
+
 describe('native-sprint-tracker: exported constants', () => {
   it('GUARDRAIL_IDS is exactly P0..P11, matching the Hero report\'s ledger', () => {
     assert.deepEqual(tracker.GUARDRAIL_IDS, Array.from({ length: 12 }, (_, i) => `P${i}`));
@@ -684,13 +789,14 @@ describe('native-sprint-tracker: createFileSnapshotStore', () => {
 });
 
 describe('sprint-wave-routes: createSprintWaveRouter', () => {
-  it('lists its own four routes', () => {
+  it('lists its own five routes', () => {
     const router = createSprintWaveRouter({});
     assert.deepEqual(router.routes, [
       { method: 'GET', pattern: '/api/sprint-waves' },
       { method: 'POST', pattern: '/api/sprint-waves/validate-disjointness' },
       { method: 'GET', pattern: '/api/sprint-reports/:version' },
-      { method: 'POST', pattern: '/api/sprint-waves/sync' }
+      { method: 'POST', pattern: '/api/sprint-waves/sync' },
+      { method: 'GET', pattern: '/api/sprint-waves/github-activity' }
     ]);
   });
 
@@ -806,6 +912,66 @@ describe('sprint-wave-routes: createSprintWaveRouter', () => {
     assert.equal(status(), 503);
     assert.equal(json().code, 'NOT_CONFIGURED');
   });
+
+  it('GET /api/sprint-waves threads a loaded roadmap into the dispatch PR link and the snapshot release grouping (#3134)', async () => {
+    const router = createSprintWaveRouter({
+      getSprintData: async () => ({
+        version: 'v6.5.1',
+        waves: [],
+        cars: [{ id: 'car-a', issues: [], version: 'v6.5.1' }],
+        lanes: [],
+        pullRequests: [{ carId: 'car-a', number: 42, state: 'open' }]
+      }),
+      getRoadmapData: () => ({
+        data: { releases: [{ version: '6.5.1', trains: [{ cars: [1] }] }] },
+        repo: 'Jason-Vaughan/TangleClaw',
+        source: 'roadmap2-data.json'
+      })
+    });
+    const { req } = fakeReq('GET', '/api/sprint-waves');
+    const { res, status, json } = fakeRes();
+    await router.handle(req, res);
+    assert.equal(status(), 200);
+    assert.equal(json().roadmapSource, 'roadmap2-data.json');
+    assert.equal(json().dispatch['car-a'].prUrl, 'https://github.com/Jason-Vaughan/TangleClaw/pull/42');
+    assert.equal(json().snapshot.releases.active[0].version, 'v6.5.1');
+  });
+
+  it('GET /api/sprint-waves answers roadmapSource "unconfigured" with no getRoadmapData, unaffected otherwise (#3134)', async () => {
+    const router = createSprintWaveRouter({
+      getSprintData: async () => ({ waves: [], cars: [{ id: 'car-a', issues: [] }], lanes: [], pullRequests: [] })
+    });
+    const { req } = fakeReq('GET', '/api/sprint-waves');
+    const { res, status, json } = fakeRes();
+    await router.handle(req, res);
+    assert.equal(status(), 200);
+    assert.equal(json().roadmapSource, 'unconfigured');
+    assert.equal(json().dispatch['car-a'].prUrl, undefined);
+  });
+
+  it('GET /api/sprint-waves/github-activity passes through the live activity (#3134)', async () => {
+    const router = createSprintWaveRouter({ getGithubActivity: async () => ({ ok: true, repo: 'a/b', pullRequests: [] }) });
+    const { req } = fakeReq('GET', '/api/sprint-waves/github-activity');
+    const { res, status, json } = fakeRes();
+    await router.handle(req, res);
+    assert.equal(status(), 200);
+    assert.equal(json().repo, 'a/b');
+  });
+
+  it('GET /api/sprint-waves/github-activity answers 503 when not configured, and 502 when the activity call itself failed', async () => {
+    const unconfigured = createSprintWaveRouter({});
+    const { req: req1 } = fakeReq('GET', '/api/sprint-waves/github-activity');
+    const { res: res1, status: status1, json: json1 } = fakeRes();
+    await unconfigured.handle(req1, res1);
+    assert.equal(status1(), 503);
+    assert.equal(json1().code, 'NOT_CONFIGURED');
+
+    const failing = createSprintWaveRouter({ getGithubActivity: async () => ({ ok: false, error: 'no repo configured' }) });
+    const { req: req2 } = fakeReq('GET', '/api/sprint-waves/github-activity');
+    const { res: res2, status: status2 } = fakeRes();
+    await failing.handle(req2, res2);
+    assert.equal(status2(), 502);
+  });
 });
 
 describe('public/sprint-wave-ui', () => {
@@ -852,9 +1018,14 @@ describe('public/sprint-wave-ui', () => {
     assert.doesNotMatch(withoutPill, /sprint-stage-pill/);
   });
 
-  it('composes enriched car cards after the board/matrix, only when a row carries files, reviewers or issues', () => {
-    const plain = sprintWaveUi.renderSprintWaveBoard(null, { dispatch: { 'car-a': { stage: 'claimed', laneName: null, openPrNumber: null } } });
-    assert.doesNotMatch(plain, /sprint-car-cards/);
+  it('never composes enriched car cards inside the board, even when a row carries files, reviewers or issues (#3138: one fewer duplicate car listing)', () => {
+    // #3138's root-cause report: the same cars appeared on one screen as the
+    // stage columns, the gate matrix, AND a third `renderSprintCarCards`
+    // listing. The matrix's exact markup is locked by other in-flight tests
+    // this module cannot touch, so the fix removes this third listing
+    // specifically -- `renderSprintCarCards` stays available as its own
+    // standalone builder (see its own describe block) for a caller that
+    // wants the richer per-car detail view, just never auto-composed here.
     const enriched = sprintWaveUi.renderSprintWaveBoard(null, {
       dispatch: {
         'car-a': {
@@ -864,9 +1035,17 @@ describe('public/sprint-wave-ui', () => {
         }
       }
     });
-    assert.ok(enriched.indexOf('class="sprint-wave-board"') < enriched.indexOf('class="sprint-car-cards"'), 'cards come after the board/matrix');
-    assert.match(enriched, /data-car-id="car-a"[\s\S]*Builder: TC-Lane-A/);
-    assert.match(enriched, /<code>lib\/a\.js<\/code>/);
+    assert.doesNotMatch(enriched, /sprint-car-cards/);
+    assert.doesNotMatch(enriched, /Builder: TC-Lane-A/);
+  });
+
+  it('separates adjacent fields in a stage-column card with a visible, literal separator (#3138: no more mashed "V650-W1-ATC-Lane-DCompleted")', () => {
+    const html = sprintWaveUi.renderSprintWaveBoard(null, {
+      dispatch: {
+        'car-a': { stage: 'closed', laneName: 'TC-Lane-D', openPrNumber: 3107, pill: { code: 'closed', label: 'Completed' } }
+      }
+    });
+    assert.match(html, /<span class="sprint-wave-car-id">car-a<\/span> · <span class="sprint-wave-lane">TC-Lane-D<\/span> · <span class="sprint-wave-pr">#3107<\/span> <span class="sprint-stage-pill is-closed">Completed<\/span>/);
   });
 
   it('filterSprintWaveRows filters by stage, lane name and case-insensitive search', () => {
@@ -1010,6 +1189,12 @@ describe('public/sprint-wave-ui: Release-First Roadmap, Sprint Car cards & Repor
   });
 
   describe('renderReleaseRoadmap', () => {
+    it('links out to the published public SSOT roadmap (#3134)', () => {
+      const html = sprintWaveUi.renderReleaseRoadmap(snapshot());
+      assert.match(html, /<a href="https:\/\/jason-vaughan\.github\.io\/TangleClaw\/" target="_blank" rel="noopener noreferrer">🌐 Public SSOT Roadmap ↗<\/a>/);
+      assert.equal(sprintWaveUi.PUBLIC_SSOT_URL, 'https://jason-vaughan.github.io/TangleClaw/');
+    });
+
     it('renders the summary metrics bar', () => {
       const html = sprintWaveUi.renderReleaseRoadmap(snapshot());
       assert.match(html, /Planned versions[\s\S]*>1</);
@@ -1134,6 +1319,54 @@ describe('public/sprint-wave-ui: Release-First Roadmap, Sprint Car cards & Repor
       const container = {};
       const html = sprintWaveUi.renderSprintReportsCatalog(snapshot(), container);
       assert.equal(container.innerHTML, html);
+    });
+  });
+
+  describe('renderGithubPanel (#3134)', () => {
+    it('renders open pull requests, issues, milestones and the latest release', () => {
+      const html = sprintWaveUi.renderGithubPanel({
+        ok: true, repo: 'Jason-Vaughan/TangleClaw',
+        pullRequests: [{ number: 10, title: 'Add X', url: 'https://github.com/a/b/pull/10', draft: true }],
+        issues: [{ number: 20, title: 'Fix Y', url: 'https://github.com/a/b/issues/20' }],
+        milestones: [{ title: 'v6.5.1', openIssues: 2, closedIssues: 8, url: 'https://github.com/a/b/milestone/1' }],
+        latestRelease: { tagName: 'v6.5.0', name: 'v6.5.0', url: 'https://github.com/a/b/releases/tag/v6.5.0' }
+      });
+      assert.match(html, /🐙 GitHub — Jason-Vaughan\/TangleClaw/);
+      assert.match(html, /<a href="https:\/\/github\.com\/a\/b\/pull\/10"[^>]*>#10 Add X<\/a>/);
+      assert.match(html, /is-pending">Draft<\/span>/);
+      assert.match(html, /<a href="https:\/\/github\.com\/a\/b\/issues\/20"[^>]*>#20 Fix Y<\/a>/);
+      assert.match(html, /2 open \/ 8 closed/);
+      assert.match(html, /<a href="https:\/\/github\.com\/a\/b\/releases\/tag\/v6\.5\.0"[^>]*>v6\.5\.0<\/a>/);
+    });
+
+    it('renders calm empty states for each section with no data', () => {
+      const html = sprintWaveUi.renderGithubPanel({ ok: true, repo: 'a/b' });
+      assert.match(html, /No open pull requests\./);
+      assert.match(html, /No open issues\./);
+      assert.match(html, /No open milestones\./);
+      assert.match(html, /No published release yet\./);
+    });
+
+    it('renders the error when the activity call itself failed, never crashing on it', () => {
+      const html = sprintWaveUi.renderGithubPanel({ ok: false, error: 'rate limited' });
+      assert.match(html, /GitHub activity is unavailable: rate limited/);
+    });
+
+    it('escapes hostile markup in every field, and never links an unsafe url', () => {
+      const html = sprintWaveUi.renderGithubPanel({
+        ok: true, repo: HOSTILE,
+        pullRequests: [{ number: 1, title: HOSTILE, url: 'javascript:alert(1)' }]
+      });
+      assert.ok(!html.includes('<img'), 'a raw <img> tag reached the GitHub panel HTML');
+      assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'), 'the hostile text is not shown escaped');
+      assert.doesNotMatch(html, /<a href="javascript:/);
+    });
+
+    it('writes into a container, and refuses one passed first', () => {
+      const container = {};
+      const html = sprintWaveUi.renderGithubPanel({ ok: true, repo: 'a/b' }, container);
+      assert.equal(container.innerHTML, html);
+      assert.throws(() => sprintWaveUi.renderGithubPanel({ innerHTML: '' }), /data comes first/);
     });
   });
 });
@@ -1263,6 +1496,9 @@ describe('the live server mounts the sprint wave routes (#3087, Ruling A774)', (
     });
   }
 
+  const ROADMAP_ENV_KEYS = ['TANGLECLAW_ROADMAP2_DATA_PATH', 'TANGLECLAW_LANE_QUEUE_PATH', 'TANGLECLAW_DOCS_RELEASES_DIR'];
+  let prevRoadmapEnv;
+
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-sprint-mount-'));
     store = require('../lib/store');
@@ -1270,6 +1506,15 @@ describe('the live server mounts the sprint wave routes (#3087, Ruling A774)', (
     store.init();
     ({ operatorHeaders } = require('./_shared-docs-callers'));
     openInstallToken = require('../lib/open-install-token');
+    // #3134: this operator's own machine (and this checkout's own
+    // docs/releases/) can genuinely have real roadmap sources -- point all
+    // three at paths inside this test's own throwaway tmpDir (never read)
+    // so this describe block's "empty board" fixture stays genuinely empty
+    // on every machine, not just one with none of these present.
+    prevRoadmapEnv = Object.fromEntries(ROADMAP_ENV_KEYS.map((k) => [k, process.env[k]]));
+    process.env.TANGLECLAW_ROADMAP2_DATA_PATH = path.join(tmpDir, 'no-roadmap2-data.json');
+    process.env.TANGLECLAW_LANE_QUEUE_PATH = path.join(tmpDir, 'no-lane-queue.md');
+    process.env.TANGLECLAW_DOCS_RELEASES_DIR = path.join(tmpDir, 'no-docs-releases');
     server = require('../server').createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   });
@@ -1278,12 +1523,22 @@ describe('the live server mounts the sprint wave routes (#3087, Ruling A774)', (
     await new Promise((resolve) => server.close(resolve));
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    for (const k of ROADMAP_ENV_KEYS) {
+      if (prevRoadmapEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = prevRoadmapEnv[k];
+    }
   });
 
   it('GET /api/sprint-waves answers an empty board with no run, and the scheduler\'s run once one exists', async () => {
     const empty = await request('GET', '/api/sprint-waves');
     assert.equal(empty.status, 200, JSON.stringify(empty.data));
-    assert.deepEqual(empty.data, {
+    // #3134: this describe block's beforeEach points every roadmap source
+    // env var at a path inside its own throwaway tmpDir, so this always
+    // reads the deterministic "fallback" answer regardless of what this
+    // machine's real shared roadmap-board checkout or docs/releases holds.
+    const { roadmapSource, ...emptyRest } = empty.data;
+    assert.equal(roadmapSource, 'fallback');
+    assert.deepEqual(emptyRest, {
       ok: true, waves: [], dispatch: {},
       snapshot: {
         releases: { active: [], planned: [], shipped: [] },
@@ -1444,7 +1699,19 @@ describe('#3093 verifySprintSetupAndRoadmapSync (Ruling A766-1, A786)', () => {
     roadmapData.backlog[0].cars.push(3089);
     const r = tracker.verifySprintSetupAndRoadmapSync(clean({
       roadmapData, syncStatus: null, reportDirs: ['v6.2.10', 'v6.4.0'],
-      milestones: [{ title: 'v9.9.9', state: 'open' }]
+      milestones: [{ title: 'v9.9.9', state: 'open' }],
+      // #3138: a single-train bucket with >= 4 issues and no declared
+      // maxParallelLanes trips both MISSING_PARALLEL_LANE_CAPACITY (checked
+      // against the 4-lane default) and UNPARALLELIZED_VERSION_PLAN in one
+      // plan; a second plan's two same-wave trains sharing a file trips
+      // WAVE_FILE_COLLISION.
+      versionPlans: [
+        { trains: [{ cars: [101, 102, 103, 104] }] },
+        { maxParallelLanes: 4, trains: [
+          { id: 'train-x', wave: 1, cars: [201], files: ['shared.js'] },
+          { id: 'train-y', wave: 1, cars: [202], files: ['shared.js'] }
+        ] }
+      ]
     }));
     assert.deepEqual([...new Set(r.violations.map((v) => v.code))].sort(), [...tracker.SETUP_VIOLATION_CODES].sort());
   });

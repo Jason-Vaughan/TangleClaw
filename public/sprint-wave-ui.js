@@ -23,6 +23,13 @@
     closed: 'Closed'
   };
 
+  /**
+   * The published public SSOT roadmap site (#3134) — a fixed, known URL,
+   * not something any producer needs to supply.
+   * @type {string}
+   */
+  const PUBLIC_SSOT_URL = 'https://jason-vaughan.github.io/TangleClaw/';
+
   const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
   /**
@@ -74,8 +81,8 @@
    * @param {{innerHTML?: string}|null} container - A DOM element to write
    *   into, or `null`/omit to only get the HTML string back.
    * @param {{waves?: string[][], dispatch?: Object<string, {stage: string, laneName?: (string|null),
-   *   openPrNumber?: (number|null), headSha?: string, gates?: object, pill?: object,
-   *   files?: string[], reviewers?: object, issues?: object[]}>}} data -
+   *   openPrNumber?: (number|null), prUrl?: string, headSha?: string, gates?: object, pill?: object,
+   *   files?: string[], reviewers?: object, issues?: object[], merged?: boolean}>}} data -
    *   `GET /api/sprint-waves`'s response shape; `headSha`/`gates` are read when a producer adds
    *   them, and `pill`/`files`/`reviewers`/`issues` the same way (#3112,
    *   `lib/native-sprint-tracker.js#syncWaveDispatchState` already adds `pill` to every row and
@@ -91,10 +98,14 @@
       const items = rowsInStage.map((row) => (
         `<li class="sprint-wave-card" data-car-id="${_escapeHtml(row.carId)}">`
         + `<span class="sprint-wave-car-id">${_escapeHtml(row.carId)}</span>`
-        + (row.laneName ? `<span class="sprint-wave-lane">${_escapeHtml(row.laneName)}</span>` : '')
+        // #3138: a literal separator between adjacent fields, so they never
+        // mash together ("V650-W1-ATC-Lane-DCompleted") regardless of
+        // whether CSS for this card has landed yet.
+        + (row.laneName ? ` · <span class="sprint-wave-lane">${_escapeHtml(row.laneName)}</span>` : '')
         + (row.openPrNumber !== null && row.openPrNumber !== undefined
-          ? `<span class="sprint-wave-pr">#${_escapeHtml(row.openPrNumber)}</span>` : '')
-        + (row.pill ? _sixStagePillBadge(row.pill) : '')
+          ? ` · ${row.prUrl ? `<a class="sprint-wave-pr" href="${_escapeHtml(row.prUrl)}" target="_blank" rel="noopener noreferrer">#${_escapeHtml(row.openPrNumber)}</a>`
+            : `<span class="sprint-wave-pr">#${_escapeHtml(row.openPrNumber)}</span>`}` : '')
+        + (row.pill ? ` ${_sixStagePillBadge(row.pill)}` : '')
         + '</li>'
       )).join('');
       return (
@@ -103,18 +114,14 @@
         + `<ul class="sprint-wave-column-list">${items}</ul></div>`
       );
     }).join('');
-    // #3112 (PRR-B I-Gate R1 BLOCKING 2): composed, never duplicated with, the board/matrix
-    // above -- only when a row carries metadata neither of those already shows (file scope,
-    // reviewers, or per-issue pills), so a plain dispatch (no producer has added this yet)
-    // renders exactly as before #3112.
-    const enrichedRows = rows.filter((row) => row.files || row.reviewers || row.issues);
-    const extraCards = enrichedRows.length ? renderSprintCarCards({
-      cars: enrichedRows.map((row) => ({
-        id: row.carId, lane: row.laneName, reviewers: row.reviewers, files: row.files,
-        prNumber: row.openPrNumber, pill: row.pill, issues: row.issues
-      }))
-    }) : '';
-    const html = `<div class="sprint-wave-board">${columns}</div>${_gateMatrix(data)}${extraCards}`;
+    // #3138: used to also append `renderSprintCarCards` here for any row
+    // carrying files/reviewers/issues (#3112) -- one of the three duplicate
+    // car listings the Sprint & Cars panel reported. Dropped: the gate
+    // matrix below is a separate, test-locked contract this file cannot
+    // change, so the fix removes THIS listing rather than that one.
+    // `renderSprintCarCards` stays exported for a caller that wants the
+    // richer per-car detail view on its own.
+    const html = `<div class="sprint-wave-board">${columns}</div>${_gateMatrix(data)}`;
     if (container && typeof container === 'object') container.innerHTML = html;
     return html;
   }
@@ -195,7 +202,11 @@
    * recorded; otherwise the stage's inference is shown, marked as inferred and
    * never with a SHA; with neither, the gate is unknown. A recorded gate bound
    * to a different SHA from the car's head is marked stale.
-   * @param {{stage?: string, gates?: object, headSha?: string, exactHead?: string}} row
+   * @param {{stage?: string, gates?: object, headSha?: string, exactHead?: string, merged?: boolean}} row -
+   *   `merged: true` (#3138, `lib/native-sprint-tracker.js#syncWaveDispatchState`'s own
+   *   signal) on a `closed` row reads its stage-inference as `merged` -- all six passed --
+   *   instead of the deliberately pessimistic bare `closed`; omit/false, or any other
+   *   stage, is unaffected.
    * @returns {Array<{key: string, label: string, name: string, status: string,
    *   source: ('recorded'|'stage'|'unknown'), sha: (string|null), token: (string|null), stale: boolean}>}
    */
@@ -203,7 +214,8 @@
     const r = row && typeof row === 'object' ? row : {};
     const gates = r.gates && typeof r.gates === 'object' ? r.gates : {};
     const stage = typeof r.stage === 'string' ? r.stage : '';
-    const inferred = Object.prototype.hasOwnProperty.call(STAGE_GATES, stage) ? STAGE_GATES[stage] : null;
+    const inferenceStage = (stage === 'closed' && r.merged === true) ? 'merged' : stage;
+    const inferred = Object.prototype.hasOwnProperty.call(STAGE_GATES, inferenceStage) ? STAGE_GATES[inferenceStage] : null;
     const head = _shortSha(r.headSha) || _shortSha(r.exactHead);
     return GATES.map((gate, i) => {
       const raw = Object.prototype.hasOwnProperty.call(gates, gate.key) ? gates[gate.key] : undefined;
@@ -578,6 +590,7 @@
 
     const html = '<section class="sprint-roadmap-panel" aria-label="Release-First Roadmap">'
       + '<h2 class="sprint-roadmap-title">Release-First Roadmap</h2>'
+      + `<p class="sprint-roadmap-public-ssot"><a href="${PUBLIC_SSOT_URL}" target="_blank" rel="noopener noreferrer">🌐 Public SSOT Roadmap ↗</a></p>`
       + metricsBar
       + (groupsHtml || '<p class="sprint-panel-empty">No releases to show yet.</p>')
       + '</section>';
@@ -594,7 +607,7 @@
    * disjoint file-scope tags.
    * @param {{cars?: Array<{id: string, lane?: (string|null),
    *   reviewers?: {oGate?: string, prr?: string}, files?: string[],
-   *   prNumber?: (number|null), pill?: object, issues?: object[]}>}} snapshotData -
+   *   prNumber?: (number|null), prUrl?: string, pill?: object, issues?: object[]}>}} snapshotData -
    *   `lib/native-sprint-tracker.js#buildSprintWaveSnapshot`'s own return shape.
    * @param {{innerHTML?: string}|null} [container] - A DOM element to write
    *   into, or omit to only get the HTML string back.
@@ -616,14 +629,21 @@
         .map((issue) => `<li class="sprint-car-issue" data-issue-id="${_escapeHtml(issue && issue.id)}">`
           + `<span class="sprint-car-issue-id">#${_escapeHtml(issue && issue.id)}</span>${_sixStagePillBadge(issue && issue.pill)}</li>`)
         .join('');
+      // #3138: a literal separator between adjacent fields, so they never
+      // mash together, regardless of whether CSS for this card has landed yet.
+      const prField = car.prNumber !== null && car.prNumber !== undefined
+        ? (car.prUrl ? `<a class="sprint-car-pr" href="${_escapeHtml(car.prUrl)}" target="_blank" rel="noopener noreferrer">#${_escapeHtml(car.prNumber)}</a>`
+          : `<span class="sprint-car-pr">#${_escapeHtml(car.prNumber)}</span>`)
+        : '';
+      const metaFields = [
+        car.lane ? `<span class="sprint-car-lane">Builder: ${_escapeHtml(car.lane)}</span>` : '',
+        reviewers.oGate ? `<span class="sprint-car-ogate">O-Gate: ${_escapeHtml(reviewers.oGate)}</span>` : '',
+        reviewers.prr ? `<span class="sprint-car-prr">PRR: ${_escapeHtml(reviewers.prr)}</span>` : '',
+        prField
+      ].filter(Boolean);
       return `<article class="sprint-car-card" data-car-id="${_escapeHtml(car.id)}">`
-        + `<header class="sprint-car-card-header"><span class="sprint-car-id">${_escapeHtml(car.id)}</span>${_sixStagePillBadge(car.pill)}</header>`
-        + `<div class="sprint-car-meta">`
-        + (car.lane ? `<span class="sprint-car-lane">Builder: ${_escapeHtml(car.lane)}</span>` : '')
-        + (reviewers.oGate ? `<span class="sprint-car-ogate">O-Gate: ${_escapeHtml(reviewers.oGate)}</span>` : '')
-        + (reviewers.prr ? `<span class="sprint-car-prr">PRR: ${_escapeHtml(reviewers.prr)}</span>` : '')
-        + (car.prNumber !== null && car.prNumber !== undefined ? `<span class="sprint-car-pr">#${_escapeHtml(car.prNumber)}</span>` : '')
-        + '</div>'
+        + `<header class="sprint-car-card-header"><span class="sprint-car-id">${_escapeHtml(car.id)}</span> ${_sixStagePillBadge(car.pill)}</header>`
+        + `<div class="sprint-car-meta">${metaFields.join(' · ')}</div>`
         + `<div class="sprint-car-gates">${gates.map((g) => `<span class="sprint-gate-cell">${_gatePill(g)}</span>`).join('')}</div>`
         + (issuePills ? `<ul class="sprint-car-issues">${issuePills}</ul>` : '')
         + _fileScopeTags(car.files)
@@ -688,6 +708,74 @@
     return html;
   }
 
+  /**
+   * The 🐙 GitHub integration panel (#3134): live open PRs, open issues,
+   * milestone progress and the latest release for this project's bound
+   * repo, from `GET /api/sprint-waves/github-activity`. Not yet mounted as
+   * a top-bar workspace tab — `public/v6-shell.js`'s `WORKSPACE_MODES`
+   * array is a sibling lane's exclusive file scope this wave; this builder
+   * is ready for that mount once it lands.
+   * @param {{ok?: boolean, repo?: string, error?: string,
+   *   pullRequests?: Array<{number: number, title: string, url: string, draft?: boolean}>,
+   *   issues?: Array<{number: number, title: string, url: string}>,
+   *   milestones?: Array<{title: string, openIssues?: number, closedIssues?: number, url?: string}>,
+   *   latestRelease?: ({tagName: string, name?: string, url: string}|null)}} data -
+   *   `GET /api/sprint-waves/github-activity`'s own response shape.
+   * @param {{innerHTML?: string}|null} [container] - A DOM element to write
+   *   into, or omit to only get the HTML string back.
+   * @returns {string} The rendered HTML.
+   */
+  function renderGithubPanel(data, container) {
+    _refuseContainerFirst(data, 'renderGithubPanel');
+    const d = data && typeof data === 'object' ? data : {};
+    if (d.ok === false) {
+      const html = `<p class="sprint-panel-empty">GitHub activity is unavailable: ${_escapeHtml(d.error || 'unknown error')}</p>`;
+      if (container && typeof container === 'object') container.innerHTML = html;
+      return html;
+    }
+    const repo = typeof d.repo === 'string' ? d.repo : null;
+    const link = (url, label) => {
+      const href = _safeHref(url);
+      return href ? `<a href="${_escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${_escapeHtml(label)}</a>` : _escapeHtml(label);
+    };
+    const list = (items, empty, render) => (items.length
+      ? `<ul class="v6-workspace-list">${items.map(render).join('')}</ul>`
+      : `<p class="sprint-panel-empty">${_escapeHtml(empty)}</p>`);
+
+    const pulls = Array.isArray(d.pullRequests) ? d.pullRequests : [];
+    const pullsHtml = list(pulls, 'No open pull requests.', (p) => (
+      `<li class="v6-workspace-item">${link(p && p.url, `#${p && p.number} ${(p && p.title) || ''}`)}`
+      + `${p && p.draft ? ' <span class="sprint-stage-pill is-pending">Draft</span>' : ''}</li>`
+    ));
+
+    const issues = Array.isArray(d.issues) ? d.issues : [];
+    const issuesHtml = list(issues, 'No open issues.', (i) => (
+      `<li class="v6-workspace-item">${link(i && i.url, `#${i && i.number} ${(i && i.title) || ''}`)}</li>`
+    ));
+
+    const milestones = Array.isArray(d.milestones) ? d.milestones : [];
+    const milestonesHtml = list(milestones, 'No open milestones.', (m) => (
+      `<li class="v6-workspace-item">${link(m && m.url, (m && m.title) || '')} `
+      + `<span class="v6-workspace-item-stage">${_escapeHtml(m && m.openIssues !== undefined ? m.openIssues : '—')} open / `
+      + `${_escapeHtml(m && m.closedIssues !== undefined ? m.closedIssues : '—')} closed</span></li>`
+    ));
+
+    const latest = d.latestRelease && typeof d.latestRelease === 'object' ? d.latestRelease : null;
+    const releaseHtml = latest
+      ? `<p>${link(latest.url, latest.name || latest.tagName)}</p>`
+      : '<p class="sprint-panel-empty">No published release yet.</p>';
+
+    const html = '<section class="sprint-panel" aria-label="GitHub">'
+      + `<h2 class="sprint-panel-title">🐙 GitHub${repo ? ` — ${_escapeHtml(repo)}` : ''}</h2>`
+      + `<h3 class="sprint-roadmap-group-title">Open pull requests</h3>${pullsHtml}`
+      + `<h3 class="sprint-roadmap-group-title">Open issues</h3>${issuesHtml}`
+      + `<h3 class="sprint-roadmap-group-title">Milestones</h3>${milestonesHtml}`
+      + `<h3 class="sprint-roadmap-group-title">Latest release</h3>${releaseHtml}`
+      + '</section>';
+    if (container && typeof container === 'object') container.innerHTML = html;
+    return html;
+  }
+
   const sprintWaveUi = {
     STAGE_ORDER, STAGE_LABELS, GATES, renderSprintKpiCards, renderSprintWaveBoard, filterSprintWaveRows, carGates,
     renderCharterReadinessPanel, renderKaizenLedgerPanel,
@@ -698,7 +786,10 @@
     // cards, and the Sprint Reports/Retrospectives catalog -- all pure
     // builders over `buildSprintWaveSnapshot`'s shape, composed alongside
     // (never replacing) the two builders above.
-    renderReleaseRoadmap, renderSprintCarCards, renderSprintReportsCatalog
+    renderReleaseRoadmap, renderSprintCarCards, renderSprintReportsCatalog,
+    // #3134: the GitHub integration panel and the public SSOT roadmap URL
+    // it and renderReleaseRoadmap both link out to.
+    renderGithubPanel, PUBLIC_SSOT_URL
   };
 
   if (typeof module !== 'undefined' && module.exports) {
