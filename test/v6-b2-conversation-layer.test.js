@@ -511,7 +511,7 @@ describe('extractRichPreviewsFromMessage (#3107)', () => {
 
   it('extracts a generic external link as an SSRF-evaluated candidate, never fetched', () => {
     const cards = b2.extractRichPreviewsFromMessage('Check https://example.com/page.');
-    assert.deepEqual(cards, [{ kind: 'link-unfurl-candidate', url: 'https://example.com/page', safe: true, unsafeReason: null }]);
+    assert.deepEqual(cards, [{ kind: 'link-unfurl-candidate', url: 'https://example.com/page', safe: true, unsafeReason: null, alwaysPreview: false }]);
   });
 
   // PRR-B R1 (PR #3123): a plain `\s+` split alone breaks on a Markdown
@@ -537,12 +537,12 @@ describe('extractRichPreviewsFromMessage (#3107)', () => {
     assert.equal(backtick.length, 1);
     assert.equal(backtick[0].path, './docs/plan.md');
     const paren = b2.extractRichPreviewsFromMessage('(https://example.com/page)');
-    assert.deepEqual(paren, [{ kind: 'link-unfurl-candidate', url: 'https://example.com/page', safe: true, unsafeReason: null }]);
+    assert.deepEqual(paren, [{ kind: 'link-unfurl-candidate', url: 'https://example.com/page', safe: true, unsafeReason: null, alwaysPreview: false }]);
   });
 
   it('flags an unsafe external link candidate with its reason, rather than silently dropping it', () => {
     const cards = b2.extractRichPreviewsFromMessage('http://169.254.169.254/latest/meta-data');
-    assert.deepEqual(cards, [{ kind: 'link-unfurl-candidate', url: 'http://169.254.169.254/latest/meta-data', safe: false, unsafeReason: 'LINK_LOCAL' }]);
+    assert.deepEqual(cards, [{ kind: 'link-unfurl-candidate', url: 'http://169.254.169.254/latest/meta-data', safe: false, unsafeReason: 'LINK_LOCAL', alwaysPreview: false }]);
   });
 
   it('preserves reference order across multiple lines', () => {
@@ -650,6 +650,70 @@ describe('evaluateUnfurlTargetSafety (#3107)', () => {
     assert.equal(b2.evaluateUnfurlTargetSafety('http://[::ffff:10.0.0.1]/x').reason, 'PRIVATE_RANGE');
     assert.equal(b2.evaluateUnfurlTargetSafety('http://[::ffff:127.0.0.1]/x').reason, 'LOOPBACK');
     assert.equal(b2.evaluateUnfurlTargetSafety('http://[::ffff:8.8.8.8]/x').reason, null, 'a mapped PUBLIC IPv4 stays safe');
+  });
+
+  // Ruling A827 (#3139, 2026-11-17): the Architect's own bounded SSRF
+  // contract — two narrow, named exceptions, neither a blanket relaxation.
+  describe('Ruling A827 — self-published preview surface & *.ts.net resolved-address exception', () => {
+    it('admits loopback ONLY on a self-published preview port, never the server\'s real API/Medusa ports or none at all', () => {
+      assert.deepEqual(b2.evaluateUnfurlTargetSafety('http://localhost:3430/x'), { safe: true, reason: null });
+      assert.deepEqual(b2.evaluateUnfurlTargetSafety('http://127.0.0.1:8443/x'), { safe: true, reason: null });
+      assert.deepEqual(b2.evaluateUnfurlTargetSafety('http://[::1]:5080/x'), { safe: true, reason: null });
+      for (const port of ['80', '443', '3102', '3009', '3010']) {
+        assert.equal(b2.evaluateUnfurlTargetSafety(`http://localhost:${port}/x`).reason, 'LOOPBACK', port);
+      }
+      assert.equal(b2.evaluateUnfurlTargetSafety('http://localhost/x').reason, 'LOOPBACK', 'no port at all');
+    });
+
+    it('admits this server\'s own Tailscale CGNAT/ULA address with NO originalHostname, but only on a preview port', () => {
+      assert.deepEqual(b2.evaluateUnfurlTargetSafety('http://100.64.0.1:3410/x'), { safe: true, reason: null });
+      assert.deepEqual(b2.evaluateUnfurlTargetSafety('http://[fd7a:115c:a1e0::1]:8443/x'), { safe: true, reason: null });
+      assert.equal(b2.evaluateUnfurlTargetSafety('http://100.64.0.1:3102/x').reason, 'PRIVATE_RANGE', 'the real API port, not a preview one');
+      assert.equal(b2.evaluateUnfurlTargetSafety('http://100.64.0.1/x').reason, 'PRIVATE_RANGE', 'no port at all');
+    });
+
+    it('admits a resolved Tailscale CGNAT/ULA address on ANY port when originalHostname is a *.ts.net name', () => {
+      assert.deepEqual(
+        b2.evaluateUnfurlTargetSafety('http://100.64.1.2:22/x', { originalHostname: 'cursatory.tail123678.ts.net' }),
+        { safe: true, reason: null }
+      );
+      assert.deepEqual(
+        b2.evaluateUnfurlTargetSafety('http://[fd7a:115c:a1e0:1::1]/x', { originalHostname: 'cursatory.tail123678.ts.net' }),
+        { safe: true, reason: null }
+      );
+    });
+
+    it('still refuses a *.ts.net origin whose resolved address is some OTHER private range — the exception is Tailscale\'s own address space only', () => {
+      assert.equal(
+        b2.evaluateUnfurlTargetSafety('http://192.168.1.1/x', { originalHostname: 'evil.ts.net' }).reason,
+        'PRIVATE_RANGE'
+      );
+      assert.equal(
+        b2.evaluateUnfurlTargetSafety('http://10.0.0.1/x', { originalHostname: 'evil.ts.net' }).reason,
+        'PRIVATE_RANGE'
+      );
+      assert.equal(
+        b2.evaluateUnfurlTargetSafety('http://169.254.1.1/x', { originalHostname: 'evil.ts.net' }).reason,
+        'LINK_LOCAL'
+      );
+    });
+
+    it('never admits loopback just because originalHostname is a *.ts.net name — the CGNAT/ULA exception is address-space-specific', () => {
+      assert.equal(
+        b2.evaluateUnfurlTargetSafety('http://127.0.0.1/x', { originalHostname: 'cursatory.tail123678.ts.net' }).reason,
+        'LOOPBACK'
+      );
+    });
+
+    it('ignores a non-string or non-*.ts.net originalHostname rather than throwing or silently admitting', () => {
+      assert.equal(b2.evaluateUnfurlTargetSafety('http://100.64.0.1/x', { originalHostname: 'github.io' }).reason, 'PRIVATE_RANGE');
+      assert.equal(b2.evaluateUnfurlTargetSafety('http://100.64.0.1/x', { originalHostname: 123 }).reason, 'PRIVATE_RANGE');
+      assert.equal(b2.evaluateUnfurlTargetSafety('http://100.64.0.1/x', {}).reason, 'PRIVATE_RANGE');
+    });
+
+    it('does not change the literal-hostname path at all — a bare *.ts.net hostname (never a literal IP) already passed before this ruling', () => {
+      assert.deepEqual(b2.evaluateUnfurlTargetSafety('https://cursatory.tail123678.ts.net:8443/x'), { safe: true, reason: null });
+    });
   });
 });
 
@@ -780,7 +844,7 @@ describe('isAllowlistedUnfurlHost (#3139)', () => {
     assert.equal(b2.isAllowlistedUnfurlHost(undefined), false);
   });
 
-  it('does not admit localhost/127.0.0.1 — deliberately out of scope (flagged to the Architect, see the matcher\'s own doc comment)', () => {
+  it('never admits localhost/127.0.0.1 itself — loopback admission is Ruling A827\'s narrower, port-scoped mechanism in evaluateUnfurlTargetSafety, not this general-domain matcher', () => {
     assert.equal(b2.isAllowlistedUnfurlHost('localhost'), false);
     assert.equal(b2.isAllowlistedUnfurlHost('127.0.0.1'), false);
   });
@@ -791,7 +855,7 @@ describe('remote video-URL classification (#3139 root cause 2, via extractRichPr
     const cards = b2.extractRichPreviewsFromMessage('https://cursatory.tail123678.ts.net:8443/clips/cut-12.mp4');
     assert.deepEqual(cards, [{
       kind: 'remote-video', url: 'https://cursatory.tail123678.ts.net:8443/clips/cut-12.mp4',
-      mimeType: 'video/mp4', safe: true, unsafeReason: null
+      mimeType: 'video/mp4', safe: true, unsafeReason: null, alwaysPreview: true
     }]);
   });
 
@@ -806,7 +870,7 @@ describe('remote video-URL classification (#3139 root cause 2, via extractRichPr
 
   it('still carries an unsafe verdict on a video URL that fails the SSRF check, rather than exempting it', () => {
     const cards = b2.extractRichPreviewsFromMessage('http://169.254.169.254/evil.mp4');
-    assert.deepEqual(cards, [{ kind: 'remote-video', url: 'http://169.254.169.254/evil.mp4', mimeType: 'video/mp4', safe: false, unsafeReason: 'LINK_LOCAL' }]);
+    assert.deepEqual(cards, [{ kind: 'remote-video', url: 'http://169.254.169.254/evil.mp4', mimeType: 'video/mp4', safe: false, unsafeReason: 'LINK_LOCAL', alwaysPreview: false }]);
   });
 
   it('classifies by PATH extension only, never a video-looking query string on a non-video path', () => {
@@ -817,5 +881,136 @@ describe('remote video-URL classification (#3139 root cause 2, via extractRichPr
   it('a GitHub URL is still classified as github, never as a video, even if it happened to end in a video extension', () => {
     const cards = b2.extractRichPreviewsFromMessage('https://github.com/a/b/pull/5');
     assert.equal(cards[0].kind, 'github');
+  });
+});
+
+describe('safeUnfurlFetch (#3139 root causes 2-4, Ruling A827 point 3)', () => {
+  const { EventEmitter } = require('node:events');
+
+  /**
+   * A stubbed `deps.request` for one hop: a function `(options) => spec`
+   * decides that hop's response (`statusCode`, `headers`, `chunks`), so a
+   * test can script a sequence of hops (a redirect, then its target) by
+   * returning a different spec each call.
+   * @param {(options: object, callIndex: number) => {statusCode: number, headers?: object, chunks?: string[]}} script
+   * @returns {{request: Function, calls: object[]}}
+   */
+  function fakeRequest(script) {
+    const calls = [];
+    const request = (options, cb) => {
+      calls.push(options);
+      const req = new EventEmitter();
+      req.destroy = () => {};
+      req.end = () => {
+        const spec = script(options, calls.length - 1);
+        const fres = new EventEmitter();
+        fres.statusCode = spec.statusCode;
+        fres.headers = spec.headers || {};
+        fres.resume = () => {};
+        fres.destroy = () => {};
+        cb(fres);
+        process.nextTick(() => {
+          for (const chunk of spec.chunks || []) fres.emit('data', Buffer.from(chunk));
+          if (spec.statusCode >= 200 && spec.statusCode < 300 && !String(spec.headers && spec.headers['content-type'] || '').startsWith('video/')) {
+            fres.emit('end');
+          }
+        });
+      };
+      return req;
+    };
+    return { request, calls };
+  }
+
+  /** A `deps.lookup` that resolves to one public IPv4 address, regardless of hostname. */
+  function fakePublicLookup() {
+    return () => Promise.resolve([{ address: '93.184.216.34', family: 4 }]);
+  }
+
+  it('fetches a safe target and returns its HTML', async () => {
+    const { request } = fakeRequest(() => ({ statusCode: 200, headers: { 'content-type': 'text/html' }, chunks: ['<html><title>Hi</title></html>'] }));
+    const result = await b2.safeUnfurlFetch('https://example.com/page', { deps: { lookup: fakePublicLookup(), request } });
+    assert.equal(result.ok, true);
+    assert.equal(result.kind, 'html');
+    assert.equal(result.html, '<html><title>Hi</title></html>');
+    assert.equal(result.truncated, false);
+  });
+
+  it('refuses a target that fails the literal safety check before ever fetching', async () => {
+    const { calls, request } = fakeRequest(() => ({ statusCode: 200 }));
+    const result = await b2.safeUnfurlFetch('http://169.254.169.254/x', { deps: { request } });
+    assert.deepEqual(result, { ok: false, reason: 'LINK_LOCAL' });
+    assert.equal(calls.length, 0, 'never fetched at all');
+  });
+
+  it('refuses when the RESOLVED address is unsafe, even though the literal hostname passed', async () => {
+    const lookup = () => Promise.resolve([{ address: '10.0.0.5', family: 4 }]);
+    const { request } = fakeRequest(() => ({ statusCode: 200 }));
+    const result = await b2.safeUnfurlFetch('https://rebinding-example.com/x', { deps: { lookup, request } });
+    assert.deepEqual(result, { ok: false, reason: 'RESOLVED_PRIVATE_RANGE' });
+  });
+
+  it('resolves with the first 512KB of a large page instead of hanging (#3139 root cause 3)', async () => {
+    const bigChunk = 'a'.repeat(100 * 1024); // 100KB per chunk, 6 chunks = 600KB > the 512KB cap
+    const { request } = fakeRequest(() => ({
+      statusCode: 200, headers: { 'content-type': 'text/html' }, chunks: Array(6).fill(bigChunk)
+    }));
+    const result = await b2.safeUnfurlFetch('https://example.com/huge', { deps: { lookup: fakePublicLookup(), request } });
+    assert.equal(result.ok, true);
+    assert.equal(result.truncated, true);
+    assert.ok(result.html.length <= b2.UNFURL_MAX_BYTES, `expected <= ${b2.UNFURL_MAX_BYTES} bytes, got ${result.html.length}`);
+  });
+
+  it('classifies a video/* Content-Type response as a video, never buffering it as HTML (#3139 root cause 2)', async () => {
+    const { request } = fakeRequest(() => ({ statusCode: 200, headers: { 'content-type': 'video/mp4; charset=binary' } }));
+    const result = await b2.safeUnfurlFetch('https://example.com/clip', { deps: { lookup: fakePublicLookup(), request } });
+    assert.deepEqual(result, { ok: true, kind: 'video', mimeType: 'video/mp4', finalUrl: 'https://example.com/clip' });
+  });
+
+  it('follows a redirect and re-validates the target\'s own safety before fetching it', async () => {
+    const { request, calls } = fakeRequest((options, i) => (i === 0
+      ? { statusCode: 302, headers: { location: 'https://example.com/final' } }
+      : { statusCode: 200, headers: { 'content-type': 'text/html' }, chunks: ['<title>Final</title>'] }));
+    const result = await b2.safeUnfurlFetch('https://example.com/start', { deps: { lookup: fakePublicLookup(), request } });
+    assert.equal(result.ok, true);
+    assert.equal(result.html, '<title>Final</title>');
+    assert.equal(calls.length, 2);
+  });
+
+  it('refuses a redirect whose OWN target fails the safety check, rather than following it blindly', async () => {
+    const { request } = fakeRequest((options, i) => (i === 0
+      ? { statusCode: 302, headers: { location: 'http://169.254.169.254/evil' } }
+      : { statusCode: 200 }));
+    const result = await b2.safeUnfurlFetch('https://example.com/start', { deps: { lookup: fakePublicLookup(), request } });
+    assert.deepEqual(result, { ok: false, reason: 'LINK_LOCAL' });
+  });
+
+  it('gives up after UNFURL_MAX_REDIRECTS redirects, never looping forever', async () => {
+    const { request, calls } = fakeRequest((options, i) => ({ statusCode: 302, headers: { location: `https://example.com/hop-${i + 1}` } }));
+    const result = await b2.safeUnfurlFetch('https://example.com/hop-0', { deps: { lookup: fakePublicLookup(), request } });
+    assert.deepEqual(result, { ok: false, reason: 'TOO_MANY_REDIRECTS' });
+    assert.equal(calls.length, b2.UNFURL_MAX_REDIRECTS + 1, 'the initial fetch plus every redirect it was willing to follow');
+  });
+
+  it('resolves a non-2xx/3xx status as an HTTP_<code> failure', async () => {
+    const { request } = fakeRequest(() => ({ statusCode: 404 }));
+    const result = await b2.safeUnfurlFetch('https://example.com/missing', { deps: { lookup: fakePublicLookup(), request } });
+    assert.deepEqual(result, { ok: false, reason: 'HTTP_404' });
+  });
+
+  it('resolves a DNS lookup failure as DNS_LOOKUP_FAILED, never throwing', async () => {
+    const lookup = () => Promise.reject(new Error('ENOTFOUND'));
+    const result = await b2.safeUnfurlFetch('https://nowhere.example/x', { deps: { lookup, request: () => { throw new Error('must not be called'); } } });
+    assert.deepEqual(result, { ok: false, reason: 'DNS_LOOKUP_FAILED' });
+  });
+
+  it('resolves a connection error as FETCH_ERROR, never throwing or hanging', async () => {
+    const request = () => {
+      const req = new EventEmitter();
+      req.destroy = () => {};
+      req.end = () => process.nextTick(() => req.emit('error', new Error('ECONNREFUSED')));
+      return req;
+    };
+    const result = await b2.safeUnfurlFetch('https://example.com/down', { deps: { lookup: fakePublicLookup(), request } });
+    assert.deepEqual(result, { ok: false, reason: 'FETCH_ERROR' });
   });
 });

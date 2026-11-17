@@ -1617,6 +1617,61 @@ describe('lib/usage-windows — #3132 automated CLI usage probe', () => {
     });
   });
 
+  // PM decision, 2026-11-17 (Medusa, Car V651-W1-B): feed a successful probe
+  // into calibrateUsage so the EXISTING getUsageWindows().calibration /
+  // buildSessionUsageReadings consumers reflect it, without either one
+  // learning anything new about this probe.
+  describe('refreshUsageProbe — feeds calibrateUsage (PM decision, 2026-11-17)', () => {
+    it('calibrates the provider with the probed weekly/5h percentages, via the real default store', async () => {
+      const probeStore = fakeProbeStore();
+      await uw.refreshUsageProbe('claude', { probeStore, execFileAsync: () => Promise.resolve('Current week (all models): 40% used') });
+      const cal = uw.getCalibration('claude');
+      assert.equal(cal.weeklyPct, 60);
+      assert.equal(cal.fiveHourPct, null);
+    });
+
+    it('calibrates with an injected calibrationStore seam, never touching the real store', async () => {
+      const probeStore = fakeProbeStore();
+      const calibrationStore = fakeProbeStore();
+      await uw.refreshUsageProbe('antigravity', {
+        probeStore, calibrationStore,
+        execFileAsync: () => Promise.resolve('Gemini Models\tWeekly Limit Remaining\t33%\t2026-12-01T00:00:00Z\nGemini Models\tFive Hour Limit Remaining\t77%\t2026-12-01T00:00:00Z')
+      });
+      const cal = calibrationStore.get('antigravity');
+      assert.equal(cal.weeklyPct, 33);
+      assert.equal(cal.fiveHourPct, 77);
+    });
+
+    it('never calibrates on a not-present/not-configured probe (nothing was actually observed)', async () => {
+      const probeStore = fakeProbeStore();
+      const calibrationStore = fakeProbeStore();
+      const enoent = Object.assign(new Error('e'), { code: 'ENOENT' });
+      await uw.refreshUsageProbe('claude', { probeStore, calibrationStore, execFileAsync: () => Promise.reject(enoent) });
+      assert.equal(calibrationStore.get('claude'), null);
+    });
+
+    it('never calibrates on a configured-but-empty probe — leaves any existing calibration on file untouched rather than overwriting it with nulls', async () => {
+      const probeStore = fakeProbeStore();
+      const calibrationStore = fakeProbeStore();
+      calibrationStore.set('claude', { provider: 'claude', weeklyPct: 42, fiveHourPct: null, calibratedAt: 123 });
+      await uw.refreshUsageProbe('claude', { probeStore, calibrationStore, execFileAsync: () => Promise.resolve('unrecognized text') });
+      assert.equal(calibrationStore.get('claude').weeklyPct, 42, 'untouched');
+    });
+
+    it('a Codex probe calibrates too, via the same path', async () => {
+      const probeStore = fakeProbeStore();
+      const calibrationStore = fakeProbeStore();
+      const tmux = {
+        hasSession: () => false, createSession: () => {}, killSession: () => {}, sendRawKey: () => {},
+        readPaneAsync: () => Promise.resolve({ cap: { lines: ['Context 100% left · weekly 55% left'] }, cursor: null })
+      };
+      await uw.refreshUsageProbe('codex', {
+        probeStore, calibrationStore, tmux, execFileAsync: () => Promise.resolve(''), startupDelayMs: 0, trustDelayMs: 0
+      });
+      assert.equal(calibrationStore.get('codex').weeklyPct, 55);
+    });
+  });
+
   describe('refreshUsageProbe — codex (disposable utility-session prober)', () => {
     /**
      * A stubbed `tmux` this describe block's tests inject in place of the
