@@ -69,6 +69,9 @@ The important distinction is: **new or unattested launch = `tc start next`; alre
 | `tc learnings` | Lists the project's recorded cross-session learnings. |
 | `tc usage windows` | Multi-provider usage & quota window telemetry: rolling 5-hour/weekly/monthly token windows per provider/model parsed from each engine's own local transcript log, the weekly reset schedule, and a recommended Builder model-tier policy. |
 | `tc usage calibrate --provider <id>` | Records an operator's percentage correction against a provider's own reported remaining headroom. |
+| `tc usage refresh [--provider <id>]` | Runs the automated CLI `/usage`/`/status` probe now (one provider, or all three — `claude -p "/usage"`, `agy -p "/usage"`, a disposable Codex utility session's own status row), and feeds a successful reading into the same calibration `windows`/`calibrate` already read (#3132). |
+| `tc usage probe [--provider <id>]` | The probe's last-persisted reading per provider (or one), without forcing a new probe. |
+| `tc usage interval <15m\|30m\|1h\|manual>` | Sets the automated probe's background refresh cadence; `manual` runs no background schedule at all. |
 | `tc model switch <project> --engine <id> --model <id>` | A governed model/engine switch for a live session: `boundary` mode (default) only switches a session provably at a clean chunk boundary; `outage-takeover` snapshots an unresponsive session's worktree before terminating it. |
 
 ## Switchboard messaging
