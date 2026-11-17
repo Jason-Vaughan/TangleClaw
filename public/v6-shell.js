@@ -1066,6 +1066,42 @@
   const isBoolean = (v) => typeof v === 'boolean';
   const isStringMap = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
     && Object.keys(v).every((k) => typeof v[k] === 'string');
+  const isFiniteNumber = (v) => typeof v === 'number' && Number.isFinite(v);
+
+  /** The Fleet sidebar's drag-resizable width (#3133): CSS default, and the drag's own clamp. */
+  const V6_SIDEBAR_DEFAULT_WIDTH = 260;
+  const V6_SIDEBAR_MIN_WIDTH = 180;
+  const V6_SIDEBAR_MAX_WIDTH = 480;
+
+  /** @param {*} width @returns {number} A sidebar width clamped to its drag range; the default when unreadable. */
+  function clampSidebarWidth(width) {
+    const n = Number(width);
+    if (!Number.isFinite(n)) return V6_SIDEBAR_DEFAULT_WIDTH;
+    return Math.max(V6_SIDEBAR_MIN_WIDTH, Math.min(V6_SIDEBAR_MAX_WIDTH, n));
+  }
+
+  /**
+   * Drop a persisted chat draft once it is implausibly large to still be a
+   * genuine in-progress message (#3133): a composer draft over 2KB is
+   * either a stale leftover (an old session's abandoned paste) or an
+   * accidental giant one, and resurrecting it on every future load only
+   * grows the stored blob further. Applied both when a draft is about to
+   * be written to storage and when one is read back, so an oversized entry
+   * already on disk from before this existed is dropped on the next read
+   * too, not just frozen in place. Pure.
+   * @param {Object<string, string>} drafts
+   * @param {number} [maxChars] - UTF-16 code units (what `localStorage`
+   *   charges a JS string); defaults to 2048 (2KB).
+   * @returns {Object<string, string>}
+   */
+  function pruneStaleChatDrafts(drafts, maxChars = 2048) {
+    const out = {};
+    Object.keys(drafts || {}).forEach((key) => {
+      const value = drafts[key];
+      if (typeof value === 'string' && value.length <= maxChars) out[key] = value;
+    });
+    return out;
+  }
 
   /** How often an open chat re-reads its session's live output (#3047). */
   const CHAT_POLL_MS = 4000;
@@ -1102,6 +1138,8 @@
   /** Reads of a just-sent chat that may show no engine activity before it stops reading as Working (#3057). */
   const AWAIT_REPLY_POLLS = 3;
   const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+  /** A plain object whose every value is a string array (#3133 PRR-B R1 BLOCKING 1b: `tc_v6_waiting_on_collapsed`'s own shape). */
+  const isStringArrayMap = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).every((k) => isStringArray(v[k]));
 
   /**
    * Which switchboard-triggered replies the chat shows (#3082), by kind; the
@@ -1430,7 +1468,11 @@
     // #dashStats can move into — exists from the shell's very first render,
     // not only once metrics arrive. A caller that omits `bar` entirely
     // (bar === undefined) keeps the old "no status concept" behavior.
-    const chips = bar && bar.metrics ? TELEMETRY_FOOTER_KEYS.map((key) => telemetryChipMarkup(bar, key)).join('') : '';
+    // #3132: a "|" divider between footer telemetry items — purely visual
+    // (aria-hidden), since each chip is already its own announced <span>.
+    const chips = bar && bar.metrics
+      ? TELEMETRY_FOOTER_KEYS.map((key) => telemetryChipMarkup(bar, key)).join('<span class="v6-telemetry-divider" aria-hidden="true">|</span>')
+      : '';
     const status = bar !== undefined
       ? `<div id="v6ShellStatusBar" class="v6-shell-status-bar" role="status" aria-label="Server status">${chips}</div>`
       : '';
@@ -1466,10 +1508,14 @@
    * calibration reported back, so it is not a live reading; one that is
    * `combined` mixes the pane with calibration and is labelled so. The
    * state follows: critical at 5% or less, warning at 25% or less, else
-   * healthy (unknown when nothing reports a percentage). #3113: when
-   * neither a pane reading nor a calibration answers, the lowest live
-   * `contextRemainingPct` across that engine's active sessions stands in
-   * (source `"context"`) rather than falling straight to unknown.
+   * healthy (unknown when nothing reports a percentage). #3132 Req 2 (PRR-B
+   * R1 BLOCKING 2a): the #3113 fallback that substituted a chat session's
+   * own `contextRemainingPct` for the engine's account-level `% left` is
+   * removed — a context window's fullness is not the same quantity as an
+   * account's weekly/5h usage allowance, and showing one as the other
+   * (`"77% (context)"`) read as a real account reading. `#3132`'s own
+   * automated CLI probe (`usageProbeRowMarkup`, below) is the real
+   * account-level reading now, with no context substitute needed.
    * @param {object|null} windows - `GET /api/usage/windows`.
    * @param {object|null} sessions - `GET /api/usage/sessions`.
    * @returns {{engines: Array<object>, resetHours: number|null, resetAt: string|null}}
@@ -1487,13 +1533,8 @@
       const mixed = readings(fromPane.filter((x) => x.source === 'combined')).length > 0;
       const cal = w.calibration && w.calibration[key];
       const calibrated = cal ? [pctOrNull(cal.weeklyPct), pctOrNull(cal.fiveHourPct)].filter((v) => v !== null) : [];
-      const contextSeen = mine.map((x) => pctOrNull(x && x.contextRemainingPct)).filter((v) => v !== null);
-      let remainingPct = seen.length ? Math.min(...seen) : (calibrated.length ? Math.min(...calibrated) : null);
-      let source = seen.length ? (mixed ? 'live and calibrated' : 'live') : (calibrated.length ? 'calibrated' : 'none');
-      if (remainingPct === null && contextSeen.length) {
-        remainingPct = Math.min(...contextSeen);
-        source = 'context';
-      }
+      const remainingPct = seen.length ? Math.min(...seen) : (calibrated.length ? Math.min(...calibrated) : null);
+      const source = seen.length ? (mixed ? 'live and calibrated' : 'live') : (calibrated.length ? 'calibrated' : 'none');
       const state = remainingPct === null ? 'unknown' : remainingPct <= 5 ? 'critical' : remainingPct <= 25 ? 'warning' : 'healthy';
       return {
         key, label, name, remainingPct, state, source,
@@ -1551,21 +1592,103 @@
         + `<span class="v6-usage-value">${escapeHtml(reading)}</span></span>`;
     };
     const summary = model.engines.map((e) => `${e.name} ${e.remainingPct === null ? 'no reading' : `${Math.round(e.remainingPct)}% left`}`).join(', ');
-    // #3113 (PRR-A R1 WARNING): a context-fallback reading looks identical
-    // to a weekly quota reading unless the row says which one it is.
     const row = (e) => `<tr data-engine="${e.key}"><th scope="row">${e.name}</th>`
       + `<td>${formatTokens(e.tokens.fiveHour)}</td><td>${formatTokens(e.tokens.weekly)}</td><td>${formatTokens(e.tokens.sprint)}</td><td>${e.sessions}</td>`
-      + `<td>${e.remainingPct === null ? '—' : `${Math.round(e.remainingPct)}%${e.source === 'context' ? ' (context)' : ''}`}</td>`
+      + `<td>${e.remainingPct === null ? '—' : `${Math.round(e.remainingPct)}%`}</td>`
       + `<td><span class="v6-usage-calibrate"><label><span class="sr-only">${e.name} weekly % left</span><input type="number" min="0" max="100" step="1" id="v6UsageWeekly-${e.key}" class="filter-input v6-usage-input" placeholder="wk %"></label>`
       + `<label><span class="sr-only">${e.name} 5-hour % left</span><input type="number" min="0" max="100" step="1" id="v6UsageFiveHour-${e.key}" class="filter-input v6-usage-input" placeholder="5h %"></label>`
       + `<button type="button" id="v6UsageSave-${e.key}" class="btn btn-secondary btn-small" data-engine="${e.key}">Set</button></span></td></tr>`;
     return `<button type="button" id="v6EngineUsageMeter" class="v6-usage-meter" aria-expanded="${open ? 'true' : 'false'}" aria-controls="v6EngineUsagePopover"
-        aria-label="${escapeHtml(`Engine usage: ${summary}. Open the breakdown.`)}">${model.engines.map(pill).join('')}</button>`
+        aria-label="${escapeHtml(`Engine usage: ${summary}. Open the breakdown.`)}">${model.engines.map(pill).join('<span class="v6-telemetry-divider" aria-hidden="true">|</span>')}</button>`
       + `<div id="v6EngineUsagePopover" class="v6-usage-popover" role="dialog" aria-label="Engine usage"${open ? '' : ' hidden'}>`
       + `<p class="v6-usage-reset">${escapeHtml(reset || 'Weekly reset time unknown')}</p>`
       + `<table class="v6-usage-table"><thead><tr><th scope="col">Engine</th><th scope="col">5h</th><th scope="col">Week</th><th scope="col">Sprint</th><th scope="col">Sessions</th><th scope="col">Left</th><th scope="col">Set % left</th></tr></thead>`
       + `<tbody>${model.engines.map(row).join('')}</tbody></table>`
+      + usageProbeMarkup(ui && ui.probe, ui && ui.probeInterval)
       + `<p id="v6EngineUsageStatus" class="v6-usage-status${status ? ` is-${escapeHtml(status.kind)}` : ''}" role="status">${status ? escapeHtml(status.message) : ''}</p></div>`;
+  }
+
+  /** Each engine's real account/usage page (#3132) — an external link, never fetched by this page. */
+  const USAGE_ACCOUNT_LINKS = Object.freeze({
+    claude: 'https://claude.ai/settings/usage',
+    codex: 'https://chatgpt.com/codex/settings/usage',
+    antigravity: 'https://antigravity.google/'
+  });
+
+  /** The automated probe's refresh cadences (#3132), mirroring `lib/usage-windows.js#USAGE_PROBE_INTERVALS`'s own keys. */
+  const USAGE_PROBE_INTERVAL_OPTIONS = Object.freeze([
+    { value: '15m', label: '15m' }, { value: '30m', label: '30m' }, { value: '1h', label: '1h' }, { value: 'manual', label: 'Manual' }
+  ]);
+
+  /** A probe status that found nothing usable, worded for the operator (#3132) — `lib/usage-windows.js#USAGE_PROBE_STATUSES`'s other two values. */
+  const USAGE_PROBE_STATUS_LABELS = Object.freeze({ 'not-present': 'Not present', 'not-configured': 'Not configured' });
+
+  /**
+   * One engine's row in the automated CLI usage probe section (#3132): a
+   * rich progress bar for weekly/5h remaining% once the probe is
+   * `'configured'`, or an honest badge — `'Not present'` (the CLI itself
+   * isn't on PATH) / `'Not configured'` (it ran but reported nothing
+   * usable) — rather than a silent blank, plus the engine's real external
+   * account-usage page either way.
+   * @param {{key: string, label: string, name: string}} engine
+   * @param {object|null} result - `GET /api/usage/probe`'s per-provider shape, or `null` (never probed).
+   * @returns {string} HTML.
+   */
+  function usageProbeRowMarkup(engine, result) {
+    const link = `<a class="v6-usage-account-link" href="${escapeHtml(USAGE_ACCOUNT_LINKS[engine.key])}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">↗ Account Usage</a>`;
+    if (!result) {
+      return `<li class="v6-usage-probe-row" data-engine="${engine.key}"><span class="v6-usage-probe-name">${escapeHtml(engine.name)}</span>`
+        + `<span class="v6-usage-probe-badge is-unknown">Not probed yet</span>${link}</li>`;
+    }
+    if (result.status !== 'configured') {
+      const label = USAGE_PROBE_STATUS_LABELS[result.status] || result.status;
+      return `<li class="v6-usage-probe-row" data-engine="${engine.key}"><span class="v6-usage-probe-name">${escapeHtml(engine.name)}</span>`
+        + `<span class="v6-usage-probe-badge is-${escapeHtml(result.status)}">${escapeHtml(label)}</span>${link}</li>`;
+    }
+    const bar = (pct, label) => {
+      const value = pctOrNull(pct);
+      return `<span class="v6-usage-probe-bar-wrap"><span class="v6-usage-probe-bar-label">${label}</span>`
+        + `<span class="v6-usage-bar" aria-hidden="true"><span class="v6-usage-fill" style="width: ${value === null ? 0 : value}%"></span></span>`
+        + `<span class="v6-usage-probe-bar-value">${value === null ? '—' : `${Math.round(value)}% left`}</span></span>`;
+    };
+    // PRR-B R1 BLOCKING 2c: `result.subTiers` (Claude's Fable, Antigravity's
+    // non-native model families) carries its own weekly/5h remaining% —
+    // the CLI renderer (`lib/tc-verbs.js#renderUsageProbe`) already prints
+    // these; this drew only the engine's own top-level bars, silently
+    // dropping a sub-tier the probe did observe.
+    const subTierRows = Object.keys(result.subTiers || {}).map((tier) => {
+      const sub = result.subTiers[tier] || {};
+      return `<li class="v6-usage-probe-subtier-row" data-engine="${engine.key}" data-subtier="${escapeHtml(tier)}">`
+        + `<span class="v6-usage-probe-name v6-usage-probe-subtier-name">${escapeHtml(tier)}</span>`
+        + `<span class="v6-usage-probe-bars">${bar(sub.weeklyRemainingPct, 'Week')}${bar(sub.fiveHourRemainingPct, '5h')}</span></li>`;
+    }).join('');
+    return `<li class="v6-usage-probe-row" data-engine="${engine.key}"><span class="v6-usage-probe-name">${escapeHtml(engine.name)}</span>`
+      + `<span class="v6-usage-probe-bars">${bar(result.weeklyRemainingPct, 'Week')}${bar(result.fiveHourRemainingPct, '5h')}</span>${link}</li>${subTierRows}`;
+  }
+
+  /**
+   * The automated CLI usage probe's own section of the popover (#3132): the
+   * refresh-cadence selector ("15m/30m/1h/Manual", `POST
+   * /api/usage/probe/interval`) and one {@link usageProbeRowMarkup} row per
+   * engine, below the existing manual-calibration table — this never
+   * replaces that table, since a probe result is a best-effort automated
+   * reading and the operator's own manual "% left" stays available as a
+   * fallback for whichever engine the probe cannot read.
+   * @param {{claude: (object|null), codex: (object|null), antigravity: (object|null)}|null} probe
+   * @param {string} [interval] - One of {@link USAGE_PROBE_INTERVAL_OPTIONS}'s own values; defaults to `'30m'`.
+   * @returns {string} HTML.
+   */
+  function usageProbeMarkup(probe, interval) {
+    const p = probe || {};
+    const current = interval || '30m';
+    const options = USAGE_PROBE_INTERVAL_OPTIONS.map(({ value, label }) => `<option value="${value}"${current === value ? ' selected' : ''}>${label}</option>`).join('');
+    return `<div class="v6-usage-probe" aria-label="Automated CLI usage probe">
+      <div class="v6-usage-probe-controls">
+        <label class="v6-usage-probe-interval">Auto-refresh<select id="v6UsageProbeInterval" class="filter-input">${options}</select></label>
+        <button type="button" id="v6UsageProbeRefresh" class="btn btn-secondary btn-small">↻ Refresh now</button>
+      </div>
+      <ul class="v6-usage-probe-list">${USAGE_ENGINES.map((e) => usageProbeRowMarkup(e, p[e.key])).join('')}</ul>
+    </div>`;
   }
 
   /**
@@ -1756,6 +1879,10 @@
           <a class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood" href="${escapeHtml(hoodHref)}" title="Open Hood (Live Terminal)" aria-label="Open Hood (Live Terminal)"><span aria-hidden="true">&gt;_</span></a>
           ${iconButton('v6ChatHistory', escapeHtml(`History and recents for ${name}`), '🕓')}
           ${iconButton('v6ChatRefresh', 'Refresh conversation', '↻')}
+          <button type="button" id="v6ChatAutoPreview" class="btn btn-secondary btn-small v6-chat-icon-btn"
+            aria-pressed="${chat.autoPreview ? 'true' : 'false'}"
+            title="${chat.autoPreview ? 'Show preview by default: on — links auto-unfurl' : 'Show preview by default: off — click 👁 Preview to unfurl a link'}"
+            aria-label="Toggle Show preview by default for chat links"><span aria-hidden="true">👁${chat.autoPreview ? '●' : ''}</span></button>
           ${iconButton('v6ChatSettings', 'Project Settings', '⚙')}
         </div>
       </header>
@@ -2353,6 +2480,20 @@
     if (entry.state === 'loading') return `<span class="v6-chat-unfurl" data-unfurl-url="${safe}">${plainLink} <span class="v6-chat-unfurl-loading">Loading preview…</span></span>`;
     if (entry.state === 'error' || !entry.preview) return `<span class="v6-chat-unfurl" data-unfurl-url="${safe}">${plainLink} <span class="v6-chat-unfurl-error">Preview unavailable.</span></span>`;
     const p = entry.preview;
+    // #3139: a `GET /api/v6/unfurl` fetch the viewer themselves just asked
+    // for (a click, or the "Show preview by default" setting below) that
+    // resolved to an actual video response — distinct from the plain
+    // `p.video` OG flag below, which only NAMES a video elsewhere and stays
+    // a labeled link per Ruling A752. Here the video IS the resource at
+    // this exact URL, already fetched and SSRF-checked server-side
+    // (`lib/v6/b2-conversation-layer.js#safeUnfurlFetch`), so playing it
+    // inline asks the browser for nothing this viewer didn't already ask
+    // the server to confirm.
+    if (p.kind === 'video') {
+      const src = escapeHtml(p.finalUrl || p.url || href);
+      return `<span class="v6-chat-unfurl v6-chat-unfurl-video" data-unfurl-url="${safe}">`
+        + `<video class="v6-chat-video-preview" controls preload="metadata" src="${src}">${plainLink}</video></span>`;
+    }
     const title = p.title ? escapeHtml(p.title) : safe;
     const desc = p.description ? `<span class="v6-chat-unfurl-desc">${escapeHtml(p.description)}</span>` : '';
     // og:image/og:video name an EXTERNAL host's media (Ruling A752) — shown
@@ -2375,6 +2516,52 @@
   const LOCAL_WORKSPACE_PATH = /^(?:\.{1,2}\/|\/|~\/)\S+$/;
   /** A `#L<start>` or `#L<start>-L<end>` code line-range suffix (#3107) — client copy of `lib/v6/b2-conversation-layer.js#LINE_RANGE_SUFFIX`. */
   const LOCAL_LINE_RANGE_SUFFIX = /#L(\d+)(?:-L(\d+))?$/;
+  /** Hostnames whose links always preview (#3139 PRR-B R1 BLOCKING 3b) — client copy of `lib/v6/b2-conversation-layer.js#UNFURL_ALLOWLISTED_HOSTS`. */
+  const UNFURL_ALLOWLISTED_HOSTS = Object.freeze(['ts.net', 'github.io', 'tangleclaw.com']);
+  /** Ports treated as this server's own self-published preview surface on localhost (#3139 PRR-B R1 BLOCKING 3b) — client copy of `lib/v6/b2-conversation-layer.js#SELF_PUBLISHED_PREVIEW_PORTS`. */
+  const SELF_PUBLISHED_PREVIEW_PORTS = Object.freeze(new Set(['3410', '3425', '3426', '3430', '5080', '8443']));
+
+  /**
+   * Whether `hostname` is one of {@link UNFURL_ALLOWLISTED_HOSTS} or a
+   * subdomain of one — client copy of `lib/v6/b2-conversation-layer.js#isAllowlistedUnfurlHost`.
+   * @param {string} hostname
+   * @returns {boolean}
+   */
+  function isAllowlistedUnfurlHost(hostname) {
+    if (typeof hostname !== 'string' || !hostname) return false;
+    const h = hostname.toLowerCase().replace(/\.+$/, '');
+    return UNFURL_ALLOWLISTED_HOSTS.some((base) => h === base || h.endsWith(`.${base}`));
+  }
+
+  /**
+   * `http(s)://host[:port]` — just enough to pull the hostname and port
+   * back out of an `href`. Regex, not the `URL` global: this file's own
+   * {@link parseGithubEntityUrl} already avoids `URL` client-side the same
+   * way, and this module's test harness (`vm.runInContext`) sandboxes a
+   * context with no `URL` global at all — the real browser has one, but
+   * nothing here needs it enough to make that the only way to test this.
+   */
+  const HREF_HOST_PORT = /^https?:\/\/([^/:?#]+)(?::(\d+))?/i;
+
+  /**
+   * Whether a chat link's own host is a self-published surface #3139 always
+   * allows & previews — a Tailscale/GitHub Pages/`tangleclaw.com` hostname,
+   * or `localhost` itself on one of this server's own preview ports — so it
+   * auto-unfurls even while the global "Show preview by default" setting is
+   * off (PRR-B R1 BLOCKING 3b). Never widens which links are safe to FETCH
+   * at all; that is still `b2.evaluateUnfurlTargetSafety`'s own call,
+   * enforced server-side regardless of what this says.
+   * @param {string} href
+   * @returns {boolean}
+   */
+  function isAlwaysPreviewLink(href) {
+    if (typeof href !== 'string') return false;
+    const m = HREF_HOST_PORT.exec(href);
+    if (!m) return false;
+    if (isAllowlistedUnfurlHost(m[1])) return true;
+    const host = m[1].toLowerCase();
+    return (host === 'localhost' || host === '127.0.0.1') && SELF_PUBLISHED_PREVIEW_PORTS.has(m[2] || '');
+  }
 
   /**
    * Split a trailing `#L<n>-L<n>` code line-range off a reference (#3107) —
@@ -4117,6 +4304,8 @@
       const queuedPrompts = (extras && extras.queuedPrompts) || [];
       const pending = (extras && extras.pending) || null;
       const verbosity = (extras && extras.verbosity) || VERBOSITY_DEFAULT;
+      // #3139: "Show preview by default" — global, off unless the operator turned it on.
+      const autoPreview = Boolean(extras && extras.autoPreview);
       const v = detail.view || {};
       // #3063: in a chat the telemetry bar shares the chat's header row.
       const telemetry = extras && 'telemetry' in extras ? extras.telemetry : undefined;
@@ -4124,7 +4313,7 @@
         chat: Object.assign({}, v.chat, {
           draft, hoodOpen, hoodFullScreen, hoodInteractive, streamPinned, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename,
           dismissedQuestions, dismissedTodoItems, dismissedFleetTargets, collapsedWaitingOn, knownProjects,
-          queuedPrompts, pending, verbosity
+          queuedPrompts, pending, verbosity, autoPreview
         })
       }));
     }
@@ -4504,6 +4693,8 @@
     // #3085: chat reads since the usage meter last refreshed.
     let usagePolls = 0;
     let usageActionsGiven = false;
+    // #3132: the automated probe's own actions are handed to the shell once, separately.
+    let usageProbeActionsGiven = false;
 
     /**
      * Load the 3-engine usage meter's data (#3085, A753-1) and hand it, and
@@ -4519,6 +4710,61 @@
         usageActionsGiven = true;
       }
       sh.setUsage({ windows, sessions });
+    }
+
+    /**
+     * Load the automated CLI usage probe's last-persisted snapshot (#3132,
+     * `GET /api/usage/probe` — never forces a fresh probe; that's what the
+     * popover's own "↻ Refresh now" button and `refreshUsageProbeAction` are
+     * for) and hand it, and once its actions, to the shell.
+     * @returns {Promise<void>}
+     */
+    async function loadUsageProbe() {
+      const data = await api('/api/usage/probe');
+      const sh = getShell();
+      if (!sh || typeof sh.setUsageProbe !== 'function' || !data) return;
+      if (!usageProbeActionsGiven && typeof sh.setUsageProbeActions === 'function') {
+        sh.setUsageProbeActions({ refresh: refreshUsageProbeAction, setInterval: setUsageProbeIntervalAction });
+        usageProbeActionsGiven = true;
+      }
+      sh.setUsageProbe(data);
+    }
+
+    /**
+     * What the popover's "↻ Refresh now" button calls (#3132): run every
+     * provider's probe now (`POST /api/usage/refresh`), rather than waiting
+     * for the next scheduled or polled read. Needs no operator proof —
+     * same reasoning as the route itself: the probe only ever shells out to
+     * the three fixed CLI binaries `lib/usage-windows.js` names, nothing
+     * caller-supplied.
+     * @returns {Promise<{ok: boolean, error?: string}>}
+     */
+    async function refreshUsageProbeAction() {
+      const res = await api('/api/usage/refresh', { method: 'POST', body: JSON.stringify({}) });
+      if (!res) return { ok: false, error: api.lastError || 'the server refused it' };
+      const sh = getShell();
+      if (sh && typeof sh.setUsageProbe === 'function') sh.setUsageProbe(res);
+      // PRR-B R1 BLOCKING 2c: `POST /api/usage/refresh` also feeds a
+      // successful reading into the server's OWN calibration store
+      // (`lib/usage-windows.js#_refreshUsageProbeUncached`) — reloading the
+      // manual meter's own data here is what makes the footer pills (fed by
+      // `GET /api/usage/windows`) reflect it at once, instead of waiting for
+      // the next scheduled poll or route change.
+      await loadUsage();
+      return { ok: true };
+    }
+
+    /**
+     * What the popover's auto-refresh interval selector calls (#3132:
+     * "15m/30m/1h/Manual", `POST /api/usage/probe/interval`).
+     * @param {string} interval
+     * @returns {Promise<{ok: boolean, interval?: string, error?: string}>}
+     */
+    async function setUsageProbeIntervalAction(interval) {
+      const res = await api('/api/usage/probe/interval', { method: 'POST', body: JSON.stringify({ interval }) });
+      if (!res) return { ok: false, error: api.lastError || 'the server refused it' };
+      await loadUsageProbe();
+      return { ok: true, interval: res.interval };
     }
 
     /**
@@ -4938,9 +5184,13 @@
       if (startTimer) {
         pollId = startTimer(async () => {
           if (mine !== seq) { stopPolling(); return; }
-          // #3085: the usage meter refreshes every USAGE_EVERY_POLLS reads.
+          // #3085/#3132: the usage meter and its automated probe snapshot
+          // both refresh every USAGE_EVERY_POLLS reads — the probe route
+          // itself never forces a fresh CLI run on this cadence, only
+          // reads back whatever its own (much longer) background
+          // scheduler or an explicit "↻ Refresh now" last recorded.
           usagePolls = (usagePolls + 1) % USAGE_EVERY_POLLS;
-          if (usagePolls === 0) loadUsage();
+          if (usagePolls === 0) { loadUsage(); loadUsageProbe(); }
           const [res, nextStatus] = await Promise.all([api(peekUrl()), api(medusaUrl)]);
           if (mine !== seq || !current || !current.view) return;
           const next = peekView(res);
@@ -5427,7 +5677,7 @@
       }
       const key = route && route.view ? JSON.stringify(route) : null;
       if (key === lastRouteKey) return;
-      if (key !== null) loadUsage();
+      if (key !== null) { loadUsage(); loadUsageProbe(); }
       const entering = lastRouteKey === null;
       lastRouteKey = key;
       const mine = ++seq;
@@ -6182,6 +6432,9 @@
     let drawerOpen = false;
     const prefs = makePrefs(options.storage !== undefined ? options.storage : defaultStorage(win));
     let sidebarCollapsed = prefs.get('tc_v6_sidebar_collapsed', false, isBoolean);
+    // #3133: drag-resizable width, independent of collapse (which still wins
+    // when both apply — see applySidebarWidthStyle).
+    let sidebarWidth = clampSidebarWidth(prefs.get('tc_v6_sidebar_width', V6_SIDEBAR_DEFAULT_WIDTH, isFiniteNumber));
     let collapsedNodes = new Set(prefs.get('tc_v6_collapsed_nodes', [], isStringArray));
     let projectRows = new Map();
     // Engine id -> {status}, from /api/models/status, for the sidebar badges (#3053).
@@ -6197,8 +6450,10 @@
     // ids were generated from it, so they are wired from it too.
     let shownTree = [];
     // Unsent composer text per target project, so text meant for one agent
-    // never appears in, and is never sent from, another one's chat.
-    const chatDrafts = new Map();
+    // never appears in, and is never sent from, another one's chat. #3133:
+    // seeded from storage (so a reload doesn't drop an in-progress draft),
+    // pruned of any oversized leftover on the way in — see persistChatDrafts.
+    const chatDrafts = new Map(Object.entries(pruneStaleChatDrafts(prefs.get('tc_v6_chat_drafts', {}, isStringMap))));
     // #3052: whether the raw-output drawer is open, kept across re-renders,
     // polls and visits; and which chat was last scrolled to its bottom, so a
     // chat opens at its newest line once and is then left where the operator puts it.
@@ -6213,6 +6468,10 @@
     let hoodBuffer = '';
     // #3082: which switchboard-triggered replies the chat shows, kept across visits.
     let verbosity = Object.assign({}, prefs.get('tc_v6_chat_verbosity', VERBOSITY_DEFAULT, isVerbosity));
+    // #3139: global — off by default (Ruling A752's click-to-reveal stays
+    // the floor) — whether a chat link auto-unfurls instead of waiting for
+    // its own "👁 Preview" click.
+    let autoPreview = prefs.get('tc_v6_auto_preview_links', false, isBoolean);
     // The workspace mode (#3086): Chat on each route, until the operator picks another.
     let workspaceMode = 'chat';
     // The route the mode was last reset on; a different one resets it to Chat.
@@ -6417,9 +6676,11 @@
     // shape as {@link dismissedTodoItems}.
     const dismissedFleetTargets = new Map();
     // #3131: each chat's folded/unfolded Waiting-on sections ('you', 'ai',
-    // `fleet:<target>`) — in memory only, the same way dismissals above
-    // are: a chat switched away from and back keeps what it had folded.
-    const waitingOnCollapsed = new Map();
+    // `fleet:<target>`). #3133 PRR-B R1 BLOCKING 1b: persisted, unlike the
+    // dismissal maps above (which stay in-memory on purpose) — a fold is a
+    // durable layout preference the operator sets once per chat, not a
+    // one-shot dismissal of a specific send.
+    const waitingOnCollapsed = new Map(Object.entries(prefs.get('tc_v6_waiting_on_collapsed', {}, isStringArrayMap)));
     // #3105: each chat's AI queue — prompts submitted while busy, surfaced
     // in Waiting on: AI to be Forced or dismissed by hand. Never fired
     // automatically (PRR-A R1 C2): that would bypass the Force-Send gate
@@ -6444,6 +6705,12 @@
     let usageOpen = false;
     let usageStatus = null;
     let usageActions = null;
+    // #3132: the automated CLI usage probe's own last snapshot and
+    // configured refresh cadence — separate from the manual calibration
+    // table above, which `usage`/`usageStatus`/`usageActions` still own.
+    let usageProbe = null;
+    let usageProbeInterval = '30m';
+    let usageProbeActions = null;
     // The chat whose Start fleet button has been clicked once (#3053).
     let fleetArmedKey = null;
     // The chat whose rename form is open (#3071), the name typed into it
@@ -6558,6 +6825,7 @@
       wireStreamPin();
       wireTreeLinks();
       wireRichPreviews();
+      wireSidebarResize();
       const search = doc.getElementById('v6FilterSearch');
       if (search) {
         search.addEventListener('input', (evt) => {
@@ -6711,6 +6979,7 @@
           const text = historyReferenceText(snap);
           const draft = chatDrafts.get(key) || '';
           chatDrafts.set(key, draft ? `${draft.replace(/\s+$/, '')}\n${text}` : text);
+          persistChatDrafts();
           render();
           focusById('v6ChatInput');
         });
@@ -7037,6 +7306,23 @@
           if (typeof options.onUnfurlLink === 'function') options.onUnfurlLink(url);
         });
       });
+      // #3139: "Show preview by default" fetches every link still showing
+      // its own Preview button, instead of waiting for a click — and a
+      // self-published link (PRR-B R1 BLOCKING 3b) always does, even with
+      // that setting off, the same way `alwaysPreview` already exempts
+      // these hosts server-side (`lib/v6/b2-conversation-layer.js#_pushReferenceCard`).
+      // Each `setUnfurl` below re-enters this function (see its own body,
+      // which calls `wireRichPreviews()` as part of its redraw), so this
+      // needs no loop guard of its own: the next pass simply finds one
+      // fewer still-unfetched link, until none remain.
+      doc.querySelectorAll('.v6-chat-unfurl-btn').forEach((btn) => {
+        const url = btn.getAttribute('data-unfurl-url');
+        if (!url || !(autoPreview || isAlwaysPreviewLink(url))) return;
+        const unfurls = unfurlsNow();
+        if (unfurls && Object.prototype.hasOwnProperty.call(unfurls, url)) return;
+        setUnfurl(url, { state: 'loading' });
+        if (typeof options.onUnfurlLink === 'function') options.onUnfurlLink(url);
+      });
     }
 
     /**
@@ -7234,7 +7520,9 @@
       if (input) {
         input.addEventListener('input', (evt) => {
           const key = chatTargetKey();
-          if (key != null) chatDrafts.set(key, String((evt && evt.target && evt.target.value) || ''));
+          if (key == null) return;
+          chatDrafts.set(key, String((evt && evt.target && evt.target.value) || ''));
+          persistChatDrafts();
         });
         input.addEventListener('keydown', (evt) => {
           const action = chatKeyAction(evt);
@@ -7245,6 +7533,14 @@
       }
       const force = doc.getElementById('v6ChatForceSend');
       if (force) force.addEventListener('click', () => submitChat(true));
+      const autoPreviewBtn = doc.getElementById('v6ChatAutoPreview');
+      if (autoPreviewBtn) {
+        autoPreviewBtn.addEventListener('click', () => {
+          autoPreview = !autoPreview;
+          prefs.set('tc_v6_auto_preview_links', autoPreview);
+          render();
+        });
+      }
       const form = doc.getElementById('v6ChatForm');
       if (form) {
         form.addEventListener('submit', (evt) => {
@@ -7423,6 +7719,7 @@
       const set = new Set(collapsedWaitingOnFor(key));
       if (set.has(sectionKey)) set.delete(sectionKey); else set.add(sectionKey);
       waitingOnCollapsed.set(key, [...set]);
+      prefs.set('tc_v6_waiting_on_collapsed', Object.fromEntries(waitingOnCollapsed));
     }
 
     /**
@@ -7651,7 +7948,9 @@
 
     /** @returns {string} The usage meter as it stands (#3085), or '' before the routes answer. */
     function usageMarkupNow() {
-      return usage ? usageMeterMarkup(usageMeterModel(usage.windows, usage.sessions), { open: usageOpen, status: usageStatus }) : '';
+      return usage ? usageMeterMarkup(usageMeterModel(usage.windows, usage.sessions), {
+        open: usageOpen, status: usageStatus, probe: usageProbe, probeInterval: usageProbeInterval
+      }) : '';
     }
 
     /**
@@ -7738,6 +8037,37 @@
           });
         });
       });
+      // #3132: the automated probe's own refresh-cadence selector and
+      // on-demand refresh button.
+      const intervalSelect = doc.getElementById('v6UsageProbeInterval');
+      if (fresh(intervalSelect)) {
+        intervalSelect.addEventListener('change', (evt) => {
+          const value = String((evt && evt.target && evt.target.value) || '');
+          if (!value || !usageProbeActions || typeof usageProbeActions.setInterval !== 'function') return;
+          usageStatus = { kind: 'pending', message: `Setting auto-refresh to ${value}…` };
+          paintUsage();
+          Promise.resolve(usageProbeActions.setInterval(value)).then((result) => {
+            usageStatus = result && result.ok
+              ? { kind: 'ok', message: `Auto-refresh set to ${result.interval || value}.` }
+              : { kind: 'error', message: `Auto-refresh not set: ${(result && result.error) || 'the server refused it'}` };
+            paintUsage();
+          });
+        });
+      }
+      const probeRefresh = doc.getElementById('v6UsageProbeRefresh');
+      if (fresh(probeRefresh)) {
+        probeRefresh.addEventListener('click', () => {
+          if (!usageProbeActions || typeof usageProbeActions.refresh !== 'function') return;
+          usageStatus = { kind: 'pending', message: 'Refreshing usage probe…' };
+          paintUsage();
+          Promise.resolve(usageProbeActions.refresh()).then((result) => {
+            usageStatus = result && result.ok
+              ? { kind: 'ok', message: 'Usage probe refreshed.' }
+              : { kind: 'error', message: `Usage probe not refreshed: ${(result && result.error) || 'the server refused it'}` };
+            paintUsage();
+          });
+        });
+      }
     }
 
     /** @returns {Object<string, string>} The chat on screen's thumbnails: file name → `blob:` URL (#3082). */
@@ -8018,31 +8348,57 @@
      * dragging it back toward its rest height gives the stream its default
      * 55vh back. Re-measures its own baseline each render, since a full
      * re-render replaces the textarea and loses any native resize the
-     * operator had made. No-ops where `ResizeObserver` is unavailable (the
-     * unit-test sandbox) — the coupling itself is a live-browser behavior,
-     * verified by this car's required browser check, not by node:test.
+     * operator had made — which is also why, before measuring, it restores
+     * whichever height the operator last dragged to (#3133), persisted in
+     * `localStorage`, so a reload doesn't silently reset a resize back to
+     * default. No-ops where `ResizeObserver` is unavailable (the unit-test
+     * sandbox) — the coupling itself is a live-browser behavior, verified
+     * by this car's required browser check, not by node:test.
      */
     function wireComposerResize() {
       const input = doc.getElementById('v6ChatInput');
       const stream = doc.getElementById('v6ChatStream');
       if (!input || !stream) return;
+      // #3133: measured BEFORE any persisted height is restored below, so
+      // these stay the true CSS-default rest heights the coupling math
+      // needs — restoring a remembered height here would otherwise make
+      // the restored height look like the baseline itself, and the two
+      // elements would stop shrinking each other on the very next drag.
       const baseInput = input.offsetHeight || 64;
       const baseStream = stream.offsetHeight || 0;
+      const savedInputHeight = prefs.get('tc_v6_chat_input_height', null, isFiniteNumber);
+      const savedStreamHeight = prefs.get('tc_v6_chat_stream_height', null, isFiniteNumber);
+      if (input.style && savedInputHeight) input.style.height = `${savedInputHeight}px`;
+      if (stream.style && savedStreamHeight) stream.style.height = `${savedStreamHeight}px`;
       const applyToStream = () => {
         if (!stream.style) return;
         stream.style.maxHeight = coupledStreamMaxHeight(input.offsetHeight, baseInput);
+        // PRR-B R1 BLOCKING 1a: `input.offsetHeight` reads 0/undefined for a
+        // hidden tab or this file's own unit-test DOM (neither computes real
+        // layout) — persisting THAT would silently erase a genuinely saved
+        // height. The inline style height (set by the drag itself, or by the
+        // restore step above) is the more trustworthy reading either way, so
+        // it is tried first; a measurement of 0 skips the write entirely
+        // rather than ever persisting null over a real saved value.
+        const measuredInput = (input.style && parseFloat(input.style.height)) || input.offsetHeight;
+        if (measuredInput) prefs.set('tc_v6_chat_input_height', measuredInput);
       };
       // #3106 (PRR-A R1 C4): the stream's `offsetHeight` also grows when
       // new content arrives — reacting to THAT would snap the input back
       // down mid-typing. Only a genuine resize-handle drag sets the
       // stream's own inline `style.height`, so that is the signal this
-      // direction watches, not the observed box size.
+      // direction watches, not the observed box size — also the signal
+      // #3133 persists from, for the same reason.
       let lastStreamInlineHeight = (stream.style && stream.style.height) || '';
       const applyToInput = () => {
         if (!input.style || !stream.style) return;
         const inlineNow = stream.style.height || '';
         if (inlineNow === lastStreamInlineHeight) return;
         lastStreamInlineHeight = inlineNow;
+        // Same guard as applyToStream's above: an empty/unparseable inline
+        // height never overwrites a genuinely saved one with null.
+        const measuredStream = parseFloat(inlineNow);
+        if (measuredStream) prefs.set('tc_v6_chat_stream_height', measuredStream);
         if (!inlineNow) return;
         const h = coupledInputHeight(parseFloat(inlineNow) || 0, baseStream, baseInput);
         if (h) input.style.height = h;
@@ -8055,6 +8411,52 @@
       composerResizeObserver.observe(input);
       composerStreamResizeObserver = new global.ResizeObserver(applyToInput);
       composerStreamResizeObserver.observe(stream);
+    }
+
+    /**
+     * The Fleet sidebar's drag-resizable width (#3133): dragging
+     * `#v6SidebarResizeHandle` sets `#v6ShellRoot`'s `grid-template-columns`
+     * via {@link applySidebarWidthStyle} and persists the result, so a
+     * reload keeps the operator's chosen width. Arrow keys on the handle
+     * nudge it by 10px, for keyboard operability (`role="separator"`
+     * already names it one).
+     */
+    function wireSidebarResize() {
+      const handle = doc.getElementById('v6SidebarResizeHandle');
+      if (!handle || (handle.dataset && handle.dataset.resizeWired)) return;
+      if (handle.dataset) handle.dataset.resizeWired = '1';
+      const setWidth = (width) => {
+        sidebarWidth = clampSidebarWidth(width);
+        prefs.set('tc_v6_sidebar_width', sidebarWidth);
+        applySidebarWidthStyle();
+        handle.setAttribute('aria-valuenow', String(sidebarWidth));
+      };
+      let dragStartX = 0;
+      let dragStartWidth = sidebarWidth;
+      const onMove = (evt) => {
+        const x = evt && typeof evt.clientX === 'number' ? evt.clientX : dragStartX;
+        setWidth(dragStartWidth + (x - dragStartX));
+      };
+      const onUp = () => {
+        if (win && typeof win.removeEventListener === 'function') {
+          win.removeEventListener('pointermove', onMove);
+          win.removeEventListener('pointerup', onUp);
+        }
+      };
+      handle.addEventListener('pointerdown', (evt) => {
+        dragStartX = evt && typeof evt.clientX === 'number' ? evt.clientX : 0;
+        dragStartWidth = sidebarWidth;
+        if (win && typeof win.addEventListener === 'function') {
+          win.addEventListener('pointermove', onMove);
+          win.addEventListener('pointerup', onUp);
+        }
+        if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+      });
+      handle.addEventListener('keydown', (evt) => {
+        if (!evt) return;
+        if (evt.key === 'ArrowLeft') { setWidth(sidebarWidth - 10); evt.preventDefault(); }
+        else if (evt.key === 'ArrowRight') { setWidth(sidebarWidth + 10); evt.preventDefault(); }
+      });
     }
 
     /**
@@ -8218,6 +8620,7 @@
         // group headings are hidden from sight (not from screen readers).
         root.classList.toggle('v6-shell-root--chat', inChat);
       }
+      applySidebarWidthStyle();
       root.innerHTML = `
         <a id="v6ShellSkipLink" class="v6-shell-skip-link" href="#v6ShellMain">Skip to main content</a>
         <button type="button" id="v6ShellDrawerToggle" class="btn btn-secondary btn-small v6-shell-drawer-toggle"
@@ -8244,6 +8647,10 @@
               return row ? memberIndicators(row, engineHealth) : null;
             }
           }) : '<p class="v6-sidebar-empty">No projects match these filters.</p>'}
+          ${sidebarCollapsed ? '' : '<div id="v6SidebarResizeHandle" class="v6-sidebar-resize-handle" role="separator" aria-orientation="vertical" '
+            + 'aria-label="Resize Fleet sidebar" aria-valuenow="' + sidebarWidth + '" aria-valuemin="' + V6_SIDEBAR_MIN_WIDTH + '" aria-valuemax="' + V6_SIDEBAR_MAX_WIDTH + '" '
+            + 'tabindex="0" title="Drag, or use arrow keys, to resize" '
+            + 'style="position:absolute;top:0;right:-6px;bottom:0;width:12px;cursor:col-resize;z-index:5;touch-action:none;"></div>'}
         </nav>
         ${inChat ? '' : telemetryHeaderMarkup(telemetry)}
         <main id="v6ShellMain" class="v6-shell-view" tabindex="-1" aria-label="${escapeHtml(title)}">
@@ -8265,7 +8672,7 @@
             knownProjects: [...projectRows.values()],
             queuedPrompts: chatQueues.get(chatTargetKey()) || [],
             pending: pendingSends.filter((p) => p.key === chatTargetKey()),
-            verbosity
+            verbosity, autoPreview
           })}</div>
           <div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard"${shown.wizard ? '' : ' hidden'}>${wizardMarkup(templates, standaloneProjectsNow(), {
             tab: wizardTab, form: wizardForm, templateId: wizardTemplateId, plan: wizardPlan, status: wizardStatus,
@@ -8312,7 +8719,30 @@
     function toggleSidebar(force) {
       sidebarCollapsed = typeof force === 'boolean' ? force : !sidebarCollapsed;
       prefs.set('tc_v6_sidebar_collapsed', sidebarCollapsed);
+      applySidebarWidthStyle();
       render();
+    }
+
+    /**
+     * Apply the sidebar's current width as an inline override of
+     * `.v6-shell-root`'s own `grid-template-columns` (#3133) — an inline
+     * style always wins over the stylesheet's class rule, which is exactly
+     * why this clears it to `''` while collapsed instead of also setting
+     * `0 1fr` itself: clearing lets the existing `.v6-shell-root--sidebar-
+     * collapsed` rule (that inline style would otherwise always shadow)
+     * keep doing the collapsing.
+     */
+    function applySidebarWidthStyle() {
+      if (root && root.style) root.style.setProperty('grid-template-columns', sidebarCollapsed ? '' : `${sidebarWidth}px 1fr`);
+    }
+
+    /**
+     * Persist the operator's chat drafts (#3133), pruned of anything
+     * implausibly large first (see {@link pruneStaleChatDrafts}) so a
+     * giant accidental paste is never the thing written to storage.
+     */
+    function persistChatDrafts() {
+      prefs.set('tc_v6_chat_drafts', pruneStaleChatDrafts(Object.fromEntries(chatDrafts)));
     }
 
     /** @param {Iterable<string>} keys - The full set of folded node keys. */
@@ -8620,7 +9050,10 @@
        * Forget a chat's composer text once it has been sent.
        * @param {*} [projectId] - The project it was sent to; the chat on screen when omitted.
        */
-      clearChatDraft(projectId) { chatDrafts.delete(projectId != null ? String(projectId) : chatTargetKey()); },
+      clearChatDraft(projectId) {
+        chatDrafts.delete(projectId != null ? String(projectId) : chatTargetKey());
+        persistChatDrafts();
+      },
       /**
        * A send has begun (#3079 item 6): the composer empties at once and
        * the message shows at the bottom of its chat until the send settles.
@@ -8631,6 +9064,7 @@
       beginSend(projectId, text, id) {
         const key = String(projectId);
         chatDrafts.delete(key);
+        persistChatDrafts();
         pendingSends = pendingSends.filter((p) => p.id !== id).concat({ key, text: String(text || ''), id });
         if (key !== chatTargetKey()) return;
         // #3079: a send going out is the operator answering, so the queue
@@ -8654,6 +9088,7 @@
         pendingSends = pendingSends.filter((p) => !(p.key === key && (id === undefined || p.id === id)));
         if (typeof restore === 'string' && restore && !chatDrafts.get(key)) {
           chatDrafts.set(key, restore);
+          persistChatDrafts();
           const input = key === chatTargetKey() ? doc.getElementById('v6ChatInput') : null;
           if (input && !input.value) input.value = restore;
         }
@@ -8731,6 +9166,25 @@
        * @param {{calibrate: Function}} actions
        */
       setUsageActions(actions) { usageActions = actions || null; },
+      /**
+       * The automated CLI usage probe's latest snapshot and configured
+       * refresh cadence (#3132, `GET /api/usage/probe`'s own shape):
+       * redraws the meter, same as {@link setUsage}.
+       * @param {{usage: {claude, codex, antigravity}, interval: string}|null} data
+       */
+      setUsageProbe(data) {
+        usageProbe = data && data.usage ? data.usage : null;
+        usageProbeInterval = (data && data.interval) || usageProbeInterval;
+        paintUsage();
+      },
+      /**
+       * What the probe's Refresh-now button and interval selector call
+       * (#3132): `refresh()` resolving to `{ok, error?}`, `setInterval(value)`
+       * resolving to `{ok, interval?, error?}`. Handed over the same way
+       * {@link setUsageActions} is.
+       * @param {{refresh: Function, setInterval: Function}} actions
+       */
+      setUsageProbeActions(actions) { usageProbeActions = actions || null; },
       /** @returns {string} The workspace mode shown (#3086). */
       getWorkspaceMode() { return workspaceMode; },
       /** @param {string} mode - Switch the workspace mode in place (#3086). */
@@ -8830,6 +9284,11 @@
   global.tcV6CreateLiveController = createLiveController;
   global.tcV6CoupledStreamMaxHeight = coupledStreamMaxHeight;
   global.tcV6CoupledInputHeight = coupledInputHeight;
+  global.tcV6ClampSidebarWidth = clampSidebarWidth;
+  global.tcV6PruneStaleChatDrafts = pruneStaleChatDrafts;
+  global.tcV6IsAlwaysPreviewLink = isAlwaysPreviewLink;
+  global.tcV6UsageProbeRowMarkup = usageProbeRowMarkup;
+  global.tcV6UsageProbeMarkup = usageProbeMarkup;
   global.tcV6ExtractCliGates = extractCliGates;
   global.tcV6ExtractMultiChoice = extractMultiChoice;
   global.tcV6ExtractOperatorTodo = extractOperatorTodo;
