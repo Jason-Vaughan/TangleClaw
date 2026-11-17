@@ -8,6 +8,20 @@ const tmux = require('../lib/tmux');
 const { shellWord } = require('../lib/shell-word');
 const { uniqueSessionName } = require('./_tmux-session-names');
 
+// #3130 — `lib/tmux.js`'s default-socket calls now strip `TMUX` from their
+// own child env so they target the TRUE default server rather than
+// whatever socket this process's own ambient `$TMUX` names (e.g. a
+// TangleClaw-launched Builder pane, which can itself be running on
+// `tangleclaw-tcc-authorized`). This file's raw `execFileSync`/`execSync`
+// calls against the default server (no `-L`) do not go through that
+// stripping, so without this they would check a DIFFERENT server than the
+// one production code now creates sessions on whenever this suite runs
+// from inside any tmux pane — node:test gives each test FILE its own
+// process, so this is scoped to this file alone. Two local tests further
+// below manage `TMUX`/`TMUX_TMPDIR` themselves for an unrelated reason
+// (a private-socket probe) and already tolerate `TMUX` being unset.
+delete process.env.TMUX;
+
 describe('tmux — a timed-out command says so (#894)', () => {
   it('raises the timeout error instead of the raw exec failure', () => {
     // `lib/tmux.js` tested `err.killed` to spot its own timeout. `execSync` never
@@ -1756,7 +1770,15 @@ describe('tmux', () => {
       // real session can make the default server's attach PROXY exit on
       // its own, and the stale snapshot read that as the default kill
       // itself failing.
-      assert.equal(targets.length, 34, `expected 34 -t sites in lib/tmux.js, found ${targets.length}`);
+      // 37 since #3130's anchor/copy-mode fixes added three: `probeTccReadable`'s
+      // own `run-shell` probe now carries an explicit `-t` at the always-present
+      // anchor session (previously untargeted, which is what let a failed probe's
+      // `[0/0]` copy-mode overlay land on the operator's own pane instead);
+      // `ensureTccAnchorAlive`'s `has-session` check for that same anchor; and
+      // `_cancelStrayCopyMode`'s `send-keys -X cancel`, called at the top of
+      // `sendKeys` to clear any such overlay before it pastes. All three go
+      // through `_target()`, like every other site here.
+      assert.equal(targets.length, 37, `expected 37 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,

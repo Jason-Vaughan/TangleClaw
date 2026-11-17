@@ -343,9 +343,16 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       // ...and the default server has a same-named proxy, attach-only, with its
       // own status line off.
       assert.equal(tmux.hasSession(name), true);
-      const proxyCommand = execFileSync('tmux', ['list-panes', '-t', name, '-F', '#{pane_start_command}'], { encoding: 'utf8' }).trim();
+      // #3130 — a raw `execFileSync` here, unlike `tmux.hasSession` above,
+      // does not go through `lib/tmux.js`'s own `TMUX`-stripping `_exec`, so
+      // it must strip it itself to target the same TRUE default server a
+      // default-socket production call now does — otherwise, run from
+      // inside ANY tmux pane (this suite's own, included), it would silently
+      // check a DIFFERENT server than the one the proxy actually landed on.
+      const defaultEnv = tmux._defaultChildEnv();
+      const proxyCommand = execFileSync('tmux', ['list-panes', '-t', name, '-F', '#{pane_start_command}'], { encoding: 'utf8', env: defaultEnv }).trim();
       assert.match(proxyCommand, new RegExp(`tmux -L '?${tmux.TCC_SOCKET}'? -u attach -t`));
-      const statusOption = execFileSync('tmux', ['show-option', '-t', name, 'status'], { encoding: 'utf8' }).trim();
+      const statusOption = execFileSync('tmux', ['show-option', '-t', name, 'status'], { encoding: 'utf8', env: defaultEnv }).trim();
       assert.equal(statusOption, 'status off');
       // Cleanup: the proxy (afterEach), and the TCC-authorized server itself
       // (afterEach's own kill-server) since the anchor session keeps it alive
@@ -430,7 +437,10 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
         assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
       });
-      const proxyCommand = execFileSync('tmux', ['list-panes', '-t', name, '-F', '#{pane_start_command}'], { encoding: 'utf8' }).trim();
+      // #3130 — see the sibling test above: this must target the TRUE
+      // default server too, not whatever socket this suite's own pane's
+      // ambient `$TMUX` happens to name.
+      const proxyCommand = execFileSync('tmux', ['list-panes', '-t', name, '-F', '#{pane_start_command}'], { encoding: 'utf8', env: tmux._defaultChildEnv() }).trim();
       assert.match(proxyCommand, /-u/, 'the proxy attaches with -u so the real session\'s UTF-8 content survives the hop');
     });
   });

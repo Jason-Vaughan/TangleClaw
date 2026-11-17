@@ -83,10 +83,23 @@ describe('#2866: lib/merge-role-guard.js#createRoleGuardWrapperScripts + recordB
     assert.doesNotThrow(() => new (require('node:vm').Script)(fs.readFileSync(r.file, 'utf8')));
   });
 
-  it('requires the EXACT file that generated it, never a relative or guessed path', () => {
-    mergeRoleGuard.createRoleGuardWrapperScripts(tmpDir);
+  it('requires the EXACT guard module copy written beside it, self-contained — never the live repo path (#3130)', () => {
+    const r = mergeRoleGuard.createRoleGuardWrapperScripts(tmpDir);
     const content = fs.readFileSync(path.join(tmpDir, 'gh'), 'utf8');
-    assert.ok(content.includes(JSON.stringify(require.resolve('../lib/merge-role-guard.js'))));
+    // Self-contained: a copy of the guard module lives IN the wrapper
+    // directory, so the directory keeps working even if the repo checkout
+    // that wrote it moves or is deleted — never the live `__filename`.
+    assert.ok(content.includes(JSON.stringify(r.guardModuleFile)));
+    assert.ok(!content.includes(JSON.stringify(require.resolve('../lib/merge-role-guard.js'))),
+      'must not require the live repo path');
+    assert.equal(r.guardModuleFile, path.join(tmpDir, '_guard-module.js'));
+    assert.ok(fs.existsSync(r.guardModuleFile));
+    // The copy is a byte-for-byte snapshot of the exact code that wrote it —
+    // "exact code, never a guess" still holds, just at a self-contained path.
+    assert.equal(
+      fs.readFileSync(r.guardModuleFile, 'utf8'),
+      fs.readFileSync(require.resolve('../lib/merge-role-guard.js'), 'utf8')
+    );
   });
 
   it('is idempotent and safe to call repeatedly (as every session launch does)', () => {
@@ -167,7 +180,7 @@ describe('#2866: lib/merge-role-guard.js#createRoleGuardWrapperScripts + recordB
   // I-Gate R1 BLOCKING 4: the raw REST merge shape (`curl -X PUT
   // .../pulls/<n>/merge`) detectMergeInvocation already recognizes needs
   // its own PATH interception, not just `gh pr merge`/`gh api`.
-  it('also writes a syntactically valid, executable curl wrapper script, requiring the exact guard module', () => {
+  it('also writes a syntactically valid, executable curl wrapper script, requiring the self-contained guard module copy (#3130)', () => {
     const r = mergeRoleGuard.createRoleGuardWrapperScripts(tmpDir);
     assert.equal(r.curlFile, path.join(tmpDir, 'curl'));
     assert.ok(fs.existsSync(r.curlFile));
@@ -175,7 +188,9 @@ describe('#2866: lib/merge-role-guard.js#createRoleGuardWrapperScripts + recordB
     assert.equal(mode, 0o755);
     assert.doesNotThrow(() => new (require('node:vm').Script)(fs.readFileSync(r.curlFile, 'utf8')));
     const content = fs.readFileSync(r.curlFile, 'utf8');
-    assert.ok(content.includes(JSON.stringify(require.resolve('../lib/merge-role-guard.js'))));
+    assert.ok(content.includes(JSON.stringify(r.guardModuleFile)));
+    assert.ok(!content.includes(JSON.stringify(require.resolve('../lib/merge-role-guard.js'))),
+      'must not require the live repo path');
   });
 
   it('curl wrapper runs correctly end-to-end: passes a non-merge call through to the real curl', (t) => {

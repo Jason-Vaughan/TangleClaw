@@ -103,8 +103,9 @@ after(() => {
  *   omit `probeSession` and drift from the real module's shape.
  * @returns {object} A tmux-shaped stub.
  */
-function fakeTmux({ alive = false, answered = true, createSession } = {}) {
+function fakeTmux({ alive = false, answered = true, createSession, killSession } = {}) {
   const calls = [];
+  const killCalls = [];
   const probeSession = () => ({
     live: answered ? alive : false,
     answered,
@@ -112,6 +113,7 @@ function fakeTmux({ alive = false, answered = true, createSession } = {}) {
   });
   return {
     calls,
+    killCalls,
     probeSession,
     // Modelled because `getMasterStatus` asks it (#968). Defaults to "answered,
     // no such session", which is the neutral honest answer for a stub that is
@@ -124,6 +126,14 @@ function fakeTmux({ alive = false, answered = true, createSession } = {}) {
     createSession: (name, opts) => {
       calls.push({ name, opts });
       return createSession ? createSession(name, opts) : true;
+    },
+    // #3130 — `ensureMasterSession`'s relaunch path. Tracked separately from
+    // `calls` (the create-session log) since no PRE-existing test passes
+    // `relaunch: true`, so no existing assertion on `calls.length` is
+    // affected by this method existing at all.
+    killSession: (name) => {
+      killCalls.push(name);
+      return killSession ? killSession(name) : true;
     }
   };
 }
@@ -476,6 +486,40 @@ describe('ensureMasterSession', () => {
     const md = fs.readFileSync(path.join(home, 'CLAUDE.md'), 'utf8');
     assert.match(md, /Project Master identity/, 'identity must be regenerated on every ensure');
     assert.doesNotMatch(md, /stale hand-edit/);
+  });
+
+  describe('relaunch (#3130) — a wedged/exhausted Master needs a restart, not just a settings change', () => {
+    it('is still the ordinary no-op without options.relaunch, even for a live session', () => {
+      const t = fakeTmux({ alive: true });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: availableEngines });
+      assert.equal(r.created, false);
+      assert.equal(t.killCalls.length, 0, 'an ordinary ensure must never kill a live Master');
+    });
+
+    it('kills the live session then launches a fresh one when relaunch is requested', () => {
+      const t = fakeTmux({ alive: true });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: availableEngines, relaunch: true });
+      assert.equal(r.created, true, 'a relaunch is a real launch, not the live no-op');
+      assert.deepEqual(t.killCalls, [master.MASTER_TMUX_SESSION]);
+      assert.equal(t.calls.length, 1, 'exactly one fresh session, after the kill');
+    });
+
+    it('is a no-op launch (not a kill) when relaunch is requested but no Master is actually running', () => {
+      const t = fakeTmux({ alive: false });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: availableEngines, relaunch: true });
+      assert.equal(r.created, true);
+      assert.equal(t.killCalls.length, 0, 'nothing was running, so there is nothing to kill');
+      assert.equal(t.calls.length, 1);
+    });
+
+    it('refuses the relaunch, and starts nothing, when tmux cannot confirm the kill', () => {
+      const t = fakeTmux({ alive: true, killSession: () => false });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: availableEngines, relaunch: true });
+      assert.equal(r.created, false);
+      assert.match(r.error, /relaunch was refused/);
+      assert.equal(r.code, 'MASTER_RELAUNCH_KILL_UNCONFIRMED');
+      assert.equal(t.calls.length, 0, 'must never start a second Master over one that might still be live');
+    });
   });
 
   it('refuses with an error when the engine binary is unavailable — and does not create tmux', () => {
