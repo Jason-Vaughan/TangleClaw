@@ -153,3 +153,38 @@ describe('a semantic colour token is readable on its own theme\'s surfaces', () 
     });
   }
 });
+
+/*
+ * #3133: the official TangleClaw Dark Brand Palette, declared once in
+ * `style.css`'s `:root` for the v6 shell's own dark-locked surfaces
+ * (scrollbars, Under the Hood, the Sprint & Cars board, Waiting-On) —
+ * unlike the semantic tokens above, these are NOT re-themed per
+ * `data-theme`, so they are checked separately, against their own
+ * intended dark canvas rather than against THEMES/SURFACES: pairing a
+ * near-white brand text token against the Light theme's own near-white
+ * surfaces would fail for a reason that has nothing to do with this
+ * palette, which never renders under that theme.
+ */
+describe('the TangleClaw Dark Brand Palette (#3133) is readable on its own canvas', () => {
+  const BRAND_TEXT_TOKENS = ['--tc-fang-ivory', '--tc-muted-sage', '--tc-predator-gold', '--tc-predator-gold-alt'];
+  const BRAND_SURFACES = ['--tc-obsidian-void', '--tc-panel-surface', '--tc-panel-surface-alt'];
+  const src = fs.readFileSync(path.join(PUB, 'style.css'), 'utf8');
+  const tokens = themeTokens(src, ':root');
+
+  it('declares every brand text token and canvas surface', () => {
+    for (const token of [...BRAND_TEXT_TOKENS, ...BRAND_SURFACES]) {
+      assert.ok(tokens[token], `${token} is expected in style.css's :root but was not declared`);
+    }
+  });
+
+  for (const token of BRAND_TEXT_TOKENS) {
+    for (const surface of BRAND_SURFACES) {
+      it(`keeps ${token} above ${FLOOR}:1 on ${surface}`, () => {
+        const ratio = contrast(tokens[token], tokens[surface]);
+        assert.ok(ratio >= FLOOR,
+          `${token} (${tokens[token]}) on ${surface} (${tokens[surface]}) `
+          + `is ${ratio.toFixed(2)}:1, below the ${FLOOR}:1 floor`);
+      });
+    }
+  }
+});
