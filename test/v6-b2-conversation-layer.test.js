@@ -809,6 +809,67 @@ describe('parseOpenGraphHtml (#3107)', () => {
     it('ignores a title/meta/h1/p tag with only whitespace content', () => {
       assert.equal(b2.parseOpenGraphHtml('<title>   </title><p>   </p>'), null);
     });
+
+    // PRR-B R1 WARNING 1b: a whitespace-only <title> must fall through to a
+    // real <h1>, not stop at the first tag that merely MATCHED structurally.
+    it('falls through to <h1> when <title> is present but whitespace-only', () => {
+      const parsed = b2.parseOpenGraphHtml('<title>   </title><h1>Real Heading</h1>');
+      assert.equal(parsed.title, 'Real Heading');
+    });
+
+    it('falls through to <p> when <meta name="description"> is present but whitespace-only', () => {
+      const parsed = b2.parseOpenGraphHtml('<meta name="description" content="   "><p>Real paragraph.</p>');
+      assert.equal(parsed.description, 'Real paragraph.');
+    });
+
+    // PRR-B R1 WARNING 1a: a single character class excluding BOTH quote
+    // characters truncates a double-quoted description at its first
+    // apostrophe, since '[^"\']' treats "'" as a terminator even inside a
+    // double-quoted attribute where it is not the quote actually in use.
+    it('does not truncate a double-quoted description at an apostrophe', () => {
+      const parsed = b2.parseOpenGraphHtml('<meta name="description" content="It\'s a great page about things.">');
+      assert.equal(parsed.description, "It's a great page about things.");
+    });
+
+    it('does not truncate a single-quoted description at an embedded double quote', () => {
+      const parsed = b2.parseOpenGraphHtml("<meta name='description' content='She said \"hello\" to everyone.'>");
+      assert.equal(parsed.description, 'She said "hello" to everyone.');
+    });
+
+    // PRR-B R1 WARNING 1b: <p[^>]*> (no tag-boundary requirement) also
+    // matches <pre> and <param ...>, since both literally start with "<p".
+    it('never misreads <pre> or <param> as a <p> paragraph', () => {
+      assert.equal(b2.parseOpenGraphHtml('<pre>some code</pre><p>Real paragraph.</p>').description, 'Real paragraph.');
+      assert.equal(
+        b2.parseOpenGraphHtml('<param name="x" value="y"><p>Real paragraph.</p>').description,
+        'Real paragraph.'
+      );
+      // No real <p> anywhere at all: must find nothing, never misread <pre>
+      // as the paragraph and run on to some unrelated later </p>.
+      assert.equal(b2.parseOpenGraphHtml('<pre>only code here</pre><div>unrelated</div></p>'), null);
+    });
+
+    it('never misreads an <h1>-prefixed tag name boundary incorrectly (parity with the <p> guard)', () => {
+      assert.equal(b2.parseOpenGraphHtml('<h1>Real Heading</h1>').title, 'Real Heading');
+      assert.equal(b2.parseOpenGraphHtml('<h1 class="big">Real Heading</h1>').title, 'Real Heading');
+    });
+
+    // PRR-B R1 WARNING 1b: "strip inline child tags" — a nested tag must
+    // not truncate the title/description at its own first "<".
+    it('strips inline child tags from a <title> and reads the full text', () => {
+      const parsed = b2.parseOpenGraphHtml('<title>Hello <b>World</b> Wide</title>');
+      assert.equal(parsed.title, 'Hello World Wide');
+    });
+
+    it('strips inline child tags from an <h1> and reads the full text', () => {
+      const parsed = b2.parseOpenGraphHtml('<h1>Hello <em>World</em></h1>');
+      assert.equal(parsed.title, 'Hello World');
+    });
+
+    it('strips inline child tags from a <p> and reads the full text', () => {
+      const parsed = b2.parseOpenGraphHtml('<p>Hello <a href="/x">link</a> there.</p>');
+      assert.equal(parsed.description, 'Hello link there.');
+    });
   });
 });
 

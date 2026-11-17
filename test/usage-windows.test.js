@@ -8,7 +8,7 @@
  * calibration, and the Conservation / Use-It-or-Lose-It policy windows.
  */
 
-const { describe, it, before, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -1453,7 +1453,10 @@ function fakeProbeStore() {
 }
 
 describe('lib/usage-windows — #3132 automated CLI usage probe', () => {
-  afterEach(() => uw._stopUsageProbeSchedulerForTests());
+  afterEach(() => {
+    uw._stopUsageProbeSchedulerForTests();
+    uw._resetInFlightProbesForTests();
+  });
 
   describe('_parseClaudeUsageCli (fixtures: `claude -p "/usage"`, verified live 2026-11-16)', () => {
     it('parses the "<h>:<mm><am|pm>" reset form', () => {
@@ -1822,6 +1825,331 @@ describe('lib/usage-windows — #3132 automated CLI usage probe', () => {
       // restart reads to skip arming setInterval at all (see
       // _restartUsageProbeScheduler's own guard clause).
       assert.equal(uw.USAGE_PROBE_INTERVALS.manual, null);
+    });
+  });
+
+  // PRR-B R1 BLOCKING 1a: two concurrent refreshUsageProbe(provider) calls
+  // must share one in-flight probe, never each start their own.
+  describe('refreshUsageProbe — in-flight deduplication (PRR-B R1 BLOCKING 1a)', () => {
+    it('two concurrent calls for the SAME provider share one underlying probe', async () => {
+      const probeStore = fakeProbeStore();
+      let calls = 0;
+      let resolveExec;
+      const execFileAsync = () => {
+        calls += 1;
+        return new Promise((resolve) => { resolveExec = resolve; });
+      };
+      const p1 = uw.refreshUsageProbe('claude', { probeStore, execFileAsync });
+      const p2 = uw.refreshUsageProbe('claude', { probeStore, execFileAsync });
+      assert.equal(calls, 1, 'the second call must not start a second probe');
+      resolveExec('Current week (all models): 20% used');
+      const [r1, r2] = await Promise.all([p1, p2]);
+      assert.equal(r1, r2, 'both callers get the exact same result object');
+    });
+
+    it('a call for a DIFFERENT provider is never held back by one already in flight', async () => {
+      const probeStore = fakeProbeStore();
+      let claudeResolve;
+      const execFileAsync = (cmd) => (cmd === 'claude'
+        ? new Promise((resolve) => { claudeResolve = resolve; })
+        : Promise.resolve('Gemini Models\tWeekly Limit Remaining\t10%\t2026-12-01T00:00:00Z'));
+      const claudePromise = uw.refreshUsageProbe('claude', { probeStore, execFileAsync });
+      const agyResult = await uw.refreshUsageProbe('antigravity', { probeStore, execFileAsync });
+      assert.equal(agyResult.weeklyRemainingPct, 10);
+      claudeResolve('Current week (all models): 50% used');
+      await claudePromise;
+    });
+
+    it('a FRESH call after the first settles starts a real new probe, not the stale cached one', async () => {
+      const probeStore = fakeProbeStore();
+      let calls = 0;
+      const execFileAsync = () => {
+        calls += 1;
+        return Promise.resolve(`Current week (all models): ${calls === 1 ? 10 : 90}% used`);
+      };
+      const first = await uw.refreshUsageProbe('claude', { probeStore, execFileAsync });
+      const second = await uw.refreshUsageProbe('claude', { probeStore, execFileAsync });
+      assert.equal(calls, 2);
+      assert.equal(first.weeklyRemainingPct, 90);
+      assert.equal(second.weeklyRemainingPct, 10);
+    });
+
+    it('clears its own in-flight entry even on a failed probe, so a later call is never wedged', async () => {
+      const probeStore = fakeProbeStore();
+      const failed = await uw.refreshUsageProbe('claude', { probeStore, execFileAsync: () => Promise.reject(new Error('boom')) });
+      assert.equal(failed.status, 'not-configured');
+      // If the entry were never cleared, this second call would reuse the
+      // first (already-settled, discarded) promise forever instead of
+      // running fresh.
+      const result = await uw.refreshUsageProbe('claude', { probeStore, execFileAsync: () => Promise.resolve('Current week (all models): 5% used') });
+      assert.equal(result.weeklyRemainingPct, 95);
+    });
+  });
+});
+
+// PRR-B R1 BLOCKING 3: unit tests for the 3 new HTTP routes and the 3 new
+// CLI subverbs. Neither lib/routes/sessions.js nor lib/tc-verbs.js has its
+// own test file in this car's scope, but nothing stops a test file this
+// car DOES own from importing and exercising them directly — the scope
+// boundary is which files this car may EDIT, not which modules a test may
+// require.
+describe('HTTP routes — GET /api/usage/probe, POST /api/usage/refresh, POST /api/usage/probe/interval (PRR-B R1 BLOCKING 3)', () => {
+  const http = require('node:http');
+  const { createServer } = require('../server');
+  // A mutating (POST) request needs a verified launch binding regardless of
+  // which route it targets — `lib/launch-binding-guard.js`'s own
+  // caller-agnostic floor, ahead of any route-specific auth, refused every
+  // POST below with 403 LAUNCH_BINDING_REQUIRED before this was added.
+  const { bindProject } = require('./_shared-docs-callers');
+
+  let server;
+  let probeHomeDir;
+  let savedTangleclawHome;
+  let launchHeaders;
+
+  before(() => {
+    savedTangleclawHome = process.env.TANGLECLAW_HOME;
+  });
+
+  beforeEach(async () => {
+    // Isolates _defaultProbeStore's flat file AND the Codex utility
+    // session's fixed work directory from this machine's REAL TangleClaw
+    // home — a route test must never read or write the operator's own
+    // real probe history.
+    probeHomeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-usage-probe-home-'));
+    process.env.TANGLECLAW_HOME = probeHomeDir;
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const project = store.projects.create({ name: `usage-probe-route-test-${Date.now()}`, path: probeHomeDir, engine: 'claude' });
+    launchHeaders = bindProject(project).headers;
+  });
+
+  afterEach(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(probeHomeDir, { recursive: true, force: true });
+    uw._stopUsageProbeSchedulerForTests();
+  });
+
+  after(() => {
+    if (savedTangleclawHome === undefined) delete process.env.TANGLECLAW_HOME;
+    else process.env.TANGLECLAW_HOME = savedTangleclawHome;
+  });
+
+  function httpRequest(method, urlPath, body, callerHeaders = {}) {
+    return new Promise((resolve, reject) => {
+      const addr = server.address();
+      const bodyStr = body != null ? JSON.stringify(body) : null;
+      const headers = { 'Content-Type': 'application/json', ...callerHeaders };
+      if (bodyStr != null) headers['Content-Length'] = Buffer.byteLength(bodyStr);
+      const req = http.request({ hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers }, (res) => {
+        let data = '';
+        res.on('data', (c) => { data += c; });
+        res.on('end', () => resolve({ status: res.statusCode, body: data ? JSON.parse(data) : null }));
+      });
+      req.on('error', reject);
+      if (bodyStr != null) req.write(bodyStr);
+      req.end();
+    });
+  }
+
+  it('GET /api/usage/probe returns a provider-keyed snapshot (nothing probed yet) plus the configured interval', async () => {
+    const res = await httpRequest('GET', '/api/usage/probe');
+    assert.equal(res.status, 200);
+    assert.deepEqual(Object.keys(res.body.usage).sort(), ['antigravity', 'claude', 'codex']);
+    assert.deepEqual(res.body.usage, { claude: null, codex: null, antigravity: null });
+    assert.equal(res.body.interval, uw.DEFAULT_USAGE_PROBE_INTERVAL);
+  });
+
+  it('GET /api/usage/probe?provider= refuses an unknown provider', async () => {
+    const res = await httpRequest('GET', '/api/usage/probe?provider=bogus');
+    assert.equal(res.status, 400);
+    assert.equal(res.body.code, 'INVALID_PROVIDER');
+  });
+
+  it('GET /api/usage/probe?provider=claude returns a provider-keyed shape, never a bare object', async () => {
+    const res = await httpRequest('GET', '/api/usage/probe?provider=claude');
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.usage, { claude: null });
+  });
+
+  it('POST /api/usage/refresh refuses an unknown provider', async () => {
+    const res = await httpRequest('POST', '/api/usage/refresh', { provider: 'bogus' }, launchHeaders);
+    assert.equal(res.status, 400);
+    assert.equal(res.body.code, 'INVALID_PROVIDER');
+  });
+
+  it('POST /api/usage/refresh for one provider returns a provider-keyed shape plus the interval, with a real (not stubbed) probe behind it', async () => {
+    const res = await httpRequest('POST', '/api/usage/refresh', { provider: 'claude' }, launchHeaders);
+    assert.equal(res.status, 200);
+    assert.deepEqual(Object.keys(res.body.usage), ['claude']);
+    // Shape-only, not an exact value: whether the real `claude` binary is
+    // installed/authenticated varies by machine, and this route has no
+    // deps-injection seam (routes call usageWindows with zero args) — the
+    // route's own job is the plumbing, already proven not to crash either way.
+    assert.ok(uw.USAGE_PROBE_STATUSES.includes(res.body.usage.claude.status));
+    assert.equal(res.body.interval, uw.DEFAULT_USAGE_PROBE_INTERVAL);
+  });
+
+  it('POST /api/usage/probe/interval persists a valid interval, readable back from GET /api/usage/probe', async () => {
+    const res = await httpRequest('POST', '/api/usage/probe/interval', { interval: '15m' }, launchHeaders);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.interval, '15m');
+    const probeRes = await httpRequest('GET', '/api/usage/probe');
+    assert.equal(probeRes.body.interval, '15m');
+  });
+
+  it('POST /api/usage/probe/interval refuses an interval outside the enum', async () => {
+    const res = await httpRequest('POST', '/api/usage/probe/interval', { interval: '5m' }, launchHeaders);
+    assert.equal(res.status, 400);
+    assert.equal(res.body.code, 'INTERVAL_INVALID');
+  });
+});
+
+describe('tc usage refresh/probe/interval — CLI subverbs & renderUsageProbe (PRR-B R1 BLOCKING 3)', () => {
+  const tcVerbs = require('../lib/tc-verbs');
+
+  function fakeCtx(overrides = {}) {
+    return {
+      argv: [],
+      getJson: async () => { throw new Error('getJson not stubbed for this test'); },
+      postJson: async () => { throw new Error('postJson not stubbed for this test'); },
+      ...overrides
+    };
+  }
+
+  describe('renderUsageProbe', () => {
+    it('renders a configured provider with its weekly/5h percentages and observedAt', () => {
+      const out = tcVerbs.renderUsageProbe({
+        claude: { provider: 'claude', status: 'configured', weeklyRemainingPct: 30, fiveHourRemainingPct: null, subTiers: {}, observedAt: '2026-11-17T00:00:00.000Z', source: 'cli-print', error: null }
+      });
+      assert.match(out, /claude: weekly 30% left/);
+      assert.match(out, /2026-11-17T00:00:00\.000Z/);
+    });
+
+    it('renders a sub-tier on its own indented line, never dropping it', () => {
+      const out = tcVerbs.renderUsageProbe({
+        claude: {
+          provider: 'claude', status: 'configured', weeklyRemainingPct: 30, fiveHourRemainingPct: null,
+          subTiers: { fable: { weeklyRemainingPct: 98, fiveHourRemainingPct: null } },
+          observedAt: '2026-11-17T00:00:00.000Z', source: 'cli-print', error: null
+        }
+      });
+      assert.match(out, /^\s+fable: weekly 98% left/m);
+    });
+
+    it('renders a not-present/not-configured status with its error, never a fabricated percentage', () => {
+      const out = tcVerbs.renderUsageProbe({
+        claude: { provider: 'claude', status: 'not-present', weeklyRemainingPct: null, fiveHourRemainingPct: null, subTiers: {}, observedAt: '2026-11-17T00:00:00.000Z', source: 'none', error: 'spawn claude ENOENT' }
+      });
+      assert.match(out, /claude: not-present — spawn claude ENOENT/);
+    });
+
+    it('renders "no probe on file yet" for a provider that was never probed', () => {
+      assert.match(tcVerbs.renderUsageProbe({ claude: null }), /claude: no probe on file yet/);
+    });
+
+    it('renders an empty map as just the trailing newline every other render ends with, never throwing', () => {
+      assert.equal(tcVerbs.renderUsageProbe({}), '\n');
+    });
+  });
+
+  describe('runUsage — refresh/probe/interval', () => {
+    it('"tc usage refresh" (no args) POSTs an empty body and renders the result', async () => {
+      let posted = null;
+      const ctx = fakeCtx({
+        argv: ['refresh'],
+        postJson: async (p, body) => {
+          posted = { p, body };
+          return { usage: { claude: { provider: 'claude', status: 'configured', weeklyRemainingPct: 10, fiveHourRemainingPct: null, subTiers: {}, observedAt: 't', source: 'cli-print', error: null } }, interval: '30m' };
+        }
+      });
+      const result = await tcVerbs.runUsage(ctx);
+      assert.equal(result.code, 0);
+      assert.equal(posted.p, '/api/usage/refresh');
+      assert.deepEqual(posted.body, {});
+      assert.match(result.stdout, /weekly 10% left/);
+    });
+
+    it('"tc usage refresh --provider claude" POSTs {provider: "claude"}', async () => {
+      let posted = null;
+      const ctx = fakeCtx({
+        argv: ['refresh', '--provider', 'claude'],
+        postJson: async (p, body) => { posted = body; return { usage: {}, interval: '30m' }; }
+      });
+      await tcVerbs.runUsage(ctx);
+      assert.deepEqual(posted, { provider: 'claude' });
+    });
+
+    it('"tc usage probe" (no args) GETs /api/usage/probe', async () => {
+      let got = null;
+      const ctx = fakeCtx({ argv: ['probe'], getJson: async (p) => { got = p; return { usage: {}, interval: '30m' }; } });
+      const result = await tcVerbs.runUsage(ctx);
+      assert.equal(result.code, 0);
+      assert.equal(got, '/api/usage/probe');
+    });
+
+    it('"tc usage probe --provider codex" GETs with ?provider=codex', async () => {
+      let got = null;
+      const ctx = fakeCtx({ argv: ['probe', '--provider', 'codex'], getJson: async (p) => { got = p; return { usage: {}, interval: '30m' }; } });
+      await tcVerbs.runUsage(ctx);
+      assert.equal(got, '/api/usage/probe?provider=codex');
+    });
+
+    it('"tc usage interval <value>" POSTs {interval} and confirms the server\'s own answer, not the typed value', async () => {
+      let posted = null;
+      const ctx = fakeCtx({ argv: ['interval', '15m'], postJson: async (p, body) => { posted = { p, body }; return { interval: '15m' }; } });
+      const result = await tcVerbs.runUsage(ctx);
+      assert.equal(result.code, 0);
+      assert.equal(posted.p, '/api/usage/probe/interval');
+      assert.deepEqual(posted.body, { interval: '15m' });
+      assert.match(result.stdout, /set to 15m/);
+    });
+
+    it('"tc usage interval" with no value refuses locally, never calling postJson at all', async () => {
+      let called = false;
+      const result = await tcVerbs.runUsage(fakeCtx({ argv: ['interval'], postJson: async () => { called = true; } }));
+      assert.equal(result.code, 1);
+      assert.equal(called, false);
+    });
+
+    // The bug this test caught (PRR-B R1 BLOCKING 3's own test-writing):
+    // refresh/probe had no try/catch at all before this fix — a server
+    // refusal propagated as an uncaught exception out of runUsage instead
+    // of the clean code-2 stderr line calibrate/interval already give.
+    it('a server refusal on "tc usage refresh" renders as a code-2 stderr line, never an uncaught exception', async () => {
+      const ctx = fakeCtx({
+        argv: ['refresh', '--provider', 'bogus'],
+        postJson: async () => { throw Object.assign(new Error('bad'), { body: { code: 'INVALID_PROVIDER', error: 'provider must be one of claude, codex, antigravity.' } }); }
+      });
+      const result = await tcVerbs.runUsage(ctx);
+      assert.equal(result.code, 2);
+      assert.match(result.stderr, /INVALID_PROVIDER/);
+    });
+
+    it('a server refusal on "tc usage probe" renders as a code-2 stderr line, never an uncaught exception', async () => {
+      const ctx = fakeCtx({
+        argv: ['probe', '--provider', 'bogus'],
+        getJson: async () => { throw Object.assign(new Error('bad'), { body: { code: 'INVALID_PROVIDER', error: 'provider must be one of claude, codex, antigravity.' } }); }
+      });
+      const result = await tcVerbs.runUsage(ctx);
+      assert.equal(result.code, 2);
+      assert.match(result.stderr, /INVALID_PROVIDER/);
+    });
+
+    it('a server refusal on "tc usage interval" renders as a code-2 stderr line', async () => {
+      const ctx = fakeCtx({
+        argv: ['interval', '5m'],
+        postJson: async () => { throw Object.assign(new Error('bad'), { body: { code: 'INTERVAL_INVALID', error: 'interval must be one of 15m, 30m, 1h, manual' } }); }
+      });
+      const result = await tcVerbs.runUsage(ctx);
+      assert.equal(result.code, 2);
+      assert.match(result.stderr, /INTERVAL_INVALID/);
+    });
+
+    it('rejects an unknown subverb', async () => {
+      const result = await tcVerbs.runUsage(fakeCtx({ argv: ['bogus'] }));
+      assert.equal(result.code, 1);
+      assert.match(result.stderr, /needs a subverb/);
     });
   });
 });
