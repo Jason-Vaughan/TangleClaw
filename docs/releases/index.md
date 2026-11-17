@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.5.0 — Rich link unfurling and inline media previews, a Portable Fleet Template JSON Spec, and an Update button that backs up local changes](v6.5.0.md)
+- [v6.5.1 — Waiting-On drill-downs, an automated CLI usage probe, the official brand palette, Under the Hood polish, and the Admin Fleet](v6.5.1.md)
 
 ## Recent releases
+
+- [v6.5.0 — Rich link unfurling and inline media previews, a Portable Fleet Template JSON Spec, and an Update button that backs up local changes](v6.5.0.md)
 
 - [v6.4.1 — A unified Waiting-On panel, composer polish, the native Release-First Roadmap, an onboarding wizard, mobile/foldable polish, and persistent macOS Full Disk Access](v6.4.1.md)
 

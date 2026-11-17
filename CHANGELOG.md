@@ -4,6 +4,79 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.5.1] - 2026-11-16
+
+### Added
+- Unified the v6 chat's "Waiting on:" panel into one outer header with collapsible,
+  per-actor drill-downs — `YOU (x)` (CLI gates, multi-choice, direct questions and the
+  operator's ToDo, combined), `AI (x)`, and a `<Fleet Member> (x)` section per outstanding
+  outbound Medusa request, auto-clearing once a reply lands. Multi-item lists now number
+  as `1- `, `2- `. The assistant's live question detection no longer reads an earlier,
+  superseded paragraph of the same reply, nor a line that merely echoes or quotes the
+  operator's own words back (#3131).
+- Automated CLI `/usage`/`/status` probe (backend, #3132): `tc usage refresh`/`tc usage probe`
+  (and `POST /api/usage/refresh`, `GET /api/usage/probe`) run `claude -p "/usage"` and
+  `agy -p "/usage"` directly (no model tokens spent) and read a disposable Codex utility
+  session's own status row, persisting weekly/5-hour/sub-tier (Fable, other model families)
+  remaining percentages and reset times across wraps. Configurable refresh cadence via
+  `tc usage interval <15m|30m|1h|manual>`. Honest `configured`/`not-present`/`not-configured`
+  status per provider — never guesses a reading it could not get. UI drill-down ships separately.
+- The v6 Fleet sidebar gained a drag-resizable width (`#3133`), persisted in `localStorage`
+  across reloads and clamped to a sane 180–480px range; the composer (`#v6ChatInput`) and
+  chat stream's own heights (`#3106`'s two-way resize coupling) are now persisted the same
+  way, instead of resetting to default on every reload. Stale composer drafts over 2KB —
+  an old session's abandoned paste — are dropped automatically rather than resurfacing.
+- Wired `GET /api/sprint-waves` to a loaded roadmap (the real
+  `roadmap2-data.json` when readable, falling back to `docs/releases/*.md`
+  and `LANE_QUEUE.md`), giving the `🧭 Charter & Roadmap` panel real release
+  grouping and clickable PR links, added a `🌐 Public SSOT Roadmap` link to
+  that panel, and added a `GET /api/sprint-waves/github-activity` endpoint
+  plus a ready-to-mount GitHub panel renderer with live open PRs, issues,
+  milestones and the latest release (#3134).
+- The v6 chat stream now stays pinned to its newest line through a reload, a chat switch
+  and the header docking that used to strand it — a floating `↓ Newest` pill appears the
+  moment the operator scrolls away, and jumps straight back. Under the Hood reads deep
+  scrollback (2000 lines, not 80) on every poll, gained a `⤢ Full Screen` dark-overlay
+  toggle (`Esc` or the same button to exit), and a double-click (or `⌨ Interactive`
+  button) Interactive CLI Mode that types directly into the live pane — named navigation
+  and control keys (arrows, Tab, Escape, Ctrl+C, Backspace, Enter) send straight through,
+  and typed text sends, with Enter, as one piece (#3135).
+- Added inline `✎` rename (or double-click the label) directly in the v6 sidebar for
+  Fleets, Fleet Members, and Solo Work projects — a Fleet Member or Solo Work row renames
+  through the same project-rename route the chat header's own `✎` already uses, including
+  its orphan-risk confirmation; renaming a Fleet gives every one of its current members
+  the same new shared name prefix, one rename at a time, stopping and naming the first
+  member it cannot rename rather than guessing (#3136).
+- Evolved the Project Master into the **Admin Fleet**, led by **Admin-PM** (full backward compatibility with the existing `master`/`Orchestrator` API, Medusa routes and tmux session), with its utility seats (`Admin-Claude`, `Admin-Codex`, `Admin-AGY`, `Admin-Advisor`) represented in the panel. Added a governed **Wrap & Relaunch** action (captures a continuity handoff capsule before restarting) with a low-context warning banner, and photo/screenshot **attachments** for Admin-PM (#3137).
+- Added a runtime version-plan parallelism validator
+  (`validateVersionPlanParallelism`) that refuses a version plan dumping a
+  parallelizable issue set into one un-parallelized train, or that lets two
+  parallel trains in the same wave share a file, wired into
+  `verifySprintSetupAndRoadmapSync` via its new optional `versionPlans` input
+  (#3138).
+- Chat link-preview backend fixes (#3139): a remote `.mp4`/`.webm`/`.mov` URL now classifies
+  as a video-preview card instead of being sent to the HTML scraper (root cause 2); a page
+  with no `og:*` tags now falls back to its `<title>`/`<meta name="description">`/`<h1>`/`<p>`
+  text (root cause 3). Added `isAllowlistedUnfurlHost` for `*.ts.net`, `*.github.io`, and
+  `tangleclaw.com` (root cause 1) — not yet wired into the server's resolved-address SSRF
+  recheck, so Tailscale links do not yet preview end to end; follow-up tracked separately.
+
+### Changed
+- v6 shell: official TangleClaw Dark Brand Palette CSS tokens (Venom Green, Viper Emerald,
+  Obsidian Void, Panel Surface, Border Emerald-Slate, Fang Ivory, Muted Sage, Predator Gold),
+  a `100dvh` viewport lock so the header and footer stay pinned without whole-page scrolling,
+  slim 6px dark scrollbars across chat/sidebar/Under the Hood, ~10% tighter Send/Force Send
+  button padding (44px touch-target floor unchanged), and new styling for the Sprint & Cars
+  6-column board and the collapsible Waiting-On sections (#3133).
+
+### Fixed
+- Fixed a blank/frozen `TiLT v2` terminal caused by an untargeted TCC-authorized-server probe opening a stray `[0/0]` copy-mode overlay on the operator's own pane, by keeping a persistent `tc-tcc-anchor` session alive on that server and auto-cancelling any stray overlay before every paste; stopped default-socket tmux calls from silently redirecting to another socket when run from inside one (`TMUX` env stripped); and stopped a single slow/unresponsive project directory from starving the `GET /api/projects` dashboard scan and dropping every directory listed after it (#3130).
+- Fixed the `📋 Sprint & Cars` panel's mashed-together text (e.g.
+  `V650-W1-ATC-Lane-DCompleted`) by separating adjacent fields with a literal
+  separator, dropped one of its three duplicate car listings, and corrected
+  gate pills to show pass across all six gates on a car the tracker can
+  confirm was merged rather than just "all issues closed" (#3138).
+
 ## [6.5.0] - 2026-11-16
 
 ### Added
