@@ -619,11 +619,17 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
     });
 
     /** A fake `http.request`/`https.request` answering with a fixed status + body, never touching the network. */
-    function stubRequest(client, { statusCode = 200, body = '' } = {}) {
+    function stubRequest(client, { statusCode = 200, body = '', headers = {} } = {}) {
       client.request = (_opts, cb) => {
         const chunks = body ? [Buffer.from(body)] : [];
         const fres = {
           statusCode,
+          // A real `http.IncomingMessage` always carries `.headers` (even
+          // when empty) — `lib/v6/b2-conversation-layer.js#_fetchOneUnfurlHop`
+          // (wired into `GET /api/v6/unfurl` for #3139 Wave 2) reads
+          // `fres.headers['content-type']` unconditionally on every 2xx
+          // response, which this stub omitted before that wiring existed.
+          headers,
           resume() {},
           on(event, fn) {
             if (event === 'data') chunks.forEach((c) => fn(c));

@@ -11883,24 +11883,7 @@ route('POST', '/api/v6/sandboxing/plan', (req, res, _params, body) => {
 const _v6UnfurlCache = new Map();
 const V6_UNFURL_CACHE_TTL_MS = 10 * 60 * 1000;
 const V6_UNFURL_CACHE_MAX = 500;
-/** Caps how much of a fetched page's bytes `_v6SafeUnfurlFetch` reads — `og:` tags live in `<head>`, always well inside this. */
-const V6_UNFURL_MAX_BYTES = 512 * 1024;
 
-/**
- * Fetch `url`'s HTML for link unfurling, pinned to the IP this function
- * itself resolved and validated — never a second, independent DNS lookup at
- * connect time. `lib/v6/b2-conversation-layer.js#evaluateUnfurlTargetSafety`
- * (already checked by the caller before this runs) only validates the
- * URL's LITERAL host; it explicitly documents that the real fetch must also
- * validate the RESOLVED address, or a DNS-rebinding target — a public name
- * that first answers safe, then re-resolves to `127.0.0.1` at connect time —
- * would pass that check and still reach an internal address here. This
- * reuses `evaluateUnfurlTargetSafety` itself (never duplicating its private
- * IPv4/IPv6 range logic) by re-running it against a URL built around each
- * resolved candidate address.
- * @param {string} url - Already confirmed safe by {@link module:lib/v6/b2-conversation-layer.evaluateUnfurlTargetSafety}.
- * @returns {Promise<{ok: true, html: string}|{ok: false, reason: string}>}
- */
 /**
  * A `http.request`/`https.request` custom `lookup` option that always
  * answers with one already-validated, pinned address — factored out so
@@ -11912,6 +11895,11 @@ const V6_UNFURL_MAX_BYTES = 512 * 1024;
  * `ERR_INVALID_IP_ADDRESS` on literally every request otherwise, confirmed
  * by calling the old form directly against a real `https.request` before
  * writing this fix, not assumed from the Node docs alone.
+ *
+ * No longer used by the route below (#3139 Wave 2: it now delegates the
+ * real fetch to `lib/v6/b2-conversation-layer.js#safeUnfurlFetch`, which
+ * owns its own pinned lookup) — kept, and still exported, because
+ * `test/v6-t2-server-routes-integration.test.js` unit-tests it directly.
  * @param {{address: string, family: number}} pinned
  * @returns {(hostname: string, opts: object, cb: Function) => void}
  */
@@ -11919,53 +11907,6 @@ function _v6PinnedLookup(pinned) {
   return (_hostname, opts, cb) => (opts && opts.all
     ? cb(null, [{ address: pinned.address, family: pinned.family }])
     : cb(null, pinned.address, pinned.family));
-}
-
-async function _v6SafeUnfurlFetch(url) {
-  const parsed = new URL(url);
-  let addresses;
-  try {
-    addresses = await dns.promises.lookup(parsed.hostname, { all: true, verbatim: true });
-  } catch {
-    return { ok: false, reason: 'DNS_LOOKUP_FAILED' };
-  }
-  if (!addresses.length) return { ok: false, reason: 'DNS_LOOKUP_FAILED' };
-  for (const { address, family } of addresses) {
-    const hostForUrl = family === 6 ? `[${address}]` : address;
-    const probe = b2.evaluateUnfurlTargetSafety(`${parsed.protocol}//${hostForUrl}${parsed.port ? `:${parsed.port}` : ''}/`);
-    if (!probe.safe) return { ok: false, reason: `RESOLVED_${probe.reason}` };
-  }
-  const pinned = addresses[0];
-  const client = parsed.protocol === 'https:' ? https : http;
-  return new Promise((resolve) => {
-    const req = client.request({
-      hostname: parsed.hostname, // kept for correct TLS SNI/cert-hostname checks
-      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-      path: `${parsed.pathname}${parsed.search}`,
-      headers: { Host: parsed.host, 'User-Agent': 'TangleClaw-LinkUnfurl/1.0', Accept: 'text/html' },
-      // Always answers with the single address already validated above —
-      // never re-resolves, which is the whole point of pinning.
-      lookup: _v6PinnedLookup(pinned),
-      timeout: 8000
-    }, (fres) => {
-      if (fres.statusCode == null || fres.statusCode < 200 || fres.statusCode >= 400) {
-        fres.resume();
-        return resolve({ ok: false, reason: `HTTP_${fres.statusCode}` });
-      }
-      let total = 0;
-      const chunks = [];
-      fres.on('data', (chunk) => {
-        total += chunk.length;
-        if (total > V6_UNFURL_MAX_BYTES) { req.destroy(); return; }
-        chunks.push(chunk);
-      });
-      fres.on('end', () => resolve({ ok: true, html: Buffer.concat(chunks).toString('utf8') }));
-      fres.on('error', () => resolve({ ok: false, reason: 'RESPONSE_ERROR' }));
-    });
-    req.on('timeout', () => req.destroy());
-    req.on('error', () => resolve({ ok: false, reason: 'FETCH_ERROR' }));
-    req.end();
-  });
 }
 
 route('GET', '/api/v6/unfurl', async (req, res) => {
@@ -11987,11 +11928,21 @@ route('GET', '/api/v6/unfurl', async (req, res) => {
   const cached = _v6UnfurlCache.get(url);
   if (cached && cached.expiresAt > Date.now()) return jsonResponse(res, 200, { ok: true, preview: cached.preview, cached: true });
 
-  const fetched = await _v6SafeUnfurlFetch(url);
+  // #3139: delegate to `b2.safeUnfurlFetch` — this route used to reimplement
+  // its own single-hop, no-video-awareness fetch (`_v6PinnedLookup`'s old
+  // neighbor, now removed); the shared helper follows redirects, caps bytes
+  // at the same 512KB, and classifies a video Content-Type response as
+  // `{kind: 'video'}` instead of buffering it as HTML and failing to parse it.
+  const fetched = await b2.safeUnfurlFetch(url);
   if (!fetched.ok) return errorResponse(res, 502, `Could not unfurl this link: ${fetched.reason}`, 'UNFURL_FETCH_FAILED');
 
-  const og = b2.parseOpenGraphHtml(fetched.html);
-  const preview = og ? { kind: 'link-unfurl', url, ...og } : { kind: 'link-unfurl', url };
+  let preview;
+  if (fetched.kind === 'video') {
+    preview = { kind: 'video', url, mimeType: fetched.mimeType, finalUrl: fetched.finalUrl };
+  } else {
+    const og = b2.parseOpenGraphHtml(fetched.html);
+    preview = og ? { kind: 'link-unfurl', url, ...og } : { kind: 'link-unfurl', url };
+  }
   if (_v6UnfurlCache.size >= V6_UNFURL_CACHE_MAX) _v6UnfurlCache.delete(_v6UnfurlCache.keys().next().value);
   _v6UnfurlCache.set(url, { expiresAt: Date.now() + V6_UNFURL_CACHE_TTL_MS, preview });
   jsonResponse(res, 200, { ok: true, preview });

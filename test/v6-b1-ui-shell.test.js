@@ -6586,6 +6586,21 @@ describe('rich link unfurling & local reference cards (#3107, Rulings A809/A811)
     assert.doesNotMatch(f(url, { [url]: { state: 'done', preview: { title: 'T', image: 'https://blog.example/x.png' } } }), /<img/);
   });
 
+  it('a GET /api/v6/unfurl fetch that resolved to an actual video response renders an inline <video>, not the OG card (#3139)', () => {
+    const url = 'https://cdn.example/clip.mp4';
+    const done = (preview) => f(url, { [url]: { state: 'done', preview } });
+    const video = done({ kind: 'video', url, mimeType: 'video/mp4', finalUrl: url });
+    assert.equal(video, `<span class="v6-chat-unfurl v6-chat-unfurl-video" data-unfurl-url="${url}">`
+      + `<video class="v6-chat-video-preview" controls preload="metadata" src="${url}">`
+      + `<a class="v6-chat-link" href="${url}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">${url}</a></video></span>`);
+    assert.doesNotMatch(video, /v6-chat-unfurl-title/, 'never the generic link-unfurl card for a video result');
+    // A redirect-followed fetch: the <video> plays the URL it actually landed on, not the one that was clicked.
+    const redirected = done({ kind: 'video', url, mimeType: 'video/webm', finalUrl: 'https://cdn.example/clip-final.webm' });
+    assert.match(redirected, /<video class="v6-chat-video-preview" controls preload="metadata" src="https:\/\/cdn\.example\/clip-final\.webm">/);
+    // kind: 'link-unfurl' (an ordinary OG-tag page) still renders the card, never a <video>.
+    assert.doesNotMatch(done({ kind: 'link-unfurl', url, title: 'Not a video' }), /<video/);
+  });
+
   // wireRichPreviews' own click wiring (Preview -> setUnfurl('loading') +
   // options.onUnfurlLink; copy-path -> clipboard.writeText) is NOT covered
   // here by a mounted-DOM click test: both buttons are deliberately class-
@@ -8070,6 +8085,232 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
     assert.match(CSS, /\.v6-usage-pill\.is-red \.v6-usage-fill \{\s*background: #f85149;/);
     assert.match(CSS, /\.v6-usage-pill\.is-critical \{\s*animation: v6-usage-pulse/);
     assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{\s*\.v6-usage-pill\.is-critical \{\s*animation: none;/);
+  });
+});
+
+// ── Car V651-W2-B (#3133, #3132, #3139): persisted layout, the automated
+// usage probe's own UI, and inline video previews ──
+
+describe('Car V651-W2-B: drag-resizable sidebar width, composer/stream height persistence, and chatDrafts pruning (#3133)', () => {
+  const G = loadV6Shell();
+
+  it('clampSidebarWidth clamps to [180, 480], defaulting an unreadable value', () => {
+    assert.equal(G.tcV6ClampSidebarWidth(260), 260);
+    assert.equal(G.tcV6ClampSidebarWidth(100), 180, 'below the floor');
+    assert.equal(G.tcV6ClampSidebarWidth(900), 480, 'above the ceiling');
+    assert.equal(G.tcV6ClampSidebarWidth(NaN), 260);
+    assert.equal(G.tcV6ClampSidebarWidth('not a number'), 260);
+    assert.equal(G.tcV6ClampSidebarWidth(undefined), 260);
+  });
+
+  it('pruneStaleChatDrafts drops any entry over 2KB, keeps the rest, and is pure', () => {
+    const small = 'a short draft';
+    const big = 'x'.repeat(2049);
+    const exactly2k = 'x'.repeat(2048);
+    const drafts = { 1: small, 2: big, 3: exactly2k, 4: 42 };
+    assert.deepEqual(plain(G.tcV6PruneStaleChatDrafts(drafts)), { 1: small, 3: exactly2k });
+    assert.deepEqual(drafts, { 1: small, 2: big, 3: exactly2k, 4: 42 }, 'the input is never mutated');
+    assert.deepEqual(plain(G.tcV6PruneStaleChatDrafts({})), {});
+    assert.deepEqual(plain(G.tcV6PruneStaleChatDrafts(null)), {}, 'a missing map prunes to empty, never throws');
+    assert.deepEqual(plain(G.tcV6PruneStaleChatDrafts({ 1: big }, 4096)), { 1: big }, 'a caller-given threshold is honored');
+  });
+
+  it('a drag-resizable handle renders beside the fleet tree, reflecting the persisted width, and disappears while collapsed', () => {
+    const storage = makeStorage({ tc_v6_sidebar_width: '340' });
+    const { root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    assert.match(root.innerHTML, /id="v6SidebarResizeHandle" class="v6-sidebar-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize Fleet sidebar" aria-valuenow="340" aria-valuemin="180" aria-valuemax="480"/);
+    shell.toggleSidebar(true);
+    assert.doesNotMatch(root.innerHTML, /v6SidebarResizeHandle/, 'no drag handle for a column that is not shown');
+  });
+
+  it('an unreadable stored width falls back to the 260px CSS default, not NaN or a crash', () => {
+    const storage = makeStorage({ tc_v6_sidebar_width: '"not a number"' });
+    const { root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    assert.match(root.innerHTML, /aria-valuenow="260"/);
+  });
+
+  it('a composer draft is persisted as it is typed, pruned if oversized, seeded back on the next mount, and cleared on send', async () => {
+    const storage = makeStorage();
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 42, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [] } } });
+    const input = doc.getElementById('v6ChatInput');
+    input.value = 'an in-progress message';
+    input.dispatch('input');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_chat_drafts), { 42: 'an in-progress message' });
+    // A second mount against the SAME storage restores the draft.
+    const again = mountShell({ tree: TWO_GROUP_TREE, storage });
+    again.shell.setDetail({ kind: 'conversation', view: { project: { id: 42, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [] } } });
+    assert.match(again.root.innerHTML, /an in-progress message/);
+    // beginSend (a send going out) clears and re-persists it.
+    shell.beginSend(42, 'an in-progress message', 'send-1');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_chat_drafts), {});
+  });
+
+  it('an oversized leftover draft already on disk is dropped on the next mount, not resurrected', () => {
+    const big = 'x'.repeat(5000);
+    const storage = makeStorage({ tc_v6_chat_drafts: JSON.stringify({ 42: big, 7: 'kept' }) });
+    const { root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 42, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [] } } });
+    assert.doesNotMatch(root.innerHTML, /xxxx/, 'the oversized draft never resurfaces in the composer');
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 7, name: 'Q' }, sessionId: 3, events: [],
+      chat: { status: 'active', members: [] } } });
+    assert.match(root.innerHTML, /kept/, 'a small draft is unaffected');
+  });
+});
+
+describe('Car V651-W2-B: footer telemetry dividers (#3132)', () => {
+  const G = loadV6Shell();
+  it('a "|" divider separates each footer telemetry chip, hidden from assistive tech', () => {
+    const bar = { metrics: { activeSessions: { value: 3, confidence: 'high' }, health: { value: 'ok', confidence: 'high' }, versionDrift: { value: 'v6.5.1', confidence: 'high' } } };
+    const html = G.tcV6WatermarkFooterMarkup(true, bar, '');
+    const dividers = html.match(/<span class="v6-telemetry-divider" aria-hidden="true">\|<\/span>/g) || [];
+    assert.equal(dividers.length, 2, 'two dividers between three chips');
+    assert.ok(html.indexOf('v6-telemetry-chip') < html.indexOf('v6-telemetry-divider'), 'a divider sits between chips, not before the first');
+  });
+});
+
+describe('Car V651-W2-B: the automated CLI usage probe\'s own UI (#3132)', () => {
+  const G = loadV6Shell();
+
+  it('a configured provider gets a rich progress bar for week and 5h, plus its real external account-usage link', () => {
+    const html = G.tcV6UsageProbeMarkup({
+      claude: { status: 'configured', weeklyRemainingPct: 62, fiveHourRemainingPct: 80 },
+      codex: null,
+      antigravity: null
+    }, '30m');
+    assert.match(html, /<li class="v6-usage-probe-row" data-engine="claude">/);
+    assert.match(html, /<span class="v6-usage-probe-bar-value">62% left<\/span>/);
+    assert.match(html, /<span class="v6-usage-probe-bar-value">80% left<\/span>/);
+    assert.match(html, /<a class="v6-usage-account-link" href="https:\/\/claude\.ai\/settings\/usage" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">↗ Account Usage<\/a>/);
+  });
+
+  it('honestly badges a CLI that is not present or not configured, never a silent blank', () => {
+    const html = G.tcV6UsageProbeMarkup({
+      claude: { status: 'not-present', error: 'claude: command not found' },
+      codex: { status: 'not-configured', error: 'no recognizable quota item' },
+      antigravity: null
+    }, 'manual');
+    assert.match(html, /data-engine="claude"><span class="v6-usage-probe-name">Claude<\/span><span class="v6-usage-probe-badge is-not-present">Not present<\/span>/);
+    assert.match(html, /data-engine="codex"><span class="v6-usage-probe-name">Codex<\/span><span class="v6-usage-probe-badge is-not-configured">Not configured<\/span>/);
+    assert.match(html, /data-engine="antigravity"><span class="v6-usage-probe-name">Antigravity<\/span><span class="v6-usage-probe-badge is-unknown">Not probed yet<\/span>/);
+    assert.match(html, /href="https:\/\/chatgpt\.com\/codex\/settings\/usage"/);
+    assert.match(html, /href="https:\/\/antigravity\.google\/"/);
+  });
+
+  it('the refresh-cadence selector offers 15m/30m/1h/Manual, with the current one selected', () => {
+    const html = G.tcV6UsageProbeMarkup({}, '1h');
+    assert.match(html, /<select id="v6UsageProbeInterval" class="filter-input"><option value="15m">15m<\/option><option value="30m">30m<\/option><option value="1h" selected>1h<\/option><option value="manual">Manual<\/option><\/select>/);
+    assert.match(html, /<button type="button" id="v6UsageProbeRefresh" class="btn btn-secondary btn-small">↻ Refresh now<\/button>/);
+    assert.match(G.tcV6UsageProbeMarkup({}), /value="30m" selected/, 'defaults to 30m with no interval given');
+  });
+
+  it('the probe section is appended inside the existing usage popover, below the manual calibration table', () => {
+    const windows = { resetSchedule: { nextWeeklyResetAt: 'x', hoursUntilWeeklyReset: 1 }, byProviderModel: {}, calibration: {} };
+    const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows), {
+      open: true, probe: { claude: { status: 'configured', weeklyRemainingPct: 50, fiveHourRemainingPct: 50 } }, probeInterval: '15m'
+    });
+    assert.match(html, /<\/table>\s*<div class="v6-usage-probe"/, 'the probe block follows the manual table');
+    assert.match(html, /v6-usage-probe-row" data-engine="claude"/);
+    assert.match(html, /<option value="15m" selected>15m<\/option>/);
+  });
+
+  it('the controller loads the probe on a route, "↻ Refresh now" runs POST /api/usage/refresh, and the interval selector posts the new cadence', async () => {
+    const calls = [];
+    const mutations = [];
+    let probeSnapshot = { usage: { claude: { status: 'not-configured', error: 'not logged in' }, codex: null, antigravity: null }, interval: '30m' };
+    let shell = null;
+    const pending = [];
+    const timers = [];
+    const live = G.tcV6CreateLiveController({
+      getShell: () => shell,
+      api: async (url, init) => {
+        calls.push(url);
+        if (url === '/api/usage/probe') return probeSnapshot;
+        if (url === '/api/usage/refresh') {
+          mutations.push({ url, method: init.method });
+          probeSnapshot = { usage: { claude: { status: 'configured', weeklyRemainingPct: 77, fiveHourRemainingPct: 90 }, codex: null, antigravity: null }, interval: probeSnapshot.interval };
+          return probeSnapshot;
+        }
+        if (url === '/api/usage/probe/interval') {
+          mutations.push({ url, method: init.method, body: JSON.parse(init.body) });
+          probeSnapshot = Object.assign({}, probeSnapshot, { interval: JSON.parse(init.body).interval });
+          return { interval: JSON.parse(init.body).interval };
+        }
+        if (url === '/api/projects') return { projects: [{ id: 12, name: 'P', engine: { id: 'claude' } }] };
+        if (/\/status$/.test(url)) return { active: true, sessionId: 1 };
+        if (url === '/api/usage/windows') return { resetSchedule: { nextWeeklyResetAt: 'x', hoursUntilWeeklyReset: 1 }, byProviderModel: {}, calibration: {} };
+        if (url === '/api/usage/sessions') return { sessions: [] };
+        if (/conversation\/events/.test(url)) return { events: [] };
+        return null;
+      },
+      apiMutate: async () => { throw new Error('the probe routes never go through apiMutate'); },
+      storage: null, setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {}
+    });
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/resources/12/conversation'), storage: null, onRender: (r) => pending.push(live.handleRoute(r)) });
+    pending.push(live.handleRoute(shell.getRoute()));
+    for (let i = 0; i < 3; i++) { while (pending.length) await pending.shift(); await new Promise((r) => setImmediate(r)); }
+    assert.ok(calls.includes('/api/usage/probe'), 'the probe snapshot loads on the route, same as the meter');
+    doc.getElementById('v6EngineUsageMeter').dispatch('click');
+    assert.match(doc.getElementById('v6EngineUsageSlot').innerHTML, /is-not-configured">Not configured/);
+    doc.getElementById('v6UsageProbeRefresh').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+    assert.ok(mutations.some((m) => m.url === '/api/usage/refresh' && m.method === 'POST'));
+    assert.match(doc.getElementById('v6EngineUsageSlot').innerHTML, /77% left/, 'the refreshed snapshot redrew the probe section');
+    doc.getElementById('v6UsageProbeInterval').value = '1h';
+    doc.getElementById('v6UsageProbeInterval').dispatch('change');
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(mutations.filter((m) => m.url === '/api/usage/probe/interval'), [{ url: '/api/usage/probe/interval', method: 'POST', body: { interval: '1h' } }]);
+    // Every 15th chat read (the same cadence #3085's own meter refreshes on) re-reads the probe too.
+    const before = calls.filter((c) => c === '/api/usage/probe').length;
+    const poll = timers[timers.length - 1];
+    for (let i = 0; i < 14; i++) await poll();
+    assert.equal(calls.filter((c) => c === '/api/usage/probe').length, before, 'not before the 15th read');
+    await poll();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(calls.filter((c) => c === '/api/usage/probe').length, before + 1);
+  });
+});
+
+describe('Car V651-W2-B: inline video previews and "Show preview by default" (#3139)', () => {
+  const G = loadV6Shell();
+
+  function mountWithChat(storageSeed) {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    root.id = 'v6ShellRoot';
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const storage = makeStorage(storageSeed);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage });
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'See https://cdn.example/clip.mp4' }] } } } });
+    return { shell, doc, root, storage };
+  }
+
+  it('"Show preview by default" is off unless the operator turned it on, and the icon says so', () => {
+    const offByDefault = mountWithChat();
+    assert.match(offByDefault.root.innerHTML, /id="v6ChatAutoPreview"[^>]*aria-pressed="false"/);
+    const rememberedOn = mountWithChat({ tc_v6_auto_preview_links: 'true' });
+    assert.match(rememberedOn.root.innerHTML, /id="v6ChatAutoPreview"[^>]*aria-pressed="true"/);
+  });
+
+  it('clicking the icon flips the setting and remembers the change across a mount', () => {
+    const { doc, root, storage } = mountWithChat();
+    doc.getElementById('v6ChatAutoPreview').dispatch('click');
+    assert.match(root.innerHTML, /id="v6ChatAutoPreview"[^>]*aria-pressed="true"/);
+    assert.equal(storage.data.tc_v6_auto_preview_links, 'true');
+    const again = mountWithChat(storage.data);
+    assert.match(again.root.innerHTML, /id="v6ChatAutoPreview"[^>]*aria-pressed="true"/, 'restored on the next mount');
+    doc.getElementById('v6ChatAutoPreview').dispatch('click');
+    assert.match(root.innerHTML, /id="v6ChatAutoPreview"[^>]*aria-pressed="false"/);
+    assert.equal(storage.data.tc_v6_auto_preview_links, 'false');
   });
 });
 
