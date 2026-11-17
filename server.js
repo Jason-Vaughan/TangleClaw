@@ -11159,17 +11159,115 @@ route('POST', '/api/v6/placement/recommend', (req, res, _params, body) => {
   }));
 });
 
+/**
+ * `roadmap2-data.json`'s default location on the Operator's own machine —
+ * the shared roadmap-board checkout, outside this repo (ADR 0024), the same
+ * TangleClaw-Shared path convention `data/global-rules.md` already names
+ * for shared docs. Overridable via `TANGLECLAW_ROADMAP2_DATA_PATH` for any
+ * other machine (CI included), which will not have this path (#3134).
+ * @type {string}
+ */
+const ROADMAP2_DATA_DEFAULT_PATH = '/Users/jasonvaughan/Documents/Projects/Shared/TangleClaw-Shared/roadmap-board/roadmap2-data.json';
+
+/** `LANE_QUEUE.md`'s default location, same convention; overridable via `TANGLECLAW_LANE_QUEUE_PATH`. */
+const LANE_QUEUE_DEFAULT_PATH = '/Users/jasonvaughan/Documents/Projects/Shared/TangleClaw-Shared/LANE_QUEUE.md';
+
+/**
+ * The roadmap data `GET /api/sprint-waves` grounds its release grouping and
+ * PR links in (#3134): the real `roadmap2-data.json` when this machine can
+ * read it, else a minimal roadmap this checkout can build from its own
+ * `docs/releases/*.md` and a readable `LANE_QUEUE.md` — never fabricated,
+ * and never cached, so an edit to either source is reflected on the very
+ * next request.
+ * @returns {{data: object, repo: (string|null), source: string}}
+ */
+function _v6LoadRoadmapData() {
+  const roadmapPath = process.env.TANGLECLAW_ROADMAP2_DATA_PATH || ROADMAP2_DATA_DEFAULT_PATH;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(roadmapPath, 'utf8'));
+    if (parsed && Array.isArray(parsed.releases)) {
+      return { data: parsed, repo: typeof parsed.repo === 'string' ? parsed.repo : null, source: 'roadmap2-data.json' };
+    }
+  } catch { /* unreadable, missing, or not this shape -- fall through to the fallback below */ }
+
+  const nativeSprintTracker = require('./lib/native-sprint-tracker');
+  let docsReleaseVersions = [];
+  try {
+    const docsReleasesDir = process.env.TANGLECLAW_DOCS_RELEASES_DIR || path.join(__dirname, 'docs', 'releases');
+    docsReleaseVersions = fs.readdirSync(docsReleasesDir)
+      .map((f) => /^v?(\d+\.\d+(?:\.\d+)?)[.-]/.exec(f)).filter(Boolean).map((m) => m[1]);
+  } catch { /* docs/releases may not exist in every checkout */ }
+  let laneQueueText = null;
+  try {
+    laneQueueText = fs.readFileSync(process.env.TANGLECLAW_LANE_QUEUE_PATH || LANE_QUEUE_DEFAULT_PATH, 'utf8');
+  } catch { /* no shared lane queue visible from this checkout/machine */ }
+
+  return {
+    data: nativeSprintTracker.buildRoadmapDataFromFallbackSources({ docsReleaseVersions, laneQueueText }),
+    repo: null,
+    source: 'fallback'
+  };
+}
+
+/**
+ * Live PRs, open issues, milestones and the latest release for the repo
+ * `_v6LoadRoadmapData` resolved (#3134), reusing the exact fetch/header
+ * pattern `_v6ProbeGithubConnection` already uses. Public, read-only GitHub
+ * data: works unauthenticated (subject to GitHub's lower rate limit for
+ * that), and attaches a vault-backed token when this server has one bound
+ * for the repo. Fails a single call closed rather than the whole response.
+ * @returns {Promise<object>}
+ */
+async function _v6SprintGithubActivity() {
+  const repo = _v6LoadRoadmapData().repo;
+  if (!repo) return { ok: false, error: 'No repo configured in the loaded roadmap data', code: 'NOT_CONFIGURED' };
+  const token = _v6GithubSecretStore.get(`vault:${repo.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`);
+  const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'TangleClaw-v6', 'X-GitHub-Api-Version': '2022-11-28' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const call = async (suffix) => {
+    try {
+      const r = await fetch(`https://api.github.com/repos/${repo}${suffix}`, { headers, signal: AbortSignal.timeout(15000) });
+      if (!r.ok) return { ok: false, status: r.status };
+      return { ok: true, body: await r.json() };
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : String(err) };
+    }
+  };
+  const [pulls, issues, milestones, releases] = await Promise.all([
+    call('/pulls?state=open&per_page=20'),
+    call('/issues?state=open&per_page=20'),
+    call('/milestones?state=open&per_page=10'),
+    call('/releases?per_page=1')
+  ]);
+  const latest = releases.ok && Array.isArray(releases.body) ? releases.body[0] : null;
+  return {
+    ok: true,
+    repo,
+    pullRequests: pulls.ok ? pulls.body.map((p) => ({ number: p.number, title: p.title, url: p.html_url, draft: Boolean(p.draft) })) : [],
+    // GitHub's issues endpoint also returns PRs; this is an issue tracker
+    // feed, so a row carrying `pull_request` is filtered out, not duplicated
+    // with the pulls list above.
+    issues: issues.ok ? issues.body.filter((i) => !i.pull_request).map((i) => ({ number: i.number, title: i.title, url: i.html_url })) : [],
+    milestones: milestones.ok
+      ? milestones.body.map((m) => ({ title: m.title, openIssues: m.open_issues, closedIssues: m.closed_issues, dueOn: m.due_on, url: m.html_url }))
+      : [],
+    latestRelease: latest ? { tagName: latest.tag_name, name: latest.name, url: latest.html_url, publishedAt: latest.published_at } : null,
+    errors: [pulls, issues, milestones, releases].filter((r) => !r.ok).map((r) => r.status || r.error)
+  };
+}
+
 // ── Sprint waves & reports (#2644 router, mounted by #3087, Ruling A774) ──
 //
-// createSprintWaveRouter's four endpoints, each registered through this
+// createSprintWaveRouter's five endpoints, each registered through this
 // route table (not a pre-dispatch hook) so they get the launch-binding floor,
 // body parsing and size limits every route here gets. Live data is the v6
 // wave scheduler's persisted runs, mapped by
 // nativeSprintTracker.sprintDataFromWaveRuns. GETs are open reads, the
 // disjointness check is pure compute over the cars in its body, and sync,
 // which writes the roadmap snapshot, is the operator's or the Master's only.
-// No roadmap source is configured on this server, so sync answers 503
-// NOT_CONFIGURED once a caller is admitted.
+// `fetchRoadmap`/`sync` still has no network source configured (a separate,
+// write-side concern from #3134's read-side `getRoadmapData` below), so
+// sync still answers 503 NOT_CONFIGURED once a caller is admitted.
 {
   const nativeSprintTracker = require('./lib/native-sprint-tracker');
   const { createSprintWaveRouter } = require('./lib/routes/sprint-wave-routes');
@@ -11177,6 +11275,8 @@ route('POST', '/api/v6/placement/recommend', (req, res, _params, body) => {
   const sprintWaves = createSprintWaveRouter({
     getSprintData: () => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), 'current'),
     getSprintDataForVersion: (version) => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), version),
+    getRoadmapData: () => _v6LoadRoadmapData(),
+    getGithubActivity: () => _v6SprintGithubActivity(),
     authorizeSync: (req, res) => {
       if (resolveControlCaller(req).kind === 'master') return true;
       return Boolean(_requireOperatorWrite(req, res, {
