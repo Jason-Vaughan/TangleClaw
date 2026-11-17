@@ -1071,13 +1071,16 @@
   const CHAT_POLL_MS = 4000;
 
   /**
-   * Under the Hood's deep-scrollback line count (#3135): read on every
-   * poll, not just once, so previous terminal history stays scrollable
-   * without leaving the v6 UI — `?full=true` would do the same at the
-   * cost of the whole tmux history buffer on EVERY poll (#3047's 4s
-   * cycle), which this avoids while still comfortably covering the
-   * issue's 500-2000+ line ask.
+   * Under the Hood's two scrollback depths (#3135): a chat whose drawer
+   * is closed (most of the time — every poll, #3047's 4s cycle, reads the
+   * SAME shallow depth the pane always has) still only needs the few
+   * lines the collapsed view ever shows; only while Under the Hood is
+   * actually open or in Full Screen is the deeper read worth its own
+   * cost — `?full=true` would ask for the whole tmux history buffer on
+   * EVERY poll regardless, which this avoids while still comfortably
+   * covering the issue's 500-2000+ line ask once the drawer IS open.
    */
+  const PEEK_LINES_SHALLOW = 80;
   const PEEK_LINES_DEEP = 2000;
 
   /**
@@ -4901,7 +4904,15 @@
         return;
       }
       const base = `/api/v6/projects/${encodeURIComponent(project.id)}/sessions/${encodeURIComponent(sessionId)}`;
-      const peekUrl = `/api/sessions/${name}/peek?lines=${PEEK_LINES_DEEP}`;
+      // #3135 (CI fix after R2): a closed drawer never needed more than the
+      // pane's own shallow depth, and this is read on every poll (#3047's
+      // 4s cycle) whether the drawer is open or not — recomputed fresh each
+      // time (never a frozen URL captured once) so the very next poll
+      // after the operator opens Under the Hood or Full Screen already
+      // asks for the deep read, with no separate "refresh now" trip.
+      const peekUrl = () => `/api/sessions/${name}/peek?lines=${
+        shell && typeof shell.isHoodExpanded === 'function' && shell.isHoodExpanded() ? PEEK_LINES_DEEP : PEEK_LINES_SHALLOW
+      }`;
       // #3076: the listener's state and unread count. Unlike opening the
       // inbox, this read marks nothing read and leaves the unread count
       // alone; while listening, the route also asks the Bridge for loops.
@@ -4909,7 +4920,7 @@
       const [events, attestations, peek, medusaStatus] = await Promise.all([
         api(`${base}/conversation/events`),
         api(`${base}/attestations`),
-        api(peekUrl),
+        api(peekUrl()),
         api(medusaUrl)
       ]);
       if (mine !== seq) return;
@@ -4930,7 +4941,7 @@
           // #3085: the usage meter refreshes every USAGE_EVERY_POLLS reads.
           usagePolls = (usagePolls + 1) % USAGE_EVERY_POLLS;
           if (usagePolls === 0) loadUsage();
-          const [res, nextStatus] = await Promise.all([api(peekUrl), api(medusaUrl)]);
+          const [res, nextStatus] = await Promise.all([api(peekUrl()), api(medusaUrl)]);
           if (mine !== seq || !current || !current.view) return;
           const next = peekView(res);
           const nextLive = liveView(res, current.project, current.view.events);
@@ -8596,6 +8607,15 @@
         render();
       },
       isHistoryOpen() { return historyOpen; },
+      /**
+       * Whether Under the Hood is open or in Full Screen (#3135, CI fix
+       * after R2): the live controller reads this to decide how deep a
+       * scrollback read to ask for — 80 lines closed, 2000 while the
+       * operator can actually see it, never 2000 on every background poll
+       * regardless.
+       * @returns {boolean}
+       */
+      isHoodExpanded() { return chatHoodOpen || hoodFullScreen; },
       /**
        * Forget a chat's composer text once it has been sent.
        * @param {*} [projectId] - The project it was sent to; the chat on screen when omitted.

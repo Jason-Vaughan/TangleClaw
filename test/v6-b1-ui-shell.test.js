@@ -2075,8 +2075,8 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
       '/api/v6/projects/12/sessions/1592/conversation/events': { events: [{ seq: 1, role: 'user', content: 'earlier' }] },
       '/api/v6/projects/12/sessions/1592/conversation/events?includeDeleted=1': { events: [{ seq: 1 }, { seq: 4, deleted_at: 'x' }] },
       '/api/v6/projects/12/sessions/1592/attestations': { attestations: [] },
-      '/api/sessions/TC-Lane-PM/peek?lines=2000': { lines: ['pm line 1'] },
-      '/api/sessions/TC-Lane-A/peek?lines=2000': { lines: ['a line'] }
+      '/api/sessions/TC-Lane-PM/peek?lines=80': { lines: ['pm line 1'] },
+      '/api/sessions/TC-Lane-A/peek?lines=80': { lines: ['a line'] }
     }, o.map || {});
     const api = async (url) => {
       calls.push(url);
@@ -2125,17 +2125,22 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     const m = mountChat();
     await m.settle();
     assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/status'));
-    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=2000'));
+    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=80'));
     assert.match(m.root.innerHTML, /Talking to: <\/span><strong>TC-Lane-PM<\/strong> \(#1592\)/);
     assert.match(m.root.innerHTML, /pm line 1/);
     assert.match(m.root.innerHTML, /earlier/);
   });
 
-  it('reads deep scrollback (#3135), not the old 80-line truncation, on every poll', async () => {
-    const m = mountChat();
+  it('reads deep scrollback (#3135) only once Under the Hood opens — a closed drawer still reads the pane\'s own shallow depth, every poll', async () => {
+    const m = mountChat({ map: { '/api/sessions/TC-Lane-PM/peek?lines=2000': () => ({ lines: ['deep history'] }) } });
     await m.settle();
-    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=2000'));
-    assert.ok(!m.calls.some((c) => /\/peek\?lines=80$/.test(c)), 'the old truncated read must never recur');
+    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=80'), 'closed by default');
+    assert.ok(!m.calls.some((c) => /peek\?lines=2000$/.test(c)), 'never 2000 lines while the drawer is closed');
+    const hood = m.doc.getElementById('v6ChatUnderHood');
+    hood.open = true;
+    hood.dispatch('toggle');
+    await m.timers[0].fn(); // the very next poll, with no separate "refresh now" trip
+    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=2000'), 'the next poll after opening reads the deep depth');
   });
 
   it('a remembered delegate is used', async () => {
@@ -2252,7 +2257,7 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
 
   it('polls the live output every 4 s without re-rendering the composer, and stops when the route changes', async () => {
     let n = 0;
-    const m = mountChat({ map: { '/api/sessions/TC-Lane-PM/peek?lines=2000': () => ({ lines: [`tick ${n++}`] }) } });
+    const m = mountChat({ map: { '/api/sessions/TC-Lane-PM/peek?lines=80': () => ({ lines: [`tick ${n++}`] }) } });
     await m.settle();
     assert.equal(m.timers.length, 1);
     assert.equal(m.timers[0].ms, 4000);
@@ -2656,7 +2661,7 @@ describe('Above-the-Hood chat, live in the shell (#3052)', () => {
       if (url === '/api/projects') return { projects: rows };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
       if (url === '/api/v6/projects/12/sessions/1592/conversation/events') return { events: [{ seq: 1, role: 'user', content: 'ship the release' }] };
-      if (url === '/api/sessions/TC-Lane-PM/peek?lines=2000') return { lines: peeks[Math.min(n++, peeks.length - 1)] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: peeks[Math.min(n++, peeks.length - 1)] };
       return null;
     };
     const timers = [];
@@ -3571,7 +3576,7 @@ describe('live turns from the pane are HTML-escaped, on first render and on ever
       if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1 };
       if (/conversation\/events$/.test(url)) return { events: [] };
-      if (url === '/api/sessions/TC-Lane-PM/peek?lines=2000') return { lines: peeks[Math.min(n++, 1)] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: peeks[Math.min(n++, 1)] };
       return null;
     };
     const timers = [];
@@ -3766,7 +3771,7 @@ describe('the busy clock in the mounted shell and live controller (#3057)', () =
       if (url === '/api/projects') return { projects: rows };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
       if (/conversation\/events/.test(url)) return { events: [] };
-      if (url === '/api/sessions/TC-Lane-PM/peek?lines=2000') return { lines: peeks[Math.min(n++, peeks.length - 1)] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: peeks[Math.min(n++, peeks.length - 1)] };
       return null;
     };
     const polls = [];
@@ -5718,7 +5723,7 @@ describe('the Medusa indicator, live through the controller (#3076)', () => {
       if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
       if (url === '/api/v6/projects/12/sessions/1592/conversation/events') return { events: [] };
-      if (url === '/api/sessions/TC-Lane-PM/peek?lines=2000') return { lines: peeks[Math.min(p++, peeks.length - 1)] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: peeks[Math.min(p++, peeks.length - 1)] };
       if (url === '/api/sessions/TC-Lane-PM/medusa/status') return statuses[Math.min(s++, statuses.length - 1)];
       return null;
     };
@@ -5985,7 +5990,7 @@ describe('a message longer than the command route takes (#3079 item 5)', () => {
       if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
       if (/conversation\/events/.test(url)) return { events: events.map((e, i) => ({ seq: i + 1, role: e.role, content: e.content })) };
-      if (url === '/api/sessions/TC-Lane-PM/peek?lines=2000' && o.peek) return { lines: o.peek() };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80' && o.peek) return { lines: o.peek() };
       if (url === '/api/sessions/TC-Lane-PM/secure-clipboard' && init && init.method === 'GET') {
         listings.push(init.headers);
         api.lastError = o.listing === null ? 'listing refused' : null;
@@ -6225,7 +6230,7 @@ describe('sending, through the controller (#3079 item 6)', () => {
       if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
       if (/conversation\/events/.test(url)) return { events: events.map((e, i) => ({ seq: i + 1, role: e.role, content: e.content })) };
-      if (url === '/api/sessions/TC-Lane-PM/peek?lines=2000') return { lines: ['⏺ Earlier reply.'] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: ['⏺ Earlier reply.'] };
       return null;
     };
     api.lastError = null;
@@ -6317,7 +6322,7 @@ describe('a long message recorded only in part is not read back as a reply (thir
       if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
       if (/conversation\/events/.test(url)) return { events: events.map((e, i) => ({ seq: i + 1, role: e.role, content: e.content })) };
-      if (url === '/api/sessions/TC-Lane-PM/peek?lines=2000') return { lines: pane };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: pane };
       if (/secure-clipboard$/.test(url) && init && init.method === 'GET') return { files: [] };
       if (/secure-clipboard$/.test(url)) return { relPath: `secrets/${JSON.parse(init.body).filename}` };
       return null;
