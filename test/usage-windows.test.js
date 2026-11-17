@@ -1436,3 +1436,337 @@ describe('lib/usage-windows — large transcript history does not overflow the c
     assert.equal(result.byProviderModel.claude['claude-sonnet-5'].fiveHour.totalTokens, RECORD_COUNT * 2);
   });
 });
+
+/**
+ * A minimal `{get, set}` probe store this file's own tests inject, so none
+ * of them touch `_defaultProbeStore`'s real flat file under this machine's
+ * TangleClaw home directory (the same isolation discipline `beforeEach`
+ * above already applies to `store.usageCalibration`).
+ * @returns {{data: object, get: function(string): (object|null), set: function(string, object): void}}
+ */
+function fakeProbeStore() {
+  return {
+    data: {},
+    get(key) { return this.data[key] || null; },
+    set(key, value) { this.data[key] = value; }
+  };
+}
+
+describe('lib/usage-windows — #3132 automated CLI usage probe', () => {
+  afterEach(() => uw._stopUsageProbeSchedulerForTests());
+
+  describe('_parseClaudeUsageCli (fixtures: `claude -p "/usage"`, verified live 2026-11-16)', () => {
+    it('parses the "<h>:<mm><am|pm>" reset form', () => {
+      const text = [
+        'You are currently using your subscription to power your Claude Code usage',
+        '',
+        'Current week (all models): 82% used · resets Nov 19 at 4:59am (America/Los_Angeles)',
+        'Current week (Fable): 2% used · resets Nov 19 at 4:59am (America/Los_Angeles)',
+        ''
+      ].join('\n');
+      const nowMs = Date.UTC(2026, 10, 16, 12, 0); // Mon Nov 16 2026, before the reset
+      const parsed = uw._parseClaudeUsageCli(text, nowMs);
+      assert.equal(parsed.weeklyRemainingPct, 18); // 100 - 82
+      assert.equal(parsed.weeklyResetAt, new Date(Date.UTC(2026, 10, 19, 12, 59)).toISOString()); // 4:59am PST = UTC-8
+      assert.equal(parsed.subTiers.fable.weeklyRemainingPct, 98);
+      assert.equal(parsed.subTiers.fable.weeklyResetAt, parsed.weeklyResetAt);
+    });
+
+    it('parses the "<h><am|pm>" reset form with no minutes clause (the CLI\'s own text varies this way)', () => {
+      const text = 'Current week (all models): 82% used · resets Nov 19 at 5am (America/Los_Angeles)';
+      const nowMs = Date.UTC(2026, 10, 16, 12, 0);
+      const parsed = uw._parseClaudeUsageCli(text, nowMs);
+      assert.equal(parsed.weeklyResetAt, new Date(Date.UTC(2026, 10, 19, 13, 0)).toISOString());
+    });
+
+    it('returns null when neither line is present (a CLI revision that changed the wording)', () => {
+      assert.equal(uw._parseClaudeUsageCli('nothing recognizable here', Date.now()), null);
+    });
+
+    it('still reads the percentage when the reset clause is absent entirely', () => {
+      const parsed = uw._parseClaudeUsageCli('Current week (all models): 40% used', Date.now());
+      assert.equal(parsed.weeklyRemainingPct, 60);
+      assert.equal(parsed.weeklyResetAt, null);
+    });
+
+    it('resolves a December -> January reset as next year, not this year', () => {
+      const text = 'Current week (all models): 10% used · resets Jan 2 at 6am (America/Los_Angeles)';
+      const nowMs = Date.UTC(2026, 11, 30, 12, 0); // Dec 30 2026
+      const parsed = uw._parseClaudeUsageCli(text, nowMs);
+      assert.equal(new Date(parsed.weeklyResetAt).getUTCFullYear(), 2027);
+    });
+
+    it('refuses to convert a reset naming a time zone other than the one this module knows how to convert', () => {
+      const text = 'Current week (all models): 10% used · resets Nov 19 at 5am (Europe/London)';
+      const parsed = uw._parseClaudeUsageCli(text, Date.now());
+      assert.equal(parsed.weeklyResetAt, null); // percentage still read; see the test above
+      assert.equal(parsed.weeklyRemainingPct, 90);
+    });
+  });
+
+  describe('_parseAntigravityUsageCli (fixture: `agy -p "/usage"`, verified live 2026-11-16)', () => {
+    const fixture = [
+      'Gemini Models\tWeekly Limit Remaining\t39%\t2026-11-20T22:51:42Z',
+      'Gemini Models\tFive Hour Limit Remaining\t88%\t2026-11-17T02:49:45Z',
+      'Claude and GPT models\tWeekly Limit Remaining\t100%\t2026-11-24T00:21:45Z',
+      'Claude and GPT models\tFive Hour Limit Remaining\t100%\t2026-11-17T05:21:45Z',
+      ''
+    ].join('\n');
+
+    it('reports the Gemini Models row at the top level (Antigravity\'s own native quota)', () => {
+      const parsed = uw._parseAntigravityUsageCli(fixture);
+      assert.equal(parsed.weeklyRemainingPct, 39);
+      assert.equal(parsed.weeklyResetAt, '2026-11-20T22:51:42.000Z');
+      assert.equal(parsed.fiveHourRemainingPct, 88);
+      assert.equal(parsed.fiveHourResetAt, '2026-11-17T02:49:45.000Z');
+    });
+
+    it('carries every other model family in subTiers rather than dropping it', () => {
+      const parsed = uw._parseAntigravityUsageCli(fixture);
+      assert.deepEqual(parsed.subTiers['claude-and-gpt-models'], {
+        weeklyRemainingPct: 100,
+        weeklyResetAt: '2026-11-24T00:21:45.000Z',
+        fiveHourRemainingPct: 100,
+        fiveHourResetAt: '2026-11-17T05:21:45.000Z'
+      });
+    });
+
+    it('returns null on unrecognized output (no tab-separated rows at all)', () => {
+      assert.equal(uw._parseAntigravityUsageCli('I am a prose response, not a table.'), null);
+    });
+
+    it('skips a malformed row (missing a column) without discarding the rows around it', () => {
+      const partial = 'Gemini Models\tWeekly Limit Remaining\t39%\n' // only 3 columns
+        + 'Gemini Models\tFive Hour Limit Remaining\t88%\t2026-11-17T02:49:45Z';
+      const parsed = uw._parseAntigravityUsageCli(partial);
+      assert.equal(parsed.weeklyRemainingPct, null); // the malformed weekly row never made it in
+      assert.equal(parsed.fiveHourRemainingPct, 88);
+    });
+  });
+
+  describe('_classifyUsageProbeFailure', () => {
+    it('classifies an ENOENT spawn failure as not-present', () => {
+      const err = Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' });
+      assert.equal(uw._classifyUsageProbeFailure(err), 'not-present');
+    });
+
+    it('classifies a "command not found" message as not-present even without an ENOENT code', () => {
+      const err = new Error('zsh: command not found: claude');
+      assert.equal(uw._classifyUsageProbeFailure(err), 'not-present');
+    });
+
+    it('classifies any other failure as not-configured (conservative default; see this function\'s own doc comment)', () => {
+      const err = new Error('unexpected token in output');
+      assert.equal(uw._classifyUsageProbeFailure(err), 'not-configured');
+    });
+
+    it('every classification it can return is one of USAGE_PROBE_STATUSES', () => {
+      const enoent = Object.assign(new Error('e'), { code: 'ENOENT' });
+      const other = new Error('e');
+      assert.ok(uw.USAGE_PROBE_STATUSES.includes(uw._classifyUsageProbeFailure(enoent)));
+      assert.ok(uw.USAGE_PROBE_STATUSES.includes(uw._classifyUsageProbeFailure(other)));
+    });
+  });
+
+  describe('refreshUsageProbe — claude/antigravity (cli-print probers)', () => {
+    it('runs claude via "-p /usage", parses the result, and persists it', async () => {
+      const probeStore = fakeProbeStore();
+      const execFileAsync = (cmd, args) => {
+        assert.equal(cmd, 'claude');
+        assert.deepEqual(args, ['-p', '/usage']);
+        return Promise.resolve('Current week (all models): 70% used');
+      };
+      const result = await uw.refreshUsageProbe('claude', { probeStore, execFileAsync });
+      assert.equal(result.status, 'configured');
+      assert.equal(result.weeklyRemainingPct, 30);
+      assert.equal(result.source, 'cli-print');
+      assert.deepEqual(probeStore.get('claude'), result);
+    });
+
+    it('runs antigravity via "agy -p /usage"', async () => {
+      const probeStore = fakeProbeStore();
+      const execFileAsync = (cmd, args) => {
+        assert.equal(cmd, 'agy');
+        assert.deepEqual(args, ['-p', '/usage']);
+        return Promise.resolve('Gemini Models\tWeekly Limit Remaining\t50%\t2026-12-01T00:00:00Z');
+      };
+      const result = await uw.refreshUsageProbe('antigravity', { probeStore, execFileAsync });
+      assert.equal(result.status, 'configured');
+      assert.equal(result.weeklyRemainingPct, 50);
+    });
+
+    it('classifies a missing binary as not-present rather than throwing', async () => {
+      const probeStore = fakeProbeStore();
+      const err = Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' });
+      const result = await uw.refreshUsageProbe('claude', { probeStore, execFileAsync: () => Promise.reject(err) });
+      assert.equal(result.status, 'not-present');
+      assert.equal(result.weeklyRemainingPct, null);
+      assert.equal(result.error, err.message);
+    });
+
+    it('reports configured-but-empty (never a crash) when the CLI ran but produced unrecognized output', async () => {
+      const probeStore = fakeProbeStore();
+      const result = await uw.refreshUsageProbe('claude', { probeStore, execFileAsync: () => Promise.resolve('unexpected text') });
+      assert.equal(result.status, 'configured');
+      assert.equal(result.weeklyRemainingPct, null);
+      assert.match(result.error, /no recognizable output/);
+    });
+
+    it('rejects an unknown provider', async () => {
+      await assert.rejects(() => uw.refreshUsageProbe('bogus', {}), /unknown provider/);
+    });
+  });
+
+  describe('refreshUsageProbe — codex (disposable utility-session prober)', () => {
+    /**
+     * A stubbed `tmux` this describe block's tests inject in place of the
+     * real module, so none of them spawn a real tmux session or a real
+     * `codex` process. `paneSequence` is consumed one capture per call to
+     * `readPaneAsync`, so a test can script "trust prompt, then the real
+     * status row" across the prober's two reads.
+     * @param {string[]} paneSequence
+     * @returns {object}
+     */
+    function fakeTmux(paneSequence) {
+      const calls = { created: null, killed: [], rawKeys: [] };
+      let reads = 0;
+      return {
+        calls,
+        hasSession: () => false,
+        createSession: (name, options) => { calls.created = { name, options }; },
+        killSession: (name) => { calls.killed.push(name); },
+        sendRawKey: (name, key) => { calls.rawKeys.push(key); },
+        readPaneAsync: () => {
+          const lines = paneSequence[Math.min(reads, paneSequence.length - 1)].split('\n');
+          reads += 1;
+          return Promise.resolve({ cap: { lines, alternateScreen: true }, cursor: null });
+        }
+      };
+    }
+
+    it('captures the idle status row and tears the session down afterward', async () => {
+      const probeStore = fakeProbeStore();
+      const tmux = fakeTmux(['GPT-5.6-Sol medium · Ready · Ask for approval · Context 100% left · weekly 64% left']);
+      const result = await uw.refreshUsageProbe('codex', {
+        probeStore, tmux, execFileAsync: () => Promise.resolve(''), startupDelayMs: 0, trustDelayMs: 0
+      });
+      assert.equal(result.status, 'configured');
+      assert.equal(result.weeklyRemainingPct, 64);
+      assert.equal(result.source, 'cli-status-pane');
+      assert.equal(tmux.calls.created.options.command, 'codex');
+      assert.deepEqual(tmux.calls.killed, ['tc-util-codex']); // torn down even on the happy path
+    });
+
+    it('accepts the one-time trust-folder dialog, then re-reads the real status row', async () => {
+      const probeStore = fakeProbeStore();
+      const tmux = fakeTmux([
+        '  Trust this folder? Codex can read, edit, and run files here...',
+        'GPT-5.6-Sol medium · Ready · Ask for approval · Context 100% left · weekly 100% left'
+      ]);
+      const result = await uw.refreshUsageProbe('codex', {
+        probeStore, tmux, execFileAsync: () => Promise.resolve(''), startupDelayMs: 0, trustDelayMs: 0
+      });
+      assert.equal(result.weeklyRemainingPct, 100);
+      assert.deepEqual(tmux.calls.rawKeys, ['1', 'Enter']);
+    });
+
+    it('tears the session down even when the pane never shows a recognizable status row', async () => {
+      const tmux = fakeTmux(['(nothing recognizable)']);
+      const result = await uw.refreshUsageProbe('codex', {
+        probeStore: fakeProbeStore(), tmux, execFileAsync: () => Promise.resolve(''), startupDelayMs: 0, trustDelayMs: 0
+      });
+      assert.equal(result.status, 'configured');
+      assert.equal(result.weeklyRemainingPct, null);
+      assert.match(result.error, /no recognizable quota item/);
+      assert.deepEqual(tmux.calls.killed, ['tc-util-codex']);
+    });
+
+    it('tears the session down even when the pane read throws', async () => {
+      const tmux = fakeTmux(['irrelevant']);
+      tmux.readPaneAsync = () => Promise.reject(new Error('tmux pane read failed'));
+      const result = await uw.refreshUsageProbe('codex', {
+        probeStore: fakeProbeStore(), tmux, execFileAsync: () => Promise.resolve(''), startupDelayMs: 0, trustDelayMs: 0
+      });
+      assert.equal(result.status, 'not-configured');
+      assert.deepEqual(tmux.calls.killed, ['tc-util-codex']);
+    });
+
+    it('clears a stale same-named session left over from a previous cycle before starting a fresh one', async () => {
+      const tmux = fakeTmux(['Context 100% left · weekly 50% left']);
+      tmux.hasSession = () => true;
+      const result = await uw.refreshUsageProbe('codex', {
+        probeStore: fakeProbeStore(), tmux, execFileAsync: () => Promise.resolve(''), startupDelayMs: 0, trustDelayMs: 0
+      });
+      assert.equal(result.weeklyRemainingPct, 50);
+      // Once for the stale pre-existing session, once for teardown after the probe.
+      assert.deepEqual(tmux.calls.killed, ['tc-util-codex', 'tc-util-codex']);
+    });
+  });
+
+  describe('refreshAllUsageProbes / getUsageProbeSnapshot', () => {
+    it('refreshes every provider in parallel and keys the result by provider', async () => {
+      const probeStore = fakeProbeStore();
+      const tmux = {
+        hasSession: () => false,
+        createSession: () => {},
+        killSession: () => {},
+        sendRawKey: () => {},
+        readPaneAsync: () => Promise.resolve({ cap: { lines: ['Context 100% left · weekly 10% left'] }, cursor: null })
+      };
+      const execFileAsync = (cmd) => Promise.resolve(
+        cmd === 'claude' ? 'Current week (all models): 50% used' : 'Gemini Models\tWeekly Limit Remaining\t20%\t2026-12-01T00:00:00Z'
+      );
+      const all = await uw.refreshAllUsageProbes({ probeStore, tmux, execFileAsync, startupDelayMs: 0, trustDelayMs: 0 });
+      assert.deepEqual(Object.keys(all).sort(), ['antigravity', 'claude', 'codex']);
+      assert.equal(all.claude.weeklyRemainingPct, 50);
+      assert.equal(all.antigravity.weeklyRemainingPct, 20);
+      assert.equal(all.codex.weeklyRemainingPct, 10);
+    });
+
+    it('getUsageProbeSnapshot reads what was persisted without re-probing', async () => {
+      const probeStore = fakeProbeStore();
+      await uw.refreshUsageProbe('claude', { probeStore, execFileAsync: () => Promise.resolve('Current week (all models): 25% used') });
+      assert.equal(uw.getUsageProbeSnapshot('claude', { probeStore }).weeklyRemainingPct, 75);
+      assert.equal(uw.getUsageProbeSnapshot('codex', { probeStore }), null); // never probed in this test
+      const all = uw.getUsageProbeSnapshot(undefined, { probeStore });
+      assert.deepEqual(Object.keys(all).sort(), ['antigravity', 'claude', 'codex']);
+    });
+  });
+
+  describe('setUsageProbeInterval / getUsageProbeInterval', () => {
+    it('defaults to 30m with nothing on file', () => {
+      assert.equal(uw.getUsageProbeInterval({ probeStore: fakeProbeStore() }), uw.DEFAULT_USAGE_PROBE_INTERVAL);
+      assert.equal(uw.DEFAULT_USAGE_PROBE_INTERVAL, '30m');
+    });
+
+    it('persists a valid interval and reads it back', () => {
+      const probeStore = fakeProbeStore();
+      const result = uw.setUsageProbeInterval('15m', { probeStore });
+      assert.equal(result.ok, true);
+      assert.equal(uw.getUsageProbeInterval({ probeStore }), '15m');
+    });
+
+    it('refuses an interval outside the enum', () => {
+      const result = uw.setUsageProbeInterval('5m', { probeStore: fakeProbeStore() });
+      assert.equal(result.ok, false);
+      assert.match(result.errors[0], /15m, 30m, 1h, manual/);
+    });
+
+    it('falls back to the default when a stored value is no longer a recognized interval (a retired option)', () => {
+      const probeStore = fakeProbeStore();
+      probeStore.set('_interval', { interval: 'hourly-ish', setAt: new Date().toISOString() });
+      assert.equal(uw.getUsageProbeInterval({ probeStore }), uw.DEFAULT_USAGE_PROBE_INTERVAL);
+    });
+
+    it('"manual" runs no background timer at all', () => {
+      const probeStore = fakeProbeStore();
+      uw.setUsageProbeInterval('manual', { probeStore });
+      uw.startUsageProbeScheduler({ probeStore });
+      // No direct handle on the timer is exported; the contract this proves
+      // is indirect — USAGE_PROBE_INTERVALS.manual is the null a scheduler
+      // restart reads to skip arming setInterval at all (see
+      // _restartUsageProbeScheduler's own guard clause).
+      assert.equal(uw.USAGE_PROBE_INTERVALS.manual, null);
+    });
+  });
+});

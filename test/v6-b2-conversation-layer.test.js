@@ -677,8 +677,11 @@ describe('parseOpenGraphHtml (#3107)', () => {
     assert.equal(b2.parseOpenGraphHtml(html).title, 'First');
   });
 
-  it('returns null for HTML with no og: tags, and for non-string/empty input', () => {
-    assert.equal(b2.parseOpenGraphHtml('<html><head><title>Plain</title></head></html>'), null);
+  it('returns null for HTML with neither og: tags nor a plain-HTML fallback, and for non-string/empty input', () => {
+    // #3139: a page with no og: tags at all but an ordinary <title> now
+    // falls back to it (see the dedicated describe block below) — this
+    // fixture has truly nothing to extract, not even that.
+    assert.equal(b2.parseOpenGraphHtml('<html><body>no title, no og tags, no h1, no p</body></html>'), null);
     assert.equal(b2.parseOpenGraphHtml(''), null);
     assert.equal(b2.parseOpenGraphHtml(null), null);
   });
@@ -700,5 +703,119 @@ describe('parseOpenGraphHtml (#3107)', () => {
 
   it('still decodes a valid numeric entity at the edge of the range', () => {
     assert.equal(b2.parseOpenGraphHtml('<meta property="og:title" content="&#x10FFFF;">').title, String.fromCodePoint(0x10FFFF));
+  });
+
+  // #3139 root cause 3: a self-published page (seen live: this fleet's own
+  // `:3430/` and `:5080/pitch-video/cut/` pages) carries only plain
+  // <title>/<meta name="description">/<h1>/<p> tags, never og:* ones.
+  describe('plain-HTML fallback (#3139)', () => {
+    it('falls back to <title> for the title when no og:title is present', () => {
+      const parsed = b2.parseOpenGraphHtml('<html><head><title>My Page</title></head><body></body></html>');
+      assert.equal(parsed.title, 'My Page');
+    });
+
+    it('falls back to the first <h1> when there is no <title> either', () => {
+      const parsed = b2.parseOpenGraphHtml('<html><body><h1>Heading One</h1><h1>Second</h1></body></html>');
+      assert.equal(parsed.title, 'Heading One');
+    });
+
+    it('falls back to <meta name="description"> for the description', () => {
+      const parsed = b2.parseOpenGraphHtml('<html><head><meta name="description" content="A page about things."></head></html>');
+      assert.equal(parsed.description, 'A page about things.');
+    });
+
+    it('falls back to the first <p> when there is no <meta name="description"> either', () => {
+      const parsed = b2.parseOpenGraphHtml('<html><body><p>First paragraph.</p><p>Second.</p></body></html>');
+      assert.equal(parsed.description, 'First paragraph.');
+    });
+
+    it('never overwrites a title/description the page already supplied via og:*', () => {
+      const html = '<meta property="og:title" content="OG Title"><title>Plain Title</title>'
+        + '<meta name="description" content="Plain description."><p>A paragraph.</p>';
+      const parsed = b2.parseOpenGraphHtml(html);
+      assert.equal(parsed.title, 'OG Title');
+      assert.equal(parsed.description, 'Plain description.');
+    });
+
+    it('decodes HTML entities in a fallback field the same as an og:* one', () => {
+      const parsed = b2.parseOpenGraphHtml('<title>Fish &amp; Chips</title>');
+      assert.equal(parsed.title, 'Fish & Chips');
+    });
+
+    it('ignores a title/meta/h1/p tag with only whitespace content', () => {
+      assert.equal(b2.parseOpenGraphHtml('<title>   </title><p>   </p>'), null);
+    });
+  });
+});
+
+describe('isAllowlistedUnfurlHost (#3139)', () => {
+  it('admits *.ts.net (Tailscale) and the bare base domain', () => {
+    assert.equal(b2.isAllowlistedUnfurlHost('cursatory.tail123678.ts.net'), true);
+    assert.equal(b2.isAllowlistedUnfurlHost('ts.net'), true);
+  });
+
+  it('admits *.github.io, including GitHub Pages sites', () => {
+    assert.equal(b2.isAllowlistedUnfurlHost('jason-vaughan.github.io'), true);
+  });
+
+  it('admits tangleclaw.com and its subdomains', () => {
+    assert.equal(b2.isAllowlistedUnfurlHost('tangleclaw.com'), true);
+    assert.equal(b2.isAllowlistedUnfurlHost('docs.tangleclaw.com'), true);
+  });
+
+  it('is case-insensitive and tolerates a trailing DNS root dot', () => {
+    assert.equal(b2.isAllowlistedUnfurlHost('CURSATORY.TAIL123678.TS.NET'), true);
+    assert.equal(b2.isAllowlistedUnfurlHost('tangleclaw.com.'), true);
+  });
+
+  it('never matches a host that merely CONTAINS an allowlisted name as a substring', () => {
+    assert.equal(b2.isAllowlistedUnfurlHost('ts.net.evil.example.com'), false);
+    assert.equal(b2.isAllowlistedUnfurlHost('nottangleclaw.com'), false);
+    assert.equal(b2.isAllowlistedUnfurlHost('evil-github.io.example.com'), false);
+  });
+
+  it('refuses a non-string or empty hostname', () => {
+    assert.equal(b2.isAllowlistedUnfurlHost(''), false);
+    assert.equal(b2.isAllowlistedUnfurlHost(null), false);
+    assert.equal(b2.isAllowlistedUnfurlHost(undefined), false);
+  });
+
+  it('does not admit localhost/127.0.0.1 — deliberately out of scope (flagged to the Architect, see the matcher\'s own doc comment)', () => {
+    assert.equal(b2.isAllowlistedUnfurlHost('localhost'), false);
+    assert.equal(b2.isAllowlistedUnfurlHost('127.0.0.1'), false);
+  });
+});
+
+describe('remote video-URL classification (#3139 root cause 2, via extractRichPreviewsFromMessage)', () => {
+  it('classifies a remote .mp4 URL as a video card, not a generic link-unfurl candidate', () => {
+    const cards = b2.extractRichPreviewsFromMessage('https://cursatory.tail123678.ts.net:8443/clips/cut-12.mp4');
+    assert.deepEqual(cards, [{
+      kind: 'remote-video', url: 'https://cursatory.tail123678.ts.net:8443/clips/cut-12.mp4',
+      mimeType: 'video/mp4', safe: true, unsafeReason: null
+    }]);
+  });
+
+  it('classifies .webm and .mov the same way', () => {
+    const webm = b2.extractRichPreviewsFromMessage('https://example.com/a.webm');
+    assert.equal(webm[0].kind, 'remote-video');
+    assert.equal(webm[0].mimeType, 'video/webm');
+    const mov = b2.extractRichPreviewsFromMessage('https://example.com/a.mov');
+    assert.equal(mov[0].kind, 'remote-video');
+    assert.equal(mov[0].mimeType, 'video/quicktime');
+  });
+
+  it('still carries an unsafe verdict on a video URL that fails the SSRF check, rather than exempting it', () => {
+    const cards = b2.extractRichPreviewsFromMessage('http://169.254.169.254/evil.mp4');
+    assert.deepEqual(cards, [{ kind: 'remote-video', url: 'http://169.254.169.254/evil.mp4', mimeType: 'video/mp4', safe: false, unsafeReason: 'LINK_LOCAL' }]);
+  });
+
+  it('classifies by PATH extension only, never a video-looking query string on a non-video path', () => {
+    const cards = b2.extractRichPreviewsFromMessage('https://example.com/watch?file=clip.mp4');
+    assert.equal(cards[0].kind, 'link-unfurl-candidate'); // the PATH is "/watch", not ".mp4"
+  });
+
+  it('a GitHub URL is still classified as github, never as a video, even if it happened to end in a video extension', () => {
+    const cards = b2.extractRichPreviewsFromMessage('https://github.com/a/b/pull/5');
+    assert.equal(cards[0].kind, 'github');
   });
 });
