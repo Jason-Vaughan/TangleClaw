@@ -7859,6 +7859,240 @@ function attachMasterFrame() {
   frame.src = '/terminal/?arg=tangleclaw-master';
 }
 
+// ── Admin Fleet / Admin-PM: governed Wrap & Relaunch, attachments (#3137) ──
+//
+// index.html's static Master markup ("🧠 Master", aria-label="Project
+// Master", the iframe's title) sits outside this car's file envelope, same
+// as public/api-helper.js's shared control bar. `renameMasterSurfacesToAdminFleet`
+// below reaches into that already-rendered DOM and relabels it from script,
+// the same technique `addMasterRelaunchButton` already established for the
+// bar. The identifiers it does NOT touch — MASTER_TMUX_SESSION, every
+// `/api/master/*` route, the Medusa workspace — stay exactly as they are, for
+// the same backward-compatibility reasons `lib/master.js`'s Orchestrator
+// vocabulary contract already documents for the layer beneath this one.
+
+/**
+ * Rename the Master's visible static surfaces to Admin Fleet / Admin-PM.
+ * Mutates text/attributes only — never replaces a child element (the
+ * `masterDot` span inside the toggle button survives untouched).
+ * @returns {void}
+ */
+function renameMasterSurfacesToAdminFleet() {
+  const toggle = document.getElementById('masterToggle');
+  if (toggle) {
+    toggle.title = 'Admin Fleet, led by Admin-PM — the global assistant above all projects; '
+      + 'what it may write is the access level on its control bar';
+    for (const node of toggle.childNodes) {
+      if (node.nodeType === Node.TEXT_NODE && node.textContent.includes('Master')) {
+        node.textContent = node.textContent.replace('Master', 'Admin Fleet');
+      }
+    }
+  }
+  const panel = document.getElementById('masterPanel');
+  if (panel) panel.setAttribute('aria-label', 'Admin Fleet');
+  const frame = document.getElementById('masterFrame');
+  if (frame) frame.title = 'Admin-PM terminal';
+}
+
+/**
+ * Insert the utility seats row and the low-context warning banner, once,
+ * between the control bar and the terminal frame — both new surfaces this
+ * car adds, both built as plain DOM (no new index.html markup, no new
+ * style.css classes: inline styles plus the existing generic `.hidden`
+ * utility).
+ * @param {string} prefix - Mounted bar's id prefix (`masterPanel`).
+ * @returns {void}
+ */
+function addMasterFleetRow(prefix) {
+  const bar = document.getElementById(`${prefix}Bar`);
+  if (!bar || !bar.parentNode) return;
+
+  const seatsRow = document.createElement('div');
+  seatsRow.id = 'masterUtilitySeatsRow';
+  seatsRow.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;padding:4px 8px;font-size:12px;opacity:0.85;';
+  bar.parentNode.insertBefore(seatsRow, bar.nextSibling);
+
+  const banner = document.createElement('div');
+  banner.id = 'masterLowContextBanner';
+  banner.className = 'hidden';
+  banner.setAttribute('role', 'status');
+  banner.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:13px;'
+    + 'background:rgba(255,184,0,0.15);border-bottom:1px solid rgba(255,184,0,0.4);';
+  banner.innerHTML = '<span id="masterLowContextText"></span>'
+    + '<button type="button" class="banner-btn" id="masterLowContextWrapBtn">Wrap &amp; Relaunch</button>';
+  bar.parentNode.insertBefore(banner, seatsRow.nextSibling);
+  document.getElementById('masterLowContextWrapBtn').addEventListener('click', wrapAndRelaunchMaster);
+}
+
+/**
+ * Governed Wrap & Relaunch (#3137): capture a continuity handoff capsule,
+ * then kill-and-relaunch Admin-PM in one step (`POST /api/master/wrap`,
+ * `lib/master.js#wrapMasterSession`). Unlike the plain `relaunchMaster()`
+ * above (#3130), this leaves something on disk for the fresh session (or a
+ * human) to reconcile against — see that function's own docblock.
+ * @returns {void}
+ */
+function wrapAndRelaunchMaster() {
+  if (state.masterEnsuring) return;
+  if (!window.confirm(
+    'Wrap and relaunch Admin-PM?\n\n'
+    + 'This captures a continuity handoff capsule, then stops the current session and starts a fresh one '
+    + 'in its place. Its durable notes under memory/ survive; the conversation it is holding does not.'
+  )) return;
+  state.masterEnsuring = true;
+  setMasterStatus('pending', 'Wrapping and relaunching Admin-PM…');
+  api('/api/master/wrap', { method: 'POST' }).then((result) => {
+    state.masterEnsuring = false;
+    if (!result) {
+      setMasterStatus('down', api.lastError || 'Failed to wrap and relaunch Admin-PM', true);
+      return;
+    }
+    setMasterStatus('live', 'Admin-PM wrapped and relaunched');
+    if (masterBar) masterBar.loadAccess();
+    // Re-read so the banner reflects the fresh session's (reset) continuity
+    // state, same one-shot-on-action philosophy `refreshMasterDot`'s own
+    // docblock already states for this panel — no timer added.
+    refreshMasterDot();
+  });
+}
+
+
+/**
+ * Admin-PM photo/screenshot attachments (#3137): a thumbnail strip plus
+ * attach/paste/drop, mirroring the v6 chat composer's attachment support
+ * (#3053) at the level this panel actually has — a terminal iframe, not a
+ * chat composer, so the result is a strip beside the frame rather than
+ * inline bubbles. `lib/routes/sessions.js`'s `POST /api/master/attachments`
+ * saves the file and notifies the Admin-PM pane with a content-free pointer;
+ * this only drives that route and renders what it returns.
+ */
+const MASTER_ATTACHMENT_THUMB_CACHE = new Map(); // filename -> blob: URL, revoked on refresh
+
+/**
+ * Fetch one pending attachment's bytes as a `blob:` URL, with the same
+ * operator-proof headers `tcOperatorProofHeaders` builds for every other
+ * authenticated-but-not-JSON read on this page (mirrors
+ * `public/v6-shell.js`'s own fetch for the identical secure-clipboard image
+ * route, #3082) — a plain `<img src="...">` would never carry them.
+ * @param {string} filename
+ * @returns {Promise<string|null>} `blob:` URL, or null on any failure.
+ */
+async function fetchMasterAttachmentThumb(filename) {
+  try {
+    const headers = await window.tcOperatorProofHeaders(api);
+    const res = await window.tcFetch(`/api/master/attachments/${encodeURIComponent(filename)}`, { headers });
+    if (!res.ok) return null;
+    return URL.createObjectURL(await res.blob());
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * Re-list Admin-PM's pending attachments and repaint the thumbnail strip.
+ * @returns {Promise<void>}
+ */
+async function refreshMasterAttachments() {
+  const strip = document.getElementById('masterAttachmentStrip');
+  if (!strip) return;
+  const result = await api('/api/master/attachments');
+  for (const url of MASTER_ATTACHMENT_THUMB_CACHE.values()) URL.revokeObjectURL(url);
+  MASTER_ATTACHMENT_THUMB_CACHE.clear();
+  const files = (result && Array.isArray(result.files)) ? result.files : [];
+  strip.classList.toggle('hidden', files.length === 0);
+  strip.innerHTML = '';
+  for (const file of files) {
+    const item = document.createElement('span');
+    item.className = 'master-attachment-thumb';
+    item.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin:2px;';
+    const img = document.createElement('img');
+    img.alt = file.filename;
+    img.style.cssText = 'width:36px;height:36px;object-fit:cover;border-radius:3px;';
+    fetchMasterAttachmentThumb(file.filename).then((url) => {
+      if (url) { MASTER_ATTACHMENT_THUMB_CACHE.set(file.filename, url); img.src = url; }
+    });
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'banner-btn';
+    del.title = `Remove ${file.filename}`;
+    del.textContent = '×';
+    del.addEventListener('click', () => {
+      apiMutate(`/api/master/attachments/${encodeURIComponent(file.filename)}`, 'DELETE')
+        .then(() => refreshMasterAttachments());
+    });
+    item.appendChild(img);
+    item.appendChild(del);
+    strip.appendChild(item);
+  }
+}
+
+/**
+ * Upload one file as an Admin-PM attachment (#3137): base64-encode it client
+ * side and POST to `/api/master/attachments`, the same shape
+ * `lib/secure-clipboard.js#writeSecretFile`'s `encoding: 'base64'` path takes.
+ * @param {File} file
+ * @returns {Promise<void>}
+ */
+async function uploadMasterAttachment(file) {
+  if (!file) return;
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  const content = String(dataUrl).split(',')[1] || '';
+  if (!content) return;
+  const result = await apiMutate('/api/master/attachments', 'POST', {
+    filename: file.name || `attachment-${Date.now()}.png`, content
+  });
+  if (result) refreshMasterAttachments();
+}
+
+/**
+ * Mount the thumbnail strip and wire paste/drag-and-drop onto the Master
+ * panel (#3137). The Attach button itself is no longer created here: it is
+ * the shared bar's own, newly un-pended `${prefix}UploadBtn`
+ * (`public/api-helper.js#tcCreateMasterControlBar`), which owns the file
+ * picker and calls back into `uploadMasterAttachment` via `deps.onUpload` —
+ * this function only owns what that bar does not: the thumbnail strip, and
+ * paste/drop directly onto the panel (neither is a per-bar-instance control,
+ * so unlike {@link addMasterRelaunchButton} this needs no `prefix` — there is
+ * exactly one Master panel on this page).
+ * @returns {void}
+ */
+function addMasterAttachmentStrip() {
+  const panel = document.getElementById('masterPanel');
+  if (!panel) return;
+
+  const strip = document.createElement('div');
+  strip.id = 'masterAttachmentStrip';
+  strip.className = 'hidden';
+  strip.style.cssText = 'display:flex;flex-wrap:wrap;padding:4px 8px;';
+  const seatsRow = document.getElementById('masterUtilitySeatsRow');
+  if (seatsRow && seatsRow.parentNode) seatsRow.parentNode.insertBefore(strip, seatsRow.nextSibling);
+
+  panel.addEventListener('dragover', (e) => { e.preventDefault(); });
+  panel.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) uploadMasterAttachment(f);
+  });
+  panel.addEventListener('paste', (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const f = item.getAsFile();
+        if (f) uploadMasterAttachment(f);
+        break;
+      }
+    }
+  });
+
+  refreshMasterAttachments();
+}
+
 // ── Advisor (Morpheus) panel (#2819) ──
 // Mirrors the Master panel's launch-on-first-open lifecycle one section up,
 // trimmed to what the Advisor actually has: no access level, so no
@@ -7981,6 +8215,58 @@ async function refreshAdvisorDot() {
  * that is the half that matters.
  */
 async function refreshMasterDot() {
+  // Nested, not top-level siblings (#3137): `test/master-unknown-frontend.test.js`
+  // lifts `refreshMasterDot` in isolation and runs it standalone, so a
+  // top-level sibling function referenced from inside it is an undefined
+  // free variable there even though it exists in the real page. Neither
+  // helper holds state across calls, so nesting (rather than a
+  // `typeof x !== 'undefined'` guard) is the clean fix.
+
+  /**
+   * The Admin Fleet's utility seats row: the lead (Admin-PM, this panel) plus
+   * its seats from `status.adminFleet.utilitySeats` (`lib/master.js#ADMIN_FLEET`)
+   * — `Admin-Advisor` links to the real Advisor panel; the rest are honest,
+   * inert placeholders (see that constant's own docstring for why).
+   * @param {{name: string, wired: boolean, panel: (string|null)}[]} seats
+   * @returns {void}
+   */
+  function renderMasterUtilitySeats(seats) {
+    const row = document.getElementById('masterUtilitySeatsRow');
+    if (!row || !Array.isArray(seats)) return;
+    row.innerHTML = seats.map((seat) => {
+      if (seat.wired && seat.panel === 'advisor') {
+        return `<button type="button" class="master-seat-chip master-seat-chip-live" data-seat="${esc(seat.key)}">${esc(seat.name)}</button>`;
+      }
+      return `<span class="master-seat-chip master-seat-chip-pending" data-seat="${esc(seat.key)}" `
+        + `title="Utility seat — not yet wired to a live session">${esc(seat.name)}</span>`;
+    }).join('');
+    const liveChip = row.querySelector('.master-seat-chip-live');
+    if (liveChip) liveChip.addEventListener('click', () => { if (!state.advisorOpen) toggleAdvisor(); });
+  }
+
+  /**
+   * Show or clear the low-context banner from a `/api/master/status` reading's
+   * `continuity` field (`lib/master-continuity.js#evaluateContinuityHealth`) —
+   * already computed server-side (#2120); this only paints it. Fires at
+   * `status === 'critical'` (<=15% remaining by that module's own default
+   * threshold — the dispatch's "<=15%"), matching the wording the dispatch asked
+   * for without inventing a second threshold here.
+   * @param {{status: string, remainingPercent: (number|null)}|null} continuity
+   * @returns {void}
+   */
+  function setMasterLowContextBanner(continuity) {
+    const banner = document.getElementById('masterLowContextBanner');
+    const text = document.getElementById('masterLowContextText');
+    if (!banner || !text) return;
+    const critical = Boolean(continuity && continuity.status === 'critical');
+    banner.classList.toggle('hidden', !critical);
+    if (!critical) return;
+    const pct = typeof continuity.remainingPercent === 'number' ? Math.round(continuity.remainingPercent) : null;
+    text.textContent = pct === null
+      ? 'Admin-PM is low on context.'
+      : `Admin-PM is low on context (${pct}% remaining).`;
+  }
+
   const status = await api('/api/master/status');
   if (!status) return;
   // The access controls paint from THIS fetch rather than issuing their own.
@@ -8000,6 +8286,11 @@ async function refreshMasterDot() {
   // the stored preference and is null when unpinned), which is the same value
   // the ensure response carries as `engine`, so both pages paint from one fact.
   if (masterBar) masterBar.loadModel((status.settings && status.settings.resolvedEngine) || null);
+  // #3137 — painted unconditionally, before the liveness branches below:
+  // the fleet shape and the low-context banner are both facts about THIS
+  // fetch's payload, not about whether `exists` is currently true.
+  if (status.adminFleet) renderMasterUtilitySeats(status.adminFleet.utilitySeats);
+  setMasterLowContextBanner(status.continuity || null);
   if (status.exists) {
     setMasterStatus('live');
     return;
@@ -8097,10 +8388,20 @@ masterBar = window.tcCreateMasterControlBar({
   esc,
   isPopout: isMasterPopout,
   onRetry: ensureMasterAttached,
-  onOpenSettings: () => { masterBar.setError(''); masterSettings.open(); }
+  onOpenSettings: () => { masterBar.setError(''); masterSettings.open(); },
+  // #3137 — the bar's own Wrap/Upload buttons (newly un-pended) delegate their
+  // behaviour here: a capsule capture + relaunch, and an upload's API call +
+  // thumbnail strip, are real client logic this page already has, tested —
+  // see `public/api-helper.js#tcCreateMasterControlBar`'s own comment at
+  // these two wirings for why that beats a second copy inside the component.
+  onWrap: wrapAndRelaunchMaster,
+  onUpload: uploadMasterAttachment
 });
 masterBar.mount();
 addMasterRelaunchButton('masterPanel');
+renameMasterSurfacesToAdminFleet();
+addMasterFleetRow('masterPanel');
+addMasterAttachmentStrip();
 
 // The Advisor control bar (#2819). Same component the session drawer mounts.
 advisorBar = window.tcCreateAdvisorControlBar({

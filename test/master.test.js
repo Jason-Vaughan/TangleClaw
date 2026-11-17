@@ -817,6 +817,90 @@ describe('getMasterStatus', () => {
       assert.equal(status.exists, alive, 'an ANSWERED negative is still a real false');
     }
   });
+
+  it('carries the additive Admin Fleet block (#3137), same frozen-constant shape as roleTerminology', () => {
+    const status = master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true }), home: NO_HOME });
+    assert.deepEqual(status.adminFleet, master.ADMIN_FLEET);
+    assert.equal(status.adminFleet.name, 'Admin Fleet');
+    assert.equal(status.adminFleet.lead, 'Admin-PM');
+    const advisor = status.adminFleet.utilitySeats.find((s) => s.key === 'admin-advisor');
+    assert.ok(advisor && advisor.wired === true, 'Admin-Advisor maps onto the real Advisor panel');
+    const claude = status.adminFleet.utilitySeats.find((s) => s.key === 'admin-claude');
+    assert.ok(claude && claude.wired === false, 'a seat with no backing session is an honest placeholder, not a fake live one');
+  });
+});
+
+describe('Admin Fleet governed Wrap & Relaunch, continuity capsule (#3137)', () => {
+  let home;
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-wrap-'));
+  });
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  describe('captureContinuityCapsule', () => {
+    it('assembles a tangleclaw-continuity/v1 capsule from the current status facts', () => {
+      const capsule = master.captureContinuityCapsule({ tmuxLib: fakeTmux({ alive: true }), home, enginesLib: availableEngines });
+      assert.equal(capsule.schema, master.CONTINUITY_CAPSULE_SCHEMA);
+      assert.equal(capsule.schema, 'tangleclaw-continuity/v1');
+      assert.match(capsule.generation, /^ADMIN-PM-WRAP-G\d+$/);
+      assert.equal(capsule.single_use, true);
+      assert.equal(capsule.source.role, 'Admin-PM');
+      assert.equal(capsule.source.tmuxSession, master.MASTER_TMUX_SESSION);
+      // Mirrors `lib/master-continuity.js#_continuityHint`'s own choice, for
+      // the same reason: Master never runs the project wrap pipeline.
+      assert.equal(capsule.lifecycle.transition, 'finalize-relaunch');
+      assert.equal(capsule.lifecycle.wrap, 'none');
+      assert.ok(capsule.continuity, 'the continuity health reading rides along');
+      assert.ok(capsule.awareness, 'the awareness reading rides along');
+    });
+
+    it('two captures a tick apart get distinct generations', async () => {
+      const a = master.captureContinuityCapsule({ tmuxLib: fakeTmux({ alive: true }), home, enginesLib: availableEngines });
+      await new Promise((r) => setTimeout(r, 2));
+      const b = master.captureContinuityCapsule({ tmuxLib: fakeTmux({ alive: true }), home, enginesLib: availableEngines });
+      assert.notEqual(a.generation, b.generation);
+    });
+  });
+
+  describe('wrapMasterSession', () => {
+    it('persists the capsule to the well-known path, then kills and relaunches', () => {
+      const t = fakeTmux({ alive: true });
+      const r = master.wrapMasterSession({ tmuxLib: t, home, enginesLib: availableEngines, refreshFleet: NO_FLEET });
+      assert.equal(r.wrapped, true);
+      assert.equal(r.capsule.path, master.continuityCapsulePath(home));
+      assert.match(r.capsule.digest, /^[0-9a-f]{64}$/);
+      assert.ok(fs.existsSync(r.capsule.path), 'the capsule file must actually be on disk');
+      const onDisk = JSON.parse(fs.readFileSync(r.capsule.path, 'utf8'));
+      assert.equal(onDisk.generation, r.capsule.generation);
+      // The digest is over the exact bytes written, so a reconciling session's
+      // "hash the local capsule before trusting it" step actually checks something.
+      const crypto = require('node:crypto');
+      const recomputed = crypto.createHash('sha256').update(fs.readFileSync(r.capsule.path, 'utf8')).digest('hex');
+      assert.equal(recomputed, r.capsule.digest);
+      assert.deepEqual(t.killCalls, [master.MASTER_TMUX_SESSION]);
+      assert.equal(r.relaunch.created, true, 'a real relaunch, not the live no-op');
+    });
+
+    it('still writes the capsule, and still attempts the relaunch, when nothing was running to kill', () => {
+      const t = fakeTmux({ alive: false });
+      const r = master.wrapMasterSession({ tmuxLib: t, home, enginesLib: availableEngines, refreshFleet: NO_FLEET });
+      assert.equal(r.wrapped, true);
+      assert.ok(fs.existsSync(r.capsule.path));
+      assert.equal(t.killCalls.length, 0, 'nothing was running, so there is nothing to kill');
+      assert.equal(r.relaunch.created, true);
+    });
+
+    it('surfaces the relaunch failure but keeps the already-written capsule info', () => {
+      const t = fakeTmux({ alive: true, killSession: () => false });
+      const r = master.wrapMasterSession({ tmuxLib: t, home, enginesLib: availableEngines, refreshFleet: NO_FLEET });
+      assert.equal(r.wrapped, true, 'the capsule write is independent of whether the relaunch half later fails');
+      assert.ok(fs.existsSync(r.capsule.path));
+      assert.equal(r.relaunch.created, false);
+      assert.equal(r.relaunch.code, 'MASTER_RELAUNCH_KILL_UNCONFIRMED');
+    });
+  });
 });
 
 // ── R-15 (#755 chunk 3): the guard's posture is read BACK, so a degraded

@@ -101,65 +101,30 @@ describe('#768 one implementation, two surfaces', () => {
 });
 
 describe('#768 controls with no backend are absent WITH a reason', () => {
-  const bar = G.tcMasterControlBarMarkup('masterPanel', {});
+  it('names a reason for each control that has no route — EMPTY now (#3137)', () => {
+    // `access` left this list in #755 chunk 3, `kill` in #968, `medusa` in #996 —
+    // each removal was the assertion that a shipped backend took its control's
+    // pending treatment WITH it, rather than leaving a reason beside a working
+    // button. `upload` and `wrap` are the same move: `POST /api/master/attachments`
+    // and `POST /api/master/wrap` now exist (#3137), so the table is empty.
+    assert.deepEqual(Object.keys(G.tcMasterPendingReasons).sort(), []);
+  });
 
-  it('every pending control is disabled and carries its reason', () => {
-    // The rule from #755/#741: never present-and-inert. A disabled control that
-    // states why is the honest middle — the operator sees the bar's final shape
-    // without being able to press something that would do nothing.
+  it('Upload and Wrap are no longer pending-disabled', () => {
+    // The flip side of #755/#741's rule: once a control has a backend, it must
+    // NOT still carry the pending treatment — that would be a reason rendered
+    // beside a working control, which is its own falsehood (the same check
+    // `access`/`kill`/`medusa` passed when THEIR backends landed).
+    const bar = G.tcMasterControlBarMarkup('masterPanel', {});
     for (const key of ['Upload', 'Wrap']) {
       const m = new RegExp(`<button[^>]*id="masterPanel${key}Btn"[^>]*>`).exec(bar);
       assert.ok(m, `${key} must render`);
-      // A STANDALONE attribute, not `\bdisabled\b` — that also matches inside
-      // `aria-disabled="true"`, so the first version of this guard stayed green
-      // when the real `disabled` was removed. It asserted nothing.
-      assert.match(m[0], /\sdisabled(?=[\s>])/, `${key} must not be pressable`);
-      assert.match(m[0], /aria-disabled="true"/, `${key} must say so to assistive tech`);
-      assert.match(m[0], /title="[^"]{10,}"/, `${key} must carry its reason`);
+      assert.doesNotMatch(m[0], /\sdisabled(?=[\s>])/, `${key} must be pressable`);
+      assert.doesNotMatch(m[0], /aria-disabled="true"/, `${key} must not claim to assistive tech that it is inert`);
+      assert.doesNotMatch(m[0], /master-bar-pending/, `${key} must not carry the pending treatment`);
     }
-  });
-
-  it('the reason is reachable without hover', () => {
-    // A `title` is invisible on touch, and this install is driven from a phone.
-    // Each pending control points at a description element carrying the same
-    // text, so the reason survives a device with no pointer.
-    // `Access` left this list in #755 chunk 3 — its toggle has a backend now, so
-    // it is a live control rather than an absence needing a reason. Removing it
-    // here is not weakening the guard: the rule is about controls with NO route,
-    // and a reason rendered beside a working control is its own falsehood.
-    // `Medusa` left this list with #996 — the bar mounts the real control now,
-    // so a reason element beside it would be the falsehood this rule forbids.
-    for (const key of ['Upload', 'Wrap']) {
-      assert.match(bar, new RegExp(`aria-describedby="masterPanel${key}Why"`),
-        `${key} must reference a description`);
-      assert.match(bar, new RegExp(`id="masterPanel${key}Why"`),
-        `${key}'s description element must exist`);
-    }
-  });
-
-  it('the reasons are one table, not one per surface', () => {
-    // Two surfaces giving different reasons for the same absence reads as one of
-    // them being wrong.
-    const panel = G.tcMasterControlBarMarkup('masterPanel', {});
-    const drawer = G.tcMasterControlBarMarkup('masterDrawer', {});
-    for (const reason of Object.values(G.tcMasterPendingReasons)) {
-      assert.ok(panel.includes(reason) && drawer.includes(reason),
-        `both surfaces must state: ${reason}`);
-    }
-  });
-
-  it('names a reason for each control that has no route', () => {
-    // `access` is GONE (#755 chunk 3) and its absence is the assertion: a
-    // control that works must not still carry an explanation for why it cannot.
-    // This list shrinking is how a shipped backend is proved to have taken the
-    // pending treatment WITH it, rather than beside it.
-    // `kill` is GONE (#968) alongside `access` (#755). Each removal is the
-    // assertion that a shipped backend took its control's pending treatment WITH
-    // it rather than leaving a reason beside a working button.
-    // `medusa` is GONE (#996): `/api/master/medusa/*` shipped and the bar mounts
-    // the shared control, so its pending treatment left with the backend.
-    assert.deepEqual(Object.keys(G.tcMasterPendingReasons).sort(),
-      ['upload', 'wrap']);
+    assert.doesNotMatch(bar, /masterPanelUploadWhy|masterPanelWrapWhy/,
+      'no pending-reason description elements should remain for either control');
   });
 });
 
@@ -202,6 +167,52 @@ describe('#768 the bar behaves', () => {
     bar.mount();
     doc.getElementById('masterPanelRetryBtn').dispatch('click');
     assert.equal(fired.length, 1, 'Retry must reach the handler the page supplied');
+  });
+
+  it('Wrap actually fires deps.onWrap (#3137)', () => {
+    // Behavioural, same reasoning as the Retry test above: a source-regex
+    // version passes whether or not `mount()` still binds the button.
+    const { doc, ids } = makeDocument(['masterPanelBar']);
+    withIdParsingInnerHTML(ids.masterPanelBar, doc);
+    const fired = [];
+    const bar = G.tcCreateMasterControlBar({
+      doc, rootId: 'masterPanelBar', prefix: 'masterPanel', onWrap: () => fired.push(1)
+    });
+    bar.mount();
+    doc.getElementById('masterPanelWrapBtn').dispatch('click');
+    assert.equal(fired.length, 1, 'Wrap must reach the handler the page supplied');
+  });
+
+  it('does not throw mounting with no onWrap/onUpload supplied', () => {
+    // Both are optional deps (the pages that mount this bar always pass them,
+    // but the component itself must not assume they exist) — same contract
+    // `onRetry`/`onOpenSettings` already have above.
+    const { doc, ids } = makeDocument(['masterPanelBar']);
+    withIdParsingInnerHTML(ids.masterPanelBar, doc);
+    const bar = G.tcCreateMasterControlBar({ doc, rootId: 'masterPanelBar', prefix: 'masterPanel' });
+    assert.doesNotThrow(() => bar.mount());
+    assert.doesNotThrow(() => doc.getElementById('masterPanelWrapBtn').dispatch('click'));
+  });
+
+  it('Upload opens the file picker, then fires deps.onUpload with the chosen file (#3137)', () => {
+    const { doc, ids } = makeDocument(['masterPanelBar']);
+    withIdParsingInnerHTML(ids.masterPanelBar, doc);
+    const uploaded = [];
+    const bar = G.tcCreateMasterControlBar({
+      doc, rootId: 'masterPanelBar', prefix: 'masterPanel', onUpload: (file) => uploaded.push(file)
+    });
+    bar.mount();
+    const input = doc.getElementById('masterPanelUploadInput');
+    assert.ok(input, 'the file input must exist');
+    const clicked = [];
+    input.click = () => clicked.push(1);
+    doc.getElementById('masterPanelUploadBtn').dispatch('click');
+    assert.equal(clicked.length, 1, 'Upload must open the picker');
+    // Simulate a choice, then the input's own change event.
+    const fakeFile = { name: 'screenshot.png' };
+    input.files = [fakeFile];
+    input.dispatch('change');
+    assert.deepEqual(uploaded, [fakeFile], 'the chosen file must reach the handler the page supplied');
   });
 
   it('paints the model pill from a real fetch', async () => {

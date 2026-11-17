@@ -3369,23 +3369,14 @@
    * carries its own reason is the honest form of that — the operator can see
    * the bar's final shape without being able to press something that would
    * silently do nothing.
+   *
+   * Empty (#3137): `upload` and `wrap` are GONE, for the same reason `access`,
+   * `kill` and `medusa` left before them — `POST /api/master/attachments` and
+   * `POST /api/master/wrap` now exist (`lib/routes/sessions.js`), so the
+   * entries' own REMOVAL is what proves the pending treatment came off WITH
+   * the backend rather than being left beside it.
    */
-  const TC_MASTER_PENDING = {
-    // `medusa` LEFT this table with #996: `/api/master/medusa/*` exists and the
-    // bar mounts the shared control (`tcCreateMedusaControl`) — the same
-    // removal-is-the-proof rule `access` and `kill` set below.
-    // `access` is GONE from this table on purpose. It named the last reason the
-    // toggle was inert ("isn't wired up yet"), and the toggle is wired now — the
-    // entry's own removal is what proves the pending treatment came off rather
-    // than being left beside a live control, which is the worst of both (a
-    // reason for an absence that is not absent).
-    upload: 'Uploads resolve through a registered project, and the Master is not one.',
-    // `kill` left this table when `POST /api/master/kill` landed (#968), for the
-    // same reason `access` did: a reason rendered beside a working control is its
-    // own falsehood, and the entry's REMOVAL is what proves the pending treatment
-    // came off WITH the backend rather than beside it.
-    wrap: "Wrap is a git pipeline and the Master has no checkout — what it should mean here isn't decided yet."
-  };
+  const TC_MASTER_PENDING = {};
 
   /**
    * Short labels for the guard-degradation codes `/api/master/status` reports.
@@ -4517,14 +4508,6 @@
     // whitespace between them renders as a visible gap inside the control's own
     // border.
     //
-    // `disabled` AND `aria-disabled` — the first stops the press, the second is
-    // what assistive tech announces. A hint element carries the reason so it is
-    // not locked inside a `title` tooltip that touch devices never show.
-    const pend = (key, cls, label) =>
-      `<button type="button" class="${cls} master-bar-pending" id="${p}${key}Btn" disabled`
-      + ` aria-disabled="true" aria-describedby="${p}${key}Why" title="${TC_MASTER_PENDING[key.toLowerCase()]}"`
-      + `>${label}</button><span class="sr-only" id="${p}${key}Why">${TC_MASTER_PENDING[key.toLowerCase()]}</span>`;
-
     return `
       <span class="master-dot" id="${p}Dot" aria-hidden="true"></span>
       <span class="master-status-text" id="${p}StatusText"></span>
@@ -4543,10 +4526,13 @@
               aria-label="Full screen" title="Expand the Master terminal to fill the screen">&#x26F6;</button>
       <button type="button" class="banner-btn" id="${p}PopoutBtn"
               aria-label="Open in separate window" title="Open the Master terminal in its own window">&#x2197;</button>
-      ${pend('Upload', 'banner-btn', 'Upload')}
+      <button type="button" class="banner-btn" id="${p}UploadBtn"
+              aria-label="Attach a photo or screenshot" title="Attach a photo or screenshot for Admin-PM">Upload</button>
+      <input type="file" accept="image/*" class="hidden" id="${p}UploadInput" aria-hidden="true">
       <button class="banner-btn" id="${p}SettingsBtn"
               aria-label="Master settings" title="Master settings">&#9881;</button>
-      ${pend('Wrap', 'banner-btn btn-wrap', 'Wrap')}
+      <button type="button" class="banner-btn btn-wrap" id="${p}WrapBtn"
+              title="Capture a continuity handoff capsule, then stop and restart Admin-PM.">Wrap</button>
       <button type="button" class="banner-btn btn-launch hidden" id="${p}LaunchBtn"
               title="Start a fresh Master session. Its memory/ files survive; the conversation does not.">Launch</button>
       <button type="button" class="banner-btn btn-kill" id="${p}KillBtn"
@@ -4719,6 +4705,30 @@
       if (popoutBtn) {
         if (deps.isPopout) popoutBtn.hidden = true;
         else popoutBtn.addEventListener('click', openPopout);
+      }
+      // Wrap (#3137): the look lives here (same `banner-btn btn-wrap` class the
+      // session banner's own Wrap button carries — "shared NOW" per this
+      // component's own docblock); the behaviour is delegated to `deps.onWrap`,
+      // same pattern Launch already delegates to `deps.onRetry` — a capsule
+      // capture + relaunch is real client logic (confirm dialog, status
+      // repaint), not something this shared component should own a second copy
+      // of beside the page that already has it, tested.
+      const wrapBtn = el('WrapBtn');
+      if (wrapBtn && deps.onWrap) wrapBtn.addEventListener('click', deps.onWrap);
+      // Upload (#3137): this component owns the file PICKER (the control's
+      // look and the one thing every caller needs identically); the actual
+      // upload — the API call, the thumbnail strip, paste/drop — is delegated
+      // to `deps.onUpload(file)`, for the same "shared look, delegated
+      // behaviour" reason as Wrap above.
+      const uploadBtn = el('UploadBtn');
+      const uploadInput = el('UploadInput');
+      if (uploadBtn && uploadInput) {
+        uploadBtn.addEventListener('click', () => uploadInput.click());
+        uploadInput.addEventListener('change', () => {
+          const file = uploadInput.files && uploadInput.files[0];
+          if (file && deps.onUpload) deps.onUpload(file);
+          uploadInput.value = '';
+        });
       }
       medusa.mount();
       if (medusaLoops) medusaLoops.mount();
