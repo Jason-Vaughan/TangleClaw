@@ -44,6 +44,22 @@
   --z-modal-backdrop: 400;
   --z-toast: 450;
   --z-unreachable: 500;
+
+  /* #3133: the official TangleClaw Dark Brand Palette (brand-guide.md).
+     Scoped to the v6 shell's own dark-locked surfaces (scrollbars, Under
+     the Hood, the Sprint & Cars board, Waiting-On) rather than repointing
+     the v2 palette above, which other, non-v6 pages still render with. */
+  --tc-venom-green: #9CF732;
+  --tc-viper-emerald: #52B818;
+  --tc-deep-jungle: #184D09;
+  --tc-obsidian-void: #070A08;
+  --tc-panel-surface: #101713;
+  --tc-panel-surface-alt: #151F19;
+  --tc-border-emerald: #233329;
+  --tc-fang-ivory: #E8F0E2;
+  --tc-muted-sage: #8CA394;
+  --tc-predator-gold: #FFB800;
+  --tc-predator-gold-alt: #D4FF2A;
 }
 
 /* ── Light Theme ── */
@@ -3865,9 +3881,52 @@ html[data-theme="light"] .tc-bg-watermark img {
   grid-template-rows: auto 1fr auto;
   gap: 16px;
   align-items: start;
+  /* #3133: lock the shell to the dynamic viewport so the telemetry header
+     (row 1) and watermark footer (row 3) stay pinned on screen; only
+     `.v6-shell-view`'s own `1fr` row scrolls. `100vh` ignores a mobile
+     browser's collapsing address bar and undercounts the real visible
+     area — `100dvh` tracks it, matching `body`'s own lock above. */
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  color-scheme: dark;
 }
 [data-theme="light"] .v6-shell-root {
   --v6-outline: #8c959f;
+}
+/* #3133: slim (6px) dark-brand scrollbars everywhere inside the v6 shell —
+   chat, sidebar, Under the Hood — replacing the browser's thick default
+   ones. Firefox reads `scrollbar-width`/`scrollbar-color`; Chrome/Safari
+   read the `::-webkit-scrollbar*` pseudo-elements below. A plain
+   descendant selector covers every current and future scroll container in
+   the shell (the chat stream, the sidebar, Under the Hood's panes, the
+   usage popover) without enumerating each one by name. */
+.v6-shell-root,
+.v6-shell-root * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--tc-border-emerald) var(--tc-obsidian-void);
+}
+.v6-shell-root::-webkit-scrollbar,
+.v6-shell-root *::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.v6-shell-root::-webkit-scrollbar-track,
+.v6-shell-root *::-webkit-scrollbar-track {
+  background: var(--tc-obsidian-void);
+}
+.v6-shell-root::-webkit-scrollbar-thumb,
+.v6-shell-root *::-webkit-scrollbar-thumb {
+  background: var(--tc-border-emerald);
+  border-radius: 999px;
+}
+.v6-shell-root::-webkit-scrollbar-thumb:hover,
+.v6-shell-root *::-webkit-scrollbar-thumb:hover {
+  background: var(--tc-viper-emerald);
+}
+.v6-shell-root::-webkit-scrollbar-thumb:active,
+.v6-shell-root *::-webkit-scrollbar-thumb:active {
+  background: var(--tc-venom-green);
 }
 .v6-shell-skip-link {
   position: absolute;
@@ -3922,6 +3981,10 @@ html[data-theme="light"] .tc-bg-watermark img {
      the main view instead of stretching the page. */
   position: sticky;
   top: 0;
+  /* #3133: left as `100vh`, not `100dvh` — `test/v6-b1-ui-shell.test.js`
+     (W1-D's car, not this one's file scope) pins this exact literal, and
+     the shell's own `100dvh` lock on `.v6-shell-root` above already
+     covers this car's actual deliverable (the header/footer pin). */
   max-height: calc(100vh - 110px);
   overflow-y: auto;
 }
@@ -3957,6 +4020,14 @@ html[data-theme="light"] .tc-bg-watermark img {
   grid-column: 2;
   grid-row: 2;
   min-width: 0;
+  /* #3133: the `1fr` row's own scroll container. Grid items default to
+     `min-height: auto` (their content's size), which refuses to shrink
+     below that even inside a sized track — without `min-height: 0` the
+     view pushes `.v6-shell-root` taller than `100dvh` instead of
+     scrolling internally, which is exactly the whole-page scroll the
+     viewport lock on `.v6-shell-root` above exists to prevent. */
+  min-height: 0;
+  overflow-y: auto;
 }
 .v6-telemetry-header {
   grid-column: 2;
@@ -4218,9 +4289,12 @@ html[data-theme="light"] .tc-bg-watermark img {
     grid-column: 1;
     grid-row: auto;
   }
-  .v6-shell-root {
-    grid-template-rows: none;
-  }
+  /* #3133: removed the `grid-template-rows: none` override that used to
+     sit here — it collapsed the explicit `auto 1fr auto` row template to
+     implicit auto-sized rows, so the header/footer no longer stayed
+     pinned and `.v6-shell-view`'s own scroll (above) had no bounded `1fr`
+     track to scroll inside, pushing the whole shell past `100dvh` on a
+     phone. The base rule's `auto 1fr auto` now applies at every width. */
   .v6-shell-sidebar {
     position: static;
     max-height: none;
@@ -4574,6 +4648,24 @@ p.v6-history-secret {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* #3133/#3135: Interactive CLI Mode's live border and indicator — today
+   `public/v6-shell.js` sets both as an inline `style="border:2px solid
+   #9CF732"` / `style="color:#9CF732"` directly (its own comment: "in lieu
+   of a style.css rule... reserved for Wave 2's own Car"), which still
+   wins over this rule via normal inline-vs-stylesheet precedence. This is
+   the reserved rule, written against the real ids and the actual brand
+   token rather than the literal hex, and against `#v6ChatPeek` (the pane
+   the inline border is actually on — no element in the shell is id
+   `v6ChatHood`) with an `.is-interactive` hook for the inline style to be
+   replaced with eventually, so no further style.css change is needed
+   once that JS change lands. */
+#v6ChatPeek.is-interactive {
+  border: 2px solid var(--tc-venom-green);
+}
+#v6ChatHoodLiveIndicator {
+  display: block;
+  color: var(--tc-venom-green);
+}
 .v6-chat-offline {
   display: flex;
   flex-wrap: wrap;
@@ -4720,7 +4812,9 @@ p.v6-history-secret {
 .v6-chat-composer {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  /* #3133: ~10% tighter than the previous 8px, to match the Send/Force
+     Send buttons' own tightened box below. */
+  gap: 7px;
   align-items: flex-end;
 }
 /* #3053: attachment chips sit on their own line above the message. */
@@ -4759,7 +4853,20 @@ p.v6-history-secret {
 .v6-chat-composer-actions {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  /* #3133: ~10% tighter than the previous 6px. */
+  gap: 5px;
+}
+/* #3133: Send / Force Send, ~10% off `.btn`'s own horizontal padding
+   (12px -> 11px) and vertical padding (4px -> 3px), with the font size
+   left untouched per the spec. `min-height` is deliberately NOT
+   overridden here: `.btn`'s 44px is the accessibility touch-target floor
+   `test/button-touch-targets.test.js` pins for #823 (the Save-button
+   regression that floor exists to prevent), and `min-height` always wins
+   over a smaller padding+content box regardless, so shrinking it further
+   would need an explicit, floor-breaking override rather than padding. */
+.v6-chat-send-btn,
+.v6-chat-force-send {
+  padding: 3px 11px;
 }
 /* #3106: the attach chip sits inside this wrapper, pinned to the
    textarea's top-right corner, instead of taking its own row in
@@ -5019,13 +5126,64 @@ p.v6-history-secret {
 .v6-waiting-on-you.has-items { border-color: #d4a72c; background: rgba(212, 167, 44, 0.1); }
 .v6-waiting-on-todo.has-items { border-color: #58a6ff; background: rgba(56, 139, 253, 0.08); }
 .v6-waiting-on-ai.has-items { border-color: #56d364; background: rgba(86, 211, 100, 0.08); }
+/* #3131/#3133: one Fleet Member section per outstanding target, styled
+   with the brand palette since it is new — the other two sections above
+   predate #3131 and keep their own established colors. */
+.v6-waiting-on-fleet.has-items {
+  border-color: var(--tc-viper-emerald);
+  background: rgba(82, 184, 24, 0.08);
+}
+/* #3131: the header is now a toggle `<button>`, not a plain heading — full
+   width, left-aligned, and button-chrome reset to still read as a label. */
 .v6-waiting-on-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 0 0 4px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  font-size: 0.9em;
+  font-weight: 600;
+  cursor: pointer;
+}
+.v6-waiting-on-section.is-collapsed .v6-waiting-on-title {
+  margin-bottom: 0;
+}
+.v6-waiting-on-caret {
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 1em;
+  text-align: center;
+}
+/* #3131: the outer "Waiting on:" header, over all the collapsible sections. */
+.v6-waiting-on-heading {
   margin: 0 0 4px;
   font-size: 0.9em;
   font-weight: 600;
+  color: var(--tc-muted-sage);
+}
+.v6-waiting-on-fleet-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.v6-waiting-on-fleet-wrap:empty {
+  display: none;
+}
+.v6-waiting-on-subhead {
+  display: block;
+  font-size: 0.8em;
+  opacity: 0.8;
+  margin: 4px 0;
 }
 .v6-waiting-on-todo-list,
-.v6-waiting-on-ai-list {
+.v6-waiting-on-ai-list,
+.v6-waiting-on-fleet-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -5033,7 +5191,8 @@ p.v6-history-secret {
   flex-direction: column;
   gap: 4px;
 }
-.v6-waiting-on-ai-list li {
+.v6-waiting-on-ai-list li,
+.v6-waiting-on-fleet-list li {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -5084,7 +5243,8 @@ p.v6-history-secret {
 }
 .v6-waiting-on-ai-force,
 .v6-waiting-on-ai-dismiss,
-.v6-waiting-on-todo-dismiss {
+.v6-waiting-on-todo-dismiss,
+.v6-waiting-on-fleet-dismiss {
   flex: 0 0 auto;
   min-width: 32px;
   min-height: 32px;
@@ -5101,6 +5261,10 @@ p.v6-history-secret {
 .v6-waiting-on-todo-dismiss:hover,
 .v6-waiting-on-todo-dismiss:focus-visible {
   border-color: #56d364;
+}
+.v6-waiting-on-fleet-dismiss:hover,
+.v6-waiting-on-fleet-dismiss:focus-visible {
+  border-color: var(--tc-viper-emerald);
 }
 /* #3076: Medusa traffic in the chat header — the inbound (left) and
    outbound (right) heads blink when traffic moves; the badge is @ or the
@@ -5743,6 +5907,89 @@ p.v6-history-secret {
   text-decoration: line-through;
   outline: 2px solid #d4a72c;
   outline-offset: 1px;
+}
+
+/* #3133: the Sprint & Cars board (#3138) — one column per stage
+   (`STAGE_LABELS` in `public/sprint-wave-ui.js`: Unassigned, Claimed, In
+   Progress, In Review, Blocked, Closed), six in total, laid out as an
+   explicit 6-column grid rather than the older `.sprint-gate-matrix`
+   table above. Brand-palette surfaces/borders, matching the rest of the
+   v6 shell. */
+.sprint-wave-board {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+.sprint-wave-column {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.sprint-wave-column-title {
+  font-size: 0.8em;
+  font-weight: 600;
+  color: var(--tc-muted-sage);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+.sprint-wave-column-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sprint-wave-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--tc-border-emerald);
+  border-radius: var(--radius-card, 10px);
+  background: var(--tc-panel-surface);
+  overflow-wrap: anywhere;
+}
+.sprint-wave-car-id {
+  font-weight: 700;
+  color: var(--tc-fang-ivory);
+}
+.sprint-wave-lane,
+.sprint-wave-pr {
+  font-size: 0.85em;
+  color: var(--tc-muted-sage);
+}
+/* The board's own gate pills (Draft/Completed badges on a card). Distinct
+   from `.sprint-gate-pill` above, which belongs to the older matrix. */
+.sprint-stage-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1px solid var(--tc-border-emerald);
+  border-radius: 999px;
+  font-size: 0.75em;
+  font-weight: 600;
+}
+.sprint-stage-pill.is-pending {
+  color: var(--tc-muted-sage);
+}
+.sprint-stage-pill.is-closed {
+  background: var(--tc-viper-emerald);
+  border-color: var(--tc-viper-emerald);
+  color: var(--tc-obsidian-void);
+}
+/* Six fixed-width columns read as a cramped single stack under ~900px —
+   scroll the board horizontally instead of forcing it to wrap. */
+@media (max-width: 900px) {
+  .sprint-wave-board {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(160px, 220px);
+    overflow-x: auto;
+  }
 }
 
 /* #3088: the charter versions and the train launch controls under Charter & Roadmap. */
