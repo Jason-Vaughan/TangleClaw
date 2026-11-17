@@ -7903,11 +7903,12 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
     assert.deepEqual([both.engines[0].remainingPct, both.engines[0].source, both.engines[0].state], [3, 'live', 'critical']);
   });
 
-  it('falls back to live contextRemainingPct when neither a pane reading nor a calibration answers (#3113)', () => {
+  it('never mixes a chat session\'s own contextRemainingPct into the engine\'s account-level % left (#3132 Req 2, PRR-B R1 BLOCKING 2a: the #3113 fallback is removed)', () => {
     const w = windows({ calibration: { claude: null, codex: null } });
+    // A context-only reading, with no pane/calibration answer, reads unknown — never substituted in.
     const m = model(w, { sessions: [{ engine: 'claude', contextRemainingPct: 18 }, { engine: 'claude', contextRemainingPct: 60 }] });
-    assert.deepEqual([m.engines[0].remainingPct, m.engines[0].source], [18, 'context']);
-    // A real pane/calibration reading still wins over context when both exist.
+    assert.deepEqual([m.engines[0].remainingPct, m.engines[0].source], [null, 'none']);
+    // A real pane reading is unaffected by a context reading sitting right beside it.
     const both = model(w, { sessions: [{ engine: 'codex', weeklyRemainingPct: 9, contextRemainingPct: 50 }] });
     assert.deepEqual([both.engines[1].remainingPct, both.engines[1].source], [9, 'live']);
     // No pane reading, no calibration, no context: still unknown.
@@ -8311,6 +8312,225 @@ describe('Car V651-W2-B: inline video previews and "Show preview by default" (#3
     doc.getElementById('v6ChatAutoPreview').dispatch('click');
     assert.match(root.innerHTML, /id="v6ChatAutoPreview"[^>]*aria-pressed="false"/);
     assert.equal(storage.data.tc_v6_auto_preview_links, 'false');
+  });
+});
+
+describe('Car V651-W2-B R1 (PRR-B REVISE PR #3145): composer/stream height write-guard, sidebar drag/keydown, and allowlisted auto-preview', () => {
+  const G = loadV6Shell();
+
+  /**
+   * Gives every element this `doc` hands out a minimal, settable `.style`
+   * (supporting both direct property writes like `.height = 'x'` and
+   * `.setProperty`/`.removeProperty`, which `applySidebarWidthStyle` uses)
+   * and an `.offsetHeight` defaulting to 0 — neither of which `test/_mini-
+   * dom.js` provides (confirmed: zero other test file reads `.style`, so
+   * this is additive and scoped entirely to the `doc` THIS function is
+   * given, never touching the shared file). A 0 `offsetHeight` default is
+   * deliberate: it is the exact condition PRR-B's BLOCKING 1a finding is
+   * about (a hidden tab, or this very test DOM, reports no real layout).
+   * @param {object} doc
+   * @returns {object} the same `doc`, mutated in place.
+   */
+  function withLayoutStubs(doc) {
+    const realGet = doc.getElementById.bind(doc);
+    doc.getElementById = (id) => {
+      const el = realGet(id);
+      if (el && !el.style) {
+        el.style = {
+          setProperty(name, value) { this[name] = String(value); },
+          removeProperty(name) { delete this[name]; },
+          getPropertyValue(name) { return this[name] || ''; }
+        };
+      }
+      if (el && el.offsetHeight === undefined) el.offsetHeight = 0;
+      return el;
+    };
+    return doc;
+  }
+
+  /** Wraps `target.addEventListener` to also record every handler by type, so a test can invoke one directly with a synthetic event the mini-dom's own `dispatch()` cannot carry (a `.key`, a `.clientX`). */
+  function captureAddEventListener(target) {
+    const handlers = {};
+    const real = target.addEventListener.bind(target);
+    target.addEventListener = (type, fn) => {
+      (handlers[type] = handlers[type] || []).push(fn);
+      real(type, fn);
+    };
+    return handlers;
+  }
+
+  function mountChatWithLayout(storageSeed) {
+    const storage = makeStorage(storageSeed);
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    root.id = 'v6ShellRoot';
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    withLayoutStubs(doc);
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage });
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [] } } });
+    return { shell, doc, root, storage };
+  }
+
+  it('BLOCKING 1a: restores a saved composer height on mount, and re-persists it — never clobbers it with null because offsetHeight reads 0', () => {
+    const { doc, storage } = mountChatWithLayout({ tc_v6_chat_input_height: '150' });
+    assert.equal(doc.getElementById('v6ChatInput').style.height, '150px', 'the saved height was restored onto the element');
+    assert.equal(storage.data.tc_v6_chat_input_height, '150', 'the restore\'s own re-persist kept the real value, not null');
+  });
+
+  it('BLOCKING 1a: restores a saved stream height on mount too', () => {
+    const { doc } = mountChatWithLayout({ tc_v6_chat_stream_height: '420' });
+    assert.equal(doc.getElementById('v6ChatStream').style.height, '420px');
+  });
+
+  it('BLOCKING 1a: a fresh mount with nothing saved and no real layout persists nothing at all (not even null)', () => {
+    const { storage } = mountChatWithLayout();
+    assert.equal(storage.data.tc_v6_chat_input_height, undefined);
+    assert.equal(storage.data.tc_v6_chat_stream_height, undefined);
+  });
+
+  it('BLOCKING 1b: waitingOnCollapsed is seeded from storage and persists across a toggle', () => {
+    const { doc, storage } = mountChatWithLayout({ tc_v6_waiting_on_collapsed: JSON.stringify({ 1: ['you'] }) });
+    doc.getElementById('v6WaitingOnToggle-ai').dispatch('click');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_waiting_on_collapsed), { 1: ['you', 'ai'] });
+    doc.getElementById('v6WaitingOnToggle-you').dispatch('click');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_waiting_on_collapsed), { 1: ['ai'] });
+  });
+
+  it('BLOCKING 1b: a corrupt stored value is ignored rather than trusted', () => {
+    const { doc, storage } = mountChatWithLayout({ tc_v6_waiting_on_collapsed: '"not an object of arrays"' });
+    doc.getElementById('v6WaitingOnToggle-you').dispatch('click');
+    assert.deepEqual(JSON.parse(storage.data.tc_v6_waiting_on_collapsed), { 1: ['you'] });
+  });
+
+  it('BLOCKING 1a: clampSidebarWidth itself, used by the handle\'s own drag/keydown math, still clamps to [180, 480]', () => {
+    assert.equal(G.tcV6ClampSidebarWidth(500), 480);
+    assert.equal(G.tcV6ClampSidebarWidth(50), 180);
+  });
+
+  /**
+   * Wraps `doc.getElementById` so that whatever element it hands back for
+   * `id` gets its `addEventListener` calls captured from the moment it is
+   * FIRST fetched — needed because `wireSidebarResize()` attaches its own
+   * listeners synchronously during mount, before a test could otherwise
+   * get a reference to wrap (unlike {@link captureAddEventListener},
+   * which only helps once a reference already exists).
+   * @param {object} doc
+   * @param {string} id
+   * @returns {object} The captured handlers, keyed by event type.
+   */
+  function captureListenersOnMount(doc, id) {
+    const handlers = {};
+    const realGet = doc.getElementById.bind(doc);
+    doc.getElementById = (elId) => {
+      const el = realGet(elId);
+      if (el && elId === id && !el._tcCaptured) {
+        el._tcCaptured = true;
+        const realAdd = el.addEventListener.bind(el);
+        el.addEventListener = (type, fn) => {
+          (handlers[type] = handlers[type] || []).push(fn);
+          realAdd(type, fn);
+        };
+      }
+      return el;
+    };
+    return handlers;
+  }
+
+  it('BLOCKING 1a: dragging #v6SidebarResizeHandle resizes within [180, 480] and persists the result', () => {
+    const storage = makeStorage({ tc_v6_sidebar_width: '260' });
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    root.id = 'v6ShellRoot';
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const handleHandlers = captureListenersOnMount(doc, 'v6SidebarResizeHandle');
+    const win = makeFakeWindow('#/projects/tc-lane');
+    G.tcCreateV6Shell(doc, { root, window: win, storage, tree: TWO_GROUP_TREE });
+    const handle = doc.getElementById('v6SidebarResizeHandle');
+    const winHandlers = captureAddEventListener(win);
+    handleHandlers.pointerdown[0]({ clientX: 500, preventDefault() {} });
+    assert.ok(winHandlers.pointermove && winHandlers.pointermove.length === 1, 'the drag armed exactly one window-level move listener');
+    winHandlers.pointermove[0]({ clientX: 560 });
+    assert.equal(storage.data.tc_v6_sidebar_width, '320');
+    assert.equal(handle.getAttribute('aria-valuenow'), '320');
+    winHandlers.pointerup[0]();
+    // A second drag past the ceiling clamps, measured from wherever the first drag left off.
+    // There is exactly one 'pointerdown' listener for the handle's whole
+    // lifetime (wired once at mount) — every drag re-fires that SAME one.
+    handleHandlers.pointerdown[0]({ clientX: 500, preventDefault() {} });
+    winHandlers.pointermove[0]({ clientX: 5000 });
+    assert.equal(storage.data.tc_v6_sidebar_width, '480');
+    winHandlers.pointerup[0]();
+    // A drag below the floor clamps too.
+    handleHandlers.pointerdown[0]({ clientX: 500, preventDefault() {} });
+    winHandlers.pointermove[0]({ clientX: -5000 });
+    assert.equal(storage.data.tc_v6_sidebar_width, '180');
+  });
+
+  it('BLOCKING 1a: ArrowLeft/ArrowRight on the handle nudge the width by 10px', () => {
+    const storage = makeStorage({ tc_v6_sidebar_width: '260' });
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    root.id = 'v6ShellRoot';
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const handleHandlers = captureListenersOnMount(doc, 'v6SidebarResizeHandle');
+    G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/tc-lane'), storage, tree: TWO_GROUP_TREE });
+    let prevented = 0;
+    const evt = (key) => ({ key, preventDefault() { prevented += 1; } });
+    handleHandlers.keydown[0](evt('ArrowLeft'));
+    assert.equal(storage.data.tc_v6_sidebar_width, '250');
+    handleHandlers.keydown[0](evt('ArrowRight'));
+    handleHandlers.keydown[0](evt('ArrowRight'));
+    assert.equal(storage.data.tc_v6_sidebar_width, '270');
+    assert.equal(prevented, 3, 'every recognized key press is prevented, so it never scrolls the page too');
+    handleHandlers.keydown[0]({ key: 'Tab', preventDefault() { prevented += 1; } });
+    assert.equal(prevented, 3, 'an unrecognized key is left alone');
+  });
+
+  it('BLOCKING 3b: isAlwaysPreviewLink admits *.ts.net/*.github.io/tangleclaw.com and localhost on a self-published port, nothing else', () => {
+    assert.equal(G.tcV6IsAlwaysPreviewLink('https://cursatory.tail123678.ts.net:8443/plans/x.md'), true);
+    assert.equal(G.tcV6IsAlwaysPreviewLink('https://jason-vaughan.github.io/TangleClaw/'), true);
+    assert.equal(G.tcV6IsAlwaysPreviewLink('https://tangleclaw.com/marketplace'), true);
+    assert.equal(G.tcV6IsAlwaysPreviewLink('http://localhost:3410/'), true, 'a self-published preview port on localhost');
+    assert.equal(G.tcV6IsAlwaysPreviewLink('http://localhost:3102/'), false, 'the real API port is never one of the preview ports');
+    assert.equal(G.tcV6IsAlwaysPreviewLink('http://127.0.0.1:8443/'), true);
+    assert.equal(G.tcV6IsAlwaysPreviewLink('https://blog.example/post'), false, 'an ordinary external link is never exempted');
+    assert.equal(G.tcV6IsAlwaysPreviewLink('not a url at all'), false);
+    assert.equal(G.tcV6IsAlwaysPreviewLink(''), false);
+  });
+
+  it('BLOCKING 3b: wireRichPreviews auto-fetches an allowlisted self-published link even with the global setting off, and a plain link once it is on', () => {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    root.id = 'v6ShellRoot';
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const calls = [];
+    const fakeButton = (url) => ({ getAttribute: (n) => (n === 'data-unfurl-url' ? url : null), addEventListener() {} });
+    let buttons = [];
+    // `doc` (unlike `doc.body`) has no `querySelectorAll` of its own in this
+    // mini-dom — same baseline the existing #3107 spy test above installs.
+    const realQSA = doc.body.querySelectorAll.bind(doc.body);
+    doc.querySelectorAll = (sel) => (sel === '.v6-chat-unfurl-btn' ? buttons : realQSA(sel));
+    doc.querySelector = (sel) => doc.body.querySelector(sel);
+    const storage = makeStorage();
+    const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/x'), storage, onUnfurlLink: (url) => calls.push(url) });
+    buttons = [fakeButton('https://blog.example/post')];
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: { status: 'active', members: [], live: { turns: [] } } } });
+    assert.deepEqual(calls, [], 'off by default: a plain external link is not auto-fetched');
+    // An allowlisted self-published host auto-fetches even with the setting off — setLive's own targeted redraw re-wires rich previews (same as #3107's own test of this).
+    buttons = [fakeButton('https://cursatory.tail123678.ts.net:8443/plans/x.md')];
+    shell.setLive({ live: { turns: [] } });
+    assert.deepEqual(calls, ['https://cursatory.tail123678.ts.net:8443/plans/x.md']);
+    // Turning the global setting on auto-fetches a plain external link too.
+    calls.length = 0;
+    buttons = [fakeButton('https://blog.example/post')];
+    doc.getElementById('v6ChatAutoPreview').dispatch('click');
+    assert.deepEqual(calls, ['https://blog.example/post']);
   });
 });
 

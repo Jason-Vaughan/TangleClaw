@@ -1138,6 +1138,8 @@
   /** Reads of a just-sent chat that may show no engine activity before it stops reading as Working (#3057). */
   const AWAIT_REPLY_POLLS = 3;
   const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+  /** A plain object whose every value is a string array (#3133 PRR-B R1 BLOCKING 1b: `tc_v6_waiting_on_collapsed`'s own shape). */
+  const isStringArrayMap = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).every((k) => isStringArray(v[k]));
 
   /**
    * Which switchboard-triggered replies the chat shows (#3082), by kind; the
@@ -1506,10 +1508,14 @@
    * calibration reported back, so it is not a live reading; one that is
    * `combined` mixes the pane with calibration and is labelled so. The
    * state follows: critical at 5% or less, warning at 25% or less, else
-   * healthy (unknown when nothing reports a percentage). #3113: when
-   * neither a pane reading nor a calibration answers, the lowest live
-   * `contextRemainingPct` across that engine's active sessions stands in
-   * (source `"context"`) rather than falling straight to unknown.
+   * healthy (unknown when nothing reports a percentage). #3132 Req 2 (PRR-B
+   * R1 BLOCKING 2a): the #3113 fallback that substituted a chat session's
+   * own `contextRemainingPct` for the engine's account-level `% left` is
+   * removed — a context window's fullness is not the same quantity as an
+   * account's weekly/5h usage allowance, and showing one as the other
+   * (`"77% (context)"`) read as a real account reading. `#3132`'s own
+   * automated CLI probe (`usageProbeRowMarkup`, below) is the real
+   * account-level reading now, with no context substitute needed.
    * @param {object|null} windows - `GET /api/usage/windows`.
    * @param {object|null} sessions - `GET /api/usage/sessions`.
    * @returns {{engines: Array<object>, resetHours: number|null, resetAt: string|null}}
@@ -1527,13 +1533,8 @@
       const mixed = readings(fromPane.filter((x) => x.source === 'combined')).length > 0;
       const cal = w.calibration && w.calibration[key];
       const calibrated = cal ? [pctOrNull(cal.weeklyPct), pctOrNull(cal.fiveHourPct)].filter((v) => v !== null) : [];
-      const contextSeen = mine.map((x) => pctOrNull(x && x.contextRemainingPct)).filter((v) => v !== null);
-      let remainingPct = seen.length ? Math.min(...seen) : (calibrated.length ? Math.min(...calibrated) : null);
-      let source = seen.length ? (mixed ? 'live and calibrated' : 'live') : (calibrated.length ? 'calibrated' : 'none');
-      if (remainingPct === null && contextSeen.length) {
-        remainingPct = Math.min(...contextSeen);
-        source = 'context';
-      }
+      const remainingPct = seen.length ? Math.min(...seen) : (calibrated.length ? Math.min(...calibrated) : null);
+      const source = seen.length ? (mixed ? 'live and calibrated' : 'live') : (calibrated.length ? 'calibrated' : 'none');
       const state = remainingPct === null ? 'unknown' : remainingPct <= 5 ? 'critical' : remainingPct <= 25 ? 'warning' : 'healthy';
       return {
         key, label, name, remainingPct, state, source,
@@ -1591,16 +1592,14 @@
         + `<span class="v6-usage-value">${escapeHtml(reading)}</span></span>`;
     };
     const summary = model.engines.map((e) => `${e.name} ${e.remainingPct === null ? 'no reading' : `${Math.round(e.remainingPct)}% left`}`).join(', ');
-    // #3113 (PRR-A R1 WARNING): a context-fallback reading looks identical
-    // to a weekly quota reading unless the row says which one it is.
     const row = (e) => `<tr data-engine="${e.key}"><th scope="row">${e.name}</th>`
       + `<td>${formatTokens(e.tokens.fiveHour)}</td><td>${formatTokens(e.tokens.weekly)}</td><td>${formatTokens(e.tokens.sprint)}</td><td>${e.sessions}</td>`
-      + `<td>${e.remainingPct === null ? '—' : `${Math.round(e.remainingPct)}%${e.source === 'context' ? ' (context)' : ''}`}</td>`
+      + `<td>${e.remainingPct === null ? '—' : `${Math.round(e.remainingPct)}%`}</td>`
       + `<td><span class="v6-usage-calibrate"><label><span class="sr-only">${e.name} weekly % left</span><input type="number" min="0" max="100" step="1" id="v6UsageWeekly-${e.key}" class="filter-input v6-usage-input" placeholder="wk %"></label>`
       + `<label><span class="sr-only">${e.name} 5-hour % left</span><input type="number" min="0" max="100" step="1" id="v6UsageFiveHour-${e.key}" class="filter-input v6-usage-input" placeholder="5h %"></label>`
       + `<button type="button" id="v6UsageSave-${e.key}" class="btn btn-secondary btn-small" data-engine="${e.key}">Set</button></span></td></tr>`;
     return `<button type="button" id="v6EngineUsageMeter" class="v6-usage-meter" aria-expanded="${open ? 'true' : 'false'}" aria-controls="v6EngineUsagePopover"
-        aria-label="${escapeHtml(`Engine usage: ${summary}. Open the breakdown.`)}">${model.engines.map(pill).join('')}</button>`
+        aria-label="${escapeHtml(`Engine usage: ${summary}. Open the breakdown.`)}">${model.engines.map(pill).join('<span class="v6-telemetry-divider" aria-hidden="true">|</span>')}</button>`
       + `<div id="v6EngineUsagePopover" class="v6-usage-popover" role="dialog" aria-label="Engine usage"${open ? '' : ' hidden'}>`
       + `<p class="v6-usage-reset">${escapeHtml(reset || 'Weekly reset time unknown')}</p>`
       + `<table class="v6-usage-table"><thead><tr><th scope="col">Engine</th><th scope="col">5h</th><th scope="col">Week</th><th scope="col">Sprint</th><th scope="col">Sessions</th><th scope="col">Left</th><th scope="col">Set % left</th></tr></thead>`
@@ -1652,8 +1651,19 @@
         + `<span class="v6-usage-bar" aria-hidden="true"><span class="v6-usage-fill" style="width: ${value === null ? 0 : value}%"></span></span>`
         + `<span class="v6-usage-probe-bar-value">${value === null ? '—' : `${Math.round(value)}% left`}</span></span>`;
     };
+    // PRR-B R1 BLOCKING 2c: `result.subTiers` (Claude's Fable, Antigravity's
+    // non-native model families) carries its own weekly/5h remaining% —
+    // the CLI renderer (`lib/tc-verbs.js#renderUsageProbe`) already prints
+    // these; this drew only the engine's own top-level bars, silently
+    // dropping a sub-tier the probe did observe.
+    const subTierRows = Object.keys(result.subTiers || {}).map((tier) => {
+      const sub = result.subTiers[tier] || {};
+      return `<li class="v6-usage-probe-subtier-row" data-engine="${engine.key}" data-subtier="${escapeHtml(tier)}">`
+        + `<span class="v6-usage-probe-name v6-usage-probe-subtier-name">${escapeHtml(tier)}</span>`
+        + `<span class="v6-usage-probe-bars">${bar(sub.weeklyRemainingPct, 'Week')}${bar(sub.fiveHourRemainingPct, '5h')}</span></li>`;
+    }).join('');
     return `<li class="v6-usage-probe-row" data-engine="${engine.key}"><span class="v6-usage-probe-name">${escapeHtml(engine.name)}</span>`
-      + `<span class="v6-usage-probe-bars">${bar(result.weeklyRemainingPct, 'Week')}${bar(result.fiveHourRemainingPct, '5h')}</span>${link}</li>`;
+      + `<span class="v6-usage-probe-bars">${bar(result.weeklyRemainingPct, 'Week')}${bar(result.fiveHourRemainingPct, '5h')}</span>${link}</li>${subTierRows}`;
   }
 
   /**
@@ -2506,6 +2516,52 @@
   const LOCAL_WORKSPACE_PATH = /^(?:\.{1,2}\/|\/|~\/)\S+$/;
   /** A `#L<start>` or `#L<start>-L<end>` code line-range suffix (#3107) — client copy of `lib/v6/b2-conversation-layer.js#LINE_RANGE_SUFFIX`. */
   const LOCAL_LINE_RANGE_SUFFIX = /#L(\d+)(?:-L(\d+))?$/;
+  /** Hostnames whose links always preview (#3139 PRR-B R1 BLOCKING 3b) — client copy of `lib/v6/b2-conversation-layer.js#UNFURL_ALLOWLISTED_HOSTS`. */
+  const UNFURL_ALLOWLISTED_HOSTS = Object.freeze(['ts.net', 'github.io', 'tangleclaw.com']);
+  /** Ports treated as this server's own self-published preview surface on localhost (#3139 PRR-B R1 BLOCKING 3b) — client copy of `lib/v6/b2-conversation-layer.js#SELF_PUBLISHED_PREVIEW_PORTS`. */
+  const SELF_PUBLISHED_PREVIEW_PORTS = Object.freeze(new Set(['3410', '3425', '3426', '3430', '5080', '8443']));
+
+  /**
+   * Whether `hostname` is one of {@link UNFURL_ALLOWLISTED_HOSTS} or a
+   * subdomain of one — client copy of `lib/v6/b2-conversation-layer.js#isAllowlistedUnfurlHost`.
+   * @param {string} hostname
+   * @returns {boolean}
+   */
+  function isAllowlistedUnfurlHost(hostname) {
+    if (typeof hostname !== 'string' || !hostname) return false;
+    const h = hostname.toLowerCase().replace(/\.+$/, '');
+    return UNFURL_ALLOWLISTED_HOSTS.some((base) => h === base || h.endsWith(`.${base}`));
+  }
+
+  /**
+   * `http(s)://host[:port]` — just enough to pull the hostname and port
+   * back out of an `href`. Regex, not the `URL` global: this file's own
+   * {@link parseGithubEntityUrl} already avoids `URL` client-side the same
+   * way, and this module's test harness (`vm.runInContext`) sandboxes a
+   * context with no `URL` global at all — the real browser has one, but
+   * nothing here needs it enough to make that the only way to test this.
+   */
+  const HREF_HOST_PORT = /^https?:\/\/([^/:?#]+)(?::(\d+))?/i;
+
+  /**
+   * Whether a chat link's own host is a self-published surface #3139 always
+   * allows & previews — a Tailscale/GitHub Pages/`tangleclaw.com` hostname,
+   * or `localhost` itself on one of this server's own preview ports — so it
+   * auto-unfurls even while the global "Show preview by default" setting is
+   * off (PRR-B R1 BLOCKING 3b). Never widens which links are safe to FETCH
+   * at all; that is still `b2.evaluateUnfurlTargetSafety`'s own call,
+   * enforced server-side regardless of what this says.
+   * @param {string} href
+   * @returns {boolean}
+   */
+  function isAlwaysPreviewLink(href) {
+    if (typeof href !== 'string') return false;
+    const m = HREF_HOST_PORT.exec(href);
+    if (!m) return false;
+    if (isAllowlistedUnfurlHost(m[1])) return true;
+    const host = m[1].toLowerCase();
+    return (host === 'localhost' || host === '127.0.0.1') && SELF_PUBLISHED_PREVIEW_PORTS.has(m[2] || '');
+  }
 
   /**
    * Split a trailing `#L<n>-L<n>` code line-range off a reference (#3107) —
@@ -4688,6 +4744,13 @@
       if (!res) return { ok: false, error: api.lastError || 'the server refused it' };
       const sh = getShell();
       if (sh && typeof sh.setUsageProbe === 'function') sh.setUsageProbe(res);
+      // PRR-B R1 BLOCKING 2c: `POST /api/usage/refresh` also feeds a
+      // successful reading into the server's OWN calibration store
+      // (`lib/usage-windows.js#_refreshUsageProbeUncached`) — reloading the
+      // manual meter's own data here is what makes the footer pills (fed by
+      // `GET /api/usage/windows`) reflect it at once, instead of waiting for
+      // the next scheduled poll or route change.
+      await loadUsage();
       return { ok: true };
     }
 
@@ -6613,9 +6676,11 @@
     // shape as {@link dismissedTodoItems}.
     const dismissedFleetTargets = new Map();
     // #3131: each chat's folded/unfolded Waiting-on sections ('you', 'ai',
-    // `fleet:<target>`) — in memory only, the same way dismissals above
-    // are: a chat switched away from and back keeps what it had folded.
-    const waitingOnCollapsed = new Map();
+    // `fleet:<target>`). #3133 PRR-B R1 BLOCKING 1b: persisted, unlike the
+    // dismissal maps above (which stay in-memory on purpose) — a fold is a
+    // durable layout preference the operator sets once per chat, not a
+    // one-shot dismissal of a specific send.
+    const waitingOnCollapsed = new Map(Object.entries(prefs.get('tc_v6_waiting_on_collapsed', {}, isStringArrayMap)));
     // #3105: each chat's AI queue — prompts submitted while busy, surfaced
     // in Waiting on: AI to be Forced or dismissed by hand. Never fired
     // automatically (PRR-A R1 C2): that would bypass the Force-Send gate
@@ -7242,20 +7307,22 @@
         });
       });
       // #3139: "Show preview by default" fetches every link still showing
-      // its own Preview button, instead of waiting for a click. Each
-      // `setUnfurl` below re-enters this function (see its own body,
+      // its own Preview button, instead of waiting for a click — and a
+      // self-published link (PRR-B R1 BLOCKING 3b) always does, even with
+      // that setting off, the same way `alwaysPreview` already exempts
+      // these hosts server-side (`lib/v6/b2-conversation-layer.js#_pushReferenceCard`).
+      // Each `setUnfurl` below re-enters this function (see its own body,
       // which calls `wireRichPreviews()` as part of its redraw), so this
       // needs no loop guard of its own: the next pass simply finds one
       // fewer still-unfetched link, until none remain.
-      if (autoPreview) {
-        doc.querySelectorAll('.v6-chat-unfurl-btn').forEach((btn) => {
-          const url = btn.getAttribute('data-unfurl-url');
-          const unfurls = unfurlsNow();
-          if (!url || (unfurls && Object.prototype.hasOwnProperty.call(unfurls, url))) return;
-          setUnfurl(url, { state: 'loading' });
-          if (typeof options.onUnfurlLink === 'function') options.onUnfurlLink(url);
-        });
-      }
+      doc.querySelectorAll('.v6-chat-unfurl-btn').forEach((btn) => {
+        const url = btn.getAttribute('data-unfurl-url');
+        if (!url || !(autoPreview || isAlwaysPreviewLink(url))) return;
+        const unfurls = unfurlsNow();
+        if (unfurls && Object.prototype.hasOwnProperty.call(unfurls, url)) return;
+        setUnfurl(url, { state: 'loading' });
+        if (typeof options.onUnfurlLink === 'function') options.onUnfurlLink(url);
+      });
     }
 
     /**
@@ -7652,6 +7719,7 @@
       const set = new Set(collapsedWaitingOnFor(key));
       if (set.has(sectionKey)) set.delete(sectionKey); else set.add(sectionKey);
       waitingOnCollapsed.set(key, [...set]);
+      prefs.set('tc_v6_waiting_on_collapsed', Object.fromEntries(waitingOnCollapsed));
     }
 
     /**
@@ -8305,7 +8373,15 @@
       const applyToStream = () => {
         if (!stream.style) return;
         stream.style.maxHeight = coupledStreamMaxHeight(input.offsetHeight, baseInput);
-        prefs.set('tc_v6_chat_input_height', input.offsetHeight || null);
+        // PRR-B R1 BLOCKING 1a: `input.offsetHeight` reads 0/undefined for a
+        // hidden tab or this file's own unit-test DOM (neither computes real
+        // layout) — persisting THAT would silently erase a genuinely saved
+        // height. The inline style height (set by the drag itself, or by the
+        // restore step above) is the more trustworthy reading either way, so
+        // it is tried first; a measurement of 0 skips the write entirely
+        // rather than ever persisting null over a real saved value.
+        const measuredInput = (input.style && parseFloat(input.style.height)) || input.offsetHeight;
+        if (measuredInput) prefs.set('tc_v6_chat_input_height', measuredInput);
       };
       // #3106 (PRR-A R1 C4): the stream's `offsetHeight` also grows when
       // new content arrives — reacting to THAT would snap the input back
@@ -8319,7 +8395,10 @@
         const inlineNow = stream.style.height || '';
         if (inlineNow === lastStreamInlineHeight) return;
         lastStreamInlineHeight = inlineNow;
-        prefs.set('tc_v6_chat_stream_height', parseFloat(inlineNow) || null);
+        // Same guard as applyToStream's above: an empty/unparseable inline
+        // height never overwrites a genuinely saved one with null.
+        const measuredStream = parseFloat(inlineNow);
+        if (measuredStream) prefs.set('tc_v6_chat_stream_height', measuredStream);
         if (!inlineNow) return;
         const h = coupledInputHeight(parseFloat(inlineNow) || 0, baseStream, baseInput);
         if (h) input.style.height = h;
@@ -9207,6 +9286,7 @@
   global.tcV6CoupledInputHeight = coupledInputHeight;
   global.tcV6ClampSidebarWidth = clampSidebarWidth;
   global.tcV6PruneStaleChatDrafts = pruneStaleChatDrafts;
+  global.tcV6IsAlwaysPreviewLink = isAlwaysPreviewLink;
   global.tcV6UsageProbeRowMarkup = usageProbeRowMarkup;
   global.tcV6UsageProbeMarkup = usageProbeMarkup;
   global.tcV6ExtractCliGates = extractCliGates;

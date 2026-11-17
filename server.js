@@ -11925,6 +11925,20 @@ route('GET', '/api/v6/unfurl', async (req, res) => {
   const safety = b2.evaluateUnfurlTargetSafety(url);
   if (!safety.safe) return errorResponse(res, 400, `Refused: ${safety.reason}`, 'UNFURL_TARGET_UNSAFE');
 
+  // #3139 (PRR-B R1 BLOCKING 3a): a URL whose PATH already names a known
+  // video extension is classified straight from the URL — no network fetch
+  // at all. Matters for an authenticated/self-signed link (a Tailscale
+  // `*.ts.net:8443` clip): `safeUnfurlFetch` would have to negotiate
+  // TLS/auth against it just to confirm what the extension already says,
+  // and that negotiation is exactly what fails for a self-signed cert this
+  // server has no reason to trust. An extensionless `video/*` URL still
+  // falls through to `safeUnfurlFetch` below, which classifies it by the
+  // response's real Content-Type instead.
+  let urlExt = '';
+  try { urlExt = path.posix.extname(new URL(url).pathname).slice(1).toLowerCase(); } catch { urlExt = ''; }
+  const inlineMimeType = b2.VIDEO_MIME_TYPES[urlExt];
+  if (inlineMimeType) return jsonResponse(res, 200, { ok: true, preview: { kind: 'video', url, mimeType: inlineMimeType, finalUrl: url } });
+
   const cached = _v6UnfurlCache.get(url);
   if (cached && cached.expiresAt > Date.now()) return jsonResponse(res, 200, { ok: true, preview: cached.preview, cached: true });
 
