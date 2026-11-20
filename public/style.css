@@ -3894,36 +3894,84 @@ html[data-theme="light"] .tc-bg-watermark img {
 [data-theme="light"] .v6-shell-root {
   --v6-outline: #8c959f;
 }
-/* #3133: slim (6px) dark-brand scrollbars everywhere inside the v6 shell —
-   chat, sidebar, Under the Hood — replacing the browser's thick default
-   ones. Firefox reads `scrollbar-width`/`scrollbar-color`; Chrome/Safari
+/* #3151: true zero-wiggle full-viewport fit. `.v6-shell-root`'s own
+   `100dvh`/`max-height: 100dvh` lock (above) is sized against the whole
+   browser window, but `.main-scroll` — its parent — already sits below the
+   ~48px top `<header>`, so `48px + 100dvh` overflows the window by that
+   much and pushes the footer (`#v6ShellStatusBar`) off-screen. Under
+   `body.v6-shell-active`, `.main-scroll` instead becomes the flex column
+   that fills the space the header leaves, and `.v6-shell-root` fills 100%
+   of *that* — not another independent viewport unit — so the two heights
+   can never disagree. */
+body.v6-shell-active .main-scroll {
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+body.v6-shell-active .v6-shell-root {
+  flex: 1 1 0%;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+}
+/* #3133/#3151: slim (6px) dark-brand scrollbars everywhere inside the v6
+   shell — chat, sidebar, Under the Hood — replacing the browser's thick
+   default ones, and on `html`/`body`/`.main-scroll` too so no white or
+   thick scrollbar can render on the outer edge of the browser window
+   itself. Firefox reads `scrollbar-width`/`scrollbar-color`; Chrome/Safari
    read the `::-webkit-scrollbar*` pseudo-elements below. A plain
    descendant selector covers every current and future scroll container in
    the shell (the chat stream, the sidebar, Under the Hood's panes, the
    usage popover) without enumerating each one by name. */
+html,
+body,
+.main-scroll,
 .v6-shell-root,
 .v6-shell-root * {
   scrollbar-width: thin;
   scrollbar-color: var(--tc-border-emerald) var(--tc-obsidian-void);
 }
+html,
+body {
+  color-scheme: dark;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+.main-scroll::-webkit-scrollbar,
 .v6-shell-root::-webkit-scrollbar,
 .v6-shell-root *::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track,
+.main-scroll::-webkit-scrollbar-track,
 .v6-shell-root::-webkit-scrollbar-track,
 .v6-shell-root *::-webkit-scrollbar-track {
   background: var(--tc-obsidian-void);
 }
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb,
+.main-scroll::-webkit-scrollbar-thumb,
 .v6-shell-root::-webkit-scrollbar-thumb,
 .v6-shell-root *::-webkit-scrollbar-thumb {
   background: var(--tc-border-emerald);
   border-radius: 999px;
 }
+html::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover,
+.main-scroll::-webkit-scrollbar-thumb:hover,
 .v6-shell-root::-webkit-scrollbar-thumb:hover,
 .v6-shell-root *::-webkit-scrollbar-thumb:hover {
   background: var(--tc-viper-emerald);
 }
+html::-webkit-scrollbar-thumb:active,
+body::-webkit-scrollbar-thumb:active,
+.main-scroll::-webkit-scrollbar-thumb:active,
 .v6-shell-root::-webkit-scrollbar-thumb:active,
 .v6-shell-root *::-webkit-scrollbar-thumb:active {
   background: var(--tc-venom-green);
@@ -4550,6 +4598,18 @@ p.v6-history-secret {
   gap: 10px;
   min-width: 0;
 }
+/* #3151: the chat column, its detail pane, and the chat view itself become
+   a full-height flex column so the stream + Under the Hood + composer fill
+   100% of the vertical space down to the always-visible footer, instead of
+   sizing to content and leaving dead space below. */
+.v6-shell-root--chat .v6-shell-view,
+#v6ShellDetail:not([hidden]),
+.v6-chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+}
 /* #3059: the chat header is one wrapping row — identity on the left,
    icon controls on the right. */
 .v6-chat-header {
@@ -4647,6 +4707,9 @@ p.v6-history-secret {
   font-size: 0.85em;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  /* #3151: operator-resizable, like the stream/composer pair below it. */
+  resize: vertical;
+  min-height: 80px;
 }
 /* #3133/#3135: Interactive CLI Mode's live border and indicator — today
    `public/v6-shell.js` sets both as an inline `style="border:2px solid
@@ -4803,6 +4866,14 @@ p.v6-history-secret {
   border-radius: 6px;
   padding: 4px 8px;
   background: var(--v6-surface, #0d0d0d);
+}
+/* #3151: open, Under the Hood is operator-resizable like the stream and
+   peek panes, instead of sizing to its content and forcing the chat
+   column taller than the footer-anchored viewport. */
+.v6-chat-under-hood[open] {
+  resize: vertical;
+  overflow: auto;
+  min-height: 80px;
 }
 .v6-chat-under-hood > summary {
   cursor: pointer;

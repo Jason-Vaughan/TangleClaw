@@ -465,13 +465,6 @@ curl -s http://localhost:3102/api/health | python3 -m json.tool
 
 The roadmap and sprint reports are generated from the canonical release plan, live GitHub issue/PR telemetry, and primary-source git/session audit logs.
 
-# Contributors
-
-Thank you to the open-source contributors whose bug reports, diagnostics, and designs have shipped in TangleClaw:
-
-- **[@GURULifeline](https://github.com/GURULifeline)** — Codex `--no-daemon` session isolation diagnostics (`#2222`, `#2233`), Global Rules preservation across updates (`#1730`), and wrap pipeline retry capture resumption.
-- **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** (Madhavan Subramaniyan K) — Linux `systemd` user-unit support for the Restart TangleClaw button (`#239` / `#1506`), settings modal hint text wrapping (`#1271`), rule-weakening confirmation symmetry (`#1048`), strict test assertion conversion (`#1067`), and project tags / quick-commands validation (`#1334` / `#1376`).
-
 ## Community and Conduct
 
 We pledge to make participation in our community a harassment-free experience for everyone. Please review our [Code of Conduct](CODE_OF_CONDUCT.md).
