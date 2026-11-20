@@ -28,6 +28,8 @@ const _store = useThrowawayStore('medusa-wake');
 after(() => _store.cleanup());
 
 const wake = require('../lib/medusa-wake');
+const medusa = require('../lib/medusa');
+const medusaSend = require('../lib/medusa-send');
 
 /** The live-probed detection profiles the engine profiles declare (#560). */
 const CLAUDE = wake.ENGINE_WAKE_PROFILES.claude;
@@ -1413,6 +1415,89 @@ describe('medusa-wake — #2402 reply-guidance override and non-actionable-notic
     });
     tickThroughDebounce();
     assert.equal(world.masterInjected.length, 1, 'the Master branch is unaffected by a setting it cannot read');
+  });
+});
+
+describe('medusa-wake — #3155 noWake: unconditional, per-message suppression', () => {
+  let saved;
+  beforeEach(() => { wake.stop(); saved = { ...wake._internal }; wake._resetNoWakeForTesting(); });
+  afterEach(() => { Object.assign(wake._internal, saved); wake.stop(); wake._resetNoWakeForTesting(); });
+
+  it('suppresses the nudge for an entry marked noWake: true directly, with no project opt-in needed', () => {
+    const world = installWorld({
+      config: { medusaWake: true }, // suppressNonActionableWakes NOT set
+      inbox: [{ id: 'm1', from: 'peer', message: 'fyi, nothing to do', noWake: true }]
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0);
+    assert.equal(world.recorded.some((r) => r.skipReason === 'non-actionable-notice-only'), true);
+  });
+
+  it('suppresses the nudge for an entry markNoWake recorded by its Hub id, the same way a real send marks it', () => {
+    wake.markNoWake('hub-msg-1');
+    const world = installWorld({
+      config: { medusaWake: true },
+      inbox: [{ id: 'hub-msg-1', from: 'peer', message: 'fyi' }]
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0);
+  });
+
+  it('still nudges when a real (non-noWake) message sits alongside a noWake one', () => {
+    const world = installWorld({
+      config: { medusaWake: true },
+      inbox: [
+        { id: 'm1', from: 'peer', message: 'fyi', noWake: true },
+        { id: 'm2', from: 'peer', message: 'please reply' }
+      ],
+      status: { state: 'listening', workspaceId: 'proj-a-abc123', unread: 2, lastError: null }
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'a real message alongside a noWake one still nudges');
+  });
+
+  it('advances the watermark silently on a noWake-only inbox, so a LATER real message still nudges normally', () => {
+    const world = installWorld({
+      config: { medusaWake: true },
+      inbox: [{ id: 'm1', from: 'peer', message: 'fyi', noWake: true }]
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0);
+    world.inbox = [
+      { id: 'm1', from: 'peer', message: 'fyi', noWake: true },
+      { id: 'm2', from: 'peer', message: 'please reply' }
+    ];
+    world.status = { state: 'listening', workspaceId: 'proj-a-abc123', unread: 2, lastError: null };
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'the new, non-noWake arrival still nudges');
+  });
+
+  it('combines with the opt-in notice suppression: a mix of noWake and an opted-in system notice, nothing else, still suppresses', () => {
+    const world = installWorld({
+      config: { medusaWake: true, suppressNonActionableWakes: true },
+      inbox: [
+        { id: 'm1', from: 'peer', message: 'fyi', noWake: true },
+        {
+          id: 'm2', from: 'system',
+          message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc: 'NETWORK', docId: 'd1', sentAt: '2026-10-28T00:00:00Z' })
+        }
+      ],
+      status: { state: 'listening', workspaceId: 'proj-a-abc123', unread: 2, lastError: null }
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0);
+  });
+
+  it('markNoWake with a null/undefined id is a no-op, never throws', () => {
+    assert.doesNotThrow(() => wake.markNoWake(null));
+    assert.doesNotThrow(() => wake.markNoWake(undefined));
+  });
+
+  it('_resetNoWakeForTesting actually clears a prior mark', () => {
+    wake.markNoWake('hub-msg-2');
+    assert.equal(wake._isNoWakeEntry({ id: 'hub-msg-2' }), true);
+    wake._resetNoWakeForTesting();
+    assert.equal(wake._isNoWakeEntry({ id: 'hub-msg-2' }), false);
   });
 });
 
@@ -2949,5 +3034,134 @@ describe('medusa-wake — verdictFor exposes per-session hold reason for the pro
     v1.reason = 'tampered';
     const v2 = wake.verdictFor(1);
     assert.notEqual(v2.reason, 'tampered', 'stored verdict is not mutated by the caller');
+  });
+});
+
+/*
+ * `lib/medusa-send.js#sendTracked` (#1839, #3155) -- the one path a
+ * switchboard send takes. Folded in here (R3, #3155/P46) rather than kept as
+ * their own `test/medusa-send.test.js`, which this repo's `test/tiers.json`
+ * ledger (`test/test-stage.test.js`) refused as an unregistered new file;
+ * this file is already registered, and registering a new one is outside
+ * this car's file scope. These reuse the module-level throwaway store this
+ * file's own `useThrowawayStore('medusa-wake')` already set up at load time
+ * (line 27 above) rather than opening a second one, since `sendTracked`
+ * needs only an initialized store, never any particular project/session row
+ * (`test/medusa-send-pruned-exchange.test.js` establishes the same thing
+ * against its own throwaway store).
+ *
+ * `test/medusa-send-pruned-exchange.test.js` already covers the #1879
+ * pruned-row degradation paths; this does not repeat those.
+ */
+describe('medusa-send: sendTracked happy path', () => {
+  it('reports the exchange and the Hub result for an ordinary send', async () => {
+    const realSend = medusa.sendMessage;
+    medusa.sendMessage = async ({ beforeHub }) => {
+      beforeHub({ from: 'sender-ws' });
+      return { status: 'received', id: 'hub-ordinary-1', to: 'ghost-ws-a' };
+    };
+    try {
+      const result = await medusaSend.sendTracked({
+        sessionId: 1,
+        senderProjectId: 10,
+        caller: { kind: 'project', projectId: 10 },
+        body: { to: 'ghost-ws-a', message: 'hello' }
+      });
+      assert.equal(result.status, 200);
+      assert.equal(result.body.status, 'received');
+      assert.equal(result.body.id, 'hub-ordinary-1');
+    } finally {
+      medusa.sendMessage = realSend;
+    }
+  });
+});
+
+describe('medusa-send: sendTracked --no-wake wiring (#3155)', () => {
+  beforeEach(() => { wake._resetNoWakeForTesting(); });
+  afterEach(() => { wake._resetNoWakeForTesting(); });
+
+  it('calls medusaWake.markNoWake with the Hub id when body.noWake is true and the send succeeds', async () => {
+    const realSend = medusa.sendMessage;
+    medusa.sendMessage = async ({ beforeHub }) => {
+      beforeHub({ from: 'sender-ws' });
+      return { status: 'received', id: 'hub-nowake-1', to: 'ghost-ws-b' };
+    };
+    try {
+      const result = await medusaSend.sendTracked({
+        sessionId: 1,
+        senderProjectId: 10,
+        caller: { kind: 'project', projectId: 10 },
+        body: { to: 'ghost-ws-b', message: 'fyi', noWake: true }
+      });
+      assert.equal(result.status, 200);
+      assert.equal(wake._isNoWakeEntry({ id: 'hub-nowake-1' }), true,
+        'the Hub id this send returned is now recorded as noWake');
+    } finally {
+      medusa.sendMessage = realSend;
+    }
+  });
+
+  it('does not mark anything noWake for an ordinary send with no noWake flag', async () => {
+    const realSend = medusa.sendMessage;
+    medusa.sendMessage = async ({ beforeHub }) => {
+      beforeHub({ from: 'sender-ws' });
+      return { status: 'received', id: 'hub-plain-1', to: 'ghost-ws-c' };
+    };
+    try {
+      await medusaSend.sendTracked({
+        sessionId: 1,
+        senderProjectId: 10,
+        caller: { kind: 'project', projectId: 10 },
+        body: { to: 'ghost-ws-c', message: 'hello' }
+      });
+      assert.equal(wake._isNoWakeEntry({ id: 'hub-plain-1' }), false);
+    } finally {
+      medusa.sendMessage = realSend;
+    }
+  });
+
+  it('does not mark noWake when the Hub returned no id at all (queued-but-unresolved shape)', async () => {
+    const realSend = medusa.sendMessage;
+    medusa.sendMessage = async ({ beforeHub }) => {
+      beforeHub({ from: 'sender-ws' });
+      return { status: 'queued', id: undefined, to: 'ghost-ws-d' };
+    };
+    try {
+      const result = await medusaSend.sendTracked({
+        sessionId: 1,
+        senderProjectId: 10,
+        caller: { kind: 'project', projectId: 10 },
+        body: { to: 'ghost-ws-d', message: 'fyi', noWake: true }
+      });
+      // No crash, and markSendUnknown's degraded path is exercised exactly
+      // as it is for any id-less Hub answer -- noWake has nothing to key on.
+      assert.equal(result.status, 200);
+    } finally {
+      medusa.sendMessage = realSend;
+    }
+  });
+
+  it('does not mark noWake when the send itself fails (markNoWake must only run on a confirmed success)', async () => {
+    const realSend = medusa.sendMessage;
+    medusa.sendMessage = async ({ beforeHub }) => {
+      beforeHub({ from: 'sender-ws' });
+      const err = new Error('Message bridge unreachable: timeout');
+      err.httpStatus = 502;
+      err.code = 'BRIDGE_UNREACHABLE';
+      err.hubOutcome = 'unknown';
+      throw err;
+    };
+    try {
+      const result = await medusaSend.sendTracked({
+        sessionId: 1,
+        senderProjectId: 10,
+        caller: { kind: 'project', projectId: 10 },
+        body: { to: 'ghost-ws-e', message: 'fyi', noWake: true }
+      });
+      assert.equal(result.status, 502);
+      assert.equal(wake._isNoWakeEntry({ id: 'hub-wont-exist' }), false);
+    } finally {
+      medusa.sendMessage = realSend;
+    }
   });
 });

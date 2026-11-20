@@ -110,3 +110,14 @@ describe('docs/tc-cli-reference.md names every IMPLEMENTED subverb too, not just
     }
   }
 });
+
+describe('docs/tc-cli-reference.md documents --no-wake and single-action-owner targeting (#3155)', () => {
+  it('has a row for `tc message send --no-wake`', () => {
+    assert.match(PAGE, /\| `tc message send --no-wake /);
+  });
+
+  it('codifies single-action-owner targeting in prose, not just a table row', () => {
+    assert.match(PAGE, /owns the next action/);
+    assert.match(PAGE, /--no-wake/);
+  });
+});

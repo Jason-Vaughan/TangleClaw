@@ -80,6 +80,7 @@ The important distinction is: **new or unattested launch = `tc start next`; alre
 | --- | --- |
 | `tc message send <workspace-id> <text...>` | Sends a normal message to an exact workspace ID. |
 | `tc message send --priority blocking --reason <code> --reply-required <workspace-id> <text...>` | Opens a blocking, reply-required exchange. Optional send flags also include `--in-reply-to <message-id>`, `--no-reply`, `--escalate-after <minutes>` and `--request-id <id>`. |
+| `tc message send --no-wake <workspace-id> <text...>` | Delivers to the recipient's inbox without typing an active `[TangleClaw Switchboard]` pane wake for it — for an informational/FYI/receipt copy to anyone other than the next action owner. |
 | `tc message read` | Reads this session's inbox and verifies that its listener is actually listening before claiming an empty inbox. |
 | `tc message ack <message-id> [<message-id>...]` | Marks received messages handled. This does not replace closing an exchange that you initiated. |
 | `tc message status <workspace-id>` | Shows whether a peer is reachable and why a message may not have been picked up. |
@@ -89,6 +90,8 @@ The important distinction is: **new or unattested launch = `tc start next`; alre
 | `tc message retract [--reason <text>] [--replacement <id>] <message-id>` | Retracts a message this session sent, while it is still unread. |
 
 `--priority` is `normal` or `blocking`. Use exact workspace IDs, not a display name. Reply with `--in-reply-to <message-id>` before acknowledging a message that requires an answer. The initiator owns closing a reply-required exchange.
+
+**Single-action-owner targeting.** Message only the session that owns the next action. When a message is informational — an FYI, a receipt, a copy to a coordinator who does not need to act — send it to anyone other than the action owner with `--no-wake` rather than a plain CC: it still lands in their inbox, but does not spend one of their idle turns waking the pane for nothing to act on.
 
 ## Shared documents
 
