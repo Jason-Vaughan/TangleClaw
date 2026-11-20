@@ -75,11 +75,12 @@ describe('workload nudge monitor (#2262)', () => {
    * @param {object} l - What {@link lane} returned
    * @param {number} atMs - When the receipt was received
    * @param {string} [state] - The asserted state
+   * @param {string} [clearance] - The asserted clearance
    * @returns {object} The stored receipt row
    */
-  const reports = (l, atMs, state = 'working') => store.workloadReceipts.append({
+  const reports = (l, atMs, state = 'working', clearance = 'do-not-clear') => store.workloadReceipts.append({
     project_id: l.project.id, session_id: l.sessionId, launch_id: l.launchId, assignment_id: null,
-    state, clearance: 'do-not-clear', summary: SUMMARY, wait_kind: null, wait_detail: null,
+    state, clearance, summary: SUMMARY, wait_kind: null, wait_detail: null,
     refs_json: '{"issues":[],"prs":[],"tasks":[]}', branch: null, head_sha: null, source: 'tc-cli',
     received_at: new Date(atMs).toISOString()
   }, { minIntervalMs: 0, nowMs: atMs }).row;
@@ -247,6 +248,51 @@ describe('workload nudge monitor (#2262)', () => {
         assert.equal(verdict(l), 'stale-not-expired', staleReason);
       }
       assert.deepEqual(typed, []);
+    });
+
+    it('idle-safe-to-clear: a complete receipt is never nudged or escalated, however long it sits expired (#3149)', () => {
+      const l = lane({ enabled: true });
+      // complete/waiting-external/blocked all expire after 120 minutes, not 30.
+      l.receipt = reports(l, T0, 'complete', 'safe-to-clear');
+      assert.equal(verdict(l, T0 + 121 * MIN), 'idle-safe-to-clear');
+      assert.equal(verdict(l, T0 + 600 * MIN), 'idle-safe-to-clear', 'never ages into a nudge no matter how long it is expired');
+      assert.deepEqual(typed, []);
+      assert.deepEqual(facts(l), []);
+      assert.deepEqual(sent, []);
+    });
+
+    it('idle-safe-to-clear: state alone is enough, even with clearance do-not-clear (#3149)', () => {
+      const l = lane({ enabled: true });
+      l.receipt = reports(l, T0, 'complete', 'do-not-clear');
+      assert.equal(verdict(l, T0 + 121 * MIN), 'idle-safe-to-clear');
+      assert.deepEqual(typed, []);
+    });
+
+    it('idle-safe-to-clear: clearance alone is enough on a waiting-external report, not just complete (#3149)', () => {
+      const l = lane({ enabled: true });
+      l.receipt = reports(l, T0, 'waiting-external', 'safe-to-clear');
+      assert.equal(verdict(l, T0 + 121 * MIN), 'idle-safe-to-clear');
+      assert.deepEqual(typed, []);
+    });
+
+    it('idle-safe-to-clear: re-reporting the same complete/safe-to-clear state mints a new receipt that never re-arms a nudge (#3149)', () => {
+      const l = lane({ enabled: true });
+      l.receipt = reports(l, T0, 'complete', 'safe-to-clear');
+      assert.equal(verdict(l, T0 + 121 * MIN), 'idle-safe-to-clear');
+      // The session answers a nudge-era reminder (or any other poke) by
+      // re-reporting the identical state -- a fresh receipt, new seq --
+      // which is exactly what re-armed the real 2-hour token-burn loop
+      // (#3149) before this guard existed.
+      l.receipt = reports(l, T0 + 130 * MIN, 'complete', 'safe-to-clear');
+      assert.equal(verdict(l, T0 + 130 * MIN + 121 * MIN), 'idle-safe-to-clear');
+      assert.deepEqual(typed, []);
+      assert.deepEqual(sent, [], 'never escalated either');
+    });
+
+    it('not idle-safe-to-clear: a blocked, do-not-clear receipt is still nudged normally once expired (#3149)', () => {
+      const l = lane({ enabled: true });
+      l.receipt = reports(l, T0, 'blocked', 'do-not-clear');
+      assert.equal(verdict(l, T0 + 121 * MIN), 'nudged');
     });
 
     it('no-pane: a web UI session, and a session with no tmux pane', () => {

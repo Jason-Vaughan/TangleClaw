@@ -41,6 +41,37 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-20 — Car V652-W1-A: TCC bootstrap recovery & workload-nudge idle guard (#3148, #3149)
+
+<!-- prawduct: type=bugfix | scope=v652-w1-a-tcc-workload -->
+
+- Fixed `createSessionWithTccBootstrap` (`lib/tmux.js`) leaking a Terminal.app window —
+  sometimes failing outright with `duplicate session: tc-tcc-anchor` — when the
+  TCC-authorized server itself could not read a protected `cwd` but the already-running
+  default tmux server could: it now falls back to the default server directly in that
+  narrower case, reached only once the TCC-authorized server has already failed its own
+  probe. #3108's own invariant (never let a default-server pass PRE-EMPT the
+  TCC-authorized server's check) is unaffected — TCC-authorized is still checked first,
+  unconditionally, on every call, and #3108's regression tests (which all start from
+  TCC-authorized already being readable) never reach this new branch. Also evicts a
+  TCC-authorized server holding nothing but the anchor session before re-bootstrapping,
+  and bootstraps with `new-session -A` so a pre-existing anchor is never a
+  duplicate-session error (#3148).
+- Fixed `lib/workload-nudge.js` re-arming its own 2-hour pane-typing/escalation cycle
+  forever on an idle lane: `tc workload set` mints a fresh receipt on every report, so a
+  session that keeps reporting the identical `complete`/`safe-to-clear` state re-aged
+  into "expired" and was nudged/escalated again every 2 hours — confirmed in the live
+  forensic record cited on the issue (`TV-Critic` nudged 88 consecutive times,
+  `TC-Lane-B` 36, `TV-ArtDir` 87, `TV-Obsr` 48, `TC-Lane-PRR-B` 31). A receipt whose own
+  `state` is `complete` or `clearance` is `safe-to-clear` is now never nudged or
+  escalated, however long it sits expired (#3149).
+- Dispatched by `TC-Lane-PM` via Medusa (Car V652-W1-A, Gate 0 PASS: Ruling A845 +
+  `OBSR-OGATE-V652-GATE0-PASS`), base `origin/main @ cef51baa` (PR #3147, verified against
+  the live repo before branching). `LANE_QUEUE.md`'s `W1-A (Car V652-W1-A)` row carries
+  the matching file-scope grant (`lib/tmux.js`, `lib/workload-nudge.js`,
+  `test/tmux-tcc.test.js`, `test/tmux.test.js`, `test/workload-nudge.test.js`,
+  `changelog.d/3148.*.md`, `changelog.d/3149.*.md`).
+
 ## 2026-11-16 — v6.5.1 release cut (Milestone #84), Car V651-W3-REL
 
 <!-- prawduct: type=internal | scope=v651-release -->

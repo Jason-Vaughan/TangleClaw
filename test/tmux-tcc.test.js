@@ -282,6 +282,14 @@ describe('sessionSocketFlags (#2929)', () => {
   });
 });
 
+describe('_tccBootstrapCommand (#3148)', () => {
+  it('uses new-session -A so a pre-existing tc-tcc-anchor session never fails with "duplicate session"', () => {
+    let captured = null;
+    tmux.bootstrapTccAuthorizedServer({ execFn: (command) => { captured = command; return ''; } });
+    assert.match(captured, /new-session -A -d -s/);
+  });
+});
+
 describe('createSessionWithTccBootstrap (#2625)', () => {
   it('delegates straight to createSession for an unprotected cwd: no TCC-authorized server involved', () => {
     const name = uniqueSessionName('tcc_unprotected');
@@ -485,6 +493,94 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       assert.equal(probeCalled, false, 'a protected cwd must never probe the default server\'s readability at all (#3108) — only the TCC-authorized server\'s own probe runs');
 
       // The real session still lands on the already-running authorized server.
+      assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
+      assert.equal(tmux.hasSession(name), true, 'the default server still gets its attach proxy');
+    });
+  });
+
+  it('falls back directly to the default tmux server when the TCC-authorized server is absent and the default server can already read cwd, without opening Terminal.app (#3148)', () => {
+    const cwd = fakeProtectedCwd('Documents/default-fallback-proj');
+    // #2735 — same contention-exposed real-probe shape as the other tests
+    // in this file; this scenario's own probe (against the DEFAULT server)
+    // is unshimmed and real, so it can occasionally exceed budget under
+    // full-suite contention with no defect involved.
+    withContentionRetry(() => {
+      const name = uniqueSessionName('tcc_default_fallback');
+      createdDefault.push(name);
+      // The TCC-authorized server starts genuinely absent for this attempt.
+      try { execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'kill-server'], { stdio: 'ignore' }); } catch { /* already absent */ }
+      let bootstrapCalls = 0;
+      tmux.bootstrapTccAuthorizedServer = () => { bootstrapCalls++; };
+      const created = tmux.createSessionWithTccBootstrap(name, { cwd });
+      assert.equal(created, true);
+      assert.equal(bootstrapCalls, 0, 'never opens Terminal.app when the default server can already read cwd (#3148)');
+      // The real session lives on the DEFAULT server directly — no
+      // TCC-authorized session or attach proxy at all, unlike every
+      // #3108-preferring path exercised above.
+      assert.equal(tmux.hasSession(name), true);
+      assert.deepEqual(tmux.sessionSocketFlags(name), [], 'no TCC-authorized session exists for this name — it landed on the default server directly');
+      assert.throws(
+        () => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }),
+        'no real session or proxy was created on the TCC-authorized socket'
+      );
+    });
+  });
+
+  it('evicts a stale TCC-authorized server holding only the anchor session before bootstrapping a fresh one, avoiding "duplicate session: tc-tcc-anchor" (#3148)', () => {
+    const cwd = fakeProtectedCwd('Documents/evict-stale-anchor-proj');
+    withContentionRetry(() => {
+      const name = uniqueSessionName('tcc_evict_stale_anchor');
+      createdDefault.push(name);
+      // The TCC-authorized server is up but holds only the anchor — the
+      // exact shape #3148's eviction targets.
+      startAuthorizedAnchor();
+
+      const sock = tmux.TCC_SOCKET;
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-evict-shim-'));
+      const killMarker = path.join(binDir, 'kill-server-called');
+      // Slows BOTH probes (TCC-authorized and default) past timeout, so the
+      // code under test sees the authorized server as unreadable and the
+      // default server as unreadable too, forcing it past the #3148
+      // default-server fallback and into the eviction+bootstrap branch.
+      // Separately records (rather than sleeps on) the exact eviction
+      // `kill-server` call this test exists to prove happened, then lets it
+      // through to the real binary for real.
+      fs.writeFileSync(path.join(binDir, 'tmux'), [
+        '#!/bin/sh',
+        'case "$*" in',
+        '  *run-shell*) exec sleep 30 ;;',
+        `  "-L ${sock} kill-server") touch ${killMarker} ;;`,
+        'esac',
+        `exec ${REAL_TMUX} "$@"`
+      ].join('\n'), { mode: 0o755 });
+      const realPath = process.env.PATH;
+      process.env.PATH = `${binDir}:${realPath}`;
+
+      let bootstrapCalls = 0;
+      tmux.bootstrapTccAuthorizedServer = () => {
+        bootstrapCalls++;
+        // Restore the real tmux on PATH before recreating — the eviction
+        // above has already killed the stale server, so this always starts
+        // a genuinely fresh one and must never race the slow-probe shim's
+        // own timeout on the re-probe that follows.
+        process.env.PATH = realPath;
+        startAuthorizedAnchor();
+      };
+
+      let created;
+      let evicted;
+      try {
+        created = tmux.createSessionWithTccBootstrap(name, { cwd });
+        // Read before cleanup removes binDir (and the marker inside it) below.
+        evicted = fs.existsSync(killMarker);
+      } finally {
+        process.env.PATH = realPath;
+        fs.rmSync(binDir, { recursive: true, force: true });
+      }
+
+      assert.equal(created, true);
+      assert.equal(bootstrapCalls, 1, 'bootstraps exactly once, after evicting the stale server');
+      assert.equal(evicted, true, 'the stale TCC-authorized server (holding only the anchor) was evicted before bootstrapping a fresh one');
       assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
       assert.equal(tmux.hasSession(name), true, 'the default server still gets its attach proxy');
     });
