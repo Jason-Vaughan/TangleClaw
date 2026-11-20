@@ -41,6 +41,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-20 — v6.5.2 release cut (Milestone #87), Car V652-W2-REL
+
+<!-- prawduct: type=internal | scope=v652-release -->
+
+- Compiled 9 accepted `changelog.d/` fragments (#3148, #3149 from PR #3159; #3150, #3151 from
+  PR #3157; #3152, #3153, #3154 and the follow-up #3156 from PR #3160; #3155 from PR #3158) into
+  `CHANGELOG.md` section `[6.5.2]` via `compileFragments`/`spliceIntoUnreleased`/`_promoteUnreleased`,
+  target version `6.5.2` (minor — the fragment set mixes `added`/`changed` with `fixed`/`internal`,
+  and a minor-tier subsection always wins per the version-bump precedence table). Bumped
+  `version.json` (`6.5.1` → `6.5.2`), updated README pins/banner (prose hand-written here, not
+  generated) and the released-section lock via `scripts/release-prepare.js`, and updated
+  `FEATURES.md`, `ROADMAP.md`, `docs/releases/index.md` and `docs/releases/v6.5.2.md`.
+- Dispatched by `TC-Lane-PM` via Medusa after all 4 Wave 1 cars (PR #3157 @ 582c858e, PR #3158 @
+  685598d1, PR #3159 @ 64428741, PR #3160 @ 37ed6d69) true-merged to `origin/main @
+  37ed6d69c95d4dfdfd3388ae460f2dfd0e3abb9e`, closing 8 of Milestone #87's own 8 tracked issues
+  (#3148–#3155); #3156 is an untracked follow-up discovered and landed inside PR #3160's own car,
+  whose changelog fragment is compiled into this release regardless of its milestone status.
+  `LANE_QUEUE.md`'s `W2-REL (Car V652-W2-REL)` row carries the matching file-scope grant.
+
 ## 2026-11-20 — Car V652-W1-A: TCC bootstrap recovery & workload-nudge idle guard (#3148, #3149)
 
 <!-- prawduct: type=bugfix | scope=v652-w1-a-tcc-workload -->

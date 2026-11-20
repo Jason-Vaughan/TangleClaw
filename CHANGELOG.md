@@ -4,6 +4,58 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.5.2] - 2026-11-20
+
+### Added
+- V6 chat view: Under the Hood (`#v6ChatPeek`) is now drag-resizable, with its
+  height persisted across reloads, and the chat stream automatically fills
+  whatever vertical space the header, Under the Hood and the composer leave
+  behind — retiring the old fixed `55vh` cap that left dead space below the
+  composer on tall screens (#3152).
+
+### Changed
+- Reverted the 2026-11-08 native GitHub `Co-authored-by:` contributor attribution amendment to ADR 0014. Clean-room reconstructions once again use strict prose `Reported-by:` attribution only — no `Co-authored-by:` commit trailers, no `@username` PR mentions, and no `README.md` **Contributors** section — so an external reporter is never displayed as a repository commit co-author or contributor on GitHub (#3150).
+- V6 shell: every top-bar dashboard control (Ports, Usage, Groups, OpenClaw,
+  Audit, Recovery, Global Rules, Sign out) now stays directly visible inline
+  on the bar — the "⋯ More" menu that used to tuck them away is gone. The
+  chat control bar also gets a direct, labeled "⚙ Edit Session" button and
+  an inline engine picker, so switching a project's engine no longer needs
+  the full Settings modal (#3153).
+- Medusa wake notifications are now targeted to the session that owns the next action instead of every live peer: routine session-startup announcements default to silent (opt in with a project's `startupAnnounceEnabled` or `TANGLECLAW_STARTUP_ANNOUNCE_ENABLED`), never wake the Architect by default, and `tc message send --no-wake` (`POST .../medusa/send` with `noWake: true`) delivers an informational/FYI/receipt copy to an inbox without typing an active pane wake for it (#3155).
+
+### Fixed
+- Fixed `createSessionWithTccBootstrap` leaking a Terminal.app window (and
+  sometimes failing with `duplicate session: tc-tcc-anchor`) when the
+  TCC-authorized tmux server itself could not read a protected `cwd` but the
+  default tmux server already could: it now uses the default server directly
+  in that case, evicts a stale TCC-authorized server that holds nothing but
+  the anchor session before re-bootstrapping, and bootstraps with
+  `new-session -A` so a pre-existing anchor is never a duplicate-session
+  error (#3148).
+- Fixed the workload-nudge monitor re-arming its own 2-hour pane-typing/escalation
+  cycle forever on an idle lane: a session whose newest workload receipt
+  already reports `state: "complete"` or `clearance: "safe-to-clear"` is now
+  never nudged or escalated, however long that receipt sits expired, instead
+  of waking the LLM in its pane every 2 hours to retype the same report
+  (#3149).
+- Fixed the V6 shell's footer wiggle and white scrollbar: `.main-scroll` and `.v6-shell-root` now fill exactly 100% of the space below the top bar (not an independent `100dvh`), and slim dark scrollbars (`color-scheme: dark`, 6px thumb/track) apply globally instead of stopping at `.v6-shell-root`. The chat view, detail pane, and composer wrapper (`.v6-chat-peek`, `.v6-chat-under-hood[open]`) are now full-height/resizable flex columns, closing most of the dead space below them (#3151). The stream's own `55vh` cap is kept as-is for this change: removing it conflicts with `public/v6-shell.js`'s `#3106` two-way resize-coupling math (`calc(55vh - Npx)`), which is outside this change's file scope — tracked separately.
+- V6 shell: entering the Fleet view now lands on a generic Fleet & Workspace
+  Overview screen (or the sidebar's currently selected fleet) instead of
+  always auto-loading the alphabetically-first project. The sidebar's fleet
+  picker now navigates the main view when changed, and the new Overview
+  screen gets direct "▶ Start", an engine picker, "⚙ Edit Session" and
+  "Open Chat" on every project card — any session can be started, switched
+  or opened without opening its chat first (#3154).
+
+### Internal
+- V6 shell: finished #3151's deferred criterion 3 — `.v6-chat-stream` no
+  longer carries a `55vh`-relative `max-height` cap at all; it fills
+  whatever `.v6-chat` has left via `flex: 1 1 0%` once Under the Hood and
+  the composer have taken their own share, and the now-inert resize
+  handle that cap's JS coupling (`coupledStreamMaxHeight`/
+  `coupledInputHeight`) used to drive has been removed along with it
+  (#3156).
+
 ## [6.5.1] - 2026-11-16
 
 ### Added
