@@ -14,7 +14,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { VERB_ROSTER } = require('../lib/tc-verbs');
 const {
-  ROLE_VERB_IDS, START_NEXT_VS_REVIEW_NOTE, SANDBOX_UNREACHABLE_NOTE, buildOperatingPrimer,
+  ROLE_VERB_IDS, START_NEXT_VS_REVIEW_NOTE, SANDBOX_UNREACHABLE_NOTE, SINGLE_ACTION_OWNER_NOTE, buildOperatingPrimer,
   SUBVERB_MANIFEST, IMPLEMENTATION_SUBVERBS, subverbsFor, subverbManifestParity
 } = require('../lib/operating-primer');
 
@@ -38,10 +38,11 @@ describe('buildOperatingPrimer — role parity against the live VERB_ROSTER', ()
       }
     });
 
-    it(`"${role}" carries both the start-next-vs-review note and the sandbox note`, () => {
+    it(`"${role}" carries the start-next-vs-review note, the sandbox note, and the single-action-owner note`, () => {
       const text = buildOperatingPrimer(role);
       assert.ok(text.includes(START_NEXT_VS_REVIEW_NOTE));
       assert.ok(text.includes(SANDBOX_UNREACHABLE_NOTE));
+      assert.ok(text.includes(SINGLE_ACTION_OWNER_NOTE));
     });
   }
 
@@ -116,6 +117,19 @@ describe('SUBVERB_MANIFEST — the structured command/subcommand schema (Archite
     const specs = subverbsFor('whoami');
     assert.equal(specs.length, 1);
     assert.equal(specs[0].id, null);
+  });
+
+  it('"message"/"send" names --no-wake in its own syntax (#3155)', () => {
+    const send = subverbsFor('message').find((s) => s.id === 'send');
+    assert.match(send.syntax, /--no-wake/);
+    assert.match(send.purpose, /without typing an active pane wake/);
+  });
+});
+
+describe('SINGLE_ACTION_OWNER_NOTE (#3155) — codifies targeted-only Medusa delivery', () => {
+  it('names --no-wake as the way to CC without waking an idle pane', () => {
+    assert.match(SINGLE_ACTION_OWNER_NOTE, /--no-wake/);
+    assert.match(SINGLE_ACTION_OWNER_NOTE, /owns the next action/);
   });
 });
 

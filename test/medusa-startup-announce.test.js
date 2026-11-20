@@ -24,26 +24,30 @@ beforeEach(() => {
   announce._resetAnnouncedForTesting();
 });
 
-describe('medusa-startup-announce: announceDisabled', () => {
-  it('exports the exact env var name the escape hatch reads', () => {
-    assert.equal(announce.ANNOUNCE_ENV_VAR, 'TANGLECLAW_STARTUP_ANNOUNCE_DISABLED');
+describe('medusa-startup-announce: announceEnabled (#3155, default OFF)', () => {
+  it('exports the exact env var name the opt-in escape hatch reads', () => {
+    assert.equal(announce.ANNOUNCE_ENV_VAR, 'TANGLECLAW_STARTUP_ANNOUNCE_ENABLED');
   });
 
-  it('is false with no project config and no env override', () => {
-    assert.equal(announce.announceDisabled(null, { env: {} }), false);
+  it('is false (silent) with no project config and no env override -- the new default', () => {
+    assert.equal(announce.announceEnabled(null, { env: {} }), false);
   });
 
-  it('is true when the project config opts out', () => {
-    assert.equal(announce.announceDisabled({ startupAnnounceDisabled: true }, { env: {} }), true);
+  it('is true when the project config opts in', () => {
+    assert.equal(announce.announceEnabled({ startupAnnounceEnabled: true }, { env: {} }), true);
   });
 
   it('is true when the env var is set to "true" or "1", regardless of project config', () => {
-    assert.equal(announce.announceDisabled({}, { env: { [announce.ANNOUNCE_ENV_VAR]: 'true' } }), true);
-    assert.equal(announce.announceDisabled({}, { env: { [announce.ANNOUNCE_ENV_VAR]: '1' } }), true);
+    assert.equal(announce.announceEnabled({}, { env: { [announce.ANNOUNCE_ENV_VAR]: 'true' } }), true);
+    assert.equal(announce.announceEnabled({}, { env: { [announce.ANNOUNCE_ENV_VAR]: '1' } }), true);
   });
 
   it('ignores an unrecognized env value', () => {
-    assert.equal(announce.announceDisabled({}, { env: { TANGLECLAW_STARTUP_ANNOUNCE_DISABLED: 'nope' } }), false);
+    assert.equal(announce.announceEnabled({}, { env: { TANGLECLAW_STARTUP_ANNOUNCE_ENABLED: 'nope' } }), false);
+  });
+
+  it('stays disabled even when the OLD opt-out field is present -- #3155 flipped the field name, not just its meaning', () => {
+    assert.equal(announce.announceEnabled({ startupAnnounceDisabled: false }, { env: {} }), false);
   });
 });
 
@@ -94,16 +98,23 @@ describe('medusa-startup-announce: resolveProjectRecipients (cross-project, #579
     isSameFleet: () => true
   });
 
-  it('resolves every OTHER project holding an active coordinator grant, never the announcing project or a non-coordinator', () => {
+  it('resolves every OTHER project holding an active coordinator grant EXCEPT architect, which is excluded by default (#3155)', () => {
     const recipients = announce.resolveProjectRecipients(1, 10, deps());
+    assert.deepEqual(recipients.sort(), ['ws-pm']);
+  });
+
+  it('includes architect when a caller explicitly opts in with includeArchitects: true (#3155)', () => {
+    const d = deps();
+    d.includeArchitects = true;
+    const recipients = announce.resolveProjectRecipients(1, 10, d);
     assert.deepEqual(recipients.sort(), ['ws-arch', 'ws-pm']);
   });
 
-  it('excludes a coordinator project with no active session for its grant', () => {
+  it('excludes a coordinator project with no active session for its grant, and excludes architect regardless', () => {
     const d = deps();
     d.getActiveSessionForProject = (pid) => (pid === 2 ? null : SESSION_BY_PROJECT[pid]);
     const recipients = announce.resolveProjectRecipients(1, 10, d);
-    assert.deepEqual(recipients, ['ws-arch']);
+    assert.deepEqual(recipients, [], 'PM has no session and architect is excluded by default -- nobody is left');
   });
 
   it('skips a coordinator project whose active session has no resolvable workspace id', () => {
@@ -202,9 +213,13 @@ describe('medusa-startup-announce: resolveProjectRecipients (cross-project, #579
 });
 
 describe('medusa-startup-announce: maybeAnnounceStartup', () => {
+  // #3155: the default flipped to OFF, so every test below that exercises a
+  // gate OTHER than enablement itself opts the project in explicitly --
+  // otherwise every one of them would read 'disabled' before reaching the
+  // gate it actually means to exercise.
   const baseInput = () => ({
     sequenceId: 42, sessionId: 1555, sessionName: 'TC-Lane-B', role: 'worker',
-    workspaceId: 'tc-lane-b-bf9cd917', isReady: true, isListening: true, projConfig: null
+    workspaceId: 'tc-lane-b-bf9cd917', isReady: true, isListening: true, projConfig: { startupAnnounceEnabled: true }
   });
 
   it('sends to every resolved recipient and reports sent:true', async () => {
@@ -234,14 +249,33 @@ describe('medusa-startup-announce: maybeAnnounceStartup', () => {
     assert.equal(sent.length, 1);
   });
 
-  it('does not send when disabled, and does not consume the idempotency slot either', async () => {
+  it('does not send by default (projConfig: null, #3155\'s new default), and does not consume the idempotency slot either', async () => {
     const deps = { resolveRecipients: () => ['ws-a'], sendSystemMessage: async () => {} };
     const disabledResult = await announce.maybeAnnounceStartup(
-      { ...baseInput(), projConfig: { startupAnnounceDisabled: true } }, deps
+      { ...baseInput(), projConfig: null }, deps
     );
     assert.equal(disabledResult.sent, false);
     assert.equal(disabledResult.reason, 'disabled');
     assert.equal(announce.hasAnnounced(42), false, 'a disabled check must not block a later enabled attempt');
+  });
+
+  it('does not send when the project config explicitly sets startupAnnounceEnabled: false', async () => {
+    const deps = { resolveRecipients: () => ['ws-a'], sendSystemMessage: async () => {} };
+    const disabledResult = await announce.maybeAnnounceStartup(
+      { ...baseInput(), projConfig: { startupAnnounceEnabled: false } }, deps
+    );
+    assert.equal(disabledResult.sent, false);
+    assert.equal(disabledResult.reason, 'disabled');
+  });
+
+  it('sends when disabled by project config but the env var opts in anyway', async () => {
+    const sent = [];
+    const result = await announce.maybeAnnounceStartup(
+      { ...baseInput(), projConfig: null },
+      { env: { [announce.ANNOUNCE_ENV_VAR]: '1' }, resolveRecipients: () => ['ws-a'], sendSystemMessage: async ({ to }) => { sent.push(to); } }
+    );
+    assert.equal(result.sent, true);
+    assert.deepEqual(sent, ['ws-a']);
   });
 
   it('does not send when not both isReady and isListening are true', async () => {

@@ -1416,6 +1416,89 @@ describe('medusa-wake — #2402 reply-guidance override and non-actionable-notic
   });
 });
 
+describe('medusa-wake — #3155 noWake: unconditional, per-message suppression', () => {
+  let saved;
+  beforeEach(() => { wake.stop(); saved = { ...wake._internal }; wake._resetNoWakeForTesting(); });
+  afterEach(() => { Object.assign(wake._internal, saved); wake.stop(); wake._resetNoWakeForTesting(); });
+
+  it('suppresses the nudge for an entry marked noWake: true directly, with no project opt-in needed', () => {
+    const world = installWorld({
+      config: { medusaWake: true }, // suppressNonActionableWakes NOT set
+      inbox: [{ id: 'm1', from: 'peer', message: 'fyi, nothing to do', noWake: true }]
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0);
+    assert.equal(world.recorded.some((r) => r.skipReason === 'non-actionable-notice-only'), true);
+  });
+
+  it('suppresses the nudge for an entry markNoWake recorded by its Hub id, the same way a real send marks it', () => {
+    wake.markNoWake('hub-msg-1');
+    const world = installWorld({
+      config: { medusaWake: true },
+      inbox: [{ id: 'hub-msg-1', from: 'peer', message: 'fyi' }]
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0);
+  });
+
+  it('still nudges when a real (non-noWake) message sits alongside a noWake one', () => {
+    const world = installWorld({
+      config: { medusaWake: true },
+      inbox: [
+        { id: 'm1', from: 'peer', message: 'fyi', noWake: true },
+        { id: 'm2', from: 'peer', message: 'please reply' }
+      ],
+      status: { state: 'listening', workspaceId: 'proj-a-abc123', unread: 2, lastError: null }
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'a real message alongside a noWake one still nudges');
+  });
+
+  it('advances the watermark silently on a noWake-only inbox, so a LATER real message still nudges normally', () => {
+    const world = installWorld({
+      config: { medusaWake: true },
+      inbox: [{ id: 'm1', from: 'peer', message: 'fyi', noWake: true }]
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0);
+    world.inbox = [
+      { id: 'm1', from: 'peer', message: 'fyi', noWake: true },
+      { id: 'm2', from: 'peer', message: 'please reply' }
+    ];
+    world.status = { state: 'listening', workspaceId: 'proj-a-abc123', unread: 2, lastError: null };
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'the new, non-noWake arrival still nudges');
+  });
+
+  it('combines with the opt-in notice suppression: a mix of noWake and an opted-in system notice, nothing else, still suppresses', () => {
+    const world = installWorld({
+      config: { medusaWake: true, suppressNonActionableWakes: true },
+      inbox: [
+        { id: 'm1', from: 'peer', message: 'fyi', noWake: true },
+        {
+          id: 'm2', from: 'system',
+          message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc: 'NETWORK', docId: 'd1', sentAt: '2026-10-28T00:00:00Z' })
+        }
+      ],
+      status: { state: 'listening', workspaceId: 'proj-a-abc123', unread: 2, lastError: null }
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0);
+  });
+
+  it('markNoWake with a null/undefined id is a no-op, never throws', () => {
+    assert.doesNotThrow(() => wake.markNoWake(null));
+    assert.doesNotThrow(() => wake.markNoWake(undefined));
+  });
+
+  it('_resetNoWakeForTesting actually clears a prior mark', () => {
+    wake.markNoWake('hub-msg-2');
+    assert.equal(wake._isNoWakeEntry({ id: 'hub-msg-2' }), true);
+    wake._resetNoWakeForTesting();
+    assert.equal(wake._isNoWakeEntry({ id: 'hub-msg-2' }), false);
+  });
+});
+
 describe('medusa-wake — a not-accepted receipt immediately asks the watchdog to re-arm (#2716)', () => {
   let saved;
   beforeEach(() => { wake.stop(); saved = { ...wake._internal }; });
