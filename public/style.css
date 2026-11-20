@@ -4241,6 +4241,44 @@ body::-webkit-scrollbar-thumb:active,
   margin: 12px 0 8px;
   overflow-wrap: anywhere;
 }
+/* #3154: the generic landing screen — a card per fleet/workspace group,
+   each member a row with its own direct actions. */
+.v6-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.v6-overview-card {
+  border: 1.5px solid var(--v6-outline, #3d444d);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--v6-surface, #0d0d0d);
+}
+.v6-overview-card h3 {
+  margin: 0 0 8px;
+  font-size: 1em;
+}
+.v6-overview-members {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.v6-overview-member {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.v6-overview-member-status {
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+.v6-overview-member.is-live .v6-overview-member-status { color: #56d364; }
+.v6-overview-member.is-offline .v6-overview-member-status { opacity: 0.65; }
 .v6-open-hood {
   display: inline-block;
   margin-bottom: 12px;
@@ -4697,9 +4735,19 @@ p.v6-history-secret {
 .v6-chat-delegate {
   max-width: 220px;
 }
+/* #3151 added `resize: vertical; min-height: 80px;` here as its own
+   courtesy start on this pane; #3152 (this car) owns the Under the Hood
+   resizer outright, with its height persisted to `tc_v6_chat_uth_height`
+   by `wireComposerResize`'s own ResizeObserver — consolidated into one
+   declaration rather than two competing `resize`/`min-height` lines.
+   `max-height` is a generous cap (never the old fixed 320px, which
+   `resize` could never drag past) rather than a constraint the operator
+   is expected to live inside. */
 .v6-chat-peek {
   margin: 0;
-  max-height: 320px;
+  min-height: 120px;
+  max-height: 70vh;
+  resize: vertical;
   overflow: auto;
   padding: 8px;
   border: 1px solid var(--border-color, #2a2f36);
@@ -4707,9 +4755,6 @@ p.v6-history-secret {
   font-size: 0.85em;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  /* #3151: operator-resizable, like the stream/composer pair below it. */
-  resize: vertical;
-  min-height: 80px;
 }
 /* #3133/#3135: Interactive CLI Mode's live border and indicator — today
    `public/v6-shell.js` sets both as an inline `style="border:2px solid
@@ -4740,15 +4785,23 @@ p.v6-history-secret {
   font-size: 0.85em;
   opacity: 0.85;
 }
-/* #3052: Above the Hood — the conversation as bubbles, the raw pane folded away. */
+/* #3052: Above the Hood — the conversation as bubbles, the raw pane folded away.
+   #3151's own criterion 3 asked for `.v6-chat-stream { flex: 1 1 0%; ...
+   max-height: none; }` too, but that specific piece was reverted out of its
+   PR (#3156) because `resize: vertical` on a `flex-basis: 0%` item makes the
+   native resize handle inert — dragging it sets an inline `height` the flex
+   layout never reads, since the explicit `0%` basis wins over `height`'s
+   `auto` fallback. #3152/#3156 (this car) finishes that criterion: the
+   stream retires its OWN resize handle (#3106's original one) and instead
+   fills 100% of whatever `.v6-chat` has left once the header, Under the
+   Hood and the composer (both still independently resizable) have taken
+   their share — zero dead space by construction, no JS measurement
+   needed, and resizing either of the other two panes reshares the stream's
+   space automatically through ordinary flex layout. */
 .v6-chat-stream {
-  max-height: 55vh;
-  /* #3106: the floor the composer/stream two-way resize coupling never
-     shrinks past — min-height overrides a smaller max-height. */
+  flex: 1 1 0%;
   min-height: 120px;
-  /* #3106: the other half of the two-way coupling — the operator can drag
-     this edge directly too, which then shrinks the composer back down. */
-  resize: vertical;
+  max-height: none;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -5442,38 +5495,10 @@ p.v6-history-secret {
 .v6-shell-watermark-mark {
   opacity: 0.5;
 }
-/* #3079: in the v6 shell the Classic admin controls sit in one More menu. */
-.v6-admin-menu {
-  position: relative;
-  display: inline-block;
-}
-.v6-admin-menu > summary {
-  list-style: none;
-  cursor: pointer;
-}
-.v6-admin-menu > summary::-webkit-details-marker {
-  display: none;
-}
-.v6-admin-menu-panel {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 180px;
-  padding: 6px;
-  background: var(--card-bg, #0d0d0d);
-  border: 1px solid var(--border, #333);
-  border-radius: 6px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
-}
-.v6-admin-menu-panel > * {
-  width: 100%;
-  justify-content: flex-start;
-  text-align: left;
-}
+/* #3153: the "⋯ More" menu these once styled is retired — the admin
+   controls stay inline in `.dash-actions` now (`tuckAdminControls` in
+   `public/v6-shell.js`), so `.v6-admin-menu`/`.v6-admin-menu-panel` have
+   no more markup to style. */
 
 /* #3082: links in messages open in a new tab; an external image is a card,
    never loaded here; an attached image shows as a thumbnail. */
