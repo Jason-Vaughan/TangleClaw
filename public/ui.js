@@ -8596,11 +8596,18 @@ if (typeof window.tcCreateV6Shell === 'function') {
     onChangeDelegate(nodeId, projectId) { v6Live.changeDelegate(nodeId, projectId); },
     onRefreshChat() { v6Live.refresh(); },
     onOpenProjectSettings(projectName) { openSettings(projectName); },
+    // #3153: the inline engine picker (chat control bar, sidebar and
+    // overview rows) — a direct `PATCH /api/projects/:name`, same request
+    // the full Settings modal's own save already sends, without opening it.
+    onChangeEngine(projectName, engine) { v6Live.changeEngine(projectName, engine); },
     // #3053: files attached in the chat composer.
     onAttachFiles(files) { v6Live.attachFiles(files); },
     onRemoveAttachment(index) { v6Live.removeAttachment(index); },
     // #3053: start from the chat, and refresh on any sidebar click.
-    onStartSession() { v6Live.startSession(); },
+    // #3154: an explicit name lets the sidebar and Overview start ANY
+    // offline project directly; the chat's own Start button still omits
+    // it and gets the chat on screen, same as before.
+    onStartSession(projectName) { v6Live.startSession(projectName); },
     onStartFleet() { v6Live.startFleet(); },
     onTreeLinkClick(hash) { v6Live.treeLinkClicked(hash); },
     // #3071: rename the chat's target from its header.
@@ -8626,7 +8633,10 @@ if (typeof window.tcCreateV6Shell === 'function') {
       if (v6ShellRoot) v6ShellRoot.classList.toggle('hidden', !active);
       if (v6DashboardRoot) v6DashboardRoot.classList.toggle('hidden', active);
       if (v6ClassicToolbar) v6ClassicToolbar.classList.toggle('hidden', active);
-      // #3079: a slim top bar in the v6 shell; the admin controls sit in a More menu.
+      // #3079: a slim top bar in the v6 shell; #3153 retired the admin
+      // controls' old "⋯ More" menu, so this now only docks the chat
+      // header/drawer toggle and the dashboard stats (see its own doc
+      // comment in v6-shell.js).
       if (typeof window.tcV6TuckAdminControls === 'function') window.tcV6TuckAdminControls(document, active);
       if (v6ToggleBtn) {
         v6ToggleBtn.textContent = window.tcV6ViewToggleLabel(route);
@@ -8643,6 +8653,14 @@ if (typeof window.tcCreateV6Shell === 'function') {
     v6ToggleBtn.addEventListener('click', async () => {
       if (v6Shell.getRoute().view) {
         v6Shell.navigate('#/');
+        return;
+      }
+      // #3154: the sidebar's own currently-selected fleet wins over the
+      // generic landing screen, so re-entering the shell after picking one
+      // doesn't bounce back to the Overview.
+      const fleetId = typeof v6Shell.getSelectedFleetId === 'function' ? v6Shell.getSelectedFleetId() : null;
+      if (fleetId) {
+        v6Shell.navigate(`#/projects/${encodeURIComponent(fleetId)}`);
         return;
       }
       v6Shell.navigate(await v6Live.enterHash());

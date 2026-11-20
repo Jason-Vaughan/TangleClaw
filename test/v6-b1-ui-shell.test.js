@@ -112,6 +112,10 @@ describe('tcV6ParseRoute (#2981 deliverable 1)', () => {
     assert.deepEqual(plain(G.tcV6ParseRoute('#/projects/42/fleets')), { view: 'project', projectId: '42' });
   });
 
+  it('#3154: parses #/overview, the generic landing screen', () => {
+    assert.deepEqual(plain(G.tcV6ParseRoute('#/overview')), { view: 'overview' });
+  });
+
   it('fails closed to {view: null} for a malformed percent-encoded segment, rather than throwing URIError (PRR-B R1 HOLD)', () => {
     assert.doesNotThrow(() => G.tcV6ParseRoute('#/projects/%E0%A4%A'));
     assert.deepEqual(plain(G.tcV6ParseRoute('#/projects/%E0%A4%A')), { view: null });
@@ -126,7 +130,8 @@ describe('tcV6RouteHash (inverse of tcV6ParseRoute)', () => {
       { view: 'project', projectId: '42' },
       { view: 'fleet', projectId: '42', fleetId: '7' },
       { view: 'conversation', resourceId: '99' },
-      { view: 'settings', settingsPath: 'engines' }
+      { view: 'settings', settingsPath: 'engines' },
+      { view: 'overview' }
     ];
     for (const route of routes) {
       const hash = G.tcV6RouteHash(route);
@@ -886,17 +891,15 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     assert.match(root.innerHTML, /ship it/);
   });
 
-  it('the toggle\'s own landing route hydrates a real member\'s conversation and attestation (PRR-B R1 HOLD)', async () => {
-    const { live, win, root, calls, settle } = mountLive(baseMap());
+  it('#3154: the toggle\'s own landing route is the generic Overview, not any one member\'s conversation', async () => {
+    const { live, win, root, settle } = mountLive(baseMap());
     const hash = await live.enterHash();
-    assert.equal(hash, '#/projects/tc-lane');
+    assert.equal(hash, '#/overview');
     win.location.hash = hash;
     await settle();
-    assert.ok(calls.includes('/api/v6/projects/11/sessions/501/conversation/events'), JSON.stringify(calls));
-    assert.ok(calls.includes('/api/v6/projects/11/sessions/501/attestations'));
-    assert.match(root.innerHTML, /ship it/);
-    assert.match(root.innerHTML, /\/session\/TC-Lane-B/);
-    assert.match(root.innerHTML, /v6-model-attestation is-estimated[\s\S]*Claude Code/);
+    const detail = root.innerHTML.slice(root.innerHTML.indexOf('id="v6ShellDetail"'));
+    assert.match(detail, /Fleet &amp; Workspace Overview/);
+    assert.doesNotMatch(detail, /v6-conversation v6-chat/, 'no chat conversation markup for a route with no project');
   });
 
   it('a fleet route hydrates its member\'s conversation and attestation (PRR-B R1 HOLD)', async () => {
@@ -1352,14 +1355,14 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
   });
   });
 
-  it('enterHash names the first logical project, loading the projects if needed', async () => {
+  it('#3154: enterHash lands on the generic Overview, loading the projects if needed, never a specific project', async () => {
     const { live } = mountLive(baseMap());
-    assert.equal(await live.enterHash(), '#/projects/tc-lane');
+    assert.equal(await live.enterHash(), '#/overview');
   });
 
-  it('enterHash falls back to settings when there are no projects', async () => {
+  it('#3154: enterHash still lands on Overview with no projects — it handles that empty state itself now', async () => {
     const { live } = mountLive(baseMap({ '/api/projects': { projects: [] } }));
-    assert.equal(await live.enterHash(), '#/settings/');
+    assert.equal(await live.enterHash(), '#/overview');
   });
 
   it('a failed telemetry read leaves the bar unavailable rather than throwing', async () => {
@@ -1411,9 +1414,9 @@ describe('page wiring (#3022 deliverable a) — index.html and ui.js', () => {
     assert.match(block, /onRemoveAttachment\(index\) \{ v6Live\.removeAttachment\(index\); \}/);
   });
 
-  it('ui.js wires Start, Start fleet and the sidebar refresh to the live controller (#3053)', () => {
+  it('ui.js wires Start, Start fleet and the sidebar refresh to the live controller (#3053, #3154)', () => {
     const block = UI.slice(UI.indexOf("if (typeof window.tcCreateV6Shell === 'function')"));
-    assert.match(block, /onStartSession\(\) \{ v6Live\.startSession\(\); \}/);
+    assert.match(block, /onStartSession\(projectName\) \{ v6Live\.startSession\(projectName\); \}/);
     assert.match(block, /onStartFleet\(\) \{ v6Live\.startFleet\(\); \}/);
     assert.match(block, /onTreeLinkClick\(hash\) \{ v6Live\.treeLinkClicked\(hash\); \}/);
   });
@@ -4001,12 +4004,27 @@ describe('the chat header is one compact row of identity and icons (#3059)', () 
       members: [{ id: '10', name: 'TC-Lane-A' }, { id: '12', name: 'TC-Lane-PM' }] }, chat || {}) });
   const header = (html) => html.slice(html.indexOf('<header class="v6-chat-header">'), html.indexOf('</header>'));
 
-  it('Open Hood, Refresh and Project Settings are icon buttons named by title and aria-label, ids kept', () => {
+  it('Open Hood and Refresh are icon buttons named by title and aria-label, ids kept', () => {
     const h = header(G.tcV6ConversationViewMarkup(view()));
     assert.match(h, /class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood"[^>]*title="Open Hood \(Live Terminal\)" aria-label="Open Hood \(Live Terminal\)"><span aria-hidden="true">&gt;_<\/span><\/a>/);
     assert.match(h, /<button type="button" id="v6ChatRefresh" class="btn btn-secondary btn-small v6-chat-icon-btn" title="Refresh conversation" aria-label="Refresh conversation"><span aria-hidden="true">↻<\/span><\/button>/);
-    assert.match(h, /<button type="button" id="v6ChatSettings" class="btn btn-secondary btn-small v6-chat-icon-btn" title="Project Settings" aria-label="Project Settings"><span aria-hidden="true">⚙<\/span><\/button>/);
-    assert.doesNotMatch(h, />Refresh<|>Project Settings<|>Open Hood \(Live Terminal\)</, 'no word labels left in the toolbar');
+    assert.doesNotMatch(h, />Refresh<|>Open Hood \(Live Terminal\)</, 'no word labels left on those two');
+  });
+
+  it('#3153: Edit Session is a clearly labeled button, not a bare icon, beside a direct engine picker', () => {
+    const h = header(G.tcV6ConversationViewMarkup(view()));
+    // R2 CI-FIX: title/aria-label stay "Project Settings" — pinned verbatim by
+    // test/v6-browser-shell-and-conversation-e2e.test.js, outside this car's
+    // file scope — while the visible button text changes to "⚙ Edit Session".
+    assert.match(h, /<button type="button" id="v6ChatSettings" class="btn btn-secondary btn-small v6-chat-settings-btn"\s*title="Project Settings" aria-label="Project Settings"><span aria-hidden="true">⚙ Edit Session<\/span><\/button>/);
+    assert.match(h, /<select id="v6ChatEngineSelect" class="btn btn-secondary btn-small v6-engine-select" data-action="change-chat-engine"/);
+    assert.match(h, /<option value="claude" selected>claude<\/option>/);
+  });
+
+  it('#3153: the engine picker defaults to the project\'s own configured engine, not always claude', () => {
+    const h = header(G.tcV6ConversationViewMarkup(view(null, { engine: { id: 'codex' } })));
+    assert.match(h, /<option value="codex" selected>codex<\/option>/);
+    assert.doesNotMatch(h, /<option value="claude" selected>/);
   });
 
   it('the identity strip carries the full detail as a tooltip and screen-reader text, and short chips on screen', () => {
@@ -4282,27 +4300,22 @@ describe('composer tightening and two-way resize (#3106)', () => {
     assert.match(css, /\.v6-chat-attach-btn \{\s*position: absolute;\s*top: 6px;\s*right: 6px;/);
   });
 
-  it('gives the stream a resize floor min-height never overrides a smaller max-height', () => {
-    assert.match(css, /\.v6-chat-stream \{\s*max-height: 55vh;[\s\S]*?min-height: 120px;/);
+  it('#3152/#3156: the stream has a resize floor and no max-height cap anymore — it fills via flex, not a JS-computed max-height', () => {
+    assert.match(css, /\.v6-chat-stream \{\s*flex: 1 1 0%;\s*min-height: 120px;\s*max-height: none;/);
   });
 
-  it('tcV6CoupledStreamMaxHeight: unchanged or shrunk input leaves the stream at its default', () => {
-    assert.equal(G.tcV6CoupledStreamMaxHeight(64, 64), '');
-    assert.equal(G.tcV6CoupledStreamMaxHeight(40, 64), '');
+  it('#3152/#3156: the stream retired its OWN resize handle — flex-basis: 0% makes a native one inert, and the other two panes already reshare its space', () => {
+    assert.doesNotMatch(css, /\.v6-chat-stream \{[^}]*resize: vertical;/);
+    assert.equal(typeof G.tcV6CoupledStreamMaxHeight, 'undefined', 'retired along with the max-height it used to compute');
+    assert.equal(typeof G.tcV6CoupledInputHeight, 'undefined', 'retired — the stream it used to react to is no longer draggable');
   });
 
-  it('tcV6CoupledStreamMaxHeight: a taller input shrinks the stream by exactly the growth', () => {
-    assert.equal(G.tcV6CoupledStreamMaxHeight(140, 64), 'calc(55vh - 76px)');
+  it('#3152: Under the Hood is drag-resizable too, with a floor and a generous (not the old fixed 320px) cap', () => {
+    assert.match(css, /\.v6-chat-peek \{[\s\S]*?min-height: 120px;[\s\S]*?max-height: 70vh;[\s\S]*?resize: vertical;/);
   });
 
-  it('tcV6CoupledInputHeight: the other direction — a stream dragged taller than its own baseline snaps the input back to its resting height', () => {
-    assert.equal(G.tcV6CoupledInputHeight(300, 300, 64), '', 'unchanged stream leaves the input alone');
-    assert.equal(G.tcV6CoupledInputHeight(250, 300, 64), '', 'a shrunk stream leaves the input alone too');
-    assert.equal(G.tcV6CoupledInputHeight(400, 300, 64), '64px');
-  });
-
-  it('gives the stream its own resize handle, the other half of the two-way coupling', () => {
-    assert.match(css, /\.v6-chat-stream \{[\s\S]*?resize: vertical;/);
+  it('#3151 (shipped) already bounds `.v6-shell-view`, `#v6ShellDetail` and `.v6-chat` to a full-height flex column — #3152 builds on it rather than duplicating it', () => {
+    assert.match(css, /\.v6-shell-root--chat \.v6-shell-view,\s*#v6ShellDetail:not\(\[hidden\]\),\s*\.v6-chat \{\s*display: flex;\s*flex-direction: column;\s*flex: 1 1 0%;\s*min-height: 0;\s*\}/);
   });
 });
 
@@ -4328,12 +4341,105 @@ describe('a remembered fleet that is gone does not trap the picker (#3068, cumul
     assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['medusa'], 'the saved choice survived the load');
   });
 
+  it('#3154: getSelectedFleetId names the one known fleet selected, null for none/several/gone', () => {
+    const none = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage() });
+    assert.equal(none.shell.getSelectedFleetId(), null);
+    const one = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) }) });
+    assert.equal(one.shell.getSelectedFleetId(), 'medusa');
+    const gone = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['gone-fleet']) }) });
+    assert.equal(gone.shell.getSelectedFleetId(), null);
+  });
+
+  it('#3154: picking a fleet in the picker navigates the main view straight to it', () => {
+    const { doc, win } = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage(), initialHash: '#/overview' });
+    const el = doc.getElementById('v6FilterFleet');
+    el.value = 'medusa';
+    el.dispatch('change');
+    assert.equal(win.location.hash, '#/projects/medusa');
+  });
+
+  it('#3154: picking "All Fleets" navigates to the generic Overview instead of leaving the view stuck', () => {
+    const { doc, win } = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) }), initialHash: '#/projects/medusa' });
+    const el = doc.getElementById('v6FilterFleet');
+    el.value = '';
+    el.dispatch('change');
+    assert.equal(win.location.hash, '#/overview');
+  });
+
   it('"Several fleets" counts only fleets still there, and one survivor is simply selected', () => {
     const several = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['tc-lane', 'medusa', 'gone']) }) });
     assert.match(several.root.innerHTML, /disabled selected>Several fleets \(2\)</);
     const single = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa', 'gone']) }) });
     assert.match(single.root.innerHTML, /<option value="medusa" selected>Medusa<\/option>/);
     assert.doesNotMatch(single.root.innerHTML, /disabled selected/);
+  });
+});
+
+describe('the Overview screen\'s own row actions (#3154)', () => {
+  const OVERVIEW_TREE = [
+    { id: 'tc-lane', displayName: 'TC-Lane', fleets: [{ id: 'tc-lane', displayName: 'TC-Lane Fleet',
+      members: [{ seatId: '11', role: 'TC-Lane-A' }, { seatId: '12', role: 'TC-Lane-PM' }] }] }
+  ];
+  const OVERVIEW_PROJECTS = [
+    { id: 11, name: 'TC-Lane-A', session: { active: false }, engine: { id: 'claude' } },
+    { id: 12, name: 'TC-Lane-PM', session: { active: true }, engine: { id: 'codex' } }
+  ];
+  function mountOverview(callbacks) {
+    return mountShell(Object.assign(
+      { detail: { kind: 'overview', view: { tree: OVERVIEW_TREE, projects: OVERVIEW_PROJECTS } } },
+      callbacks || {}
+    ));
+  }
+
+  it('renders a card per fleet and shows each member Online/Offline', () => {
+    const { root } = mountOverview();
+    assert.match(root.innerHTML, /Fleet &amp; Workspace Overview/);
+    assert.match(root.innerHTML, /v6-overview-member is-offline">\s*<a id="v6OverviewMemberLink-11"[^>]*>TC-Lane-A<\/a>\s*<span class="v6-overview-member-status">Offline<\/span>/);
+    assert.match(root.innerHTML, /v6-overview-member is-live">\s*<a id="v6OverviewMemberLink-12"[^>]*>TC-Lane-PM<\/a>\s*<span class="v6-overview-member-status">Online<\/span>/);
+  });
+
+  it('shows "▶ Start" only for the offline member, never the online one', () => {
+    const { doc } = mountOverview();
+    assert.ok(doc.getElementById('v6OverviewStart-11'));
+    assert.equal(doc.getElementById('v6OverviewStart-12'), null);
+  });
+
+  it('Start calls onStartSession with the project\'s own name', () => {
+    const started = [];
+    const { doc } = mountOverview({ onStartSession: (name) => started.push(name) });
+    doc.getElementById('v6OverviewStart-11').dispatch('click');
+    assert.deepEqual(started, ['TC-Lane-A']);
+  });
+
+  it('Edit Session calls onOpenProjectSettings with the project\'s own name', () => {
+    const opened = [];
+    const { doc } = mountOverview({ onOpenProjectSettings: (name) => opened.push(name) });
+    doc.getElementById('v6OverviewSettings-12').dispatch('click');
+    assert.deepEqual(opened, ['TC-Lane-PM']);
+  });
+
+  it('the engine picker defaults to each project\'s own engine and calls onChangeEngine with its name and the new value', () => {
+    const changed = [];
+    const { doc, root } = mountOverview({ onChangeEngine: (name, engine) => changed.push([name, engine]) });
+    assert.match(root.innerHTML, /id="v6OverviewEngine-11"[^>]*>(?:(?!<\/select>)[\s\S])*<option value="claude" selected>/);
+    assert.match(root.innerHTML, /id="v6OverviewEngine-12"[^>]*>(?:(?!<\/select>)[\s\S])*<option value="codex" selected>/);
+    const select = doc.getElementById('v6OverviewEngine-11');
+    select.value = 'codex';
+    select.dispatch('change');
+    assert.deepEqual(changed, [['TC-Lane-A', 'codex']]);
+  });
+
+  it('clicking a route link reports it through onTreeLinkClick, the same as the sidebar', () => {
+    const clicked = [];
+    const { doc } = mountOverview({ onTreeLinkClick: (hash) => clicked.push(hash) });
+    doc.getElementById('v6OverviewFleetLink-tc-lane').dispatch('click');
+    doc.getElementById('v6OverviewOpenChat-12').dispatch('click');
+    assert.deepEqual(clicked, ['#/projects/tc-lane', '#/resources/12/conversation']);
+  });
+
+  it('an empty workspace shows a friendly empty state instead of nothing', () => {
+    const { root } = mountShell({ detail: { kind: 'overview', view: { tree: [], projects: [] } } });
+    assert.match(root.innerHTML, /No projects yet/);
   });
 });
 
@@ -5896,41 +6002,26 @@ describe('a slim top bar in the v6 shell (#3079)', () => {
     return { doc, body, left, actions, ids };
   }
 
-  it('tucks the admin controls into a More menu, keeping Classic View, Master and Advisor in the bar', () => {
+  it('#3153: leaves every admin control inline in the bar — no More menu is ever created', () => {
     const h = makeHeader();
+    const before = h.ids(h.actions);
     G.tcV6TuckAdminControls(h.doc, true);
     assert.ok(h.body.classList.contains('v6-shell-active'));
-    assert.deepEqual(h.ids(h.actions), ['v6ViewToggleBtn', 'masterToggle', 'advisorToggle', 'gearBtn', 'v6AdminMenu']);
-    const panel = h.doc.getElementById('v6AdminMenuPanel');
-    assert.deepEqual(h.ids(panel), ['portsToggle', 'usageToggle', 'groupsToggle', 'openclawToggle', 'auditToggle', 'fleetRecoveryToggle', 'rulesToggle', 'signOutBtn']);
-    const summary = h.doc.getElementById('v6AdminMenu').childNodes[0];
-    assert.equal(summary.tagName, 'SUMMARY');
-    assert.equal(summary.attrs['aria-label'], 'More dashboard controls');
-    assert.deepEqual(h.ids(h.left), ['ttydNotice']);
+    assert.deepEqual(h.ids(h.actions), before, 'nothing moved out of .dash-actions');
+    assert.equal(h.doc.getElementById('v6AdminMenu'), null, 'the "⋯ More" menu is retired');
+    assert.equal(h.doc.getElementById('v6AdminMenuPanel'), null);
+    assert.deepEqual(h.ids(h.left), ['signOutBtn', 'ttydNotice'], 'Sign out stays in .dash-auth, inline, same as always');
   });
 
-  it('is safe to repeat on every render, and choosing a control closes the menu', () => {
+  it('#3153: is safe to repeat on every render — still idempotent with nothing left to tuck', () => {
     const h = makeHeader();
+    const before = h.ids(h.actions);
     G.tcV6TuckAdminControls(h.doc, true);
     G.tcV6TuckAdminControls(h.doc, true);
-    assert.equal(h.ids(h.actions).filter((id) => id === 'v6AdminMenu').length, 1);
-    assert.equal(h.ids(h.doc.getElementById('v6AdminMenuPanel')).length, 8);
-    const menu = h.doc.getElementById('v6AdminMenu');
-    menu.open = true;
-    h.doc.getElementById('v6AdminMenuPanel').listeners.click.forEach((fn) => fn());
-    assert.equal(menu.open, false);
-  });
-
-  it('leaving the shell puts every control back exactly where it was and removes the menu, after any number of renders', () => {
-    const h = makeHeader();
-    const before = { actions: h.ids(h.actions), left: h.ids(h.left) };
-    G.tcV6TuckAdminControls(h.doc, true);
-    G.tcV6TuckAdminControls(h.doc, true);
+    assert.deepEqual(h.ids(h.actions), before);
     G.tcV6TuckAdminControls(h.doc, false);
     assert.ok(!h.body.classList.contains('v6-shell-active'));
-    assert.deepEqual(h.ids(h.actions), before.actions);
-    assert.deepEqual(h.ids(h.left), before.left);
-    assert.equal(h.doc.getElementById('v6AdminMenu'), null);
+    assert.deepEqual(h.ids(h.actions), before);
   });
 
   it('ui.js runs it from the shell\'s render hook with whether the shell shows', () => {
@@ -5962,9 +6053,13 @@ describe('V629 styles (#3076, #3079)', () => {
     assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{\s*\.v6-chat-medusa \.v6-medusa-head \{\s*animation: none;/);
   });
 
-  it('lays the footer out as a status bar and floats the More menu over the page', () => {
+  it('lays the footer out as a status bar', () => {
     assert.match(CSS, /\.v6-shell-watermark\.has-status \{[^}]*display: flex;[^}]*opacity: 1;/);
-    assert.match(CSS, /\.v6-admin-menu-panel \{[^}]*position: absolute;[^}]*z-index: 30;/);
+  });
+
+  it('#3153: the retired More menu leaves no styling behind', () => {
+    assert.doesNotMatch(CSS, /\.v6-admin-menu\s*\{/);
+    assert.doesNotMatch(CSS, /\.v6-admin-menu-panel\s*\{/);
   });
 });
 
@@ -8379,15 +8474,20 @@ describe('Car V651-W2-B R1 (PRR-B REVISE PR #3145): composer/stream height write
     assert.equal(storage.data.tc_v6_chat_input_height, '150', 'the restore\'s own re-persist kept the real value, not null');
   });
 
-  it('BLOCKING 1a: restores a saved stream height on mount too', () => {
+  it('#3152/#3156: the stream itself has no saved height to restore anymore — it fills via flex layout, not a persisted drag', () => {
     const { doc } = mountChatWithLayout({ tc_v6_chat_stream_height: '420' });
-    assert.equal(doc.getElementById('v6ChatStream').style.height, '420px');
+    assert.equal(doc.getElementById('v6ChatStream').style.height, undefined);
+  });
+
+  it('#3152: restores a saved Under the Hood height on mount too', () => {
+    const { doc } = mountChatWithLayout({ tc_v6_chat_uth_height: '260' });
+    assert.equal(doc.getElementById('v6ChatPeek').style.height, '260px');
   });
 
   it('BLOCKING 1a: a fresh mount with nothing saved and no real layout persists nothing at all (not even null)', () => {
     const { storage } = mountChatWithLayout();
     assert.equal(storage.data.tc_v6_chat_input_height, undefined);
-    assert.equal(storage.data.tc_v6_chat_stream_height, undefined);
+    assert.equal(storage.data.tc_v6_chat_uth_height, undefined);
   });
 
   it('BLOCKING 1b: waitingOnCollapsed is seeded from storage and persists across a toggle', () => {

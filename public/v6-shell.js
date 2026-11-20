@@ -86,6 +86,8 @@
     if (segments[0] === 'settings') {
       return { view: 'settings', settingsPath: segments.slice(1).join('/') };
     }
+    // #3154: the generic, non-session-specific landing screen.
+    if (segments[0] === 'overview') return { view: 'overview' };
     return { view: null };
   }
 
@@ -104,6 +106,7 @@
       case 'fleet': return `#/projects/${enc(route.projectId)}/fleets/${enc(route.fleetId)}`;
       case 'conversation': return `#/resources/${enc(route.resourceId)}/conversation`;
       case 'settings': return `#/settings/${route.settingsPath ? enc(route.settingsPath) : ''}`;
+      case 'overview': return '#/overview';
       default: return '#/';
     }
   }
@@ -121,6 +124,7 @@
       case 'fleet': return `Fleet ${route.fleetId}`;
       case 'conversation': return `Conversation — Resource ${route.resourceId}`;
       case 'settings': return route.settingsPath ? `Settings — ${route.settingsPath}` : 'Settings';
+      case 'overview': return 'Fleet & Workspace Overview';
       default: return 'Projects';
     }
   }
@@ -1031,38 +1035,6 @@
     if (el && typeof el.scrollHeight === 'number') el.scrollTop = el.scrollHeight;
   }
 
-  /**
-   * The chat stream's `max-height` while the composer's textarea is resized
-   * taller than its own baseline (#3106): growing the input shrinks the
-   * stream by the same amount it grew; back at or below baseline, the
-   * stream gets its full default back. A CSS `min-height` on the stream is
-   * the floor this never overrides (min-height wins over a smaller
-   * max-height), so this never needs to know the viewport's real 55vh px.
-   * @param {number} inputHeight - `#v6ChatInput`'s current height, px.
-   * @param {number} baseInputHeight - its height when last measured at rest, px.
-   * @returns {string} '' (use the stylesheet's default) or `calc(55vh - Npx)`.
-   */
-  function coupledStreamMaxHeight(inputHeight, baseInputHeight) {
-    const grown = Math.max(0, (Number(inputHeight) || 0) - (Number(baseInputHeight) || 0));
-    return grown > 0 ? `calc(55vh - ${grown}px)` : '';
-  }
-
-  /**
-   * The composer textarea's own height while `.v6-chat-stream` has been
-   * resized taller than its own baseline (#3106) — the other direction of
-   * the two-way coupling: growing the stream reclaims space from the
-   * input, snapping it back to its resting (Force+Send-stack) height
-   * rather than leaving it stuck wherever the operator last dragged it.
-   * @param {number} streamHeight
-   * @param {number} baseStreamHeight
-   * @param {number} baseInputHeight
-   * @returns {string} '' (leave the input's own height alone) or a px height.
-   */
-  function coupledInputHeight(streamHeight, baseStreamHeight, baseInputHeight) {
-    const grown = Math.max(0, (Number(streamHeight) || 0) - (Number(baseStreamHeight) || 0));
-    return grown > 0 ? `${Number(baseInputHeight) || 0}px` : '';
-  }
-
   const isBoolean = (v) => typeof v === 'boolean';
   const isStringMap = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
     && Object.keys(v).every((k) => typeof v[k] === 'string');
@@ -1246,8 +1218,27 @@
     return `<ul class="v6-wizard-list" aria-label="Starter fleet templates">${items}</ul>`;
   }
 
-  /** The AI engines every Wizard workflow offers (#3114). */
+  /** The AI engines every Wizard workflow offers (#3114); also the inline
+   * engine picker's own options (#3153) — one list, not two to drift. */
   const WIZARD_ENGINES = Object.freeze(['claude', 'codex', 'antigravity', 'aider']);
+
+  /**
+   * The inline, direct engine picker (#3153): a `<select>` an operator can
+   * change right from the chat control bar, a sidebar row, or an overview
+   * card, without opening the full Settings modal. `id` lets the same
+   * markup be reused across those three places without colliding.
+   * @param {string} id
+   * @param {{engine?: {id?: string}|null}|null} project
+   * @param {string} label
+   * @returns {string} HTML.
+   */
+  function engineSelectMarkup(id, project, label) {
+    const current = (project && project.engine && project.engine.id) || 'claude';
+    const name = (project && project.name) || '';
+    const options = WIZARD_ENGINES.map((e) => `<option value="${e}"${current === e ? ' selected' : ''}>${e}</option>`).join('');
+    return `<select id="${escapeHtml(id)}" class="btn btn-secondary btn-small v6-engine-select" data-action="change-chat-engine" data-project="${escapeHtml(name)}"
+      aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${options}</select>`;
+  }
 
   /** Workflow B's fixed additional-role picker (#3114) — PM is the source project's own role, not a new seat. */
   const WIZARD_FLEET_ROLES = Object.freeze(['Architect', 'Builder', 'PRR', 'Integrator', 'Observer']);
@@ -1883,7 +1874,9 @@
             aria-pressed="${chat.autoPreview ? 'true' : 'false'}"
             title="${chat.autoPreview ? 'Show preview by default: on — links auto-unfurl' : 'Show preview by default: off — click 👁 Preview to unfurl a link'}"
             aria-label="Toggle Show preview by default for chat links"><span aria-hidden="true">👁${chat.autoPreview ? '●' : ''}</span></button>
-          ${iconButton('v6ChatSettings', 'Project Settings', '⚙')}
+          ${engineSelectMarkup('v6ChatEngineSelect', v.project, `Switch engine for ${name}`)}
+          <button type="button" id="v6ChatSettings" class="btn btn-secondary btn-small v6-chat-settings-btn"
+            title="Project Settings" aria-label="Project Settings"><span aria-hidden="true">⚙ Edit Session</span></button>
         </div>
       </header>
       ${stream}
@@ -4272,13 +4265,70 @@
   }
 
   /**
+   * One member row on the Overview screen (#3154): its live/offline state,
+   * a direct "▶ Start" when offline, the same inline engine picker the
+   * chat header carries, a direct "⚙ Edit Session", and "Open Chat".
+   * @param {{seatId: string, role: string}} member - A tree member.
+   * @param {object|null} row - Its matching flat `GET /api/projects` row, if found.
+   * @returns {string} HTML.
+   */
+  function overviewMemberMarkup(member, row) {
+    const name = (row && row.name) || member.role || '';
+    const live = Boolean(row && row.session && row.session.active === true);
+    const hash = routeHash({ view: 'conversation', resourceId: member.seatId });
+    const idSuffix = escapeHtml(String(member.seatId));
+    return `<li class="v6-overview-member${live ? ' is-live' : ' is-offline'}">
+      <a id="v6OverviewMemberLink-${idSuffix}" class="v6-overview-member-link" href="${escapeHtml(hash)}" data-route="${escapeHtml(hash)}">${escapeHtml(name)}</a>
+      <span class="v6-overview-member-status">${live ? 'Online' : 'Offline'}</span>
+      ${live ? '' : `<button type="button" id="v6OverviewStart-${idSuffix}" class="btn btn-secondary btn-small" data-action="overview-start" data-project="${escapeHtml(name)}">▶ Start</button>`}
+      ${engineSelectMarkup(`v6OverviewEngine-${idSuffix}`, row, `Switch engine for ${name}`)}
+      <button type="button" id="v6OverviewSettings-${idSuffix}" class="btn btn-secondary btn-small" data-action="overview-settings" data-project="${escapeHtml(name)}"><span aria-hidden="true">⚙ Edit Session</span></button>
+      <a id="v6OverviewOpenChat-${idSuffix}" class="btn btn-secondary btn-small" href="${escapeHtml(hash)}" data-route="${escapeHtml(hash)}">Open Chat</a>
+    </li>`;
+  }
+
+  /**
+   * The generic, non-session-specific V6 landing screen (#3154): every
+   * fleet and workspace project, grouped the same way the sidebar tree is,
+   * each a card an operator can act on directly — start it, switch its
+   * engine, edit it, or open its chat — with no session needing to be
+   * open first. Shown whenever `route.view === 'overview'` resolves no
+   * project (every time: Overview never has one).
+   * @param {Array<{id: string, displayName: string, fleets: Array<{members: Array<object>}>}>} tree -
+   *   `synthesizeTreeFromProjects`'s own shape.
+   * @param {Array<object>|null} projects - `GET /api/projects`'s flat rows, looked up by each
+   *   member's `seatId` for its live session/engine state.
+   * @returns {string} HTML.
+   */
+  function overviewMarkup(tree, projects) {
+    const rows = Array.isArray(projects) ? projects : [];
+    const byId = (id) => rows.find((p) => p && String(p.id) === String(id)) || null;
+    const groups = Array.isArray(tree) ? tree : [];
+    const cards = groups.map((lp) => {
+      const members = (lp.fleets || []).flatMap((f) => f.members || []);
+      const memberItems = members.map((m) => overviewMemberMarkup(m, byId(m.seatId))).join('');
+      const fleetHash = routeHash({ view: 'project', projectId: lp.id });
+      const fleetIdSuffix = escapeHtml(String(lp.id));
+      return `<section class="v6-overview-card" aria-label="${escapeHtml(lp.displayName)}">
+        <h3><a id="v6OverviewFleetLink-${fleetIdSuffix}" href="${escapeHtml(fleetHash)}" data-route="${escapeHtml(fleetHash)}">${escapeHtml(lp.displayName)}</a></h3>
+        <ul class="v6-overview-members">${memberItems}</ul>
+      </section>`;
+    }).join('');
+    return `<section class="v6-overview" aria-label="Fleet and Workspace Overview">
+      <h2 class="v6-detail-title">Fleet &amp; Workspace Overview</h2>
+      ${cards || '<p class="v6-detail-empty">No projects yet — use + New Project / Fleet Wizard in the sidebar.</p>'}
+    </section>`;
+  }
+
+  /**
    * Render whichever detail the current view carries.
    * @param {{kind: 'plan', plan: object}|{kind: 'conversation', view: object}|{kind: 'settings', view: object}|
-   *   {kind: 'recovery', view: object}|{kind: 'knowledge', help: object}|{kind: 'loading'}|null} detail
+   *   {kind: 'recovery', view: object}|{kind: 'knowledge', help: object}|{kind: 'overview', view: object}|{kind: 'loading'}|null} detail
    * @returns {string} HTML.
    */
   function detailMarkup(detail, extras) {
     if (!detail) return '';
+    if (detail.kind === 'overview') return overviewMarkup(detail.view.tree, detail.view.projects);
     if (detail.kind === 'plan') return fleetPlanMarkup(detail.plan);
     if (detail.kind === 'conversation') {
       // The composer's unsent text lives in the shell, not the controller's
@@ -4328,24 +4378,27 @@
   }
 
   /**
-   * The Classic dashboard's admin controls that the v6 shell tucks into one
-   * menu (#3079). Classic View, Master and Advisor stay in the bar.
+   * The Classic dashboard's admin controls (#3079). #3153 retired the "⋯
+   * More" menu these used to tuck into: `.dash-bar`/`.dash-actions` has
+   * ample room, so every one of these now stays directly visible inline
+   * on the top bar in V6 view, same as Classic View, Master and Advisor
+   * always did. Kept as a named list (rather than inlined where it's read)
+   * for `test/v6-b1-ui-shell.test.js` and anything else that still needs
+   * to name "the admin controls" as a group.
    */
   const ADMIN_TUCK_IDS = Object.freeze([
     'portsToggle', 'usageToggle', 'groupsToggle', 'openclawToggle',
     'auditToggle', 'fleetRecoveryToggle', 'rulesToggle', 'signOutBtn'
   ]);
 
-  /** Where each tucked control came from — its parent and the node after it — so it goes back exactly there. */
-  const adminHomes = new Map();
-
   /**
    * Slim the top bar while the v6 shell shows (#3079): mark the body
-   * `v6-shell-active`, and move the admin controls into an expandable
-   * "More" menu at the end of `.dash-actions`. The controls are moved, not
-   * copied, so each keeps its own listeners, badge and state; leaving the
-   * shell puts each back where it was and removes the menu. Safe to call on
-   * every render.
+   * `v6-shell-active`. #3153: no longer moves the admin controls
+   * (`ADMIN_TUCK_IDS`) anywhere — they stay inline in `.dash-actions`
+   * exactly where Classic View put them, so this function (and this
+   * doc comment) is left named for the OTHER docking it still does: the
+   * chat header and drawer toggle into `.dash-bar`, and the dashboard's
+   * own stats into the shell's footer. Safe to call on every render.
    * @param {Document} doc
    * @param {boolean} active - Whether the v6 shell is showing.
    * @returns {void}
@@ -4353,7 +4406,6 @@
   function tuckAdminControls(doc, active) {
     if (!doc || typeof doc.getElementById !== 'function') return;
     if (doc.body && doc.body.classList) doc.body.classList.toggle('v6-shell-active', Boolean(active));
-    let menu = doc.getElementById('v6AdminMenu');
     // Ruling A764: one top bar. The chat's header joins the dashboard bar,
     // and the dashboard's own stats go to the shell's footer (A765). The
     // stats move first, so the place they return to is before the bar's
@@ -4361,48 +4413,6 @@
     moveDashStats(doc, active);
     dockChatHeader(doc, active);
     dockDrawerToggle(doc, active);
-    if (!active) {
-      // Last first: each control's recorded next node is then back in place.
-      ADMIN_TUCK_IDS.slice().reverse().forEach((id) => {
-        const el = doc.getElementById(id);
-        const home = adminHomes.get(id);
-        if (!el || !home || !home.parent) return;
-        if (home.next && home.next.parentNode === home.parent) home.parent.insertBefore(el, home.next);
-        else home.parent.appendChild(el);
-        adminHomes.delete(id);
-      });
-      if (menu && typeof menu.remove === 'function') menu.remove();
-      return;
-    }
-    const actions = typeof doc.querySelector === 'function' ? doc.querySelector('.dash-actions') : null;
-    if (!actions) return;
-    if (!menu) {
-      menu = doc.createElement('details');
-      menu.id = 'v6AdminMenu';
-      menu.className = 'v6-admin-menu';
-      const summary = doc.createElement('summary');
-      summary.className = 'dash-action v6-admin-menu-toggle';
-      summary.textContent = '⋯ More';
-      summary.title = 'Ports, Usage, Groups, OpenClaw, Audit, Recovery, Global Rules and Sign out';
-      summary.setAttribute('aria-label', 'More dashboard controls');
-      const panel = doc.createElement('div');
-      panel.id = 'v6AdminMenuPanel';
-      panel.className = 'v6-admin-menu-panel';
-      // Choosing a control closes the menu; the control itself does the rest.
-      panel.addEventListener('click', () => { menu.open = false; });
-      menu.appendChild(summary);
-      menu.appendChild(panel);
-      actions.appendChild(menu);
-      if (typeof doc._register === 'function') { doc._register(menu); doc._register(panel); }
-    }
-    const panel = doc.getElementById('v6AdminMenuPanel');
-    if (!panel) return;
-    ADMIN_TUCK_IDS.forEach((id) => {
-      const el = doc.getElementById(id);
-      if (!el || el.parentNode === panel) return;
-      adminHomes.set(id, { parent: el.parentNode, next: el.nextSibling || null });
-      panel.appendChild(el);
-    });
   }
 
   /** Where `#dashStats` lives in the dashboard bar, so it goes back exactly there (A765). */
@@ -5723,6 +5733,14 @@
      */
     async function loadRouteDetail(route, mine) {
       const shell = getShell();
+      // #3154: the Overview never resolves a project — it IS the "nothing
+      // selected" screen — so it's handled before resolveRouteProject's
+      // own null case would otherwise just show nothing at all.
+      if (route.view === 'overview') {
+        shell.setAttestation(null);
+        shell.setDetail({ kind: 'overview', view: { tree: synthesizeTreeFromProjects(projects), projects } });
+        return;
+      }
       const project = resolveRouteProject(route, projects, delegates());
       if (!project) {
         shell.setAttestation(null);
@@ -5892,20 +5910,32 @@
     }
 
     /**
-     * Start the chat's offline target (#3053) and reload it in place. A
-     * refusal (stranded wraps to acknowledge, an engine that cannot start)
-     * shows the server's reason, and the banner links to Classic View for the
-     * cases that need its launch dialogs.
+     * Start a project's offline session (#3053, extended #3154 to take any
+     * project by name — not only the chat on screen, since the sidebar and
+     * the Overview screen's own "▶ Start" buttons name theirs directly)
+     * and reload in place. A refusal (stranded wraps to acknowledge, an
+     * engine that cannot start) shows the server's reason on the chat
+     * that started it; one started from the sidebar or Overview has no
+     * banner of its own to show it on, so it only refreshes — the row's
+     * own status (still offline) still tells the truth. The server's
+     * stranded-wraps gate itself (`lib/stranded-wraps.js`) has no
+     * single-flag override; resolving it (acknowledge, or open a PR for
+     * the branch) stays Classic View's own flow for now (#3154 PR body).
+     * @param {string} [projectName] - Defaults to the chat on screen.
      * @returns {Promise<void>}
      */
-    async function startSession() {
+    async function startSession(projectName) {
+      const shell = getShell();
+      if (!shell) return;
       const chat = current;
-      if (!chat || !getShell()) return;
-      showSend({ kind: 'pending', message: `Starting ${chat.project.name}…` });
-      const ok = await apiMutate(`/api/sessions/${encodeURIComponent(chat.project.name)}`, 'POST', {});
-      if (chat !== current) return;
+      const name = String(projectName || (chat && chat.project && chat.project.name) || '');
+      if (!name) return;
+      const onThisChat = Boolean(chat) && String(chat.project.name || '') === name;
+      if (onThisChat) showSend({ kind: 'pending', message: `Starting ${name}…` });
+      const ok = await apiMutate(`/api/sessions/${encodeURIComponent(name)}`, 'POST', {});
+      if (onThisChat && chat !== current) return;
       if (!ok) {
-        showSend({ kind: 'error', message: `Not started: ${api.lastError || 'the server refused it'}` });
+        if (onThisChat) showSend({ kind: 'error', message: `Not started: ${api.lastError || 'the server refused it'}` });
         return;
       }
       await refresh();
@@ -6057,6 +6087,34 @@
       await refresh();
       const warnings = Array.isArray(res.warnings) ? res.warnings.filter(Boolean) : [];
       showSend({ kind: warnings.length ? 'warning' : 'ok', message: `Renamed ${from} to ${to}.${warnings.map((w) => ` ${w}`).join('')}` });
+    }
+
+    /**
+     * Switch a project's engine (#3153) straight from the inline picker —
+     * the same `PATCH /api/projects/:name` the full Settings modal's own
+     * save already sends, without opening it. Works for ANY project named,
+     * not only the chat currently on screen, since the picker also shows
+     * on sidebar and overview rows.
+     * @param {string} projectName
+     * @param {string} engine
+     * @returns {Promise<void>}
+     */
+    async function changeEngine(projectName, engine) {
+      const name = String(projectName || '');
+      const next = String(engine || '');
+      if (!name || !next) return;
+      const chat = current;
+      const onThisChat = Boolean(chat) && String(chat.project.name || '') === name;
+      if (onThisChat) showSend({ kind: 'pending', message: `Switching ${name} to ${next}…` });
+      const res = await apiMutate(`/api/projects/${encodeURIComponent(name)}`, 'PATCH', { engine: next });
+      if (onThisChat && chat !== current) return;
+      if (!res) {
+        const reason = api.lastError || 'the server refused it';
+        if (onThisChat) showSend({ kind: 'error', message: `Not switched: ${reason}` });
+        return;
+      }
+      await refresh();
+      if (onThisChat) showSend({ kind: 'ok', message: `${name} switched to ${next}.` });
     }
 
     /**
@@ -6246,10 +6304,19 @@
       await afterWizardAction(shell, firstName);
     }
 
+    /**
+     * Where entering the v6 shell fresh lands (#3154): the generic Fleet &
+     * Workspace Overview, never a specific project — `#/projects/ariadne`
+     * used to win every time simply because "Ariadne" sorted first. The
+     * Overview screen itself handles an empty workspace gracefully (its
+     * own "No projects yet"), so there is no separate settings fallback
+     * to keep. `ui.js`'s own click handler checks the sidebar's currently
+     * selected fleet FIRST and prefers that over this when one is set.
+     * @returns {Promise<string>}
+     */
     async function enterHash() {
       if (!projects) await loadProjects();
-      const tree = synthesizeTreeFromProjects(projects);
-      return tree.length ? routeHash({ view: 'project', projectId: tree[0].id }) : '#/settings/';
+      return routeHash({ view: 'overview' });
     }
 
     /**
@@ -6353,7 +6420,7 @@
 
     return {
       handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, attachFiles, removeAttachment,
-      startSession, startFleet, treeLinkClicked, renameProject, loadHistory, openHistorySession,
+      startSession, startFleet, treeLinkClicked, renameProject, changeEngine, loadHistory, openHistorySession,
       createWorkspaceProject, convertToFleet, provisionFleet, requestUnfurl,
       loadBundledFleetSpecs, requestValidateFleetSpec, applyFleetSpec, exportFleetSpec,
       getProjects() { return projects; }
@@ -6374,8 +6441,9 @@
    *   storage?: {getItem: Function, setItem: Function}|null,
    *   onSendChat?: (text: string) => void, onChangeDelegate?: (nodeId: string, projectId: string) => void,
    *   onRefreshChat?: () => void, onOpenProjectSettings?: (projectName: string) => void,
+   *   onChangeEngine?: (projectName: string, engine: string) => void,
    *   onAttachFiles?: (files: Array<object>) => void, onRemoveAttachment?: (index: number) => void,
-   *   onStartSession?: () => void, onStartFleet?: () => void, onTreeLinkClick?: (hash: string) => void,
+   *   onStartSession?: (projectName?: string) => void, onStartFleet?: () => void, onTreeLinkClick?: (hash: string) => void,
    *   onRenameProject?: (oldName: string, newName: string, opts?: {confirmOrphanRisk: boolean}) => void,
    *   onHistoryLoad?: (form: {scope: string, kind: string, q: string}) => void,
    *   onHistoryOpenSession?: (pick: {member: string, sid: string, q: string, kind: string}) => void,
@@ -6751,10 +6819,13 @@
     let streamPinned = true;
     const raf = typeof options.requestAnimationFrame === 'function' ? options.requestAnimationFrame
       : (win && typeof win.requestAnimationFrame === 'function' ? (fn) => win.requestAnimationFrame(fn) : null);
-    // #3106: the composer/stream two-way resize coupling's live ResizeObservers
-    // (one per direction), reattached to the fresh elements each render.
-    let composerResizeObserver = null;
-    let composerStreamResizeObserver = null;
+    // #3106/#3152: persist the composer's and Under the Hood's own
+    // drag-resized heights (the chat stream no longer has one of its own —
+    // see `.v6-chat-stream`'s doc comment in `style.css`, #3156 — it fills
+    // whatever either of these leaves through ordinary flex layout, no JS
+    // needed for that direction). Reattached to the fresh elements each render.
+    let composerInputResizeObserver = null;
+    let composerHoodResizeObserver = null;
     // #3057: when the chat on screen became busy, and the 1 s ticker that
     // advances its elapsed time while it stays busy.
     const now = typeof options.now === 'function' ? options.now : () => Date.now();
@@ -6815,6 +6886,11 @@
         fleetPicker.addEventListener('change', (evt) => {
           const value = String((evt && evt.target && evt.target.value) || '');
           setSelectedGroups(value ? [value] : []);
+          // #3154: the main view follows the picker — All Fleets goes to
+          // the generic Overview, a specific fleet navigates straight to
+          // it, so the main pane never stays stuck on whatever it showed
+          // before (Ariadne, or anything else).
+          navigate(value ? routeHash({ view: 'project', projectId: value }) : routeHash({ view: 'overview' }));
         });
       }
       wireChat();
@@ -6824,6 +6900,7 @@
       wireSidebarRename();
       wireStreamPin();
       wireTreeLinks();
+      wireOverview();
       wireRichPreviews();
       wireSidebarResize();
       const search = doc.getElementById('v6FilterSearch');
@@ -7279,6 +7356,55 @@
     }
 
     /**
+     * The Overview screen's own per-row actions (#3154), wired by id the
+     * same way {@link wireTreeLinks} wires the sidebar — not by
+     * `querySelectorAll`, which this file's own `test/_mini-dom.js`
+     * cannot walk past a flat id-only parse of `innerHTML`. Each row's id
+     * is unique by seat id, so no render-order index is needed the way
+     * the sidebar's `p${pi}-f${fi}-m${mi}` ones are.
+     */
+    function wireOverview() {
+      if (!detail || detail.kind !== 'overview') return;
+      const rows = Array.isArray(detail.view && detail.view.projects) ? detail.view.projects : [];
+      const byId = (id) => rows.find((p) => p && String(p.id) === String(id)) || null;
+      const tree = Array.isArray(detail.view && detail.view.tree) ? detail.view.tree : [];
+      tree.forEach((lp) => {
+        const fleetHash = routeHash({ view: 'project', projectId: lp.id });
+        const fleetLink = doc.getElementById(`v6OverviewFleetLink-${lp.id}`);
+        if (fleetLink) fleetLink.addEventListener('click', () => {
+          if (typeof options.onTreeLinkClick === 'function') options.onTreeLinkClick(fleetHash);
+        });
+        (lp.fleets || []).flatMap((f) => f.members || []).forEach((m) => {
+          const seatId = m.seatId;
+          const row = byId(seatId);
+          const name = (row && row.name) || m.role || '';
+          const idSuffix = seatId;
+          const memberHash = routeHash({ view: 'conversation', resourceId: seatId });
+          ['v6OverviewMemberLink', 'v6OverviewOpenChat'].forEach((prefix) => {
+            const link = doc.getElementById(`${prefix}-${idSuffix}`);
+            if (link) link.addEventListener('click', () => {
+              if (typeof options.onTreeLinkClick === 'function') options.onTreeLinkClick(memberHash);
+            });
+          });
+          const start = doc.getElementById(`v6OverviewStart-${idSuffix}`);
+          if (start && typeof options.onStartSession === 'function') {
+            start.addEventListener('click', () => options.onStartSession(name));
+          }
+          const settings = doc.getElementById(`v6OverviewSettings-${idSuffix}`);
+          if (settings && typeof options.onOpenProjectSettings === 'function') {
+            settings.addEventListener('click', () => options.onOpenProjectSettings(name));
+          }
+          const engine = doc.getElementById(`v6OverviewEngine-${idSuffix}`);
+          if (engine && typeof options.onChangeEngine === 'function') {
+            engine.addEventListener('change', (evt) => {
+              options.onChangeEngine(name, String((evt && evt.target && evt.target.value) || ''));
+            });
+          }
+        });
+      });
+    }
+
+    /**
      * The rich preview affordances a message can draw (#3107): a "Preview"
      * button asks for an external link's Open Graph card (never auto-
      * fetched, per Ruling A752), and a local-reference card's copy-path
@@ -7644,6 +7770,13 @@
       const project = detail && detail.view ? detail.view.project : null;
       if (settings && project && typeof options.onOpenProjectSettings === 'function') {
         settings.addEventListener('click', () => options.onOpenProjectSettings(String(project.name || '')));
+      }
+      // #3153: the inline engine picker — direct, no Settings modal needed.
+      const engineSelect = doc.getElementById('v6ChatEngineSelect');
+      if (engineSelect && project && typeof options.onChangeEngine === 'function') {
+        engineSelect.addEventListener('change', (evt) => {
+          options.onChangeEngine(String(project.name || ''), String((evt && evt.target && evt.target.value) || ''));
+        });
       }
     }
 
@@ -8343,36 +8476,38 @@
     }
 
     /**
-     * The composer/stream two-way resize coupling (#3106): dragging
-     * `#v6ChatInput` taller shrinks `.v6-chat-stream` by the same amount;
-     * dragging it back toward its rest height gives the stream its default
-     * 55vh back. Re-measures its own baseline each render, since a full
-     * re-render replaces the textarea and loses any native resize the
-     * operator had made — which is also why, before measuring, it restores
-     * whichever height the operator last dragged to (#3133), persisted in
-     * `localStorage`, so a reload doesn't silently reset a resize back to
-     * default. No-ops where `ResizeObserver` is unavailable (the unit-test
-     * sandbox) — the coupling itself is a live-browser behavior, verified
-     * by this car's required browser check, not by node:test.
+     * Persists the composer's and Under the Hood's own drag-resized
+     * heights (#3106, #3133, extended #3152) across reloads, restoring
+     * whichever height the operator last dragged to before anything else
+     * reads `offsetHeight` — a full re-render replaces both elements and
+     * loses any native resize the operator had made otherwise.
+     *
+     * The chat stream (`.v6-chat-stream`) has no resize handle of its own
+     * to persist: #3152/#3156 finished #3151's deferred criterion 3 by
+     * giving it `flex: 1 1 0%; max-height: none` in `style.css`, so it
+     * fills 100% of whatever `.v6-chat` has left once the header, Under
+     * the Hood and the composer have taken their own share — zero dead
+     * space at the bottom by construction, and resizing either of the
+     * other two panes reshares the stream's space automatically through
+     * ordinary flex layout, with no JS measurement needed for that
+     * direction (a `resize: vertical` handle on a `flex-basis: 0%` item
+     * would be inert anyway — dragging it sets an inline `height` the
+     * flex layout never reads over the explicit `0%` basis).
+     *
+     * No-ops where `ResizeObserver` is unavailable (the unit-test
+     * sandbox) — the persistence itself is a live-browser behavior,
+     * verified by this car's required browser check, not by node:test.
      */
     function wireComposerResize() {
       const input = doc.getElementById('v6ChatInput');
       const stream = doc.getElementById('v6ChatStream');
       if (!input || !stream) return;
-      // #3133: measured BEFORE any persisted height is restored below, so
-      // these stay the true CSS-default rest heights the coupling math
-      // needs — restoring a remembered height here would otherwise make
-      // the restored height look like the baseline itself, and the two
-      // elements would stop shrinking each other on the very next drag.
-      const baseInput = input.offsetHeight || 64;
-      const baseStream = stream.offsetHeight || 0;
+      const hood = doc.getElementById('v6ChatPeek');
       const savedInputHeight = prefs.get('tc_v6_chat_input_height', null, isFiniteNumber);
-      const savedStreamHeight = prefs.get('tc_v6_chat_stream_height', null, isFiniteNumber);
+      const savedHoodHeight = prefs.get('tc_v6_chat_uth_height', null, isFiniteNumber);
       if (input.style && savedInputHeight) input.style.height = `${savedInputHeight}px`;
-      if (stream.style && savedStreamHeight) stream.style.height = `${savedStreamHeight}px`;
-      const applyToStream = () => {
-        if (!stream.style) return;
-        stream.style.maxHeight = coupledStreamMaxHeight(input.offsetHeight, baseInput);
+      if (hood && hood.style && savedHoodHeight) hood.style.height = `${savedHoodHeight}px`;
+      const applyToInput = () => {
         // PRR-B R1 BLOCKING 1a: `input.offsetHeight` reads 0/undefined for a
         // hidden tab or this file's own unit-test DOM (neither computes real
         // layout) — persisting THAT would silently erase a genuinely saved
@@ -8383,34 +8518,20 @@
         const measuredInput = (input.style && parseFloat(input.style.height)) || input.offsetHeight;
         if (measuredInput) prefs.set('tc_v6_chat_input_height', measuredInput);
       };
-      // #3106 (PRR-A R1 C4): the stream's `offsetHeight` also grows when
-      // new content arrives — reacting to THAT would snap the input back
-      // down mid-typing. Only a genuine resize-handle drag sets the
-      // stream's own inline `style.height`, so that is the signal this
-      // direction watches, not the observed box size — also the signal
-      // #3133 persists from, for the same reason.
-      let lastStreamInlineHeight = (stream.style && stream.style.height) || '';
-      const applyToInput = () => {
-        if (!input.style || !stream.style) return;
-        const inlineNow = stream.style.height || '';
-        if (inlineNow === lastStreamInlineHeight) return;
-        lastStreamInlineHeight = inlineNow;
-        // Same guard as applyToStream's above: an empty/unparseable inline
-        // height never overwrites a genuinely saved one with null.
-        const measuredStream = parseFloat(inlineNow);
-        if (measuredStream) prefs.set('tc_v6_chat_stream_height', measuredStream);
-        if (!inlineNow) return;
-        const h = coupledInputHeight(parseFloat(inlineNow) || 0, baseStream, baseInput);
-        if (h) input.style.height = h;
+      const applyToHood = () => {
+        if (!hood) return;
+        const measuredHood = (hood.style && parseFloat(hood.style.height)) || hood.offsetHeight;
+        if (measuredHood) prefs.set('tc_v6_chat_uth_height', measuredHood);
       };
-      applyToStream();
-      if (composerResizeObserver && typeof composerResizeObserver.disconnect === 'function') composerResizeObserver.disconnect();
-      if (composerStreamResizeObserver && typeof composerStreamResizeObserver.disconnect === 'function') composerStreamResizeObserver.disconnect();
+      if (composerInputResizeObserver && typeof composerInputResizeObserver.disconnect === 'function') composerInputResizeObserver.disconnect();
+      if (composerHoodResizeObserver && typeof composerHoodResizeObserver.disconnect === 'function') composerHoodResizeObserver.disconnect();
       if (typeof global.ResizeObserver !== 'function') return;
-      composerResizeObserver = new global.ResizeObserver(applyToStream);
-      composerResizeObserver.observe(input);
-      composerStreamResizeObserver = new global.ResizeObserver(applyToInput);
-      composerStreamResizeObserver.observe(stream);
+      composerInputResizeObserver = new global.ResizeObserver(applyToInput);
+      composerInputResizeObserver.observe(input);
+      if (hood) {
+        composerHoodResizeObserver = new global.ResizeObserver(applyToHood);
+        composerHoodResizeObserver.observe(hood);
+      }
     }
 
     /**
@@ -8837,6 +8958,17 @@
       toggleSidebar,
       isSidebarCollapsed() { return sidebarCollapsed; },
       selectGroup,
+      /**
+       * The one fleet `#v6FilterFleet` currently narrows to, or `null` when
+       * none/several are selected or it names one gone from the tree
+       * (#3154) — the same "exactly one known fleet" reading
+       * `filterControlsMarkup` already shows the picker as selected on.
+       * @returns {string|null}
+       */
+      getSelectedFleetId() {
+        const known = [...selectedGroups].filter((id) => tree.some((p) => String(p.id) === id));
+        return known.length === 1 ? known[0] : null;
+      },
       /** @param {Object<string, {status?: string}>|null} health - Engine id -> status (#3053). */
       setEngineHealth(health) {
         engineHealth = health && typeof health === 'object' ? health : {};
@@ -9282,8 +9414,6 @@
   global.tcV6CharterVersionsMarkup = charterVersionsMarkup;
   global.tcV6TrainControlsMarkup = trainControlsMarkup;
   global.tcV6CreateLiveController = createLiveController;
-  global.tcV6CoupledStreamMaxHeight = coupledStreamMaxHeight;
-  global.tcV6CoupledInputHeight = coupledInputHeight;
   global.tcV6ClampSidebarWidth = clampSidebarWidth;
   global.tcV6PruneStaleChatDrafts = pruneStaleChatDrafts;
   global.tcV6IsAlwaysPreviewLink = isAlwaysPreviewLink;
