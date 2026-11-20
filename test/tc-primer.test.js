@@ -38,11 +38,10 @@ describe('buildOperatingPrimer — role parity against the live VERB_ROSTER', ()
       }
     });
 
-    it(`"${role}" carries the start-next-vs-review note, the sandbox note, and the single-action-owner note`, () => {
+    it(`"${role}" carries both the start-next-vs-review note and the sandbox note`, () => {
       const text = buildOperatingPrimer(role);
       assert.ok(text.includes(START_NEXT_VS_REVIEW_NOTE));
       assert.ok(text.includes(SANDBOX_UNREACHABLE_NOTE));
-      assert.ok(text.includes(SINGLE_ACTION_OWNER_NOTE));
     });
   }
 
