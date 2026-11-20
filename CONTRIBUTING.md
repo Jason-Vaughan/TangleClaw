@@ -296,14 +296,6 @@ or a patch in a comment, is not fetched or run.
    landing are ours even though the fix is yours. A fix described in an issue is treated the same
    way: a report that leads to a fix is credited by name in the changelog.
 
-   For contributors we've named for it, that credit also includes native GitHub attribution: an
-   `@<username>` mention in the PR body when the reconstruction PR is opened, another at merge/close
-   and in the release notes, and an official `Co-authored-by: Name <id+login@users.noreply.github.com>`
-   trailer on the commit and merge commit — so you get the avatar, the contribution-graph credit, and
-   a listing in this repository's **Contributors** sidebar. [ADR 0014's 2026-11-08
-   amendment](docs/adr/0014-dual-key-review-for-untrusted-prs.md#amendment-2026-11-08-native-github-contributor-attribution)
-   has the full rule and who is currently named.
-
 3. **Because we reconstruct it, your explanation is worth more than your code.** The most valuable
    contribution, whether a collaborator's pull request or an issue, describes the bug precisely,
    says why it happens, and explains the approach. A clear
