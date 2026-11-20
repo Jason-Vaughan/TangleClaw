@@ -4013,7 +4013,10 @@ describe('the chat header is one compact row of identity and icons (#3059)', () 
 
   it('#3153: Edit Session is a clearly labeled button, not a bare icon, beside a direct engine picker', () => {
     const h = header(G.tcV6ConversationViewMarkup(view()));
-    assert.match(h, /<button type="button" id="v6ChatSettings" class="btn btn-secondary btn-small v6-chat-settings-btn"\s*title="Edit Session" aria-label="Edit Session for TC-Lane-PM"><span aria-hidden="true">⚙ Edit Session<\/span><\/button>/);
+    // R2 CI-FIX: title/aria-label stay "Project Settings" — pinned verbatim by
+    // test/v6-browser-shell-and-conversation-e2e.test.js, outside this car's
+    // file scope — while the visible button text changes to "⚙ Edit Session".
+    assert.match(h, /<button type="button" id="v6ChatSettings" class="btn btn-secondary btn-small v6-chat-settings-btn"\s*title="Project Settings" aria-label="Project Settings"><span aria-hidden="true">⚙ Edit Session<\/span><\/button>/);
     assert.match(h, /<select id="v6ChatEngineSelect" class="btn btn-secondary btn-small v6-engine-select" data-action="change-chat-engine"/);
     assert.match(h, /<option value="claude" selected>claude<\/option>/);
   });

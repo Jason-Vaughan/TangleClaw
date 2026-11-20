@@ -1876,7 +1876,7 @@
             aria-label="Toggle Show preview by default for chat links"><span aria-hidden="true">👁${chat.autoPreview ? '●' : ''}</span></button>
           ${engineSelectMarkup('v6ChatEngineSelect', v.project, `Switch engine for ${name}`)}
           <button type="button" id="v6ChatSettings" class="btn btn-secondary btn-small v6-chat-settings-btn"
-            title="Edit Session" aria-label="Edit Session for ${escapeHtml(name)}"><span aria-hidden="true">⚙ Edit Session</span></button>
+            title="Project Settings" aria-label="Project Settings"><span aria-hidden="true">⚙ Edit Session</span></button>
         </div>
       </header>
       ${stream}
