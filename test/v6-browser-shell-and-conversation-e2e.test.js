@@ -388,7 +388,11 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       const { root, calls, settle, live, doc } = mountShell('#/projects/e2echat');
       await settle();
       assert.ok(calls.includes('GET /api/sessions/e2echat-PM/status'), JSON.stringify(calls));
-      assert.ok(calls.includes('GET /api/sessions/e2echat-PM/peek?lines=80'));
+      // #3166: always the deep depth now, whether or not Under the Hood is open --
+      // a closed drawer used to read only the shallow 80-line depth, which silently
+      // truncated #v6ChatStream itself since extractLiveTurns parses chat turns from
+      // this same read, not just what the drawer's own raw panel shows.
+      assert.ok(calls.includes('GET /api/sessions/e2echat-PM/peek?lines=2000'));
       // Restated by #3059: the lead-in and the mode are screen-reader text in the compact toolbar.
       assert.match(root.innerHTML, /Talking to: <\/span><strong>e2echat-PM<\/strong> \(#\d+\)<span class="sr-only"> · Designated Project Delegate<\/span>/);
       assert.match(root.innerHTML, /<option value="\d+" selected>e2echat-PM<\/option>/);
@@ -481,14 +485,24 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.doesNotMatch(root.innerHTML, /id="v6ChatShowFleet"/);
     });
 
-    it('a send the real command route refuses does not leave the chat reading as Working (#3057)', async () => {
+    it('a send the real command route refuses still shows the refusal, and is busy throughout from the session\'s own real status (#3057, #3166)', async () => {
       const pid = seedProject('e2e-busy-refused');
       store.getDb().prepare(
         "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
       ).run(pid);
       const { root, settle, calls, doc } = mountShell(`#/resources/${pid}/conversation`);
       await settle();
-      assert.doesNotMatch(root.innerHTML, /v6-chat-activity is-busy/);
+      // #3167: this seeded row's real GET /api/sessions/:name/status answers
+      // idle: false (an "active" session row with no reachable pane probe
+      // still reports not-at-rest), which chatBusyLabel now reads as a second,
+      // engine-agnostic busy signal alongside live.activity -- so this fixture
+      // reads busy from the moment it mounts, for a reason unrelated to the
+      // send below. The original #3057 regression this test guards against
+      // (a refused send's own optimistic "Working" getting stuck) is still
+      // checked: the refusal's error message must appear, and the busy state
+      // must come only from the real status signal throughout, never an
+      // additional one the refused send itself leaves behind.
+      assert.match(root.innerHTML, /v6-chat-activity is-busy/);
       const input = doc.getElementById('v6ChatInput');
       input.value = 'are you there?';
       input.dispatch('input');
@@ -496,7 +510,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       await settle();
       assert.ok(calls.includes('POST /api/sessions/e2e-busy-refused/command'));
       assert.match(root.innerHTML, /is-error[^>]*>Not sent:/);
-      assert.match(root.innerHTML, /<p id="v6ChatActivity" class="v6-chat-activity" aria-live="polite"><\/p>/);
+      assert.match(root.innerHTML, /<p id="v6ChatActivity" class="v6-chat-activity is-busy"[^>]*><span class="v6-chat-activity-label">Working<\/span>/);
     });
 
     it('a project route marks its delegate lane in the sidebar and shows the one-row icon toolbar (#3059)', async () => {
