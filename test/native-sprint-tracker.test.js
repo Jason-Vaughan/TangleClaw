@@ -591,6 +591,41 @@ describe('native-sprint-tracker: buildSprintWaveSnapshot (#3112)', () => {
     assert.deepEqual(snapshot.releases.shipped, [{ version: 'v6.4.0', status: 'shipped', carCount: 2 }]);
   });
 
+  it('#3162 (PRR-B R-Gate REVISE, BLOCKING 2): classifies the current version as shipped, not active, once it is in shippedVersions AND every one of its own cars is closed', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({
+      currentVersion: 'v6.5.2',
+      shippedVersions: ['6.5.2'],
+      roadmapData: { releases: [{ version: '6.5.2', trains: [{ cars: [1] }] }] },
+      cars: [{ id: 'W1-B', version: 'v6.5.2', issues: [{ id: 1, state: 'closed' }], confirmedComplete: true }]
+    });
+    assert.deepEqual(snapshot.releases.shipped, [{ version: 'v6.5.2', status: 'shipped', carCount: 1 }]);
+    assert.deepEqual(snapshot.releases.active, []);
+  });
+
+  it('#3162 BLOCKING 2: keeps the current version active while it still has an open car, even though it is already in shippedVersions', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({
+      currentVersion: 'v6.5.3',
+      shippedVersions: ['6.5.3'],
+      roadmapData: { releases: [{ version: '6.5.3', trains: [{ cars: [1, 2] }] }] },
+      cars: [
+        { id: 'W1-A', version: 'v6.5.3', issues: [{ id: 1, state: 'closed' }], confirmedComplete: true },
+        { id: 'W1-B', version: 'v6.5.3', issues: [{ id: 2, state: 'open' }] }
+      ]
+    });
+    assert.deepEqual(snapshot.releases.active, [{ version: 'v6.5.3', status: 'active', carCount: 2 }]);
+    assert.deepEqual(snapshot.releases.shipped, []);
+  });
+
+  it('#3162 BLOCKING 2: a current version with no cars at all and shipped stays shipped, not stuck active forever', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({
+      currentVersion: 'v6.5.2',
+      shippedVersions: ['6.5.2'],
+      roadmapData: { releases: [{ version: '6.5.2', trains: [{ cars: [1] }] }] },
+      cars: []
+    });
+    assert.deepEqual(snapshot.releases.shipped, [{ version: 'v6.5.2', status: 'shipped', carCount: 1 }]);
+  });
+
   it('enriches every car with its lane, reviewers, files, PR number and 6-stage pill', () => {
     const snapshot = tracker.buildSprintWaveSnapshot(baseInput);
     const carA = snapshot.cars.find((c) => c.id === 'W1-A');
@@ -1192,6 +1227,18 @@ describe('sprint-wave-routes: createSprintWaveRouter', () => {
     const { res, json } = fakeRes();
     await router.handle(req, res);
     assert.equal(json().report.heroKpis.releaseCommit, 'abc123deadbeef');
+  });
+
+  it('#3164 (PRR-B R-Gate REVISE, BLOCKING 1d): GET /api/sprint-reports/current calls getReleaseCommit with the RESOLVED version, never the literal "current"', async () => {
+    const seen = [];
+    const router = createSprintWaveRouter({
+      getSprintDataForVersion: async () => ({ version: 'v6.5.3', cars: [], pullRequests: [] }),
+      getReleaseCommit: async (version) => { seen.push(version); return null; }
+    });
+    const { req } = fakeReq('GET', '/api/sprint-reports/current');
+    const { res } = fakeRes();
+    await router.handle(req, res);
+    assert.deepEqual(seen, ['v6.5.3'], 'getReleaseCommit must never be asked to resolve a tag literally named "current"');
   });
 
   it('#3164 (Architect Ruling A859, R2): a null getReleaseCommit never stomps out a releaseCommit getSprintDataForVersion already resolved', async () => {
@@ -1908,6 +1955,44 @@ describe('native-sprint-tracker: sprintDataFromWaveRuns (#3087, Ruling A774)', (
 
     it('reads releaseCommit null when neither the run nor its metadata carries one, unchanged from before this ruling', () => {
       assert.equal(tracker.sprintDataFromWaveRuns({ r: run('r', 1, 'active', { c: {} }) }, 'current').releaseCommit, null);
+    });
+
+    // PRR-B R-Gate REVISE, BLOCKING 1 (beyond Ruling A859's own R2 ask).
+    it('falls back to car.mergeSha/car.mergeCommit for headSha when neither payload.headSha nor car.headSha is present (the real v6.5.0/v6.5.1 shape)', () => {
+      const viaMergeSha = tracker.sprintDataFromWaveRuns({ r: run('r', 1, 'active', { c: { mergeSha: '43ce8724' } }) }, 'current');
+      assert.equal(viaMergeSha.cars[0].headSha, '43ce8724');
+      const viaMergeCommit = tracker.sprintDataFromWaveRuns({ r: run('r', 1, 'active', { c: { mergeCommit: 'd8b145d6' } }) }, 'current');
+      assert.equal(viaMergeCommit.cars[0].headSha, 'd8b145d6');
+    });
+
+    it('prefers a real headSha over mergeSha/mergeCommit when both are present', () => {
+      const data = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', { c: { headSha: 'realhead123', mergeSha: 'ignored' } })
+      }, 'current');
+      assert.equal(data.cars[0].headSha, 'realhead123');
+    });
+
+    it('falls back to the release car\'s (id ending "-REL") mergeCommit for releaseCommit when neither the run nor its metadata carries one (the real v6.5.0 shape)', () => {
+      const data = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', {
+          'V650-W1-A': { status: 'complete' },
+          'V650-W-REL': { status: 'complete', mergeCommit: '63933a52' }
+        })
+      }, 'current');
+      assert.equal(data.releaseCommit, '63933a52');
+    });
+
+    it('prefers the run\'s own releaseCommit over the release car\'s mergeCommit when both are present', () => {
+      const runs = { r: run('r', 1, 'active', { 'X-W-REL': { mergeCommit: 'ignored' } }) };
+      runs.r.releaseCommit = 'real-release-sha';
+      assert.equal(tracker.sprintDataFromWaveRuns(runs, 'current').releaseCommit, 'real-release-sha');
+    });
+
+    it('finds no release car and reads releaseCommit null when no car id ends in "-REL" and the run itself carries none', () => {
+      const data = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', { 'W1-A': { mergeCommit: 'not-a-release-car' } })
+      }, 'current');
+      assert.equal(data.releaseCommit, null);
     });
   });
 });

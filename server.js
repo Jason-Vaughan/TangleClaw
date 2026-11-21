@@ -11245,19 +11245,52 @@ function _v6ShippedVersions() {
  * never published. Tracked as a known gap rather than guessed around.
  * @returns {Array<{id: string, version: string, title: string, url: string, kind: string}>}
  */
+/**
+ * The leading `X.Y.Z` this catalog entry names, for sorting newest-first --
+ * the first version number in `id` (a retrospective's id names a range,
+ * e.g. `v5.68.0-v5.71.0-retrospective`; its OWN first version is what
+ * orders it against the single-version entries around it).
+ * @param {{id: string}} entry
+ * @returns {number[]} `[major, minor, patch]`, `[0, 0, 0]` if none parses.
+ */
+function _v6ReportVersionKey(entry) {
+  // Patch is optional so the older 2-segment `v5.30`-style status-only
+  // entries (no `.Z` at all) still parse, rather than all tying at [0,0,0].
+  const m = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(String(entry && entry.id));
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3] || 0)] : [0, 0, 0];
+}
+
+/**
+ * The Sprint Reports Hub catalog `GET /api/sprint-waves` and `GET
+ * /api/sprint-reports/:version` both render (#3164; extended by PRR-B R-Gate
+ * REVISE, BLOCKING 3): one entry per `docs/releases/v*.md` file (excluding
+ * `index.md`), titled from that file's own leading `# ` heading when it has
+ * one, else a bare `vX.Y.Z` fallback -- plus a `v*-status.md` entry for a
+ * version that has ONLY a status doc (an older convention this repo used
+ * before every release got full notes; `docs/releases/v5.30-status.md`
+ * through roughly `v5.6x` have no matching `vX.Y.Z.md` at all), and
+ * whatever report/retrospective directories the Sprint Reports Hub itself
+ * links that this checkout's `docs/releases/` does not already name (a
+ * retrospective spans a version RANGE and has no `docs/releases/*.md` file
+ * of its own at all -- the hub is the only source for those). Sorted
+ * newest-first by {@link _v6ReportVersionKey}.
+ * @returns {Array<{id: string, version: (string|null), title: string, url: string, kind: string}>}
+ */
 function _v6ReportsCatalog() {
   const docsReleasesDir = process.env.TANGLECLAW_DOCS_RELEASES_DIR || path.join(__dirname, 'docs', 'releases');
   let files;
   try {
     files = fs.readdirSync(docsReleasesDir);
   } catch {
-    return [];
+    files = [];
   }
   const out = [];
+  const fullNotesVersions = new Set();
   for (const file of files) {
     const m = /^v?(\d+\.\d+\.\d+)\.md$/.exec(file);
     if (!m || file === 'index.md') continue;
     const version = `v${m[1]}`;
+    fullNotesVersions.add(version);
     let title = version;
     try {
       const text = fs.readFileSync(path.join(docsReleasesDir, file), 'utf8');
@@ -11266,6 +11299,50 @@ function _v6ReportsCatalog() {
     } catch { /* keep the bare-version fallback title */ }
     out.push({ id: version, version, title, url: `docs/releases/${file}`, kind: 'report' });
   }
+  // A `-status.md` file only contributes when the SAME version has no full
+  // notes file -- where both exist, the full notes are the real report and
+  // the status doc is superseded, not a second entry for the same release.
+  for (const file of files) {
+    const m = /^v?(\d+(?:\.\d+)?(?:\.\d+)?)-status\.md$/.exec(file);
+    if (!m) continue;
+    const version = `v${m[1]}`;
+    if (fullNotesVersions.has(version)) continue;
+    let title = `${version} release status`;
+    try {
+      const text = fs.readFileSync(path.join(docsReleasesDir, file), 'utf8');
+      const heading = /^#\s+(.+)$/m.exec(text);
+      if (heading) title = heading[1].trim();
+    } catch { /* keep the bare-version fallback title */ }
+    out.push({ id: version, version, title, url: `docs/releases/${file}`, kind: 'report' });
+  }
+  // Hub-linked directories this checkout's own docs/releases/ does not
+  // already cover -- chiefly multi-version retrospectives, which have no
+  // docs/releases/*.md file of their own at all.
+  const hubHtml = _v6LoadReportsHubHtml();
+  if (typeof hubHtml === 'string') {
+    const known = new Set(out.map((r) => r.id));
+    for (const m of hubHtml.matchAll(/<a\s+href="([^"]+)"[^>]*>([^<]*)<\/a>/gi)) {
+      const hrefMatch = /^(?:\.\/)?([^/?#]+)\/?(?:index\.html)?(?:[?#].*)?$/.exec(m[1].trim());
+      const dir = hrefMatch ? hrefMatch[1] : null;
+      if (!dir || !/^v\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(dir) || known.has(dir)) continue;
+      known.add(dir);
+      const isRetrospective = /retrospective/i.test(dir);
+      const versionMatch = /^(v\d+\.\d+\.\d+)$/.exec(dir);
+      out.push({
+        id: dir,
+        version: versionMatch ? versionMatch[1] : null,
+        title: (m[2] && m[2].trim()) || dir,
+        url: `https://jason-vaughan.github.io/TangleClaw/reports/${dir}/`,
+        kind: isRetrospective ? 'retrospective' : 'report'
+      });
+    }
+  }
+  out.sort((a, b) => {
+    const ka = _v6ReportVersionKey(a);
+    const kb = _v6ReportVersionKey(b);
+    for (let i = 0; i < 3; i += 1) if (ka[i] !== kb[i]) return kb[i] - ka[i];
+    return 0;
+  });
   return out;
 }
 
