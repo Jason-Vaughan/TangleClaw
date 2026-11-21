@@ -41,6 +41,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-20 — v6.5.3 release cut (Milestone #88), Car V653-W2-REL
+
+<!-- prawduct: type=internal | scope=v653-release -->
+
+- Compiled 7 accepted `changelog.d/` fragments (#3162 from PR #3170; #3163 from PR #3169;
+  #3164 from PR #3170; #3165, #3166 from PR #3171; #3167 from PR #3168 (`.changed.md`) and
+  PR #3171 (`.fixed.md`)) into `CHANGELOG.md` section `[6.5.3]` via
+  `compileFragments`/`spliceIntoUnreleased`/`_promoteUnreleased`, target version `6.5.3` (minor —
+  the fragment set mixes `changed` with `fixed`, and a minor-tier subsection always wins per the
+  version-bump precedence table). Bumped `version.json` (`6.5.2` → `6.5.3`), updated README
+  pins/banner (prose hand-written here, not generated) and the released-section lock via
+  `scripts/release-prepare.js`, and updated `FEATURES.md`, `ROADMAP.md`, `docs/releases/index.md`
+  and `docs/releases/v6.5.3.md`.
+- Dispatched by `TC-Lane-PM`/`TC-Lane-INT` via Medusa after all 4 Wave 1 cars (PR #3168 @
+  e92b1286, PR #3169 @ 59953c16, PR #3170 @ ddaaea8f, PR #3171 @ 130fe85d) true-merged to
+  `origin/main @ 130fe85dab333cc31bb6f3ff2162c68abd6eced0`, closing all 6 Milestone #88 issues
+  (#3162–#3167). `LANE_QUEUE.md`'s `W2-REL (Car V653-W2-REL)` row carries the matching
+  file-scope grant. PR #3170 (this lane's own Wave 1 car) went through 3 review rounds (R1-R3)
+  after Architect Ruling A859/A860/A861 and an independent PRR R-Gate review both found the
+  sprint tracker's real persisted `v6_wave_runs` data stored several fields differently than
+  its own writer's source code alone would suggest — both re-verified directly against the
+  real production database before each round closed.
+
 ## 2026-11-21 — Car V653-W1-A: wave-scheduler createdAt backfill & wide tmux geometry (#3163, #3167)
 
 <!-- prawduct: type=bugfix | scope=v653-w1-a-wave-scheduler-tmux -->
