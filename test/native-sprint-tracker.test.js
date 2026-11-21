@@ -979,7 +979,7 @@ describe('native-sprint-tracker: parseSprintReportSettlement (#3175)', () => {
     assert.deepEqual(result.postMortem, { whatWorked: [], whatDidnt: [], rule283PassCount: 0 });
   });
 
-  it('#3175 (real shape): parses the real sprint-reports generator\'s pm-item/badge markup, with no synthetic ids at all', () => {
+  it('#3175 (real shape): parses the real sprint-reports generator\'s pm-item/Rule #283 table markup, with no synthetic ids at all', () => {
     const rows = Array.from({ length: 16 }, (_, i) => {
       const n = i + 1;
       const status = n <= 14
@@ -990,13 +990,34 @@ describe('native-sprint-tracker: parseSprintReportSettlement (#3175)', () => {
     const html = '<section class="section" id="postmortem">'
       + '<div class="pm-item"><h4>Disjoint lanes</h4><p>Zero file collisions across the wave.</p></div>'
       + '<div class="pm-item warn"><h4>Report settlement drifted</h4><p>v6.5.3 shipped with a live placeholder.</p></div>'
-      + `<table>${rows}</table>`
+      + `<table><thead><tr><th>#</th><th>Rule #283 Audit Dimension</th><th>Verdict</th></tr></thead><tbody>${rows}</tbody></table>`
       + '</section>';
     const result = tracker.parseSprintReportSettlement(html);
     assert.equal(result.settled, true);
     assert.deepEqual(result.postMortem.whatWorked, ['Disjoint lanes: Zero file collisions across the wave.']);
     assert.deepEqual(result.postMortem.whatDidnt, ['Report settlement drifted: v6.5.3 shipped with a live placeholder.']);
     assert.equal(result.postMortem.rule283PassCount, 14);
+  });
+
+  it('#3175 (real shape, verified against the real sprint-reports/v6.5.3/index.html): does not overcount from an unrelated badge-green table, and tolerates an annotated PASS cell', () => {
+    // The real #postmortem holds TWO tables: a "4-Gate Matrix" (4 data rows,
+    // each also PASS/badge-green) and the Rule #283 table (16 rows) -- a
+    // whole-section badge scan over-counts by the first table's own rows,
+    // and 2 of the real 16 rows read "PASS (Recovered)"/"PASS (0 Red Runs)",
+    // not bare "PASS" -- both reproduced here from the real bytes.
+    const gateMatrix = '<table><thead><tr><th>Gate</th><th>Owner</th><th>Status</th></tr></thead><tbody>'
+      + Array.from({ length: 4 }, (_, i) => `<tr><td>Gate ${i + 1}</td><td>TC-Lane-Arc</td><td><span class="badge badge-green">PASS</span></td></tr>`).join('')
+      + '</tbody></table>';
+    const rule283Rows = Array.from({ length: 16 }, (_, i) => {
+      const n = i + 1;
+      const status = n === 6 ? '<span class="badge badge-green">PASS (0 Red Runs)</span>'
+        : n === 9 ? '<span class="badge badge-green">PASS (Recovered)</span>'
+          : '<span class="badge badge-green">PASS</span>';
+      return `<tr><td>${n}</td><td>Measure ${n}</td><td>${status}</td></tr>`;
+    }).join('');
+    const rule283Table = `<table><thead><tr><th>#</th><th>Rule #283 Audit Dimension</th><th>Verdict</th></tr></thead><tbody>${rule283Rows}</tbody></table>`;
+    const html = `<section class="section" id="postmortem">${gateMatrix}${rule283Table}</section>`;
+    assert.equal(tracker.parseSprintReportSettlement(html).postMortem.rule283PassCount, 16);
   });
 
   it('#3175: the synthetic ul/table convention wins over the real pm-item/badge shape when BOTH are present in the same section', () => {

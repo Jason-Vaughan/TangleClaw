@@ -11404,6 +11404,34 @@ function _v6LoadReportsHubHtml() {
 }
 
 /**
+ * One version's own `sprint-reports/vX.Y.Z/index.html` text, or null when
+ * this machine cannot read it (#3175, Ruling A871) -- same degrade-
+ * gracefully contract as {@link _v6LoadRoadmapSyncStatus}/
+ * {@link _v6LoadReportsHubHtml}, and the same parent directory
+ * {@link SPRINT_REPORTS_HUB_DEFAULT_PATH} already names (the hub's own
+ * `index.html` sits directly beside every version's own report
+ * directory). `version` is validated against
+ * {@link module:lib/native-sprint-tracker.SPRINT_VERSION_RE} before it
+ * ever reaches a path -- `'current'` and anything malformed answer null
+ * rather than resolving a path at all, since neither names a real report
+ * directory and letting either reach `path.join` unchecked is how a
+ * path-traversal segment would reach the filesystem.
+ * @param {string} version
+ * @returns {string|null}
+ */
+function _v6LoadSprintReportHtml(version) {
+  const { SPRINT_VERSION_RE } = require('./lib/native-sprint-tracker');
+  if (typeof version !== 'string' || version === 'current' || !SPRINT_VERSION_RE.test(version)) return null;
+  try {
+    const reportsHubPath = process.env.TANGLECLAW_SPRINT_REPORTS_HUB_PATH || SPRINT_REPORTS_HUB_DEFAULT_PATH;
+    const dir = `v${version.replace(/^v/, '')}`;
+    return fs.readFileSync(path.join(path.dirname(reportsHubPath), dir, 'index.html'), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The roadmap data `GET /api/sprint-waves` grounds its release grouping and
  * PR links in (#3134): the real `roadmap2-data.json` when this machine can
  * read it, else a minimal roadmap this checkout can build from its own
@@ -11536,6 +11564,10 @@ async function _v6SprintGithubActivity() {
   if (fs.existsSync(syncStatusPath) || fs.existsSync(reportsHubPath)) {
     sprintWaveDeps.getSyncStatus = () => _v6LoadRoadmapSyncStatus();
     sprintWaveDeps.getReportsHubHtml = () => _v6LoadReportsHubHtml();
+    // #3175 (Ruling A871): same mount-time guard as the two deps above --
+    // wired only when this machine can actually reach the shared
+    // `sprint-reports/` checkout a version's report would live under.
+    sprintWaveDeps.getSprintReportHtml = (version) => _v6LoadSprintReportHtml(version);
   }
   const sprintWaves = createSprintWaveRouter(sprintWaveDeps);
   for (const endpoint of sprintWaves.endpoints) {
