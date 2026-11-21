@@ -8547,6 +8547,119 @@ describe('Car V651-W2-B: the automated CLI usage probe\'s own UI (#3132)', () =>
   });
 });
 
+describe('Car V654-W1-C: per-engine next-reset countdown/timestamp on the usage probe and meter (#3174)', () => {
+  const G = loadV6Shell();
+
+  it('a bar with a valid resetAt gets a "Resets in Xh Ym · <date> <time> UTC" badge, Week and 5h independently', () => {
+    const html = G.tcV6UsageProbeMarkup({
+      claude: {
+        status: 'configured',
+        weeklyRemainingPct: 62, weeklyResetAt: '2026-11-22T00:55:00.000Z',
+        fiveHourRemainingPct: 80, fiveHourResetAt: '2026-11-21T22:00:00.000Z'
+      },
+      codex: null,
+      antigravity: null
+    }, '30m');
+    assert.match(html, /<span class="v6-usage-probe-bar-value">62% left<\/span><span class="v6-usage-probe-reset">Resets in [^<]+ · 2026-11-22 00:55 UTC<\/span>/);
+    assert.match(html, /<span class="v6-usage-probe-bar-value">80% left<\/span><span class="v6-usage-probe-reset">Resets in [^<]+ · 2026-11-21 22:00 UTC<\/span>/);
+  });
+
+  it('omits the reset badge entirely when resetAt is missing or unparsable, never a broken one', () => {
+    const missing = G.tcV6UsageProbeMarkup({
+      claude: { status: 'configured', weeklyRemainingPct: 62, fiveHourRemainingPct: 80 },
+      codex: null, antigravity: null
+    });
+    assert.doesNotMatch(missing, /v6-usage-probe-reset/);
+    const bad = G.tcV6UsageProbeMarkup({
+      claude: { status: 'configured', weeklyRemainingPct: 62, weeklyResetAt: 'not a date', fiveHourRemainingPct: 80 },
+      codex: null, antigravity: null
+    });
+    assert.doesNotMatch(bad, /v6-usage-probe-reset/);
+  });
+
+  it('a sub-tier (Fable, Antigravity non-native families) gets its own independent reset badge', () => {
+    const html = G.tcV6UsageProbeMarkup({
+      claude: {
+        status: 'configured', weeklyRemainingPct: 50, fiveHourRemainingPct: 50,
+        subTiers: { fable: { weeklyRemainingPct: 10, weeklyResetAt: '2026-11-25T12:00:00.000Z', fiveHourRemainingPct: 20, fiveHourResetAt: '2026-11-21T23:00:00.000Z' } }
+      },
+      codex: null, antigravity: null
+    });
+    const subtier = html.slice(html.indexOf('data-subtier="fable"'));
+    assert.match(subtier, /Resets in [^<]+ · 2026-11-25 12:00 UTC/);
+    assert.match(subtier, /Resets in [^<]+ · 2026-11-21 23:00 UTC/);
+  });
+
+  it('tcV6UsageMeterMarkup surfaces the same per-engine reset badges in the pill tooltip and the breakdown table row', () => {
+    const windows = { resetSchedule: { nextWeeklyResetAt: 'x', hoursUntilWeeklyReset: 1 }, byProviderModel: {}, calibration: {} };
+    const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows), {
+      open: true,
+      probe: { claude: { status: 'configured', weeklyRemainingPct: 50, weeklyResetAt: '2026-11-22T00:55:00.000Z', fiveHourRemainingPct: 90, fiveHourResetAt: '2026-11-21T22:00:00.000Z' } }
+    });
+    const pill = html.slice(html.indexOf('data-engine="claude"'), html.indexOf('</span></span>', html.indexOf('data-engine="claude"')));
+    assert.match(pill, /title="[^"]*Resets in [^"]*2026-11-22 00:55 UTC[^"]*2026-11-21 22:00 UTC[^"]*"/, 'both badges land in the tooltip, in Week-then-5h order');
+    const row = html.slice(html.indexOf('<tr data-engine="claude">'), html.indexOf('</tr>', html.indexOf('<tr data-engine="claude">')));
+    assert.match(row, /<span class="v6-usage-probe-reset">Resets in [^<]+ · 2026-11-22 00:55 UTC · Resets in [^<]+ · 2026-11-21 22:00 UTC<\/span>/);
+  });
+
+  it('an engine with no probe result at all shows no reset badge anywhere, no throw', () => {
+    const windows = { resetSchedule: {}, byProviderModel: {}, calibration: {} };
+    const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows), { open: true });
+    assert.doesNotMatch(html, /v6-usage-probe-reset/);
+  });
+});
+
+describe('Car V654-W1-C: composer/Under the Hood pane height clamping (#3173)', () => {
+  const G = loadV6Shell();
+
+  it('tcV6ClampChatPaneHeights clamps each pane to [min, maxCap] with no real viewport, unreadable values returning null', () => {
+    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({ input: 150, hood: 200 }, 0)), { input: 150, hood: 200 }, 'within range, untouched');
+    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({ input: 10, hood: 10 }, 0)), { input: 64, hood: 80 }, 'below the floor');
+    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({ input: 9000, hood: 9000 }, 0)), { input: 260, hood: 360 }, 'above the cap, no viewport to shrink it further');
+    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({ input: null, hood: undefined }, 0)), { input: null, hood: null }, 'an unreadable height stays null rather than coercing to 0');
+    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({ input: 'not a number' }, 0)), { input: null, hood: null });
+    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({}, 0)), { input: null, hood: null }, 'a missing key is the same as unreadable');
+  });
+
+  it('tcV6ClampChatPaneHeights tightens the cap on a small viewport: input to 30%, hood to 40%, floor still wins below that', () => {
+    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({ input: 200, hood: 200 }, 400)), { input: 120, hood: 160 }, 'floor(400*0.30)=120, floor(400*0.40)=160');
+    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({ input: 200, hood: 200 }, 100)), { input: 64, hood: 80 }, 'floor(100*0.30)=30 and floor(100*0.40)=40, both below their own floor');
+    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({ input: 200, hood: 200 }, 2000)), { input: 200, hood: 200 }, 'a tall viewport still defers to the 260/360 cap, not 30%/40% of 2000');
+  });
+
+  function withLayoutStubsLocal(doc) {
+    const realGet = doc.getElementById.bind(doc);
+    doc.getElementById = (id) => {
+      const el = realGet(id);
+      if (el && !el.style) {
+        el.style = {
+          setProperty(name, value) { this[name] = String(value); },
+          removeProperty(name) { delete this[name]; },
+          getPropertyValue(name) { return this[name] || ''; }
+        };
+      }
+      if (el && el.offsetHeight === undefined) el.offsetHeight = 0;
+      return el;
+    };
+    return doc;
+  }
+
+  it('#3173: a saved composer height restores clamped to a small simulated viewport, never full-size', () => {
+    const storage = makeStorage({ tc_v6_chat_input_height: '240', tc_v6_chat_uth_height: '300' });
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    root.id = 'v6ShellRoot';
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    withLayoutStubsLocal(doc);
+    const fakeWindow = Object.assign(makeFakeWindow('#/projects/x'), { innerHeight: 400 });
+    const shell = G.tcCreateV6Shell(doc, { root, window: fakeWindow, storage });
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [], chat: { status: 'active', members: [] } } });
+    assert.equal(doc.getElementById('v6ChatInput').style.height, '120px', 'floor(400*0.30)=120, below the saved 240');
+    assert.equal(doc.getElementById('v6ChatPeek').style.height, '160px', 'floor(400*0.40)=160, below the saved 300');
+  });
+});
+
 describe('Car V651-W2-B: inline video previews and "Show preview by default" (#3139)', () => {
   const G = loadV6Shell();
 

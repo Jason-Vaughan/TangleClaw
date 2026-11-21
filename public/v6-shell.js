@@ -1054,6 +1054,54 @@
     return Math.max(V6_SIDEBAR_MIN_WIDTH, Math.min(V6_SIDEBAR_MAX_WIDTH, n));
   }
 
+  /** The composer input's drag/restore range (#3173): never below a usable minimum, never above a viewport-relative ceiling. */
+  const V6_CHAT_INPUT_MIN_HEIGHT = 64;
+  const V6_CHAT_INPUT_MAX_HEIGHT = 260;
+  const V6_CHAT_INPUT_MAX_VIEWPORT_PCT = 0.30;
+
+  /** The Under the Hood pane's drag/restore range (#3173), same rationale as the composer input's. */
+  const V6_CHAT_UTH_MIN_HEIGHT = 80;
+  const V6_CHAT_UTH_MAX_HEIGHT = 360;
+  const V6_CHAT_UTH_MAX_VIEWPORT_PCT = 0.40;
+
+  /**
+   * One composer pane height, clamped to `[min, min(maxCap, floor(viewportH * viewportPct))]`
+   * (#3173) — `null` for an unreadable `value` (mirrors {@link isFiniteNumber}'s own
+   * `null`-on-missing rather than coercing it to 0), so a caller that never had a saved or
+   * measured height keeps doing nothing, same as before this clamp existed. `viewportH` of 0 or
+   * non-finite (no real `window`, e.g. this file's own unit-test sandbox) falls back to `maxCap`.
+   * @param {*} value
+   * @param {number} min
+   * @param {number} maxCap
+   * @param {number} viewportPct
+   * @param {number} viewportH
+   * @returns {number|null}
+   */
+  function clampChatPaneHeight(value, min, maxCap, viewportPct, viewportH) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    const vh = Number(viewportH);
+    const max = Number.isFinite(vh) && vh > 0 ? Math.min(maxCap, Math.floor(vh * viewportPct)) : maxCap;
+    return Math.max(min, Math.min(max, value));
+  }
+
+  /**
+   * Both composer pane heights, clamped together (#3173): an oversized saved or drag-resized
+   * `tc_v6_chat_input_height`/`tc_v6_chat_uth_height` must never push `#v6ChatStream` or
+   * `#v6ChatForm`/`#v6ChatInput` off-screen or lock scrolling. `viewportH` is taken as a plain
+   * argument rather than read from `window` so this stays a pure helper, testable without a real
+   * layout — exported as `global.tcV6ClampChatPaneHeights`.
+   * @param {{input?: *, hood?: *}} heights
+   * @param {number} viewportH
+   * @returns {{input: number|null, hood: number|null}}
+   */
+  function clampChatPaneHeights(heights, viewportH) {
+    const h = heights || {};
+    return {
+      input: clampChatPaneHeight(h.input, V6_CHAT_INPUT_MIN_HEIGHT, V6_CHAT_INPUT_MAX_HEIGHT, V6_CHAT_INPUT_MAX_VIEWPORT_PCT, viewportH),
+      hood: clampChatPaneHeight(h.hood, V6_CHAT_UTH_MIN_HEIGHT, V6_CHAT_UTH_MAX_HEIGHT, V6_CHAT_UTH_MAX_VIEWPORT_PCT, viewportH)
+    };
+  }
+
   /**
    * Drop a persisted chat draft once it is implausibly large to still be a
    * genuine in-progress message (#3133): a composer draft over 2KB is
@@ -1560,6 +1608,32 @@
     return h >= 24 ? `Resets in ${Math.floor(h / 24)}d ${h % 24}h` : `Resets in ${h}h ${Math.floor((hours - h) * 60)}m`;
   }
 
+  /** @param {*} iso @returns {number|null} Hours from now until `iso`, or `null` if it isn't a parseable timestamp. */
+  function hoursUntilReset(iso) {
+    if (typeof iso !== 'string' || !iso) return null;
+    const ms = Date.parse(iso);
+    if (!Number.isFinite(ms)) return null;
+    return (ms - Date.now()) / 3600000;
+  }
+
+  /**
+   * One usage window's next-reset badge (#3174): `"Resets in 4h 48m ·
+   * 2026-11-22 00:55 UTC"`, so clicking the engine usage indicator shows
+   * when each engine's 5-hour and weekly quota actually resets, not just
+   * the weekly summary the popover header already carries. `''` when `iso`
+   * isn't a valid timestamp — callers skip rendering the badge entirely
+   * rather than show a broken one.
+   * @param {*} iso
+   * @returns {string}
+   */
+  function formatResetBadge(iso) {
+    const hours = hoursUntilReset(iso);
+    if (hours === null) return '';
+    const countdown = formatReset(hours) || 'Resets now';
+    const stamp = new Date(iso).toISOString().slice(0, 16).replace('T', ' ');
+    return `${countdown} · ${stamp} UTC`;
+  }
+
   /** The state classes a meter pill carries (#3085, A753-1). */
   const USAGE_STATE_CLASSES = Object.freeze({
     healthy: 'is-healthy is-green', unknown: 'is-healthy is-green is-unknown', warning: 'is-warning is-amber', critical: 'is-critical is-red'
@@ -1568,30 +1642,46 @@
   /**
    * The usage meter (#3085, A753-1): one pill per engine, coloured by what
    * it has left, opening a breakdown with one-click calibration.
+   *
+   * #3174: when `ui.probe` carries a per-engine `weeklyResetAt`/
+   * `fiveHourResetAt` (the automated CLI probe's own reading — see
+   * {@link usageProbeRowMarkup}), each pill's tooltip and the breakdown
+   * table both also show that engine's next-reset badge, not just the
+   * popover header's one weekly-reset summary.
    * @param {ReturnType<typeof usageMeterModel>} model
-   * @param {{open?: boolean, status?: {kind: string, message: string}|null}} [ui]
+   * @param {{open?: boolean, status?: {kind: string, message: string}|null, probe?: object|null}} [ui]
    * @returns {string} HTML.
    */
   function usageMeterMarkup(model, ui) {
     const open = Boolean(ui && ui.open);
     const status = ui && ui.status ? ui.status : null;
     const reset = formatReset(model.resetHours);
+    const probeFor = (key) => (ui && ui.probe && ui.probe[key]) || null;
+    const probeResetBadges = (key) => {
+      const probeResult = probeFor(key);
+      if (!probeResult) return [];
+      return [formatResetBadge(probeResult.weeklyResetAt), formatResetBadge(probeResult.fiveHourResetAt)].filter(Boolean);
+    };
     const pill = (e) => {
       const left = e.remainingPct === null ? null : Math.round(e.remainingPct);
       const reading = left === null ? `${formatTokens(e.tokens.weekly)} this week` : `${left}% left`;
-      const tip = `${e.name}: ${left === null ? 'no % left reported' : `${left}% left (${e.source})`} · ${formatTokens(e.tokens.fiveHour)} tokens in 5h, ${formatTokens(e.tokens.weekly)} this week${reset ? ` · ${reset}` : ''}`;
+      const engineReset = probeResetBadges(e.key).join(', ');
+      const tip = `${e.name}: ${left === null ? 'no % left reported' : `${left}% left (${e.source})`} · ${formatTokens(e.tokens.fiveHour)} tokens in 5h, ${formatTokens(e.tokens.weekly)} this week${reset ? ` · ${reset}` : ''}${engineReset ? ` · ${engineReset}` : ''}`;
       return `<span class="v6-usage-pill ${USAGE_STATE_CLASSES[e.state]}" data-engine="${e.key}" title="${escapeHtml(tip)}">`
         + `<span class="v6-usage-label">${e.label}</span>`
         + `<span class="v6-usage-bar" aria-hidden="true"><span class="v6-usage-fill" style="width: ${left === null ? 0 : left}%"></span></span>`
         + `<span class="v6-usage-value">${escapeHtml(reading)}</span></span>`;
     };
     const summary = model.engines.map((e) => `${e.name} ${e.remainingPct === null ? 'no reading' : `${Math.round(e.remainingPct)}% left`}`).join(', ');
-    const row = (e) => `<tr data-engine="${e.key}"><th scope="row">${e.name}</th>`
-      + `<td>${formatTokens(e.tokens.fiveHour)}</td><td>${formatTokens(e.tokens.weekly)}</td><td>${formatTokens(e.tokens.sprint)}</td><td>${e.sessions}</td>`
-      + `<td>${e.remainingPct === null ? '—' : `${Math.round(e.remainingPct)}%`}</td>`
-      + `<td><span class="v6-usage-calibrate"><label><span class="sr-only">${e.name} weekly % left</span><input type="number" min="0" max="100" step="1" id="v6UsageWeekly-${e.key}" class="filter-input v6-usage-input" placeholder="wk %"></label>`
-      + `<label><span class="sr-only">${e.name} 5-hour % left</span><input type="number" min="0" max="100" step="1" id="v6UsageFiveHour-${e.key}" class="filter-input v6-usage-input" placeholder="5h %"></label>`
-      + `<button type="button" id="v6UsageSave-${e.key}" class="btn btn-secondary btn-small" data-engine="${e.key}">Set</button></span></td></tr>`;
+    const row = (e) => {
+      const engineReset = probeResetBadges(e.key).join(' · ');
+      return `<tr data-engine="${e.key}"><th scope="row">${e.name}</th>`
+        + `<td>${formatTokens(e.tokens.fiveHour)}</td><td>${formatTokens(e.tokens.weekly)}</td><td>${formatTokens(e.tokens.sprint)}</td><td>${e.sessions}</td>`
+        + `<td>${e.remainingPct === null ? '—' : `${Math.round(e.remainingPct)}%`}${engineReset ? `<br><span class="v6-usage-probe-reset">${escapeHtml(engineReset)}</span>` : ''}</td>`
+        + `<td><span class="v6-usage-calibrate"><label><span class="sr-only">${e.name} weekly % left</span><input type="number" min="0" max="100" step="1" id="v6UsageWeekly-${e.key}" class="filter-input v6-usage-input" placeholder="wk %"></label>`
+        + `<label><span class="sr-only">${e.name} 5-hour % left</span><input type="number" min="0" max="100" step="1" id="v6UsageFiveHour-${e.key}" class="filter-input v6-usage-input" placeholder="5h %"></label>`
+        + `<button type="button" id="v6UsageSave-${e.key}" class="btn btn-secondary btn-small" data-engine="${e.key}">Set</button></span></td></tr>`;
+    };
     return `<button type="button" id="v6EngineUsageMeter" class="v6-usage-meter" aria-expanded="${open ? 'true' : 'false'}" aria-controls="v6EngineUsagePopover"
         aria-label="${escapeHtml(`Engine usage: ${summary}. Open the breakdown.`)}">${model.engines.map(pill).join('<span class="v6-telemetry-divider" aria-hidden="true">|</span>')}</button>`
       + `<div id="v6EngineUsagePopover" class="v6-usage-popover" role="dialog" aria-label="Engine usage"${open ? '' : ' hidden'}>`
@@ -1626,6 +1716,8 @@
    * account-usage page either way.
    * @param {{key: string, label: string, name: string}} engine
    * @param {object|null} result - `GET /api/usage/probe`'s per-provider shape, or `null` (never probed).
+   *   `weeklyResetAt`/`fiveHourResetAt` (#3174), when present, are rendered as a next-reset badge
+   *   on that window's own bar — `lib/usage-windows.js` already reports both.
    * @returns {string} HTML.
    */
   function usageProbeRowMarkup(engine, result) {
@@ -1639,11 +1731,17 @@
       return `<li class="v6-usage-probe-row" data-engine="${engine.key}"><span class="v6-usage-probe-name">${escapeHtml(engine.name)}</span>`
         + `<span class="v6-usage-probe-badge is-${escapeHtml(result.status)}">${escapeHtml(label)}</span>${link}</li>`;
     }
-    const bar = (pct, label) => {
+    // #3174: each bar's own next-reset countdown + timestamp, when the probe
+    // reported one for that window — clicking the usage indicator should
+    // show when each engine's 5-hour and weekly quota actually resets.
+    const bar = (pct, label, resetIso) => {
       const value = pctOrNull(pct);
+      const resetBadge = formatResetBadge(resetIso);
       return `<span class="v6-usage-probe-bar-wrap"><span class="v6-usage-probe-bar-label">${label}</span>`
         + `<span class="v6-usage-bar" aria-hidden="true"><span class="v6-usage-fill" style="width: ${value === null ? 0 : value}%"></span></span>`
-        + `<span class="v6-usage-probe-bar-value">${value === null ? '—' : `${Math.round(value)}% left`}</span></span>`;
+        + `<span class="v6-usage-probe-bar-value">${value === null ? '—' : `${Math.round(value)}% left`}</span>`
+        + (resetBadge ? `<span class="v6-usage-probe-reset">${escapeHtml(resetBadge)}</span>` : '')
+        + `</span>`;
     };
     // PRR-B R1 BLOCKING 2c: `result.subTiers` (Claude's Fable, Antigravity's
     // non-native model families) carries its own weekly/5h remaining% —
@@ -1654,10 +1752,10 @@
       const sub = result.subTiers[tier] || {};
       return `<li class="v6-usage-probe-subtier-row" data-engine="${engine.key}" data-subtier="${escapeHtml(tier)}">`
         + `<span class="v6-usage-probe-name v6-usage-probe-subtier-name">${escapeHtml(tier)}</span>`
-        + `<span class="v6-usage-probe-bars">${bar(sub.weeklyRemainingPct, 'Week')}${bar(sub.fiveHourRemainingPct, '5h')}</span></li>`;
+        + `<span class="v6-usage-probe-bars">${bar(sub.weeklyRemainingPct, 'Week', sub.weeklyResetAt)}${bar(sub.fiveHourRemainingPct, '5h', sub.fiveHourResetAt)}</span></li>`;
     }).join('');
     return `<li class="v6-usage-probe-row" data-engine="${engine.key}"><span class="v6-usage-probe-name">${escapeHtml(engine.name)}</span>`
-      + `<span class="v6-usage-probe-bars">${bar(result.weeklyRemainingPct, 'Week')}${bar(result.fiveHourRemainingPct, '5h')}</span>${link}</li>${subTierRows}`;
+      + `<span class="v6-usage-probe-bars">${bar(result.weeklyRemainingPct, 'Week', result.weeklyResetAt)}${bar(result.fiveHourRemainingPct, '5h', result.fiveHourResetAt)}</span>${link}</li>${subTierRows}`;
   }
 
   /**
@@ -8595,16 +8693,27 @@
      * No-ops where `ResizeObserver` is unavailable (the unit-test
      * sandbox) — the persistence itself is a live-browser behavior,
      * verified by this car's required browser check, not by node:test.
+     *
+     * #3173: every restored or newly measured height is run through
+     * {@link clampChatPaneHeights} first, so an oversized saved height (set
+     * on a taller window, or before the viewport shrank) never comes back
+     * large enough to push `#v6ChatStream` or `#v6ChatForm`/`#v6ChatInput`
+     * off-screen or lock scrolling.
      */
     function wireComposerResize() {
       const input = doc.getElementById('v6ChatInput');
       const stream = doc.getElementById('v6ChatStream');
       if (!input || !stream) return;
       const hood = doc.getElementById('v6ChatPeek');
+      const viewportH = () => (win && typeof win.innerHeight === 'number' ? win.innerHeight : 0);
       const savedInputHeight = prefs.get('tc_v6_chat_input_height', null, isFiniteNumber);
       const savedHoodHeight = prefs.get('tc_v6_chat_uth_height', null, isFiniteNumber);
-      if (input.style && savedInputHeight) input.style.height = `${savedInputHeight}px`;
-      if (hood && hood.style && savedHoodHeight) hood.style.height = `${savedHoodHeight}px`;
+      // #3173: clamp the restored heights too — a height saved before the
+      // viewport last shrank (a smaller window, a narrower device) must not
+      // come back oversized and push the stream or the input off-screen.
+      const restored = clampChatPaneHeights({ input: savedInputHeight, hood: savedHoodHeight }, viewportH());
+      if (input.style && restored.input !== null) input.style.height = `${restored.input}px`;
+      if (hood && hood.style && restored.hood !== null) hood.style.height = `${restored.hood}px`;
       const applyToInput = () => {
         // PRR-B R1 BLOCKING 1a: `input.offsetHeight` reads 0/undefined for a
         // hidden tab or this file's own unit-test DOM (neither computes real
@@ -8614,12 +8723,20 @@
         // it is tried first; a measurement of 0 skips the write entirely
         // rather than ever persisting null over a real saved value.
         const measuredInput = (input.style && parseFloat(input.style.height)) || input.offsetHeight;
-        if (measuredInput) prefs.set('tc_v6_chat_input_height', measuredInput);
+        if (!measuredInput) return;
+        const clamped = clampChatPaneHeights({ input: measuredInput }, viewportH()).input;
+        if (clamped === null) return;
+        prefs.set('tc_v6_chat_input_height', clamped);
+        if (input.style && clamped !== measuredInput) input.style.height = `${clamped}px`;
       };
       const applyToHood = () => {
         if (!hood) return;
         const measuredHood = (hood.style && parseFloat(hood.style.height)) || hood.offsetHeight;
-        if (measuredHood) prefs.set('tc_v6_chat_uth_height', measuredHood);
+        if (!measuredHood) return;
+        const clamped = clampChatPaneHeights({ hood: measuredHood }, viewportH()).hood;
+        if (clamped === null) return;
+        prefs.set('tc_v6_chat_uth_height', clamped);
+        if (hood.style && clamped !== measuredHood) hood.style.height = `${clamped}px`;
       };
       if (composerInputResizeObserver && typeof composerInputResizeObserver.disconnect === 'function') composerInputResizeObserver.disconnect();
       if (composerHoodResizeObserver && typeof composerHoodResizeObserver.disconnect === 'function') composerHoodResizeObserver.disconnect();
@@ -9517,6 +9634,7 @@
   global.tcV6TrainControlsMarkup = trainControlsMarkup;
   global.tcV6CreateLiveController = createLiveController;
   global.tcV6ClampSidebarWidth = clampSidebarWidth;
+  global.tcV6ClampChatPaneHeights = clampChatPaneHeights;
   global.tcV6PruneStaleChatDrafts = pruneStaleChatDrafts;
   global.tcV6IsAlwaysPreviewLink = isAlwaysPreviewLink;
   global.tcV6UsageProbeRowMarkup = usageProbeRowMarkup;
