@@ -700,15 +700,21 @@ describe('native-sprint-tracker: buildSprintWaveSnapshot (#3112)', () => {
     assert.deepEqual(snapshot.releases.planned.map((r) => r.version), ['v6.5.0', 'v6.6.0']);
   });
 
-  it('synthesizes a fallback car row from roadmap trains for a release with no matching input car (#3112, PRR-B I-Gate R1 WARNING 1)', () => {
+  it('synthesizes a fallback car row from roadmap trains for a release with no matching input car (#3112, PRR-B I-Gate R1 WARNING 1; pill fixed for a shipped release by #3162)', () => {
     const snapshot = tracker.buildSprintWaveSnapshot(baseInput);
     // v6.4.0 (shipped) and v6.5.0 (planned) have no car in baseInput.cars -- both must still
     // show their roadmap-placed issues, not an empty table.
     const shipped = snapshot.cars.find((c) => c.version === 'v6.4.0');
     const planned = snapshot.cars.find((c) => c.version === 'v6.5.0');
     assert.deepEqual(shipped.issues.map((i) => i.id), [1, 2]);
-    assert.deepEqual(shipped.pill, { code: 'open', label: 'Not started' });
+    // #3162: a shipped release's fallback row (no dispatched car for it)
+    // must read closed/"Completed" -- the release itself is already
+    // classified `shipped` above, and a fallback row reading "Not started"
+    // underneath a release card that says it shipped is exactly the bug.
+    assert.deepEqual(shipped.pill, { code: 'closed', label: 'Completed' });
+    assert.deepEqual(shipped.issues.map((i) => i.pill), [{ code: 'closed', label: 'Completed' }, { code: 'closed', label: 'Completed' }]);
     assert.deepEqual(planned.issues.map((i) => i.id), [6]);
+    assert.deepEqual(planned.pill, { code: 'open', label: 'Not started' });
     // v6.4.1 (active) DOES have matching cars (W1-A, W1-B) -- no fallback row for it.
     assert.equal(snapshot.cars.filter((c) => c.version === 'v6.4.1').length, 2);
   });
@@ -726,6 +732,109 @@ describe('native-sprint-tracker: buildSprintWaveSnapshot (#3112)', () => {
     });
     const rows = snapshot.cars.filter((c) => c.version === 'v6.5.0');
     assert.deepEqual(rows.map((r) => r.issues.map((i) => i.id)), [[1], [2, 3]]);
+  });
+
+  it('#3163: enriches every car with carId, branch, title and a bare status string alongside the existing fields', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({
+      ...baseInput,
+      cars: baseInput.cars.map((c) => ({ ...c, branch: `feat/${c.id}`, title: `Car ${c.id}` }))
+    });
+    const carA = snapshot.cars.find((c) => c.id === 'W1-A');
+    assert.equal(carA.carId, 'W1-A');
+    assert.equal(carA.branch, 'feat/W1-A');
+    assert.equal(carA.title, 'Car W1-A');
+    assert.equal(carA.status, 'closed');
+    const carB = snapshot.cars.find((c) => c.id === 'W1-B');
+    assert.equal(carB.status, 'in-review');
+  });
+
+  it('#3163: a fallback row also carries carId, branch, title and status (null/unassigned for a planned release)', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot(baseInput);
+    const shipped = snapshot.cars.find((c) => c.version === 'v6.4.0');
+    const planned = snapshot.cars.find((c) => c.version === 'v6.5.0');
+    assert.equal(shipped.carId, shipped.id);
+    assert.equal(shipped.branch, null);
+    assert.equal(shipped.title, null);
+    assert.equal(shipped.status, 'closed');
+    assert.equal(planned.status, 'unassigned');
+  });
+
+  it('#3164: a done car\'s recorded PR reads merged (not open), and pullRequests carries lane/title/status', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({
+      currentVersion: 'v6.4.1',
+      cars: [{ id: 'W1-C', version: 'v6.4.1', lane: 'TC-Lane-C', title: 'Shipped car', issues: [{ id: 1, state: 'closed' }] }],
+      pullRequests: [{ carId: 'W1-C', number: 3300, state: 'merged', title: 'Shipped car', lane: 'TC-Lane-C', status: 'complete' }]
+    });
+    const car = snapshot.cars.find((c) => c.id === 'W1-C');
+    assert.equal(car.prNumber, 3300);
+    assert.equal(car.merged, true);
+  });
+
+  it('#3166: roadmapSyncStatus is absent when input.syncStatus is never mentioned, and present (ok) when it is', () => {
+    const noMention = tracker.buildSprintWaveSnapshot(baseInput);
+    assert.equal('roadmapSyncStatus' in noMention, false);
+    const mentioned = tracker.buildSprintWaveSnapshot({ ...baseInput, syncStatus: { state: 'ok' } });
+    assert.deepEqual(mentioned.roadmapSyncStatus, { state: 'ok', message: null });
+  });
+
+  it('#3166: roadmapSyncStatus reads degraded when the hub has no link for the current version, even though syncStatus says ok', () => {
+    const snapshot = tracker.buildSprintWaveSnapshot({
+      ...baseInput,
+      syncStatus: { state: 'ok' },
+      hubHtml: '<a href="./v6.3.0/">v6.3.0</a>'
+    });
+    assert.equal(snapshot.roadmapSyncStatus.state, 'degraded');
+    assert.match(snapshot.roadmapSyncStatus.message, /v6\.4\.1/);
+  });
+});
+
+describe('native-sprint-tracker: parseShippedVersionsFromChangelog (#3162)', () => {
+  it('reads every bracketed released heading, newest first as the file already orders them', () => {
+    const text = '# Changelog\n\n## [Unreleased]\n\n## [6.5.2] - 2026-11-20\n\n### Added\n- x\n\n## [6.5.1] - 2026-11-16\n\n### Fixed\n- y\n';
+    assert.deepEqual(tracker.parseShippedVersionsFromChangelog(text), ['6.5.2', '6.5.1']);
+  });
+
+  it('reads a bare (non-bracketed) heading style too', () => {
+    const text = '## 1.4.2 - 2026-01-01\n\n### Fixed\n- y\n';
+    assert.deepEqual(tracker.parseShippedVersionsFromChangelog(text), ['1.4.2']);
+  });
+
+  it('never matches [Unreleased] -- it has no digits to match', () => {
+    assert.deepEqual(tracker.parseShippedVersionsFromChangelog('## [Unreleased]\n\nNothing yet.\n'), []);
+  });
+
+  it('returns an empty array for a non-string or empty input, never throws', () => {
+    assert.deepEqual(tracker.parseShippedVersionsFromChangelog(null), []);
+    assert.deepEqual(tracker.parseShippedVersionsFromChangelog(''), []);
+    assert.deepEqual(tracker.parseShippedVersionsFromChangelog(undefined), []);
+  });
+});
+
+describe('native-sprint-tracker: validateRoadmapSyncStatus (#3166)', () => {
+  it('reads ok when syncStatus is healthy and the hub links the current version', () => {
+    const result = tracker.validateRoadmapSyncStatus({
+      currentVersion: 'v6.5.2', syncStatus: { state: 'ok' }, hubHtml: '<a href="./v6.5.2/">v6.5.2</a>'
+    });
+    assert.deepEqual(result, { state: 'ok', message: null });
+  });
+
+  it('fails closed when syncStatus itself is missing, malformed or not ok, before ever looking at the hub', () => {
+    assert.equal(tracker.validateRoadmapSyncStatus({ currentVersion: 'v6.5.2', syncStatus: null }).state, 'degraded');
+    assert.equal(tracker.validateRoadmapSyncStatus({ currentVersion: 'v6.5.2', syncStatus: { state: 'error' } }).state, 'degraded');
+    assert.equal(tracker.validateRoadmapSyncStatus({ currentVersion: 'v6.5.2', syncStatus: { ok: false } }).state, 'degraded');
+  });
+
+  it('fails closed when syncStatus says ok but the hub has no link for the current shipped version -- the exact #3166 gap', () => {
+    const result = tracker.validateRoadmapSyncStatus({
+      currentVersion: 'v6.5.2', syncStatus: { state: 'ok' }, hubHtml: '<a href="./v6.5.1/">v6.5.1</a>'
+    });
+    assert.equal(result.state, 'degraded');
+    assert.match(result.message, /v6\.5\.2/);
+  });
+
+  it('skips the hub check entirely when hubHtml or currentVersion is not supplied, and still reads ok from syncStatus alone', () => {
+    assert.deepEqual(tracker.validateRoadmapSyncStatus({ syncStatus: { state: 'ok' } }), { state: 'ok', message: null });
+    assert.deepEqual(tracker.validateRoadmapSyncStatus({ currentVersion: 'v6.5.2', syncStatus: { state: 'ok' } }), { state: 'ok', message: null });
   });
 });
 
@@ -1026,6 +1135,99 @@ describe('sprint-wave-routes: createSprintWaveRouter', () => {
     const { res: res2, status: status2 } = fakeRes();
     await failing.handle(req2, res2);
     assert.equal(status2(), 502);
+  });
+
+  it('#3162: GET /api/sprint-waves threads getShippedVersions into the snapshot\'s release classification', async () => {
+    const router = createSprintWaveRouter({
+      getSprintData: async () => ({ version: 'v6.4.1', waves: [], cars: [], lanes: [], pullRequests: [] }),
+      getRoadmapData: () => ({ data: { releases: [{ version: '6.4.0', trains: [{ cars: [1] }] }] }, repo: null, source: 'fallback' }),
+      getShippedVersions: async () => ['6.4.0']
+    });
+    const { req } = fakeReq('GET', '/api/sprint-waves');
+    const { res, status, json } = fakeRes();
+    await router.handle(req, res);
+    assert.equal(status(), 200);
+    assert.deepEqual(json().snapshot.releases.shipped, [{ version: 'v6.4.0', status: 'shipped', carCount: 1 }]);
+    // #3162: the fallback row synthesized for it must read closed/"Completed" too.
+    assert.deepEqual(json().snapshot.cars[0].pill, { code: 'closed', label: 'Completed' });
+  });
+
+  it('#3162: GET /api/sprint-waves classifies nothing as shipped with no getShippedVersions, unchanged from before #3162', async () => {
+    const router = createSprintWaveRouter({
+      getSprintData: async () => ({ version: 'v6.4.1', waves: [], cars: [], lanes: [], pullRequests: [] }),
+      getRoadmapData: () => ({ data: { releases: [{ version: '6.4.0', trains: [{ cars: [1] }] }] }, repo: null, source: 'fallback' })
+    });
+    const { req } = fakeReq('GET', '/api/sprint-waves');
+    const { res, json } = fakeRes();
+    await router.handle(req, res);
+    assert.deepEqual(json().snapshot.releases.shipped, []);
+    assert.deepEqual(json().snapshot.releases.planned, [{ version: 'v6.4.0', status: 'planned', carCount: 1 }]);
+  });
+
+  it('#3164: GET /api/sprint-waves and GET /api/sprint-reports/:version both carry getReports into their reports catalog', async () => {
+    const reports = [{ id: 'v6.5.1', version: 'v6.5.1', title: 'v6.5.1 report', url: 'docs/releases/v6.5.1.md' }];
+    const normalized = reports.map((r) => ({ ...r, kind: 'report' }));
+    const router = createSprintWaveRouter({
+      getSprintData: async () => ({ version: 'v6.5.1', waves: [], cars: [], lanes: [], pullRequests: [] }),
+      getSprintDataForVersion: async (version) => ({ version, cars: [], pullRequests: [] }),
+      getReports: async () => reports
+    });
+    const { req: req1 } = fakeReq('GET', '/api/sprint-waves');
+    const { res: res1, json: json1 } = fakeRes();
+    await router.handle(req1, res1);
+    assert.deepEqual(json1().snapshot.reports, normalized);
+
+    const { req: req2 } = fakeReq('GET', '/api/sprint-reports/v6.5.1');
+    const { res: res2, json: json2 } = fakeRes();
+    await router.handle(req2, res2);
+    assert.deepEqual(json2().report.reports, normalized);
+  });
+
+  it('#3164: GET /api/sprint-reports/:version carries getReleaseCommit into heroKpis.releaseCommit', async () => {
+    const router = createSprintWaveRouter({
+      getSprintDataForVersion: async (version) => ({ version, cars: [], pullRequests: [] }),
+      getReleaseCommit: async (version) => (version === 'v6.5.1' ? 'abc123deadbeef' : null)
+    });
+    const { req } = fakeReq('GET', '/api/sprint-reports/v6.5.1');
+    const { res, json } = fakeRes();
+    await router.handle(req, res);
+    assert.equal(json().report.heroKpis.releaseCommit, 'abc123deadbeef');
+  });
+
+  it('#3164: getReports/getReleaseCommit never mutate the object getSprintDataForVersion returned', async () => {
+    const shared = { version: 'v6.5.1', cars: [], pullRequests: [] };
+    const router = createSprintWaveRouter({
+      getSprintDataForVersion: async () => shared,
+      getReports: async () => [{ id: 'x', version: null, title: 'x' }],
+      getReleaseCommit: async () => 'sha123'
+    });
+    const { req } = fakeReq('GET', '/api/sprint-reports/v6.5.1');
+    const { res } = fakeRes();
+    await router.handle(req, res);
+    assert.equal('reports' in shared, false);
+    assert.equal('releaseCommit' in shared, false);
+  });
+
+  it('#3166: GET /api/sprint-waves attaches roadmapSyncStatus from getSyncStatus/getReportsHubHtml', async () => {
+    const router = createSprintWaveRouter({
+      getSprintData: async () => ({ version: 'v6.5.2', waves: [], cars: [], lanes: [], pullRequests: [] }),
+      getSyncStatus: async () => ({ state: 'ok' }),
+      getReportsHubHtml: async () => '<a href="./v6.5.1/">v6.5.1</a>'
+    });
+    const { req } = fakeReq('GET', '/api/sprint-waves');
+    const { res, json } = fakeRes();
+    await router.handle(req, res);
+    assert.equal(json().snapshot.roadmapSyncStatus.state, 'degraded');
+  });
+
+  it('#3166: GET /api/sprint-waves omits roadmapSyncStatus entirely with no getSyncStatus, unchanged from before #3166', async () => {
+    const router = createSprintWaveRouter({
+      getSprintData: async () => ({ version: 'v6.5.2', waves: [], cars: [], lanes: [], pullRequests: [] })
+    });
+    const { req } = fakeReq('GET', '/api/sprint-waves');
+    const { res, json } = fakeRes();
+    await router.handle(req, res);
+    assert.equal('roadmapSyncStatus' in json().snapshot, false);
   });
 });
 
@@ -1491,7 +1693,9 @@ describe('native-sprint-tracker: sprintDataFromWaveRuns (#3087, Ruling A774)', (
     assert.deepEqual(car.reviewers, { oGate: 'TC-Lane-Obsr', prr: 'TC-Lane-PRR-A' });
     assert.equal(car.headSha, 'abcdef1234567890');
     assert.equal(car.lane, 'TC-Lane-A');
-    assert.deepEqual(data.pullRequests, [{ carId: 'rich', number: 42, state: 'open' }]);
+    // #3164: lane/title/status now ride along on every synthesized PR entry
+    // (title null here -- the fixture's payload sets no `title`).
+    assert.deepEqual(data.pullRequests, [{ carId: 'rich', number: 42, state: 'open', title: null, lane: 'TC-Lane-A', status: 'running' }]);
     const dispatch = tracker.syncWaveDispatchState({ cars: data.cars, lanes: data.lanes, pullRequests: data.pullRequests });
     assert.equal(dispatch.rich.openPrNumber, 42);
     assert.equal(dispatch.rich.stage, 'in-review');
@@ -1600,7 +1804,16 @@ describe('the live server mounts the sprint wave routes (#3087, Ruling A774)', (
     });
   }
 
-  const ROADMAP_ENV_KEYS = ['TANGLECLAW_ROADMAP2_DATA_PATH', 'TANGLECLAW_LANE_QUEUE_PATH', 'TANGLECLAW_DOCS_RELEASES_DIR'];
+  const ROADMAP_ENV_KEYS = [
+    'TANGLECLAW_ROADMAP2_DATA_PATH', 'TANGLECLAW_LANE_QUEUE_PATH', 'TANGLECLAW_DOCS_RELEASES_DIR',
+    // #3166: this operator's own machine genuinely has a real Sprint Reports
+    // Hub checkout (confirmed live at its guessed default path) -- isolated
+    // the same way the three roadmap sources above already are, or this
+    // describe block's "empty board" fixture would pick up this machine's
+    // real hub/status file and read a real `roadmapSyncStatus` on a board
+    // that is supposed to have nothing to report.
+    'TANGLECLAW_ROADMAP_SYNC_STATUS_PATH', 'TANGLECLAW_SPRINT_REPORTS_HUB_PATH'
+  ];
   let prevRoadmapEnv;
 
   beforeEach(async () => {
@@ -1610,15 +1823,17 @@ describe('the live server mounts the sprint wave routes (#3087, Ruling A774)', (
     store.init();
     ({ operatorHeaders } = require('./_shared-docs-callers'));
     openInstallToken = require('../lib/open-install-token');
-    // #3134: this operator's own machine (and this checkout's own
-    // docs/releases/) can genuinely have real roadmap sources -- point all
-    // three at paths inside this test's own throwaway tmpDir (never read)
-    // so this describe block's "empty board" fixture stays genuinely empty
-    // on every machine, not just one with none of these present.
+    // #3134/#3166: this operator's own machine (and this checkout's own
+    // docs/releases/) can genuinely have real roadmap sources -- point every
+    // one at a path inside this test's own throwaway tmpDir (never read) so
+    // this describe block's "empty board" fixture stays genuinely empty on
+    // every machine, not just one with none of these present.
     prevRoadmapEnv = Object.fromEntries(ROADMAP_ENV_KEYS.map((k) => [k, process.env[k]]));
     process.env.TANGLECLAW_ROADMAP2_DATA_PATH = path.join(tmpDir, 'no-roadmap2-data.json');
     process.env.TANGLECLAW_LANE_QUEUE_PATH = path.join(tmpDir, 'no-lane-queue.md');
     process.env.TANGLECLAW_DOCS_RELEASES_DIR = path.join(tmpDir, 'no-docs-releases');
+    process.env.TANGLECLAW_ROADMAP_SYNC_STATUS_PATH = path.join(tmpDir, 'no-roadmap-sync-status.json');
+    process.env.TANGLECLAW_SPRINT_REPORTS_HUB_PATH = path.join(tmpDir, 'no-sprint-reports-hub.html');
     server = require('../server').createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   });
@@ -1663,6 +1878,42 @@ describe('the live server mounts the sprint wave routes (#3087, Ruling A774)', (
     // #3112: a real run's cars are enriched into the snapshot too, not just dispatch.
     assert.equal(live.data.snapshot.cars.length, 2);
     assert.deepEqual(live.data.snapshot.cars.map((c) => c.id).sort(), ['car-a', 'car-b']);
+  });
+
+  it('#3162/#3164: GET /api/sprint-waves surfaces real shippedVersions and reports once this install\'s sources exist', async () => {
+    // docs/releases/ with one real file, for a version DIFFERENT from the
+    // run's own current version, so classifying it 'shipped' is actually
+    // shippedVersions' doing, not the separate 'active' precedence rule.
+    // (getShippedVersions/getReports are called fresh per request, unlike
+    // #3166's getSyncStatus/getReportsHubHtml, which this describe block's
+    // own `createSprintWaveRouter` tests already cover directly -- those two
+    // are wired once at server MOUNT time based on whether this install can
+    // reach a sync source at all, which this already-running `beforeEach`
+    // server decided before this test's fixtures existed on disk.)
+    const docsReleasesDir = path.join(tmpDir, 'docs-releases');
+    fs.mkdirSync(docsReleasesDir);
+    fs.writeFileSync(path.join(docsReleasesDir, 'v9.9.0.md'), '# v9.9.0 — A fixture release\n\nBody.\n');
+    process.env.TANGLECLAW_DOCS_RELEASES_DIR = docsReleasesDir;
+    // roadmap2-data.json naming that shipped version as a release with no
+    // matching car, so its fallback row's pill is the signal shippedVersions
+    // actually reached buildSprintWaveSnapshot.
+    fs.writeFileSync(process.env.TANGLECLAW_ROADMAP2_DATA_PATH, JSON.stringify({
+      releases: [{ version: '9.9.0', trains: [{ cars: [1] }] }]
+    }));
+    const c3 = require('../lib/v6/c3-wave-scheduler');
+    new c3.WaveScheduler({ store: new c3.SqliteSchedulerStore(store.getDb()) }).createRun({
+      id: 'run1', fleetId: 'f', cars: [{ id: 'car-a', fileScope: ['lib/a.js'] }], metadata: { version: '9.9.1' }
+    });
+
+    const live = await request('GET', '/api/sprint-waves');
+    assert.equal(live.status, 200, JSON.stringify(live.data));
+    assert.deepEqual(live.data.snapshot.releases.shipped, [{ version: 'v9.9.0', status: 'shipped', carCount: 1 }]);
+    // #3162: the fallback row synthesized for it (no real car named v9.9.0,
+    // only the run's own "car-a" at v9.9.1) must read closed/"Completed",
+    // not the old hardcoded "Not started".
+    const fallback = live.data.snapshot.cars.find((c) => c.version === 'v9.9.0');
+    assert.deepEqual(fallback.pill, { code: 'closed', label: 'Completed' });
+    assert.deepEqual(live.data.snapshot.reports, [{ id: 'v9.9.0', version: 'v9.9.0', title: 'v9.9.0 — A fixture release', url: 'docs/releases/v9.9.0.md', kind: 'report' }]);
   });
 
   it('GET /api/sprint-reports/:version: current answers, an unknown version 404s, anything else 400s before any lookup', async () => {

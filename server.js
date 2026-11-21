@@ -11173,6 +11173,160 @@ const ROADMAP2_DATA_DEFAULT_PATH = '/Users/jasonvaughan/Documents/Projects/Share
 const LANE_QUEUE_DEFAULT_PATH = '/Users/jasonvaughan/Documents/Projects/Shared/TangleClaw-Shared/LANE_QUEUE.md';
 
 /**
+ * `roadmap-sync-status.json`'s default location (#3166): `lib/roadmap-vercel-guard.js`
+ * names its path as `public/roadmap/roadmap-sync-status.json` relative to the
+ * roadmap-board site's own deploy root, which is the same `roadmap-board/`
+ * directory {@link ROADMAP2_DATA_DEFAULT_PATH} already names. Overridable via
+ * `TANGLECLAW_ROADMAP_SYNC_STATUS_PATH`.
+ * @type {string}
+ */
+const ROADMAP_SYNC_STATUS_DEFAULT_PATH = '/Users/jasonvaughan/Documents/Projects/Shared/TangleClaw-Shared/roadmap-board/public/roadmap/roadmap-sync-status.json';
+
+/**
+ * The Sprint Reports Hub's own `index.html` (#3166) — `test/v6-sprint-report-validator-v3.test.js`
+ * excerpts real hub markup from `TangleClaw-Shared/sprint-reports/<dir>/index.html`,
+ * so the hub itself is the parent of those directories. Overridable via
+ * `TANGLECLAW_SPRINT_REPORTS_HUB_PATH`.
+ * @type {string}
+ */
+const SPRINT_REPORTS_HUB_DEFAULT_PATH = '/Users/jasonvaughan/Documents/Projects/Shared/TangleClaw-Shared/sprint-reports/index.html';
+
+/**
+ * Bare `X.Y.Z` versions this checkout's own `docs/releases/*.md` files name
+ * (#3134, factored out of {@link _v6LoadRoadmapData} for #3162's own shipped-
+ * versions source, which needs the exact same listing). Empty when the
+ * directory does not exist in this checkout.
+ * @returns {string[]}
+ */
+function _v6DocsReleaseVersions() {
+  try {
+    const docsReleasesDir = process.env.TANGLECLAW_DOCS_RELEASES_DIR || path.join(__dirname, 'docs', 'releases');
+    return fs.readdirSync(docsReleasesDir)
+      .map((f) => /^v?(\d+\.\d+(?:\.\d+)?)[.-]/.exec(f)).filter(Boolean).map((m) => m[1]);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Every version this checkout can show as already shipped (#3162): every
+ * `CHANGELOG.md` released heading, every `docs/releases/v*.md` file, and
+ * `version.json`'s own current version (covering the gap between a release
+ * landing and its own `docs/releases/v<ver>.md`/CHANGELOG section existing,
+ * if those ever ship in a later commit than the version bump itself).
+ * Deduplicated; bare (no leading `v`). Never throws: an unreadable
+ * `CHANGELOG.md` or `version.json` simply contributes nothing, same as an
+ * unreadable `docs/releases/` already does.
+ * @returns {string[]}
+ */
+function _v6ShippedVersions() {
+  const nativeSprintTracker = require('./lib/native-sprint-tracker');
+  const versions = new Set(_v6DocsReleaseVersions());
+  try {
+    const changelogText = fs.readFileSync(path.join(__dirname, 'CHANGELOG.md'), 'utf8');
+    for (const v of nativeSprintTracker.parseShippedVersionsFromChangelog(changelogText)) versions.add(v);
+  } catch { /* CHANGELOG.md unreadable -- docs/releases and version.json still contribute */ }
+  try {
+    const current = JSON.parse(fs.readFileSync(path.join(__dirname, 'version.json'), 'utf8')).version;
+    if (typeof current === 'string' && current) versions.add(current.replace(/^v/, ''));
+  } catch { /* version.json unreadable */ }
+  return [...versions];
+}
+
+/**
+ * The Sprint Reports Hub catalog `GET /api/sprint-waves` and `GET
+ * /api/sprint-reports/:version` both render (#3164): one entry per
+ * `docs/releases/v*.md` file (excluding `index.md`), titled from that file's
+ * own leading `# ` heading when it has one, else a bare `vX.Y.Z` fallback.
+ * Deliberately NOT including retrospectives here: this checkout has no
+ * structured source naming which multi-version ranges got one (today only
+ * the README banner's own hand-written links know), so inventing retrospective
+ * entries from a guessed naming convention risks citing a page that was
+ * never published. Tracked as a known gap rather than guessed around.
+ * @returns {Array<{id: string, version: string, title: string, url: string, kind: string}>}
+ */
+function _v6ReportsCatalog() {
+  const docsReleasesDir = process.env.TANGLECLAW_DOCS_RELEASES_DIR || path.join(__dirname, 'docs', 'releases');
+  let files;
+  try {
+    files = fs.readdirSync(docsReleasesDir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const file of files) {
+    const m = /^v?(\d+\.\d+\.\d+)\.md$/.exec(file);
+    if (!m || file === 'index.md') continue;
+    const version = `v${m[1]}`;
+    let title = version;
+    try {
+      const text = fs.readFileSync(path.join(docsReleasesDir, file), 'utf8');
+      const heading = /^#\s+(.+)$/m.exec(text);
+      if (heading) title = heading[1].trim();
+    } catch { /* keep the bare-version fallback title */ }
+    out.push({ id: version, version, title, url: `docs/releases/${file}`, kind: 'report' });
+  }
+  return out;
+}
+
+/**
+ * The real merge/release commit SHA for an already-tagged version (#3164),
+ * via the exact same tag `.github/workflows/release.yml` creates
+ * (`docs/release-process.md`'s own chain: "an annotated vX.Y.Z tag"). `git
+ * rev-list -n 1` resolves an annotated tag to the commit it points at, not
+ * the tag object itself. Returns null for `'current'`, an untagged version,
+ * or when `git` itself is unavailable -- never throws.
+ * @param {string} version - `'current'` or `vX.Y.Z`/`X.Y.Z`.
+ * @returns {string|null}
+ */
+function _v6ReleaseCommitFor(version) {
+  if (version === 'current') return null;
+  const tag = `v${String(version).replace(/^v/, '')}`;
+  try {
+    return require('node:child_process').execFileSync('git', ['rev-list', '-n', '1', tag], {
+      cwd: __dirname, encoding: 'utf8'
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parsed `roadmap-sync-status.json`, or null when this machine cannot read
+ * it (#3166) -- the same "external, read-only-to-this-checkout, degrade
+ * gracefully" contract {@link _v6LoadRoadmapData} already follows for
+ * `roadmap2-data.json`. `null` here is a real, meaningful answer to
+ * {@link module:lib/native-sprint-tracker.validateRoadmapSyncStatus}: "could
+ * not read the status file" fails closed exactly like a status file that
+ * reads unhealthy, never like one that was never asked about at all (which
+ * is what omitting the `getSyncStatus` dep entirely means instead).
+ * @returns {*}
+ */
+function _v6LoadRoadmapSyncStatus() {
+  try {
+    return JSON.parse(fs.readFileSync(
+      process.env.TANGLECLAW_ROADMAP_SYNC_STATUS_PATH || ROADMAP_SYNC_STATUS_DEFAULT_PATH, 'utf8'
+    ));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The Sprint Reports Hub's own `index.html` text, or null when this machine
+ * cannot read it (#3166) -- same degrade-gracefully contract as
+ * {@link _v6LoadRoadmapSyncStatus}.
+ * @returns {string|null}
+ */
+function _v6LoadReportsHubHtml() {
+  try {
+    return fs.readFileSync(process.env.TANGLECLAW_SPRINT_REPORTS_HUB_PATH || SPRINT_REPORTS_HUB_DEFAULT_PATH, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The roadmap data `GET /api/sprint-waves` grounds its release grouping and
  * PR links in (#3134): the real `roadmap2-data.json` when this machine can
  * read it, else a minimal roadmap this checkout can build from its own
@@ -11191,12 +11345,7 @@ function _v6LoadRoadmapData() {
   } catch { /* unreadable, missing, or not this shape -- fall through to the fallback below */ }
 
   const nativeSprintTracker = require('./lib/native-sprint-tracker');
-  let docsReleaseVersions = [];
-  try {
-    const docsReleasesDir = process.env.TANGLECLAW_DOCS_RELEASES_DIR || path.join(__dirname, 'docs', 'releases');
-    docsReleaseVersions = fs.readdirSync(docsReleasesDir)
-      .map((f) => /^v?(\d+\.\d+(?:\.\d+)?)[.-]/.exec(f)).filter(Boolean).map((m) => m[1]);
-  } catch { /* docs/releases may not exist in every checkout */ }
+  const docsReleaseVersions = _v6DocsReleaseVersions();
   let laneQueueText = null;
   try {
     laneQueueText = fs.readFileSync(process.env.TANGLECLAW_LANE_QUEUE_PATH || LANE_QUEUE_DEFAULT_PATH, 'utf8');
@@ -11272,11 +11421,15 @@ async function _v6SprintGithubActivity() {
   const nativeSprintTracker = require('./lib/native-sprint-tracker');
   const { createSprintWaveRouter } = require('./lib/routes/sprint-wave-routes');
   const waveRuns = () => new c3Waves.SqliteSchedulerStore(v6Db()).read().runs;
-  const sprintWaves = createSprintWaveRouter({
+  const sprintWaveDeps = {
     getSprintData: () => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), 'current'),
     getSprintDataForVersion: (version) => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), version),
     getRoadmapData: () => _v6LoadRoadmapData(),
     getGithubActivity: () => _v6SprintGithubActivity(),
+    // #3162/#3164.
+    getShippedVersions: () => _v6ShippedVersions(),
+    getReports: () => _v6ReportsCatalog(),
+    getReleaseCommit: (version) => _v6ReleaseCommitFor(version),
     authorizeSync: (req, res) => {
       if (resolveControlCaller(req).kind === 'master') return true;
       return Boolean(_requireOperatorWrite(req, res, {
@@ -11291,7 +11444,23 @@ async function _v6SprintGithubActivity() {
         gateUnsupported: (gateState) => `The sprint roadmap cannot be synced while the login gate is "${gateState}".`
       }));
     }
-  });
+  };
+  // #3166: wired only when THIS install can actually reach a sync-status
+  // source -- checked once at mount time, not per-request. Omitting the dep
+  // entirely (never calling it with a value that resolves to null) is what
+  // keeps `roadmapSyncStatus` absent for every install other than this one
+  // operator's own machine, exactly as it read before #3166: a machine with
+  // no shared TangleClaw-Shared checkout (every other operator, CI, this
+  // repo's own test suite) was never "configured to check" in the first
+  // place, and must not read as a false "roadmap sync degraded" alarm just
+  // because it lacks a file it never had any reason to have.
+  const syncStatusPath = process.env.TANGLECLAW_ROADMAP_SYNC_STATUS_PATH || ROADMAP_SYNC_STATUS_DEFAULT_PATH;
+  const reportsHubPath = process.env.TANGLECLAW_SPRINT_REPORTS_HUB_PATH || SPRINT_REPORTS_HUB_DEFAULT_PATH;
+  if (fs.existsSync(syncStatusPath) || fs.existsSync(reportsHubPath)) {
+    sprintWaveDeps.getSyncStatus = () => _v6LoadRoadmapSyncStatus();
+    sprintWaveDeps.getReportsHubHtml = () => _v6LoadReportsHubHtml();
+  }
+  const sprintWaves = createSprintWaveRouter(sprintWaveDeps);
   for (const endpoint of sprintWaves.endpoints) {
     route(endpoint.method, endpoint.pattern, (req, res, params, body) => endpoint.handler(req, res, params, body));
   }
