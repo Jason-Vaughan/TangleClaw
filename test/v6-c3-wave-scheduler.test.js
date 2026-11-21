@@ -364,6 +364,32 @@ describe('SqliteSchedulerStore', () => {
     assert.equal(scheduler.reconcileRun('r').status, 'complete');
   });
 
+  it('#3163: read() backfills createdAt from the created_at column when state_json omits it', () => {
+    const db = new DatabaseSync(':memory:');
+    const store = new SqliteSchedulerStore(db);
+    const { scheduler } = setup({ store });
+    scheduler.createRun({ id: 'r', fleetId: 'f', cars: [{ id: 'a', fileScope: ['x'] }] });
+    // Simulate a run whose state_json never carried createdAt (the v6.5.2
+    // bug) -- the created_at SQLite column itself is NOT NULL and always
+    // has a real value, independent of what state_json says.
+    const row = db.prepare('SELECT state_json, created_at FROM v6_wave_runs WHERE id = ?').get('r');
+    const stripped = JSON.parse(row.state_json);
+    delete stripped.createdAt;
+    db.prepare('UPDATE v6_wave_runs SET state_json = ? WHERE id = ?').run(JSON.stringify(stripped), 'r');
+    const reopened = new SqliteSchedulerStore(db).read();
+    assert.equal(reopened.runs.r.createdAt, row.created_at);
+  });
+
+  it('#3163: read() never overwrites a createdAt state_json already carries', () => {
+    const db = new DatabaseSync(':memory:');
+    const store = new SqliteSchedulerStore(db);
+    const { scheduler } = setup({ store });
+    scheduler.createRun({ id: 'r', fleetId: 'f', cars: [{ id: 'a', fileScope: ['x'] }] });
+    const before = store.read().runs.r.createdAt;
+    assert.equal(typeof before, 'number');
+    assert.equal(new SqliteSchedulerStore(db).read().runs.r.createdAt, before);
+  });
+
   it('rolls back every write when the transaction throws', () => {
     const db = new DatabaseSync(':memory:');
     const store = new SqliteSchedulerStore(db);
