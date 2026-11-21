@@ -41,6 +41,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-21 — Car V653-W1-A: wave-scheduler createdAt backfill & wide tmux geometry (#3163, #3167)
+
+<!-- prawduct: type=bugfix | scope=v653-w1-a-wave-scheduler-tmux -->
+
+- Fixed `SqliteSchedulerStore#read()` (`lib/v6/c3-wave-scheduler.js`) returning `createdAt: null`
+  ("Invalid Date" in the Sprint & Cars UI) for a wave run whose `state_json` omits it: the SQLite
+  `created_at` column is `NOT NULL` and always carries a real value, so `read()` now backfills
+  `run.createdAt` from it (falling back to `run.updatedAt`, then `null`) only when `state_json`
+  itself does not already carry one — a run that already has its own `createdAt` is left
+  unchanged (#3163).
+- Fixed `lib/tmux.js` creating detached sessions with tmux's own `80x24` default instead of a
+  usable width: `_newSessionCommand`/`_tccNewSessionCommand` now pass `-x 200 -y 50`
+  (`DEFAULT_TMUX_COLS`/`DEFAULT_TMUX_ROWS`), and a new `ensureMinWindowWidth` helper, invoked from
+  `capturePane`, restores a session's window back to that width whenever a narrow mobile/browser
+  client has shrunk it below `MIN_TMUX_COLS` (120) — tmux never grows a window back on its own
+  once such a client detaches, so a session was otherwise stuck chopping TUI output at whatever
+  column count the narrowest client that ever attached left it at (#3167).
+- Dispatched by `TC-Lane-INT` via Medusa (Car V653-W1-A, Gate 1 Pre-Dispatch: `OBSR-OGATE-V653-PRE-DISPATCH-PASS`
+  + Arc Ruling A856 `ARC-GATE1-V653-D173F071-PASS`), base `origin/main @ d173f071` (PR #3161, v6.5.2
+  release cut, verified against the live repo before branching). The sprint charter
+  (`v653-sprint-charter.md`) and `LANE_QUEUE.md`'s `W1-A (Car V653-W1-A)` row both carry the
+  matching file-scope grant (`lib/v6/c3-wave-scheduler.js`, `lib/tmux.js`,
+  `test/v6-c3-wave-scheduler.test.js`, `test/tmux.test.js`, `changelog.d/3163.*.md`).
+
 ## 2026-11-20 — v6.5.2 release cut (Milestone #87), Car V652-W2-REL
 
 <!-- prawduct: type=internal | scope=v652-release -->

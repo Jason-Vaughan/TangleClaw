@@ -541,6 +541,79 @@ describe('tmux', () => {
     });
   });
 
+  describe('createSession - window geometry (#3167)', () => {
+    it('creates a detached session with wide 200x50 geometry, not tmux\'s own 80x24 default', () => {
+      const testSession = uniqueSessionName('geometry');
+      try {
+        tmux.createSession(testSession, { command: 'exec bash' });
+        const { execSync } = require('node:child_process');
+        const dims = execSync(
+          `tmux display-message -p -t ${testSession} '#{window_width}x#{window_height}'`,
+          { encoding: 'utf8', timeout: 3000 }
+        ).trim();
+        assert.equal(dims, `${tmux.DEFAULT_TMUX_COLS}x${tmux.DEFAULT_TMUX_ROWS}`);
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+
+    it('_tccNewSessionCommand carries the same wide -x/-y geometry as the default-server builder', () => {
+      const cmd = tmux._tccNewSessionCommand('name-1', {});
+      assert.match(cmd, new RegExp(`-x ${tmux.DEFAULT_TMUX_COLS} -y ${tmux.DEFAULT_TMUX_ROWS}`));
+    });
+  });
+
+  describe('ensureMinWindowWidth (#3167)', () => {
+    const { execSync } = require('node:child_process');
+    const dims = (name) => execSync(
+      `tmux display-message -p -t ${name} '#{window_width}x#{window_height}'`,
+      { encoding: 'utf8', timeout: 3000 }
+    ).trim();
+
+    it('resizes a window narrowed below minCols back up to targetCols/targetRows', () => {
+      const testSession = uniqueSessionName('ensure-narrow');
+      try {
+        tmux.createSession(testSession, { command: 'exec bash' });
+        execSync(`tmux resize-window -t ${testSession} -x 60 -y 20`);
+        assert.equal(dims(testSession), '60x20', 'the shrink itself took effect');
+        tmux.ensureMinWindowWidth(testSession, { minCols: 120, targetCols: 200, targetRows: 50 });
+        assert.equal(dims(testSession), '200x50');
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+
+    it('leaves a window at or above minCols alone', () => {
+      const testSession = uniqueSessionName('ensure-wide-enough');
+      try {
+        tmux.createSession(testSession, { command: 'exec bash' });
+        assert.equal(dims(testSession), '200x50');
+        tmux.ensureMinWindowWidth(testSession, { minCols: 100 });
+        assert.equal(dims(testSession), '200x50', 'a 200-column window is already >= a 100-column floor');
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+
+    it('resizes using whatever minCols/targetCols/targetRows the caller passes, not just the module defaults', () => {
+      const testSession = uniqueSessionName('ensure-custom');
+      try {
+        tmux.createSession(testSession, { command: 'exec bash' });
+        assert.equal(dims(testSession), '200x50');
+        // 200 < 250, so this must resize even though 200 already satisfies the
+        // module's own DEFAULT_TMUX_COLS/MIN_TMUX_COLS.
+        tmux.ensureMinWindowWidth(testSession, { minCols: 250, targetCols: 300, targetRows: 60 });
+        assert.equal(dims(testSession), '300x60');
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+
+    it('is best-effort: never throws for a session that does not exist', () => {
+      assert.doesNotThrow(() => tmux.ensureMinWindowWidth(uniqueSessionName('ensure-absent')));
+    });
+  });
+
   describe('createSession - launch env injection', () => {
     const testSession = uniqueSessionName('launchenv');
     const os = require('node:os');
@@ -867,7 +940,7 @@ describe('tmux', () => {
         const command = 'export PATH="/x y/bin:$PATH"; claude --dangerously-skip-permissions';
         const cmd = tmux._newSessionCommand('name-1', { cwd: '/a b/c', command, env: PROJECT });
         assert.equal(cmd, [
-          "tmux new-session -d -P -F '#{pane_id} #{pid}.#{start_time}' -s 'name-1' -c '/a b/c'",
+          "tmux new-session -d -x 200 -y 50 -P -F '#{pane_id} #{pid}.#{start_time}' -s 'name-1' -c '/a b/c'",
           "-e 'TANGLECLAW_LAUNCH_ID=L-project' -e 'TANGLECLAW_PROJECT_ID=14'",
           "-e 'TANGLECLAW_ROLE=' -e 'TANGLECLAW_WORKSPACE_ID='",
           `'${command}'`
@@ -1816,7 +1889,12 @@ describe('tmux', () => {
       // `_cancelStrayCopyMode`'s `send-keys -X cancel`, called at the top of
       // `sendKeys` to clear any such overlay before it pastes. All three go
       // through `_target()`, like every other site here.
-      assert.equal(targets.length, 37, `expected 37 -t sites in lib/tmux.js, found ${targets.length}`);
+      // 39 since `ensureMinWindowWidth` (#3167) added two: a `display-message`
+      // reading `window_width`, and a `resize-window` that restores wide
+      // geometry when a narrow client shrank it. Both go through `_target()`,
+      // and it checks the session exists first, for the reason
+      // `paneCurrentPath`/`visiblePane` do.
+      assert.equal(targets.length, 39, `expected 39 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,
