@@ -18,7 +18,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
 
-**Latest release:** `v6.5.3` — “The Charter & Roadmap panel now classifies every shipped release correctly instead of showing it all as upcoming, Kaizen & Reports gets a real reports catalog and release/PR KPIs for shipped sprints, the chat stream spans the full pane width with a universal 4-engine busy indicator, the Fleet Setup Wizard stops rendering twice, and Under the Hood keeps full scrollback instead of truncating replies when collapsed” ([release status](docs/releases/v6.5.3.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.5.3` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.5.3/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
+**Latest release:** `v6.5.4` — “The V6 shell's chat stream, Under the Hood pane, and composer scroll internally again instead of overflowing the viewport, a dragged or saved composer/Under the Hood height can no longer push the chat input off-screen, the per-engine usage indicator now shows each engine's next 5-hour and weekly reset countdown and timestamp, and a shipped version's Gate 4 post-sprint report is checked for real content rather than a live-tracking placeholder before the roadmap calls it settled” ([release status](docs/releases/v6.5.4.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.5.4` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.5.4/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
 
 One AI coding agent is easy. Five are not. They forget what the last session decided, edit the same files, fight over the same ports, and wait silently for an answer you did not know they needed. You end up watching terminals.
 
@@ -52,7 +52,7 @@ TangleClaw is developed with TangleClaw. Its own Builder, Project Manager and re
 
 ```bash
 # macOS. What the installer does, and what you need first: Quick Start, below
-git clone --branch v6.5.3 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.5.4 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw && ./deploy/install.sh
 ```
 
@@ -186,7 +186,7 @@ Most importantly, TangleClaw enforces strict safety boundaries, ensuring that wh
 ## Quick Start
 
 ```bash
-git clone --branch v6.5.3 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.5.4 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw
 ./deploy/install.sh
 ```

@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.5.3 — Charter & Roadmap release classification, Kaizen reports catalog, full-width chat, and Wizard/UTH fixes](v6.5.3.md)
+- [v6.5.4 — V6 scroll & chat reachability restoration, per-engine next-reset countdown, and Gate 4 post-sprint report enforcement](v6.5.4.md)
 
 ## Recent releases
+
+- [v6.5.3 — Charter & Roadmap release classification, Kaizen reports catalog, full-width chat, and Wizard/UTH fixes](v6.5.3.md)
 
 - [v6.5.2 — Full-viewport V6 layout, 3-pane resizers, generic overview, TCC bootstrap recovery, and targeted Medusa wakes](v6.5.2.md)
 
