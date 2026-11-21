@@ -2263,21 +2263,28 @@
     // prose to the terminal's column width rather than the browser pane's.
     // There is no marker in captured tmux text saying "this line only ended
     // because the pane ran out of columns"; the signal used instead is the
-    // PREVIOUS line's own length — only a line close to the pane's full
-    // width (`WRAP_WIDTH_THRESHOLD`, comfortably under the #3167 tmux
-    // geometry of 200 columns) could have been cut off by it, so a short
-    // line is never merged into. A blank line, a heading, a list item, or a
-    // fenced code block's own lines are never merged — true paragraph
-    // breaks, list items and code must survive exactly as the engine wrote
-    // them, verbatim inside a fence.
-    const WRAP_WIDTH_THRESHOLD = 150;
+    // PREVIOUS line's own length — only a line at least `WRAP_WIDTH_THRESHOLD`
+    // long could plausibly have been cut off (a real 4-line wrapped question,
+    // Ruling A864: its first line, bulleted, already runs 60-66 chars once
+    // the bullet itself is stripped, well under the #3167 tmux geometry's 200
+    // columns — an engine's own markdown/word-wrap rarely fills the pane to
+    // the literal column edge), so a short line is never merged into. A blank
+    // line, a heading, a list item, or a fenced code block's own lines are
+    // never merged — true paragraph breaks, list items and code must survive
+    // exactly as the engine wrote them, verbatim inside a fence.
+    const WRAP_WIDTH_THRESHOLD = 55;
     const NEW_REPLY_BLOCK = /^#{1,6}\s/;
     const FENCE_DELIM = /^(?:```|~~~)/;
     let replyLineLen = 0;
     let inFence = false;
-    const appendReplyLine = (txt) => {
+    // `hasBullet` (Ruling A864): the bullet-stripping call site below strips
+    // `⏺ `/`• ` from `txt` BEFORE this runs, so `QUESTION_PREFIX` alone can no
+    // longer see it there — passed in so a bulleted line still starts its own
+    // block (never gets merged into whatever reply content came before it)
+    // even though the text it is classifying on has already lost the bullet.
+    const appendReplyLine = (txt, hasBullet = false) => {
       const isFenceDelim = FENCE_DELIM.test(txt);
-      const startsNewBlock = !inFence && (isFenceDelim || NEW_REPLY_BLOCK.test(txt) || QUESTION_PREFIX.test(txt));
+      const startsNewBlock = !inFence && (hasBullet || isFenceDelim || NEW_REPLY_BLOCK.test(txt) || QUESTION_PREFIX.test(txt));
       const mergeIntoLast = !inFence && !startsNewBlock && reply.length > 0 && replyLineLen >= WRAP_WIDTH_THRESHOLD;
       if (mergeIntoLast) reply[reply.length - 1] += ` ${txt}`;
       else reply.push(txt);
@@ -2387,7 +2394,7 @@
       }
       block = 'reply';
       activity = null;
-      appendReplyLine(text.replace(LIVE_BULLET, ''));
+      appendReplyLine(text.replace(LIVE_BULLET, ''), LIVE_BULLET.test(text));
     });
     flush();
     const last = turns[turns.length - 1];
@@ -3716,15 +3723,32 @@
   }
 
   /**
+   * The `idleReason` values `GET /api/sessions/:name/status` reports that
+   * mean an engine is GENUINELY working (#3167, Ruling A864): exactly the
+   * three `lib/medusa-wake.js#_assessActivity` sets when it finds the
+   * engine mid-turn. `idle === false` ALONE is not enough — the same route
+   * also reports `idle: false` with `idleReason: null` for a row with no
+   * reachable pane probe at all (nothing is known, not "it is busy"), and
+   * `idleReason: 'settling'` for a session that IS at rest but has not
+   * held still long enough yet to clear `lib/sessions.js#detectAtPrompt`'s
+   * wall-clock floor — both would have been misread as busy without this.
+   */
+  const STATUS_BUSY_REASONS = new Set(['turn-in-flight', 'not-at-rest', 'agents-running']);
+
+  /** @param {{idle?: boolean, idleReason?: string|null}|null} s @returns {boolean} */
+  function isSessionStatusBusy(s) {
+    return Boolean(s && s.idle === false && STATUS_BUSY_REASONS.has(s.idleReason));
+  }
+
+  /**
    * What the chat is busy with (#3057, extended by #3167): what the engine
    * reports from the live pane text, else — across all 4 engines, since
    * this reads the server's own `GET /api/sessions/:name/status` signal
-   * rather than the pane — `Working` while that status is NOT at rest
-   * (`idle === false`, whatever the reason: `turn-in-flight`, `not-at-rest`,
-   * or any later reason this route adds), else `Working` while a send is on
-   * its way.
+   * rather than the pane — `Working` while that status names one of the
+   * genuinely-working reasons above, else `Working` while a send is on its
+   * way.
    * @param {object} chat - A conversation view's `chat`; `chat.statusBusy`
-   *   is `status.idle === false` from the session status poll (#3167).
+   *   is `isSessionStatusBusy(status)` from the session status poll (#3167).
    * @returns {string|null}
    */
   function chatBusyLabel(chat) {
@@ -5196,11 +5220,9 @@
       const sessionId = status && status.active && status.sessionId != null ? status.sessionId : null;
       const chat = Object.assign({}, ctx, {
         status: sessionId == null ? 'offline' : (status.idle ? 'idle' : 'active'),
-        // #3167: the universal, engine-agnostic busy signal — true whenever
-        // the server's own idle gate says this session is not at rest,
-        // whatever the reason (turn-in-flight, not-at-rest, ...), read
-        // alongside LIVE_BUSY's own pane-text detection in chatBusyLabel.
-        statusBusy: status != null && status.idle === false,
+        // #3167: the universal, engine-agnostic busy signal, read alongside
+        // LIVE_BUSY's own pane-text detection in chatBusyLabel.
+        statusBusy: isSessionStatusBusy(status),
         send: sendOutcome || null,
         inFlight: (sendsInFlight.get(String(project.id)) || 0) > 0
       });
@@ -5283,7 +5305,7 @@
           const nextMedusa = medusaView(nextMedusaStatus, nextLive, current.view.chat && current.view.chat.medusa);
           const lastSent = lastSentFor(current.project);
           const thumbs = thumbsFor(current.project, current.view.events, nextLive);
-          const statusBusy = nextSessionStatus != null && nextSessionStatus.idle === false;
+          const statusBusy = isSessionStatusBusy(nextSessionStatus);
           current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next, live: nextLive, medusa: nextMedusa, lastSent, thumbs, statusBusy }) });
           const sh = getShell();
           if (sh && typeof sh.setLive === 'function') sh.setLive({ peek: next, live: nextLive, medusa: nextMedusa, lastSent, thumbs, statusBusy });
@@ -9473,6 +9495,7 @@
   global.tcV6HoodKeyAction = hoodKeyAction;
   global.tcV6FormatElapsed = formatElapsed;
   global.tcV6ExtractLiveTurns = extractLiveTurns;
+  global.tcV6IsSessionStatusBusy = isSessionStatusBusy;
   global.tcV6MessageMarkup = messageMarkup;
   global.tcV6UsageMeterModel = usageMeterModel;
   global.tcV6UsageMeterMarkup = usageMeterMarkup;

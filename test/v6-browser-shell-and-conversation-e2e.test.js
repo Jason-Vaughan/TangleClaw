@@ -485,24 +485,18 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.doesNotMatch(root.innerHTML, /id="v6ChatShowFleet"/);
     });
 
-    it('a send the real command route refuses still shows the refusal, and is busy throughout from the session\'s own real status (#3057, #3166)', async () => {
+    it('a send the real command route refuses does not leave the chat reading as Working (#3057)', async () => {
       const pid = seedProject('e2e-busy-refused');
       store.getDb().prepare(
         "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
       ).run(pid);
       const { root, settle, calls, doc } = mountShell(`#/resources/${pid}/conversation`);
       await settle();
-      // #3167: this seeded row's real GET /api/sessions/:name/status answers
-      // idle: false (an "active" session row with no reachable pane probe
-      // still reports not-at-rest), which chatBusyLabel now reads as a second,
-      // engine-agnostic busy signal alongside live.activity -- so this fixture
-      // reads busy from the moment it mounts, for a reason unrelated to the
-      // send below. The original #3057 regression this test guards against
-      // (a refused send's own optimistic "Working" getting stuck) is still
-      // checked: the refusal's error message must appear, and the busy state
-      // must come only from the real status signal throughout, never an
-      // additional one the refused send itself leaves behind.
-      assert.match(root.innerHTML, /v6-chat-activity is-busy/);
+      // #3167, Ruling A864: this seeded row's real GET /api/sessions/:name/status
+      // answers idle: false with idleReason: null (no reachable pane probe at all,
+      // not "it is busy") -- isSessionStatusBusy requires idleReason to be one of
+      // the 3 genuinely-working reasons, so this correctly reads idle throughout.
+      assert.doesNotMatch(root.innerHTML, /v6-chat-activity is-busy/);
       const input = doc.getElementById('v6ChatInput');
       input.value = 'are you there?';
       input.dispatch('input');
@@ -510,7 +504,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       await settle();
       assert.ok(calls.includes('POST /api/sessions/e2e-busy-refused/command'));
       assert.match(root.innerHTML, /is-error[^>]*>Not sent:/);
-      assert.match(root.innerHTML, /<p id="v6ChatActivity" class="v6-chat-activity is-busy"[^>]*><span class="v6-chat-activity-label">Working<\/span>/);
+      assert.match(root.innerHTML, /<p id="v6ChatActivity" class="v6-chat-activity" aria-live="polite"><\/p>/);
     });
 
     it('a project route marks its delegate lane in the sidebar and shows the one-row icon toolbar (#3059)', async () => {

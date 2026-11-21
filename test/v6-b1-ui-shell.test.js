@@ -2606,19 +2606,41 @@ describe('tcV6ExtractLiveTurns (#3052)', () => {
 describe('tcV6ExtractLiveTurns unwraps soft-wrapped terminal lines into flowing prose (#3167)', () => {
   const G = loadV6Shell();
   const run = (lines) => plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
-  // Below WRAP_WIDTH_THRESHOLD (150): ordinary short lines, the terminal
-  // could not have cut these off, so each stays its own line -- the
-  // pre-#3167 behavior every other describe block in this file relies on.
+  // Below WRAP_WIDTH_THRESHOLD (55, Ruling A864 -- every existing short
+  // standalone line fixture in this file is <= 42 chars): the terminal could
+  // not have cut these off, so each stays its own line -- the pre-#3167
+  // behavior every other describe block in this file relies on.
   const long = (n) => 'x'.repeat(n);
 
-  it('joins a line at least 150 chars with the short line that completes it, with one space', () => {
-    const out = run(['> go', `${long(150)} and the rest of the sentence.`]);
-    assert.equal(out.turns[1].text, `${long(150)} and the rest of the sentence.`);
+  it('joins a line at least 55 chars with the short line that completes it, with one space', () => {
+    const out = run(['> go', `${long(55)} and the rest of the sentence.`]);
+    assert.equal(out.turns[1].text, `${long(55)} and the rest of the sentence.`);
   });
 
   it('leaves two short lines (neither near the pane width) exactly as the engine wrote them', () => {
     const out = run(['> go', 'Short first line.', 'Short second line.']);
     assert.equal(out.turns[1].text, 'Short first line.\nShort second line.');
+  });
+
+  // #3167, Ruling A864: the real-world case this threshold was tuned for -- a
+  // 4-line bulleted question, each line 60-66 chars once stripped, well under
+  // the old 150 threshold (which would have left it entirely unwrapped) but
+  // over the new 55. The first line's leading "• " is stripped by the bullet
+  // call site before appendReplyLine ever sees it, so hasBullet (passed in
+  // separately) is what keeps it starting its own block rather than merging
+  // into whatever reply content came before it.
+  it('unwraps a real 4-line bulleted wrapped question into one flowing line (Ruling A864)', () => {
+    const out = run(['> go', 'Earlier, unrelated reply.', '',
+      '• Would you like me to draft a clean patch or GitHub issue to move',
+      '  the Fleet Setup Wizard exclusively into its own tab/modal and make',
+      '  the project header show the live conversation context in one',
+      '  place?']);
+    // LIVE_BULLET strips the "• " from the first line before appendReplyLine
+    // ever sees it -- hasBullet (passed in separately) is what classification
+    // reads instead, so the stripped text itself carries no bullet through.
+    assert.equal(out.turns[1].text, 'Earlier, unrelated reply.\n'
+      + 'Would you like me to draft a clean patch or GitHub issue to move the Fleet Setup Wizard exclusively into its own tab/modal and make the project header show the live conversation context in one place?');
+    assert.equal(out.question, 'Would you like me to draft a clean patch or GitHub issue to move the Fleet Setup Wizard exclusively into its own tab/modal and make the project header show the live conversation context in one place?');
   });
 
   it('never merges across a blank-line paragraph break, even after a long line', () => {
@@ -2700,6 +2722,35 @@ describe('Above-the-Hood chat view (#3052)', () => {
     const html = G.tcV6ConversationViewMarkup(view({ live: { turns: [], question: null, activity: null }, statusBusy: false }));
     assert.match(html, /<p id="v6ChatActivity" class="v6-chat-activity"[^>]*><\/p>/);
     assert.match(html, /<span id="v6UthStatus" class="v6-uth-status" aria-hidden="true"><\/span>/);
+  });
+
+  // #3167, Ruling A864: idle === false alone is NOT enough -- the status route
+  // also answers idle: false with idleReason: null for a row with no reachable
+  // pane probe at all (nothing is known, not "it is busy"), and idleReason:
+  // 'settling' for a session that IS at rest but hasn't held still long enough
+  // yet to clear detectAtPrompt's wall-clock floor. Only the 3 reasons
+  // lib/medusa-wake.js#_assessActivity sets when it finds the engine mid-turn
+  // count as genuinely busy.
+  describe('tcV6IsSessionStatusBusy (#3167, Ruling A864)', () => {
+    it('is busy only for the 3 genuinely-working idleReason values', () => {
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'turn-in-flight' }), true);
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'not-at-rest' }), true);
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'agents-running' }), true);
+    });
+
+    it('is NOT busy for idle: false with no real information or a transient settling window', () => {
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: null }), false, 'unprobed row');
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'settling' }), false, 'at rest, not held still long enough yet');
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'pane-writing' }), false, 'transcript moving, not necessarily a turn');
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false }), false, 'idleReason absent entirely');
+    });
+
+    it('is NOT busy when idle is true or unknown, whatever idleReason says', () => {
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: true, idleReason: 'turn-in-flight' }), false);
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: null, idleReason: 'turn-in-flight' }), false);
+      assert.equal(G.tcV6IsSessionStatusBusy(null), false);
+      assert.equal(G.tcV6IsSessionStatusBusy(undefined), false);
+    });
   });
 
   it('puts the raw output in a collapsed Under the Hood drawer, open only when asked', () => {
