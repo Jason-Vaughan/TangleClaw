@@ -254,7 +254,8 @@
       <span>TangleClaw Autonomous Sprint Reports</span>
     </div>
     <div class="nav-links">
-      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.3/">v6.5.3 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.4/">v6.5.4 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.3/">v6.5.3</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.2/">v6.5.2</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.1/">v6.5.1</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.0/">v6.5.0</a>
@@ -332,8 +333,8 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">Published Sprint Reports</div>
-          <div class="kpi-val">63 Releases</div>
-          <div class="kpi-sub"><code>v5.34.0</code>–<code>v6.5.3</code> + <code>v6.2.2–v6.4.0</code>, <code>v6.0.0–v6.2.1</code>, <code>v5.68.0–v5.71.0</code>, <code>v5.65.0–v5.66.0</code>, <code>v5.62.0–v5.64.0</code>, <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
+          <div class="kpi-val">64 Releases</div>
+          <div class="kpi-sub"><code>v5.34.0</code>–<code>v6.5.4</code> + <code>v6.2.2–v6.4.0</code>, <code>v6.0.0–v6.2.1</code>, <code>v5.68.0–v5.71.0</code>, <code>v5.65.0–v5.66.0</code>, <code>v5.62.0–v5.64.0</code>, <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
@@ -347,42 +348,40 @@
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Release Report</div>
-          <div class="kpi-val" style="color:var(--green);">v6.5.3</div>
-          <div class="kpi-sub">Tag <code>v6.5.3 @ a0efc33a</code> (Merge <code>a0efc33a</code>) · Milestone <code>#88</code> (<code>6/6</code> Closed: <code>#3162–#3167</code>)</div>
+          <div class="kpi-val" style="color:var(--green);">v6.5.4</div>
+          <div class="kpi-sub">Tag <code>v6.5.4 @ 89f6bc09</code> (Merge <code>89f6bc09</code>) · Milestone <code>#90</code> (<code>3/3</code> Closed: <code>#3173–#3175</code>)</div>
         </div>
       </div>
     </section>
 
     <div class="report-list">
-      <!-- LIVE_SPRINT_CARD_START -->
-      <article class="report-card" style="border-color:rgba(56,189,248,0.65);background:linear-gradient(135deg,rgba(15,23,42,0.96),rgba(14,116,144,0.18));">
+      <!-- v6.5.4 Card -->
+      <article class="report-card">
         <div class="report-header">
           <div>
-            <span class="badge badge-cyan">● Live Sprint In Progress · Updated 2026-11-21 20:21 UTC</span>
-            <h2 class="report-title"><a href="./v6.5.4/">TangleClaw <code>v6.5.4</code> — Live Wave &amp; Gate Tracker</a></h2>
+            <span class="badge badge-green">● Latest Release · Nov 21, 2026 (Rulings A869–A880)</span>
+            <h2 class="report-title"><a href="./v6.5.4/">TangleClaw <code>v6.5.4</code>: “V6 Scroll &amp; Chat Reachability Restoration, Per-Engine Next-Reset Countdown in Usage Indicator &amp; Gate 4 Post-Sprint Report Enforcement”</a></h2>
           </div>
-          <span class="badge badge-purple">0/5 Cars Merged · 0 In Review</span>
+          <span class="badge badge-cyan">Tag v6.5.4 → 89f6bc09 · 5/5 True Merges (#3176–#3180) &amp; Milestone #90 Closed</span>
         </div>
         <p style="color:#cbd5e1; margin:0;">
-          <strong>Live Sprint Telemetry (Auto-Synced from <code>LANE_QUEUE.md</code>):</strong> TangleClaw — Active Lane Queue (`Sprint v6.5.4` Staged for Post-Continuity Launch; `v6.5.3` &amp; `v6.5.2` Shipped).
-          Current wave status: <code>W1-A (Car V654-W1-A): STAGED (Wave 1 · Parallel Lane 1 of 4) · W1-B (Car V654-W1-B): STAGED (Wave 1 · Parallel Lane 2 of 4) · W1-C (Car V654-W1-C): STAGED (Wave 1 · Parallel Lane 3 of 4) · W1-D (Car V654-W1-D): STAGED (Wave 1 · Parallel Lane 4 of 4) · W2-REL (Car V654-W2-REL): QUEUED (Wave 2 Single-Stream — After Wave 1 M</code>.
-          Open the live interactive report below to inspect real-time car progress, Builder/PRR lane assignments, and gate statuses as waves progress.
+          Restored internal V6 pane and chat stream/composer scrolling and viewport-clamped drag/restored heights without outer viewport wiggle (<code>#3173</code>), surfaced per-engine 5-hour and weekly next-reset countdown and UTC timestamp badges in the bottom frontier engine usage indicator and <code>tc usage</code> CLI probe (<code>#3174</code>), and enforced settled Gate 4 post-sprint reports (What Worked, What Didn&apos;t &amp; 16-Point Rule #283 table) in <code>GET /api/sprint-waves</code> and <code>GET /api/sprint-reports/:version</code> (<code>#3175</code>).
         </p>
         <div class="meta-pills">
-          <span class="badge badge-cyan">5 Chartered Wave Rows</span>
-          <span class="badge badge-green">0 Merged · 0 In Review</span>
-          <span class="badge badge-purple">State: STAGED FOR GATE 0 &amp; POST-CONTINUITY WAVE 1 DISPATCH (Milestone #90 — 3 issues #3173–#3175 across 4 file-disjoint Wave 1 Cars + Wave 2 Release Cut)</span>
+          <span class="badge badge-green">⏱️ T_eng = 1.48h (Wave 1 + Release Cut · 0 CI Red Runs)</span>
+          <span class="badge badge-cyan">5/5 True Merges (#3176, #3177, #3178, #3179, #3180)</span>
+          <span class="badge badge-purple">Milestone #90: 3/3 Issues Closed (#3173–#3175)</span>
+          <span class="badge badge-green">Live :3102 Updated &amp; Gate 4 Certified (OBSR-OGATE-V654-SPRINT-EXIT-89F6BC09-PASS)</span>
         </div>
         <div class="actions">
-          <a class="btn btn-primary" href="./v6.5.4/">📡 Open v6.5.4 Live Sprint Tracker →</a>
+          <a class="btn btn-primary" href="./v6.5.4/">Open v6.5.4 Sprint Report →</a>
         </div>
       </article>
-      <!-- LIVE_SPRINT_CARD_END -->
       <!-- v6.5.3 Card -->
       <article class="report-card">
         <div class="report-header">
           <div>
-            <span class="badge badge-green">● Latest Release · Nov 21, 2026 (Rulings A856–A868)</span>
+            <span class="badge badge-green">● Release · Nov 21, 2026 (Rulings A856–A868)</span>
             <h2 class="report-title"><a href="./v6.5.3/">TangleClaw <code>v6.5.3</code>: “Top-Bar Workspace Menus (Sprint &amp; Cars, Charter &amp; Roadmap, Kaizen &amp; Reports, Wizard), Public SSOT Roadmap Sync Gate &amp; Chat/UTH Clarity”</a></h2>
           </div>
           <span class="badge badge-cyan">Tag v6.5.3 → a0efc33a · 5/5 True Merges (#3168–#3172) &amp; Milestone #88 Closed</span>
