@@ -8550,18 +8550,38 @@ describe('Car V651-W2-B: the automated CLI usage probe\'s own UI (#3132)', () =>
 describe('Car V654-W1-C: per-engine next-reset countdown/timestamp on the usage probe and meter (#3174)', () => {
   const G = loadV6Shell();
 
+  // R2 (PRRA-R1-V654-W1C-PR3176-9FDB9F6E-REVISE): formatResetBadge measures
+  // against live Date.now(), so a test timestamp must be computed relative
+  // to "now" at run time, never a hardcoded wall-clock value -- a fixed
+  // future date eventually becomes the past and silently flips these tests'
+  // own "Resets in ..." assertions to "Resets now ...".
+  const future = (hours) => new Date(Date.now() + hours * 3600000).toISOString();
+  const past = (hours) => new Date(Date.now() - hours * 3600000).toISOString();
+  const expectedStamp = (iso) => new Date(iso).toISOString().slice(0, 16).replace('T', ' ');
+
   it('a bar with a valid resetAt gets a "Resets in Xh Ym · <date> <time> UTC" badge, Week and 5h independently', () => {
+    const weeklyIso = future(50);
+    const fiveHourIso = future(2);
     const html = G.tcV6UsageProbeMarkup({
       claude: {
         status: 'configured',
-        weeklyRemainingPct: 62, weeklyResetAt: '2026-11-22T00:55:00.000Z',
-        fiveHourRemainingPct: 80, fiveHourResetAt: '2026-11-21T22:00:00.000Z'
+        weeklyRemainingPct: 62, weeklyResetAt: weeklyIso,
+        fiveHourRemainingPct: 80, fiveHourResetAt: fiveHourIso
       },
       codex: null,
       antigravity: null
     }, '30m');
-    assert.match(html, /<span class="v6-usage-probe-bar-value">62% left<\/span><span class="v6-usage-probe-reset">Resets in [^<]+ · 2026-11-22 00:55 UTC<\/span>/);
-    assert.match(html, /<span class="v6-usage-probe-bar-value">80% left<\/span><span class="v6-usage-probe-reset">Resets in [^<]+ · 2026-11-21 22:00 UTC<\/span>/);
+    assert.match(html, new RegExp(`<span class="v6-usage-probe-bar-value">62% left</span><span class="v6-usage-probe-reset">Resets in [^<]+ · ${expectedStamp(weeklyIso)} UTC</span>`));
+    assert.match(html, new RegExp(`<span class="v6-usage-probe-bar-value">80% left</span><span class="v6-usage-probe-reset">Resets in [^<]+ · ${expectedStamp(fiveHourIso)} UTC</span>`));
+  });
+
+  it('a resetAt already in the past renders "Resets now · <date> <time> UTC", never a negative countdown', () => {
+    const pastIso = past(1);
+    const html = G.tcV6UsageProbeMarkup({
+      claude: { status: 'configured', weeklyRemainingPct: 5, weeklyResetAt: pastIso, fiveHourRemainingPct: null },
+      codex: null, antigravity: null
+    });
+    assert.match(html, new RegExp(`<span class="v6-usage-probe-reset">Resets now · ${expectedStamp(pastIso)} UTC</span>`));
   });
 
   it('omits the reset badge entirely when resetAt is missing or unparsable, never a broken one', () => {
@@ -8578,28 +8598,32 @@ describe('Car V654-W1-C: per-engine next-reset countdown/timestamp on the usage 
   });
 
   it('a sub-tier (Fable, Antigravity non-native families) gets its own independent reset badge', () => {
+    const weeklyIso = future(100);
+    const fiveHourIso = future(3);
     const html = G.tcV6UsageProbeMarkup({
       claude: {
         status: 'configured', weeklyRemainingPct: 50, fiveHourRemainingPct: 50,
-        subTiers: { fable: { weeklyRemainingPct: 10, weeklyResetAt: '2026-11-25T12:00:00.000Z', fiveHourRemainingPct: 20, fiveHourResetAt: '2026-11-21T23:00:00.000Z' } }
+        subTiers: { fable: { weeklyRemainingPct: 10, weeklyResetAt: weeklyIso, fiveHourRemainingPct: 20, fiveHourResetAt: fiveHourIso } }
       },
       codex: null, antigravity: null
     });
     const subtier = html.slice(html.indexOf('data-subtier="fable"'));
-    assert.match(subtier, /Resets in [^<]+ · 2026-11-25 12:00 UTC/);
-    assert.match(subtier, /Resets in [^<]+ · 2026-11-21 23:00 UTC/);
+    assert.match(subtier, new RegExp(`Resets in [^<]+ · ${expectedStamp(weeklyIso)} UTC`));
+    assert.match(subtier, new RegExp(`Resets in [^<]+ · ${expectedStamp(fiveHourIso)} UTC`));
   });
 
   it('tcV6UsageMeterMarkup surfaces the same per-engine reset badges in the pill tooltip and the breakdown table row', () => {
+    const weeklyIso = future(50);
+    const fiveHourIso = future(2);
     const windows = { resetSchedule: { nextWeeklyResetAt: 'x', hoursUntilWeeklyReset: 1 }, byProviderModel: {}, calibration: {} };
     const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows), {
       open: true,
-      probe: { claude: { status: 'configured', weeklyRemainingPct: 50, weeklyResetAt: '2026-11-22T00:55:00.000Z', fiveHourRemainingPct: 90, fiveHourResetAt: '2026-11-21T22:00:00.000Z' } }
+      probe: { claude: { status: 'configured', weeklyRemainingPct: 50, weeklyResetAt: weeklyIso, fiveHourRemainingPct: 90, fiveHourResetAt: fiveHourIso } }
     });
     const pill = html.slice(html.indexOf('data-engine="claude"'), html.indexOf('</span></span>', html.indexOf('data-engine="claude"')));
-    assert.match(pill, /title="[^"]*Resets in [^"]*2026-11-22 00:55 UTC[^"]*2026-11-21 22:00 UTC[^"]*"/, 'both badges land in the tooltip, in Week-then-5h order');
+    assert.match(pill, new RegExp(`title="[^"]*Resets in [^"]*${expectedStamp(weeklyIso)} UTC[^"]*${expectedStamp(fiveHourIso)} UTC[^"]*"`), 'both badges land in the tooltip, in Week-then-5h order');
     const row = html.slice(html.indexOf('<tr data-engine="claude">'), html.indexOf('</tr>', html.indexOf('<tr data-engine="claude">')));
-    assert.match(row, /<span class="v6-usage-probe-reset">Resets in [^<]+ · 2026-11-22 00:55 UTC · Resets in [^<]+ · 2026-11-21 22:00 UTC<\/span>/);
+    assert.match(row, new RegExp(`<span class="v6-usage-probe-reset">Resets in [^<]+ · ${expectedStamp(weeklyIso)} UTC · Resets in [^<]+ · ${expectedStamp(fiveHourIso)} UTC</span>`));
   });
 
   it('an engine with no probe result at all shows no reset badge anywhere, no throw', () => {
