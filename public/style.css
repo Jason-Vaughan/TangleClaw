@@ -4068,6 +4068,15 @@ body::-webkit-scrollbar-thumb:active,
   grid-column: 2;
   grid-row: 2;
   min-width: 0;
+  /* #3173: `.v6-shell-root`'s own `align-items: start` (above) overrides
+     the grid default of `stretch`, so this item sized to its own content
+     height instead of the bounded `1fr` track — overflowing the root's
+     `overflow: hidden` instead of scrolling internally via the
+     `min-height: 0`/`overflow-y: auto` below, which never got the chance
+     to engage. `align-self: stretch` + `height: 100%` restore the track
+     bound those two were always meant to scroll within. */
+  align-self: stretch;
+  height: 100%;
   /* #3133: the `1fr` row's own scroll container. Grid items default to
      `min-height: auto` (their content's size), which refuses to shrink
      below that even inside a sized track — without `min-height: 0` the
@@ -4666,6 +4675,16 @@ p.v6-history-secret {
   flex: 1 1 0%;
   min-height: 0;
 }
+/* #3173: a fallback bound alongside the flex column above — without a
+   `max-height` these three can still grow past the footer-anchored
+   viewport before their own children's resize/scroll rules engage, which
+   is exactly what reintroduces the outer-page wiggle #3151 removed. */
+.v6-shell-root--chat .v6-shell-view,
+#v6ShellDetail:not([hidden]),
+.v6-chat {
+  max-height: 100%;
+  overflow-y: auto;
+}
 /* #3059: the chat header is one wrapping row — identity on the left,
    icon controls on the right. */
 .v6-chat-header {
@@ -4821,6 +4840,10 @@ p.v6-history-secret {
   min-height: 120px;
   max-height: none;
   overflow-y: auto;
+  /* #3173: iOS Safari needs this explicitly for momentum scroll inside a
+     nested flex scroll container — without it the stream can feel locked
+     even though overflow-y: auto already makes it scrollable. */
+  -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -4966,6 +4989,10 @@ p.v6-history-secret {
   resize: vertical;
   overflow: auto;
   min-height: 80px;
+  /* #3173: the native resize handle respects max-height, so this caps how
+     far open can be dragged before it (like the stream) pushes the
+     composer off the footer-anchored viewport. */
+  max-height: 45vh;
 }
 .v6-chat-under-hood > summary {
   cursor: pointer;
@@ -5078,6 +5105,11 @@ p.v6-history-secret {
 .v6-chat-input {
   width: 100%;
   min-height: 64px;
+  /* #3173: same reasoning as Under the Hood's cap above — the native
+     resize handle respects max-height, so dragging it can no longer push
+     the composer itself off the footer-anchored viewport. */
+  max-height: 30vh;
+  overflow-y: auto;
   resize: vertical;
   box-sizing: border-box;
   font: inherit;
