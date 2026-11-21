@@ -1505,6 +1505,77 @@ describe('lib/usage-windows — #3132 automated CLI usage probe', () => {
       assert.equal(parsed.weeklyResetAt, null); // percentage still read; see the test above
       assert.equal(parsed.weeklyRemainingPct, 90);
     });
+
+    describe('5-hour session line (#3174/Car V654-W1-B)', () => {
+      it('parses "Current session (5h): NN% used · resets ..."', () => {
+        const text = [
+          'Current week (all models): 82% used · resets Nov 19 at 4:59am (America/Los_Angeles)',
+          'Current session (5h): 42% used · resets Nov 17 at 2:30pm (America/Los_Angeles)'
+        ].join('\n');
+        const nowMs = Date.UTC(2026, 10, 16, 12, 0);
+        const parsed = uw._parseClaudeUsageCli(text, nowMs);
+        assert.equal(parsed.fiveHourRemainingPct, 58); // 100 - 42
+        assert.equal(parsed.fiveHourResetAt, new Date(Date.UTC(2026, 10, 17, 22, 30)).toISOString()); // 2:30pm PST = UTC-8
+        // Weekly/Fable parsing untouched by the new line's presence.
+        assert.equal(parsed.weeklyRemainingPct, 18);
+      });
+
+      it('parses "Current 5-hour...: NN% used · resets ..." (no "session" wrapper)', () => {
+        const text = 'Current 5-hour limit: 10% used · resets Nov 17 at 6am (America/Los_Angeles)';
+        const nowMs = Date.UTC(2026, 10, 16, 12, 0);
+        const parsed = uw._parseClaudeUsageCli(text, nowMs);
+        assert.equal(parsed.fiveHourRemainingPct, 90);
+        assert.equal(parsed.fiveHourResetAt, new Date(Date.UTC(2026, 10, 17, 14, 0)).toISOString());
+      });
+
+      it('parses the "five-hour" spelling too', () => {
+        const parsed = uw._parseClaudeUsageCli('Current session (five-hour): 5% used', Date.now());
+        assert.equal(parsed.fiveHourRemainingPct, 95);
+        assert.equal(parsed.fiveHourResetAt, null);
+      });
+
+      it('leaves fiveHourRemainingPct/fiveHourResetAt null when the line is absent, same as before this car', () => {
+        const parsed = uw._parseClaudeUsageCli('Current week (all models): 40% used', Date.now());
+        assert.equal(parsed.fiveHourRemainingPct, null);
+        assert.equal(parsed.fiveHourResetAt, null);
+      });
+
+      it('is the only line present: still returns a non-null result rather than falling through to the all-absent null', () => {
+        const parsed = uw._parseClaudeUsageCli('Current session (5h): 0% used', Date.now());
+        assert.notEqual(parsed, null);
+        assert.equal(parsed.fiveHourRemainingPct, 100);
+        assert.equal(parsed.weeklyRemainingPct, null);
+      });
+    });
+  });
+
+  describe('formatResetCountdown (#3174/Car V654-W1-B)', () => {
+    it('formats an under-a-day gap as "resets in <h>h <m>m"', () => {
+      const nowMs = Date.UTC(2026, 10, 17, 0, 0);
+      const resetAtIso = new Date(Date.UTC(2026, 10, 17, 4, 48)).toISOString();
+      assert.equal(uw.formatResetCountdown(resetAtIso, nowMs), 'resets in 4h 48m');
+    });
+
+    it('formats a day-or-more gap as "resets in <d>d <h>h", dropping minutes', () => {
+      const nowMs = Date.UTC(2026, 10, 24, 8, 1, 3);
+      const resetAtIso = new Date(Date.UTC(2026, 10, 29, 0, 55, 44)).toISOString();
+      // 4 days, 16 hours, 54 remaining minutes dropped — see this function's own doc comment.
+      assert.equal(uw.formatResetCountdown(resetAtIso, nowMs), 'resets in 4d 16h');
+    });
+
+    it('returns "" for null', () => {
+      assert.equal(uw.formatResetCountdown(null, Date.now()), '');
+    });
+
+    it('returns "" for an unparseable string', () => {
+      assert.equal(uw.formatResetCountdown('not a date', Date.now()), '');
+    });
+
+    it('returns "" for an instant already in the past', () => {
+      const nowMs = Date.UTC(2026, 10, 17, 12, 0);
+      const resetAtIso = new Date(Date.UTC(2026, 10, 17, 11, 0)).toISOString();
+      assert.equal(uw.formatResetCountdown(resetAtIso, nowMs), '');
+    });
   });
 
   describe('_parseAntigravityUsageCli (fixture: `agy -p "/usage"`, verified live 2026-11-16)', () => {
