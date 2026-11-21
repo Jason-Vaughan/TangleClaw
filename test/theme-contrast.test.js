@@ -218,3 +218,36 @@ describe('full-width chat wrapping and the busy-indicator CSS (#3167)', () => {
     assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.v6-uth-status--busy::before \{ animation: none; \}/);
   });
 });
+
+/*
+ * #3173: `.v6-shell-root`'s `align-items: start` let `.v6-shell-view` size to
+ * its own content instead of the bounded `1fr` track, overflowing the root's
+ * `overflow: hidden` and disabling the view's own `overflow-y: auto` — the
+ * same property-presence style as the other CSS regression blocks in this
+ * file (#3167 above), scoped to the properties this car's fix added rather
+ * than a cascade/layout audit a browser check already covers.
+ */
+describe('v6 shell internal scroll and chat reachability (#3173)', () => {
+  const css = fs.readFileSync(path.join(PUB, 'style.css'), 'utf8');
+
+  it('stretches .v6-shell-view to the grid row it is bound to instead of sizing to its content', () => {
+    assert.match(css, /\.v6-shell-view \{[^}]*align-self: stretch;[^}]*height: 100%;[^}]*min-height: 0;[^}]*overflow-y: auto;/s);
+  });
+
+  it('bounds the chat column, #v6ShellDetail and the chat view to the viewport as a fallback alongside their flex-column rule', () => {
+    assert.match(css, /\.v6-shell-root--chat \.v6-shell-view,\s*#v6ShellDetail:not\(\[hidden\]\),\s*\.v6-chat \{\s*max-height: 100%;\s*overflow-y: auto;\s*\}/);
+  });
+
+  it('keeps the chat stream scrollable with iOS momentum scroll, without reintroducing its retired resize handle', () => {
+    assert.match(css, /\.v6-chat-stream \{[^}]*overflow-y: auto;[^}]*-webkit-overflow-scrolling: touch;/s);
+    assert.doesNotMatch(css, /\.v6-chat-stream \{[^}]*resize: vertical;/s);
+  });
+
+  it('caps Under the Hood\'s drag-resize so it cannot push the composer off-screen', () => {
+    assert.match(css, /\.v6-chat-under-hood\[open\] \{[^}]*resize: vertical;[^}]*max-height: 45vh;/s);
+  });
+
+  it('caps the composer\'s drag-resize the same way, with its own scroll for taller content', () => {
+    assert.match(css, /\.v6-chat-input \{[^}]*max-height: 30vh;[^}]*overflow-y: auto;[^}]*resize: vertical;/s);
+  });
+});
