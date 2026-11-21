@@ -4307,6 +4307,24 @@ body::-webkit-scrollbar-thumb:active,
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* #3167: unwrapped paragraphs (joined by the JS side's own fix for this
+   issue) must flow across the full center-pane width and auto-wrap as the
+   window resizes, never clipped to a narrower column. A new rule, not an
+   edit to the existing `.v6-conversation-event`/`.v6-conversation-content`
+   blocks above/below: those are pinned by test/v6-b1-ui-shell.test.js's
+   exact-body regexes for the accent border and background-tint rules, and
+   this car's envelope is public/style.css only — v6-shell.js/its test file
+   belong to a sibling car. */
+.v6-conversation-stream,
+.v6-conversation-event,
+.v6-conversation-event.is-assistant,
+.v6-conversation-content {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
 .v6-conversation-empty,
 .v6-plan-empty,
 .v6-detail-loading {
@@ -4857,15 +4875,36 @@ p.v6-history-secret {
   display: inline-flex;
   align-items: baseline;
   align-self: flex-start;
+  /* #3167: a more prominent pill — gap for the new spinner glyph, a brand
+     accent border/tint instead of the plain outline, full opacity, and a
+     bolder label so "working under the hood" reads at a glance rather than
+     blending into idle chrome. */
+  gap: 6px;
   padding: 2px 10px;
   border-radius: 999px;
-  border: 1px solid var(--border-color, #2a2f36);
+  border: 1.5px solid var(--tc-venom-green, #9CF732);
+  background: rgba(156, 247, 50, 0.1);
   font-size: 0.85em;
-  opacity: 0.85;
+  font-weight: 600;
+  opacity: 1;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* #3167: the spinner itself — a rotating glyph ahead of the label, reusing
+   the generic `spin` keyframe already declared for `.spinner` rather than
+   a second one. */
+.v6-chat-activity.is-busy::before {
+  content: '⟳';
+  display: inline-block;
+  flex: none;
+  align-self: center;
+  color: var(--tc-venom-green, #9CF732);
+  animation: spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .v6-chat-activity.is-busy::before { animation: none; }
 }
 /* #3057: dots that build up (. .. ...) after the busy label, and its
    elapsed time; with reduced motion the dots hold still at three. */
@@ -4932,6 +4971,42 @@ p.v6-history-secret {
   cursor: pointer;
   opacity: 0.85;
   margin-bottom: 6px;
+}
+/* #3167: a badge for the Under the Hood summary bar mirroring
+   #v6ChatActivity's busy state — a pulsing dot rather than a second
+   spinner glyph, so the two indicators read as related without being
+   identical. Styled ahead of the markup/toggle, which is v6-shell.js's own
+   change under this issue (sibling car, out of this envelope). */
+.v6-uth-status--busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1.5px solid var(--tc-venom-green, #9CF732);
+  background: rgba(156, 247, 50, 0.12);
+  color: var(--tc-venom-green, #9CF732);
+  font-size: 0.75em;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.v6-uth-status--busy::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+  animation: v6-uth-status-pulse 1.2s ease-in-out infinite;
+}
+@keyframes v6-uth-status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .v6-uth-status--busy::before { animation: none; }
 }
 .v6-chat-composer {
   display: flex;

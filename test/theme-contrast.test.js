@@ -188,3 +188,33 @@ describe('the TangleClaw Dark Brand Palette (#3133) is readable on its own canva
     }
   }
 });
+
+/*
+ * #3167: full-width chat wrapping and the busy-indicator CSS. Both new
+ * colors used here (`--tc-venom-green`) are already brand text tokens
+ * checked against their own canvas by the describe block above, so no new
+ * token needs adding to TEXT_TOKENS/BRAND_TEXT_TOKENS — these assertions
+ * only confirm the new rules exist with the properties this car's
+ * acceptance criteria name, the same scope-limited style the other CSS
+ * regression tests in this repo use (property presence, not a cascade
+ * audit).
+ */
+describe('full-width chat wrapping and the busy-indicator CSS (#3167)', () => {
+  const css = fs.readFileSync(path.join(PUB, 'style.css'), 'utf8');
+
+  it('spans the conversation stream/event/content to the full center-pane width and wraps long tokens', () => {
+    assert.match(css, /\.v6-conversation-stream,\s*\.v6-conversation-event,\s*\.v6-conversation-event\.is-assistant,\s*\.v6-conversation-content \{\s*width: 100%;\s*max-width: none;\s*box-sizing: border-box;\s*overflow-wrap: anywhere;\s*word-break: normal;\s*\}/);
+  });
+
+  it('gives #v6ChatActivity.is-busy a rotating spinner that respects reduced motion', () => {
+    assert.match(css, /\.v6-chat-activity\.is-busy::before \{[^}]*content: '⟳';[^}]*animation: spin 1s linear infinite;/);
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.v6-chat-activity\.is-busy::before \{ animation: none; \}/);
+  });
+
+  it('defines .v6-uth-status--busy as a pulsing badge for the Under the Hood summary bar, respecting reduced motion', () => {
+    assert.match(css, /\.v6-uth-status--busy \{[^}]*display: inline-flex;/);
+    assert.match(css, /\.v6-uth-status--busy::before \{[^}]*animation: v6-uth-status-pulse 1\.2s ease-in-out infinite;/);
+    assert.match(css, /@keyframes v6-uth-status-pulse \{\s*0%, 100% \{ opacity: 1; transform: scale\(1\); \}\s*50% \{ opacity: 0\.4; transform: scale\(0\.7\); \}\s*\}/);
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.v6-uth-status--busy::before \{ animation: none; \}/);
+  });
+});
