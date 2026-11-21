@@ -388,7 +388,11 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       const { root, calls, settle, live, doc } = mountShell('#/projects/e2echat');
       await settle();
       assert.ok(calls.includes('GET /api/sessions/e2echat-PM/status'), JSON.stringify(calls));
-      assert.ok(calls.includes('GET /api/sessions/e2echat-PM/peek?lines=80'));
+      // #3166: always the deep depth now, whether or not Under the Hood is open --
+      // a closed drawer used to read only the shallow 80-line depth, which silently
+      // truncated #v6ChatStream itself since extractLiveTurns parses chat turns from
+      // this same read, not just what the drawer's own raw panel shows.
+      assert.ok(calls.includes('GET /api/sessions/e2echat-PM/peek?lines=2000'));
       // Restated by #3059: the lead-in and the mode are screen-reader text in the compact toolbar.
       assert.match(root.innerHTML, /Talking to: <\/span><strong>e2echat-PM<\/strong> \(#\d+\)<span class="sr-only"> · Designated Project Delegate<\/span>/);
       assert.match(root.innerHTML, /<option value="\d+" selected>e2echat-PM<\/option>/);
@@ -488,6 +492,10 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       ).run(pid);
       const { root, settle, calls, doc } = mountShell(`#/resources/${pid}/conversation`);
       await settle();
+      // #3167, Ruling A864: this seeded row's real GET /api/sessions/:name/status
+      // answers idle: false with idleReason: null (no reachable pane probe at all,
+      // not "it is busy") -- isSessionStatusBusy requires idleReason to be one of
+      // the 3 genuinely-working reasons, so this correctly reads idle throughout.
       assert.doesNotMatch(root.innerHTML, /v6-chat-activity is-busy/);
       const input = doc.getElementById('v6ChatInput');
       input.value = 'are you there?';

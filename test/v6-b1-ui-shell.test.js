@@ -2078,8 +2078,8 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
       '/api/v6/projects/12/sessions/1592/conversation/events': { events: [{ seq: 1, role: 'user', content: 'earlier' }] },
       '/api/v6/projects/12/sessions/1592/conversation/events?includeDeleted=1': { events: [{ seq: 1 }, { seq: 4, deleted_at: 'x' }] },
       '/api/v6/projects/12/sessions/1592/attestations': { attestations: [] },
-      '/api/sessions/TC-Lane-PM/peek?lines=80': { lines: ['pm line 1'] },
-      '/api/sessions/TC-Lane-A/peek?lines=80': { lines: ['a line'] }
+      '/api/sessions/TC-Lane-PM/peek?lines=2000': { lines: ['pm line 1'] },
+      '/api/sessions/TC-Lane-A/peek?lines=2000': { lines: ['a line'] }
     }, o.map || {});
     const api = async (url) => {
       calls.push(url);
@@ -2128,22 +2128,26 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     const m = mountChat();
     await m.settle();
     assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/status'));
-    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=80'));
+    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=2000'));
     assert.match(m.root.innerHTML, /Talking to: <\/span><strong>TC-Lane-PM<\/strong> \(#1592\)/);
     assert.match(m.root.innerHTML, /pm line 1/);
     assert.match(m.root.innerHTML, /earlier/);
   });
 
-  it('reads deep scrollback (#3135) only once Under the Hood opens — a closed drawer still reads the pane\'s own shallow depth, every poll', async () => {
+  it('reads deep scrollback every poll, whether or not Under the Hood is open (#3166 reverts #3135\'s shallow-when-closed depth)', async () => {
+    // #3166: #3135's closed-drawer shallow depth (80 lines) silently truncated
+    // #v6ChatStream itself, since extractLiveTurns parses chat turns from this
+    // same read, not just what Under the Hood's own raw panel shows. The deep
+    // depth is now unconditional.
     const m = mountChat({ map: { '/api/sessions/TC-Lane-PM/peek?lines=2000': () => ({ lines: ['deep history'] }) } });
     await m.settle();
-    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=80'), 'closed by default');
-    assert.ok(!m.calls.some((c) => /peek\?lines=2000$/.test(c)), 'never 2000 lines while the drawer is closed');
+    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=2000'), 'deep depth from the very first poll, drawer closed');
+    assert.ok(!m.calls.some((c) => /peek\?lines=80$/.test(c)), 'the shallow depth is never requested at all');
     const hood = m.doc.getElementById('v6ChatUnderHood');
     hood.open = true;
     hood.dispatch('toggle');
     await m.timers[0].fn(); // the very next poll, with no separate "refresh now" trip
-    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=2000'), 'the next poll after opening reads the deep depth');
+    assert.ok(m.calls.includes('/api/sessions/TC-Lane-PM/peek?lines=2000'), 'still the deep depth once opened too');
   });
 
   it('a remembered delegate is used', async () => {
@@ -2260,7 +2264,7 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
 
   it('polls the live output every 4 s without re-rendering the composer, and stops when the route changes', async () => {
     let n = 0;
-    const m = mountChat({ map: { '/api/sessions/TC-Lane-PM/peek?lines=80': () => ({ lines: [`tick ${n++}`] }) } });
+    const m = mountChat({ map: { '/api/sessions/TC-Lane-PM/peek?lines=2000': () => ({ lines: [`tick ${n++}`] }) } });
     await m.settle();
     assert.equal(m.timers.length, 1);
     assert.equal(m.timers[0].ms, 4000);
@@ -2599,6 +2603,80 @@ describe('tcV6ExtractLiveTurns (#3052)', () => {
   });
 });
 
+describe('tcV6ExtractLiveTurns unwraps soft-wrapped terminal lines into flowing prose (#3167)', () => {
+  const G = loadV6Shell();
+  const run = (lines) => plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+  // Below WRAP_WIDTH_THRESHOLD (55, Ruling A864 -- every existing short
+  // standalone line fixture in this file is <= 42 chars): the terminal could
+  // not have cut these off, so each stays its own line -- the pre-#3167
+  // behavior every other describe block in this file relies on.
+  const long = (n) => 'x'.repeat(n);
+
+  it('joins a line at least 55 chars with the short line that completes it, with one space', () => {
+    const out = run(['> go', `${long(55)} and the rest of the sentence.`]);
+    assert.equal(out.turns[1].text, `${long(55)} and the rest of the sentence.`);
+  });
+
+  it('leaves two short lines (neither near the pane width) exactly as the engine wrote them', () => {
+    const out = run(['> go', 'Short first line.', 'Short second line.']);
+    assert.equal(out.turns[1].text, 'Short first line.\nShort second line.');
+  });
+
+  // #3167, Ruling A864: the real-world case this threshold was tuned for -- a
+  // 4-line bulleted question, each line 60-66 chars once stripped, well under
+  // the old 150 threshold (which would have left it entirely unwrapped) but
+  // over the new 55. The first line's leading "• " is stripped by the bullet
+  // call site before appendReplyLine ever sees it, so hasBullet (passed in
+  // separately) is what keeps it starting its own block rather than merging
+  // into whatever reply content came before it.
+  it('unwraps a real 4-line bulleted wrapped question into one flowing line (Ruling A864)', () => {
+    const out = run(['> go', 'Earlier, unrelated reply.', '',
+      '• Would you like me to draft a clean patch or GitHub issue to move',
+      '  the Fleet Setup Wizard exclusively into its own tab/modal and make',
+      '  the project header show the live conversation context in one',
+      '  place?']);
+    // LIVE_BULLET strips the "• " from the first line before appendReplyLine
+    // ever sees it -- hasBullet (passed in separately) is what classification
+    // reads instead, so the stripped text itself carries no bullet through.
+    assert.equal(out.turns[1].text, 'Earlier, unrelated reply.\n'
+      + 'Would you like me to draft a clean patch or GitHub issue to move the Fleet Setup Wizard exclusively into its own tab/modal and make the project header show the live conversation context in one place?');
+    assert.equal(out.question, 'Would you like me to draft a clean patch or GitHub issue to move the Fleet Setup Wizard exclusively into its own tab/modal and make the project header show the live conversation context in one place?');
+  });
+
+  it('never merges across a blank-line paragraph break, even after a long line', () => {
+    const out = run(['> go', long(150), '', 'A new paragraph.']);
+    assert.equal(out.turns[1].text, `${long(150)}\nA new paragraph.`);
+  });
+
+  it('never merges INTO a heading or a list item, even after a long line', () => {
+    const headingOut = run(['> go', long(150), '## A heading']);
+    assert.equal(headingOut.turns[1].text, `${long(150)}\n## A heading`);
+    const listOut = run(['> go', long(150), '1. First item']);
+    assert.equal(listOut.turns[1].text, `${long(150)}\n1. First item`);
+  });
+
+  it('never merges INSIDE a fenced code block, however long its lines are', () => {
+    const out = run(['> go', '```', long(150), 'const x = 1;', '```']);
+    assert.equal(out.turns[1].text, `\`\`\`\n${long(150)}\nconst x = 1;\n\`\`\``);
+  });
+
+  it('a long list item\'s own wrapped continuation still folds back into that item', () => {
+    const out = run(['> go', `1. ${long(150)}`, 'still part of item 1']);
+    assert.equal(out.turns[1].text, `1. ${long(150)} still part of item 1`);
+  });
+
+  it('strips the collapsed background-task footer ("↓ N more") out of the reply (#3167)', () => {
+    const out = run(['> go', 'Here is the summary.', '↓ 3 more']);
+    assert.equal(out.turns[1].text, 'Here is the summary.');
+  });
+
+  it('a multi-line question is never truncated to its trailing fragment once unwrapped (#3167)', () => {
+    const out = run(['> go', `${long(150)} should we meet at this`, 'place?']);
+    assert.equal(out.turns[1].text, `${long(150)} should we meet at this place?`);
+    assert.equal(out.question, `${long(150)} should we meet at this place?`);
+  });
+});
+
 describe('Above-the-Hood chat view (#3052)', () => {
   const G = loadV6Shell();
   const view = (chat, extra) => Object.assign({
@@ -2630,12 +2708,60 @@ describe('Above-the-Hood chat view (#3052)', () => {
     assert.match(html, /<ol id="v6ChatLive"[^>]*><\/ol>/);
   });
 
+  // #3167: the server's own session-status idle gate is a SECOND, engine-agnostic
+  // busy signal, independent of whether LIVE_BUSY recognized anything in the pane
+  // text -- chatBusyLabel (and the v6UthStatus badge mirroring it) must show busy
+  // from chat.statusBusy alone, with no live.activity at all.
+  it('shows busy from the session status poll alone (chat.statusBusy), with no live.activity (#3167)', () => {
+    const html = G.tcV6ConversationViewMarkup(view({ live: { turns: [], question: null, activity: null }, statusBusy: true }));
+    assert.match(html, /<p id="v6ChatActivity" class="v6-chat-activity is-busy"[^>]*><span class="v6-chat-activity-label">Working<\/span>/);
+    assert.match(html, /<span id="v6UthStatus" class="v6-uth-status v6-uth-status--busy" aria-hidden="true">Working<\/span>/);
+  });
+
+  it('stays idle when neither live.activity nor chat.statusBusy says otherwise', () => {
+    const html = G.tcV6ConversationViewMarkup(view({ live: { turns: [], question: null, activity: null }, statusBusy: false }));
+    assert.match(html, /<p id="v6ChatActivity" class="v6-chat-activity"[^>]*><\/p>/);
+    assert.match(html, /<span id="v6UthStatus" class="v6-uth-status" aria-hidden="true"><\/span>/);
+  });
+
+  // #3167, Ruling A864: idle === false alone is NOT enough -- the status route
+  // also answers idle: false with idleReason: null for a row with no reachable
+  // pane probe at all (nothing is known, not "it is busy"), and idleReason:
+  // 'settling' for a session that IS at rest but hasn't held still long enough
+  // yet to clear detectAtPrompt's wall-clock floor. Only the 3 reasons
+  // lib/medusa-wake.js#_assessActivity sets when it finds the engine mid-turn
+  // count as genuinely busy.
+  describe('tcV6IsSessionStatusBusy (#3167, Ruling A864)', () => {
+    it('is busy only for the 3 genuinely-working idleReason values', () => {
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'turn-in-flight' }), true);
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'not-at-rest' }), true);
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'agents-running' }), true);
+    });
+
+    it('is NOT busy for idle: false with no real information or a transient settling window', () => {
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: null }), false, 'unprobed row');
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'settling' }), false, 'at rest, not held still long enough yet');
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'pane-writing' }), false, 'transcript moving, not necessarily a turn');
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false }), false, 'idleReason absent entirely');
+    });
+
+    it('is NOT busy when idle is true or unknown, whatever idleReason says', () => {
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: true, idleReason: 'turn-in-flight' }), false);
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: null, idleReason: 'turn-in-flight' }), false);
+      assert.equal(G.tcV6IsSessionStatusBusy(null), false);
+      assert.equal(G.tcV6IsSessionStatusBusy(undefined), false);
+    });
+  });
+
   it('puts the raw output in a collapsed Under the Hood drawer, open only when asked', () => {
     const closed = G.tcV6ConversationViewMarkup(view({ peek: { lines: ['$ ok'] } }));
     // Restated by #3076: the switchboard's traffic list sits above the raw output, inside the drawer.
     // Restated by #3082: the summary carries the tucked count, and the verbosity filter and the
     // tucked list come first.
-    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count"><\/span>\s*<button type="button" id="v6ChatHoodFullScreen"[\s\S]*?<\/button>\s*<button type="button" id="v6ChatHoodInteractive"[\s\S]*?<\/button>\s*<\/summary>\s*<fieldset class="v6-chat-verbosity">[\s\S]*?<\/fieldset>\s*<section class="v6-chat-tucked"[\s\S]*?<\/section>\s*<section class="v6-chat-switchboard"[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
+    // #3167: a v6UthStatus badge (empty/not busy here) now sits between the
+    // tucked count and the Full Screen button -- mirrors #v6ChatActivity's
+    // own busy state in the UTH summary bar.
+    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count"><\/span>\s*<span id="v6UthStatus" class="v6-uth-status" aria-hidden="true"><\/span>\s*<button type="button" id="v6ChatHoodFullScreen"[\s\S]*?<\/button>\s*<button type="button" id="v6ChatHoodInteractive"[\s\S]*?<\/button>\s*<\/summary>\s*<fieldset class="v6-chat-verbosity">[\s\S]*?<\/fieldset>\s*<section class="v6-chat-tucked"[\s\S]*?<\/section>\s*<section class="v6-chat-switchboard"[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
     assert.match(G.tcV6ConversationViewMarkup(view({ peek: { lines: [] }, hoodOpen: true })), /<details id="v6ChatUnderHood" class="v6-chat-under-hood" open>/);
   });
 
@@ -2664,7 +2790,7 @@ describe('Above-the-Hood chat, live in the shell (#3052)', () => {
       if (url === '/api/projects') return { projects: rows };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
       if (url === '/api/v6/projects/12/sessions/1592/conversation/events') return { events: [{ seq: 1, role: 'user', content: 'ship the release' }] };
-      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: peeks[Math.min(n++, peeks.length - 1)] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=2000') return { lines: peeks[Math.min(n++, peeks.length - 1)] };
       return null;
     };
     const timers = [];
@@ -3097,10 +3223,12 @@ describe('chat start controls and delegate recognition markup (#3053)', () => {
 });
 
 describe('tcCreateV6Shell — chrome in the conversation view (#3053)', () => {
-  it('keeps the template wizard and attestation slots in the page but hidden while a conversation shows', () => {
+  it('keeps the template wizard and attestation slots in the page but hidden outside the Wizard tab, with or without a conversation (#3165)', () => {
     const { shell, root } = mountShell({ tree: TWO_GROUP_TREE, templates: [{ id: 't1', name: 'T', seats: [1] }] });
     // Restated by #3086: the wizard slot is now the Wizard tab's panel, so it carries role="tabpanel" and names its tab.
-    assert.match(root.innerHTML, /<div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard">/);
+    // #3165: hidden from the start (mounted in Chat mode, no conversation yet) -- it no
+    // longer shows below an idle #/overview screen, only inside its own tab.
+    assert.match(root.innerHTML, /<div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard" hidden>/);
     shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'x' }, sessionId: null, chat: {} } });
     assert.match(root.innerHTML, /<div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard" hidden>[\s\S]*v6ShellWizardLaunch-t1/);
     assert.match(root.innerHTML, /<div id="v6ShellAttestation" hidden>/);
@@ -3476,6 +3604,31 @@ describe('tcV6ExtractLiveTurns: the interrupt hint is chrome only in its UI form
     assert.match(plain(G.tcV6ExtractLiveTurns(['> go', 'Working (esc to interrupt)'], 'claude', [])).activity, /Working/);
     assert.deepEqual(plain(G.tcV6ExtractLiveTurns(['> go', 'esc to cancel'], 'claude', [])).turns.length, 1);
   });
+
+  // #3167: Antigravity's own interrupt hint is "esc to cancel", not Claude Code's
+  // "esc to interrupt" -- LIVE_BUSY must recognize it too, and recognize it BEFORE
+  // LIVE_NOISE (which also matches it) ever gets to silently drop the line with no
+  // activity set at all -- the exact bug the issue's problem #1 describes.
+  it('Antigravity\'s "esc to cancel" is read as activity, not silently dropped as noise (#3167)', () => {
+    const bare = plain(G.tcV6ExtractLiveTurns(['> go', 'esc to cancel'], 'antigravity', []));
+    assert.notEqual(bare.activity, null);
+    const trailing = plain(G.tcV6ExtractLiveTurns(['> go', 'Thinking (esc to cancel)'], 'antigravity', []));
+    assert.match(trailing.activity, /Thinking/);
+  });
+
+  // #3167: Codex's "● [HH:MM:SS] ... running" status line, and a bare
+  // "Running…"/"Thinking…" status word on its own line -- anchored to the
+  // WHOLE line, so ordinary prose that merely uses those words is unaffected.
+  it('reads a Codex-style timestamped running line, and a bare Running/Thinking line, as activity (#3167)', () => {
+    const codex = plain(G.tcV6ExtractLiveTurns(['> go', '● [14:32:07] npm test running'], 'codex', []));
+    assert.notEqual(codex.activity, null);
+    assert.doesNotMatch(codex.activity, /●|\[14:32:07\]/, 'the timestamp/glyph chrome is stripped from the label');
+    assert.match(plain(G.tcV6ExtractLiveTurns(['> go', 'Running…'], 'codex', [])).activity, /Running/);
+    assert.match(plain(G.tcV6ExtractLiveTurns(['> go', 'Thinking…'], 'aider', [])).activity, /Thinking/);
+    // Ordinary prose that merely uses the word is still just a reply, not activity.
+    const prose = plain(G.tcV6ExtractLiveTurns(['> go', 'Running the tests now took a while, and thinking it over, I\'m satisfied.'], 'codex', []));
+    assert.equal(prose.activity, null);
+  });
 });
 
 describe('offline status polling does not overlap itself (cumulative review note)', () => {
@@ -3579,7 +3732,7 @@ describe('live turns from the pane are HTML-escaped, on first render and on ever
       if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1 };
       if (/conversation\/events$/.test(url)) return { events: [] };
-      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: peeks[Math.min(n++, 1)] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=2000') return { lines: peeks[Math.min(n++, 1)] };
       return null;
     };
     const timers = [];
@@ -3774,7 +3927,7 @@ describe('the busy clock in the mounted shell and live controller (#3057)', () =
       if (url === '/api/projects') return { projects: rows };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
       if (/conversation\/events/.test(url)) return { events: [] };
-      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: peeks[Math.min(n++, peeks.length - 1)] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=2000') return { lines: peeks[Math.min(n++, peeks.length - 1)] };
       return null;
     };
     const polls = [];
@@ -3952,7 +4105,7 @@ describe('the sidebar marks the lane the chat talks to (#3059)', () => {
       if (url === '/api/projects') return { projects: rows };
       if (/\/status$/.test(url)) return { active: true, sessionId: 1 };
       if (/conversation\/events$/.test(url)) return { events: [] };
-      if (/\/peek\?lines=80$/.test(url)) return { lines: [] };
+      if (/\/peek\?lines=2000$/.test(url)) return { lines: [] };
       return null;
     };
     let shell = null;
@@ -5538,6 +5691,21 @@ describe('the unified 3-category Waiting-on panel (#3105)', () => {
       assert.equal(G.tcV6ExtractMultiChoice('Mislabeled:\n2. Skip to two\n3. Three'), null);
       assert.equal(G.tcV6ExtractMultiChoice(''), null);
     });
+
+    // #3167: a declarative numbered list is syntactically identical to a real
+    // multi-choice prompt -- 1-4 sequential numbering alone is not enough, the
+    // preceding line must actually ask something or explicitly invite a choice.
+    it('never renders a declarative numbered list as a multi-choice question (#3167)', () => {
+      assert.equal(G.tcV6ExtractMultiChoice('What the code is doing right now:\n1. Reading the config\n2. Validating it'), null);
+      assert.equal(G.tcV6ExtractMultiChoice('Here is the plan:\n1. Branch from main\n2. Open a PR'), null);
+    });
+
+    it('still reads a choice prompt that invites picking one in words, with no literal "?" (#3167)', () => {
+      assert.deepEqual(plain(G.tcV6ExtractMultiChoice('Choose an approach:\n1. Branch from main\n2. Branch from the sprint branch')),
+        { question: 'Choose an approach:', choices: ['Branch from main', 'Branch from the sprint branch'] });
+      assert.notEqual(G.tcV6ExtractMultiChoice('Reply with one of the following:\n1. Yes\n2. No'), null);
+      assert.notEqual(G.tcV6ExtractMultiChoice('Pick which option fits:\n1. Yes\n2. No'), null);
+    });
   });
 
   describe('tcV6ExtractOperatorTodo', () => {
@@ -5829,7 +5997,7 @@ describe('the Medusa indicator, live through the controller (#3076)', () => {
       if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
       if (url === '/api/v6/projects/12/sessions/1592/conversation/events') return { events: [] };
-      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: peeks[Math.min(p++, peeks.length - 1)] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=2000') return { lines: peeks[Math.min(p++, peeks.length - 1)] };
       if (url === '/api/sessions/TC-Lane-PM/medusa/status') return statuses[Math.min(s++, statuses.length - 1)];
       return null;
     };
@@ -6085,7 +6253,7 @@ describe('a message longer than the command route takes (#3079 item 5)', () => {
       if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
       if (/conversation\/events/.test(url)) return { events: events.map((e, i) => ({ seq: i + 1, role: e.role, content: e.content })) };
-      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80' && o.peek) return { lines: o.peek() };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=2000' && o.peek) return { lines: o.peek() };
       if (url === '/api/sessions/TC-Lane-PM/secure-clipboard' && init && init.method === 'GET') {
         listings.push(init.headers);
         api.lastError = o.listing === null ? 'listing refused' : null;
@@ -6325,7 +6493,7 @@ describe('sending, through the controller (#3079 item 6)', () => {
       if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
       if (/conversation\/events/.test(url)) return { events: events.map((e, i) => ({ seq: i + 1, role: e.role, content: e.content })) };
-      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: ['⏺ Earlier reply.'] };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=2000') return { lines: ['⏺ Earlier reply.'] };
       return null;
     };
     api.lastError = null;
@@ -6417,7 +6585,7 @@ describe('a long message recorded only in part is not read back as a reply (thir
       if (url === '/api/projects') return { projects: [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }] };
       if (url === '/api/sessions/TC-Lane-PM/status') return { active: true, sessionId: 1592 };
       if (/conversation\/events/.test(url)) return { events: events.map((e, i) => ({ seq: i + 1, role: e.role, content: e.content })) };
-      if (url === '/api/sessions/TC-Lane-PM/peek?lines=80') return { lines: pane };
+      if (url === '/api/sessions/TC-Lane-PM/peek?lines=2000') return { lines: pane };
       if (/secure-clipboard$/.test(url) && init && init.method === 'GET') return { files: [] };
       if (/secure-clipboard$/.test(url)) return { relPath: `secrets/${JSON.parse(init.body).filename}` };
       return null;
@@ -7364,8 +7532,11 @@ describe('the workspace mode bar and wizard launcher (#3086)', () => {
   const G = loadV6Shell();
   const MODES = ['chat', 'sprint', 'charter', 'kaizen', 'wizard'];
 
-  it('shows the detail in Chat, the wizard in Wizard even in a chat, and a panel in the data modes', () => {
-    assert.deepEqual(plain(G.tcV6WorkspaceVisibility('chat', false)), { detail: true, wizard: true, attestation: true, panel: false });
+  it('shows the detail in Chat, the wizard only inside its own tab (#3165), and a panel in the data modes', () => {
+    // #3165: Chat never shows the wizard/attestation, in or out of a conversation --
+    // they used to show below an idle #/overview screen, duplicating the Wizard tab's
+    // own content once #3086 gave it one; `inChat` no longer affects this outcome.
+    assert.deepEqual(plain(G.tcV6WorkspaceVisibility('chat', false)), { detail: true, wizard: false, attestation: false, panel: false });
     assert.deepEqual(plain(G.tcV6WorkspaceVisibility('chat', true)), { detail: true, wizard: false, attestation: false, panel: false });
     assert.deepEqual(plain(G.tcV6WorkspaceVisibility('wizard', true)), { detail: false, wizard: true, attestation: true, panel: false });
     for (const mode of ['sprint', 'charter', 'kaizen']) {
@@ -7453,7 +7624,9 @@ describe('the workspace mode bar and wizard launcher (#3086)', () => {
       assert.match(html, new RegExp(`id="${id}"[^>]*role="tabpanel"[^>]*aria-labelledby="v6WorkspaceMode-\\w+"`), id);
     }
     assert.match(html, /<div id="v6ShellDetail" role="tabpanel" aria-labelledby="v6WorkspaceMode-chat">/);
-    assert.match(html, /<div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard">/);
+    // #3165: hidden even on an idle #/overview screen (no chat active) -- the wizard
+    // tab panel is only ever shown from inside its own tab, never duplicated below Chat.
+    assert.match(html, /<div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard" hidden>/);
   });
 
   it('the top launcher opens the wizard too', () => {

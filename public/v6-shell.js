@@ -517,17 +517,19 @@
 
   /**
    * Which parts of the main view a workspace mode shows (#3086). Chat shows
-   * the detail, with the template wizard and attestation below it outside a
-   * conversation (#3053); Wizard shows those two even in a conversation; the
-   * other modes show their panel. Nothing is removed, only hidden, so a chat's
-   * draft and scroll survive a trip to another mode.
+   * only the detail; the template wizard and attestation show exclusively
+   * inside the dedicated Wizard tab (#3165 — before that tab existed, Chat
+   * also showed them below an idle #/overview screen, which duplicated the
+   * Wizard tab's own content once #3086 added it); the other modes show
+   * their panel. Nothing is removed, only hidden, so a chat's draft and
+   * scroll survive a trip to another mode.
    * @param {string} mode
    * @param {boolean} inChat - Whether the detail is a conversation.
    * @returns {{detail: boolean, wizard: boolean, attestation: boolean, panel: boolean}}
    */
   function workspaceVisibility(mode, inChat) {
     if (mode === 'wizard') return { detail: false, wizard: true, attestation: true, panel: false };
-    if (mode === 'chat' || !isWorkspaceMode(mode)) return { detail: true, wizard: !inChat, attestation: !inChat, panel: false };
+    if (mode === 'chat' || !isWorkspaceMode(mode)) return { detail: true, wizard: false, attestation: false, panel: false };
     return { detail: false, wizard: false, attestation: false, panel: true };
   }
 
@@ -1079,16 +1081,17 @@
   const CHAT_POLL_MS = 4000;
 
   /**
-   * Under the Hood's two scrollback depths (#3135): a chat whose drawer
-   * is closed (most of the time — every poll, #3047's 4s cycle, reads the
-   * SAME shallow depth the pane always has) still only needs the few
-   * lines the collapsed view ever shows; only while Under the Hood is
-   * actually open or in Full Screen is the deeper read worth its own
-   * cost — `?full=true` would ask for the whole tmux history buffer on
-   * EVERY poll regardless, which this avoids while still comfortably
-   * covering the issue's 500-2000+ line ask once the drawer IS open.
+   * Under the Hood's scrollback depth (#3135, reverted by #3166): a closed
+   * drawer used to read only `PEEK_LINES_SHALLOW` (80 lines) on every poll,
+   * reasoning that the collapsed view never showed more anyway — but
+   * `extractLiveTurns` parses chat TURNS from this same `lines` read, not
+   * just what Under the Hood's own raw panel shows, so a closed drawer was
+   * silently truncating `#v6ChatStream` itself: a reply longer than 80
+   * terminal lines vanished from the chat the moment the drawer closed.
+   * #3166 decouples the two: the deep depth is now unconditional, whether
+   * or not Under the Hood is open — the bandwidth saving `PEEK_LINES_SHALLOW`
+   * existed for is no longer worth truncating a reply to get.
    */
-  const PEEK_LINES_SHALLOW = 80;
   const PEEK_LINES_DEEP = 2000;
 
   /**
@@ -1887,11 +1890,14 @@
           + 'margin:0;background:#0b0f0c;color:#e8f0e2;overflow:auto;padding:16px;box-sizing:border-box;"' : ''
       }>
         <summary>🔧 Under the Hood (Raw CLI &amp; Tool Activity) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count">${tuckedCountText(tuckedTurns(liveTurns, chat.verbosity).length)}</span>
+          <span id="v6UthStatus" class="v6-uth-status${chatBusyLabel(chat) ? ' v6-uth-status--busy' : ''}" aria-hidden="true">${chatBusyLabel(chat) ? 'Working' : ''}</span>
           <button type="button" id="v6ChatHoodFullScreen" class="btn btn-secondary btn-small v6-chat-hood-fullscreen"
             title="${chat.hoodFullScreen ? 'Exit Full Screen' : 'Full Screen'}" aria-label="${chat.hoodFullScreen ? 'Exit Full Screen' : 'Full Screen'}">
             <span aria-hidden="true">${chat.hoodFullScreen ? '⤡ Exit Full Screen' : '⤢ Full Screen'}</span></button>
           <button type="button" id="v6ChatHoodInteractive" class="btn btn-secondary btn-small v6-chat-hood-interactive"
-            aria-pressed="${chat.hoodInteractive ? 'true' : 'false'}" title="Interactive CLI: type directly into the live pane">
+            aria-pressed="${chat.hoodInteractive ? 'true' : 'false'}"
+            title="Interactive CLI: type directly into THIS drawer's own live pane below — not the chat composer, and not &gt;_ Open Hood's separate Classic View page"
+            aria-label="Interactive CLI: type directly into this drawer's own live pane">
             <span aria-hidden="true">⌨ Interactive</span></button>
         </summary>
         ${verbosityMarkup(chat.verbosity)}
@@ -1959,7 +1965,10 @@
     /^※\s*recap:/i,
     /\(disable recaps in \/config\)\s*$/i,
     /^[⏵⏸]+\s*bypass permissions/i,
-    /\|\s*(?:Opus|Sonnet|Haiku|Claude|GPT|Gemini)\b[^|]*\|\s*\d+%\s*left\s*$/i
+    /\|\s*(?:Opus|Sonnet|Haiku|Claude|GPT|Gemini)\b[^|]*\|\s*\d+%\s*left\s*$/i,
+    // #3167: a collapsed background-task footer, naming how many more lines
+    // are hidden — chrome about the TUI's own display, not the reply.
+    /^↓\s*\d+\s+more\b/i
   ]);
 
   /** Lines that start a tool block: what is indented under them is the tool's output. */
@@ -1977,11 +1986,18 @@
   });
 
   /**
-   * A tail line meaning the engine is busy right now: a spinner glyph or the
-   * interrupt hint. Words like "thinking" alone are not enough — a reply can
-   * say them.
+   * A tail line meaning the engine is busy right now, across all 4 engines
+   * (#3167): a spinner glyph, the interrupt/cancel hint (Claude Code's own
+   * "esc to interrupt", Antigravity's "esc to cancel" — in standalone-line
+   * or trailing-parenthesis form, same as `LIVE_NOISE` recognizes them, so
+   * this is checked, and returns, before `LIVE_NOISE` ever sees the line —
+   * see the per-line loop below), a Codex-style "● [HH:MM:SS] ... running"
+   * status line, or a bare "Running…"/"Thinking…" status word on its own
+   * line. Anchored to the WHOLE line for the bare status words: a reply
+   * that merely contains "thinking" or "running" in a sentence is not
+   * enough — a reply can say them.
    */
-  const LIVE_BUSY = /\(esc to interrupt\)\s*$|^[\u2736\u273B\u273D\u2722]|^[\u2800-\u28FF]/i;
+  const LIVE_BUSY = /^esc to (cancel|interrupt)\b|\(esc to (cancel|interrupt)\)\s*$|^[\u2736\u273B\u273D\u2722]|^[\u2800-\u28FF]|^\u25CF\s*\[\d{1,2}:\d{2}:\d{2}\].*\brunning\b|^(Running|Thinking)\u2026?\s*$/i;
 
   /** A prompt line: `> text`, `❯ text` or `› text`, possibly inside a box border. */
   const LIVE_PROMPT = /^(?:│\s*)?(?:>|❯|›)\s?(.*?)\s*│?$/;
@@ -2237,6 +2253,43 @@
       }
       reply = [];
       replyBlockStart = 0;
+      replyLineLen = 0;
+      inFence = false;
+    };
+    // #3167: a reply line soft-wrapped by the terminal's own column width
+    // (not a genuine newline in the engine's own text) is unwrapped into the
+    // same flowing line as what it continues — joined with a single space —
+    // instead of staying a forced `\n` break that clips #v6ChatStream's
+    // prose to the terminal's column width rather than the browser pane's.
+    // There is no marker in captured tmux text saying "this line only ended
+    // because the pane ran out of columns"; the signal used instead is the
+    // PREVIOUS line's own length — only a line at least `WRAP_WIDTH_THRESHOLD`
+    // long could plausibly have been cut off (a real 4-line wrapped question,
+    // Ruling A864: its first line, bulleted, already runs 60-66 chars once
+    // the bullet itself is stripped, well under the #3167 tmux geometry's 200
+    // columns — an engine's own markdown/word-wrap rarely fills the pane to
+    // the literal column edge), so a short line is never merged into. A blank
+    // line, a heading, a list item, or a fenced code block's own lines are
+    // never merged — true paragraph breaks, list items and code must survive
+    // exactly as the engine wrote them, verbatim inside a fence.
+    const WRAP_WIDTH_THRESHOLD = 55;
+    const NEW_REPLY_BLOCK = /^#{1,6}\s/;
+    const FENCE_DELIM = /^(?:```|~~~)/;
+    let replyLineLen = 0;
+    let inFence = false;
+    // `hasBullet` (Ruling A864): the bullet-stripping call site below strips
+    // `⏺ `/`• ` from `txt` BEFORE this runs, so `QUESTION_PREFIX` alone can no
+    // longer see it there — passed in so a bulleted line still starts its own
+    // block (never gets merged into whatever reply content came before it)
+    // even though the text it is classifying on has already lost the bullet.
+    const appendReplyLine = (txt, hasBullet = false) => {
+      const isFenceDelim = FENCE_DELIM.test(txt);
+      const startsNewBlock = !inFence && (hasBullet || isFenceDelim || NEW_REPLY_BLOCK.test(txt) || QUESTION_PREFIX.test(txt));
+      const mergeIntoLast = !inFence && !startsNewBlock && reply.length > 0 && replyLineLen >= WRAP_WIDTH_THRESHOLD;
+      if (mergeIntoLast) reply[reply.length - 1] += ` ${txt}`;
+      else reply.push(txt);
+      replyLineLen = txt.length;
+      if (isFenceDelim) inFence = !inFence;
     };
     (Array.isArray(lines) ? lines : []).forEach((raw) => {
       if (typeof raw !== 'string') return;
@@ -2250,7 +2303,7 @@
         // within an ongoing reply (#3131) — never reached from inside tool
         // output, which is dropped before this point regardless.
         if (block === 'wake') block = null;
-        if (block === 'reply') replyBlockStart = reply.length;
+        if (block === 'reply') { replyBlockStart = reply.length; replyLineLen = 0; }
         return;
       }
       const indented = /^\s/.test(line);
@@ -2315,7 +2368,10 @@
       if (echo && (knownLines.has(text) || echo.includes(squash(text)) || LONG_PROMPT_NOTE.test(text) || (echoCut && indented))) return;
       echo = null;
       if (LIVE_BUSY.test(text) && !/Thought for/i.test(text)) {
-        activity = text.replace(/^[✶✻✽✢⠀-⣿\s]+/, '').replace(/\s*\(?esc to interrupt\)?/i, '').trim() || 'Working…';
+        activity = text.replace(/^[✶✻✽✢⠀-⣿\s]+/, '')
+          .replace(/\s*\(?esc to (cancel|interrupt)\)?/i, '')
+          .replace(/^●\s*\[\d{1,2}:\d{2}:\d{2}\]\s*/, '').replace(/\s*running\s*$/i, '')
+          .trim() || 'Working…';
         return;
       }
       // Under a tool line, only its output marker or a deeper indent is
@@ -2333,12 +2389,12 @@
         return;
       }
       if (indented && block === 'reply') {
-        reply.push(text);
+        appendReplyLine(text);
         return;
       }
       block = 'reply';
       activity = null;
-      reply.push(text.replace(LIVE_BULLET, ''));
+      appendReplyLine(text.replace(LIVE_BULLET, ''), LIVE_BULLET.test(text));
     });
     flush();
     const last = turns[turns.length - 1];
@@ -3082,8 +3138,19 @@
     // a multi-choice prompt syntactically — only the preceding header
     // tells them apart, so a ToDo list never also renders as a question.
     if (TODO_HEADER.test(question)) return null;
+    // #3167: a declarative numbered list ("• What the code is doing right
+    // now: / 1. ... / 2. ...") is syntactically identical to a real
+    // multi-choice prompt too — sequential 1-4 numbering alone (already
+    // required above) is not enough. The preceding line must actually ASK
+    // something, or explicitly invite a choice in words, or this was never
+    // a question in the first place.
+    if (!asksQuestion(question) && !MULTI_CHOICE_PROMPT.test(question)) return null;
     return { question, choices };
   }
+
+  /** An explicit invitation to pick one of several options (#3167), for a preceding
+   *  line that does not itself end in a `?` (`asksQuestion` already covers that case). */
+  const MULTI_CHOICE_PROMPT = /\b(choose|select|pick|which option|reply with)\b/i;
 
   /**
    * Headers that open a "Your ToDo" block (#3105), capturing anything
@@ -3656,14 +3723,38 @@
   }
 
   /**
-   * What the chat is busy with (#3057): what the engine reports, else
-   * `Working` while a send is on its way.
-   * @param {object} chat - A conversation view's `chat`.
+   * The `idleReason` values `GET /api/sessions/:name/status` reports that
+   * mean an engine is GENUINELY working (#3167, Ruling A864): exactly the
+   * three `lib/medusa-wake.js#_assessActivity` sets when it finds the
+   * engine mid-turn. `idle === false` ALONE is not enough — the same route
+   * also reports `idle: false` with `idleReason: null` for a row with no
+   * reachable pane probe at all (nothing is known, not "it is busy"), and
+   * `idleReason: 'settling'` for a session that IS at rest but has not
+   * held still long enough yet to clear `lib/sessions.js#detectAtPrompt`'s
+   * wall-clock floor — both would have been misread as busy without this.
+   */
+  const STATUS_BUSY_REASONS = new Set(['turn-in-flight', 'not-at-rest', 'agents-running']);
+
+  /** @param {{idle?: boolean, idleReason?: string|null}|null} s @returns {boolean} */
+  function isSessionStatusBusy(s) {
+    return Boolean(s && s.idle === false && STATUS_BUSY_REASONS.has(s.idleReason));
+  }
+
+  /**
+   * What the chat is busy with (#3057, extended by #3167): what the engine
+   * reports from the live pane text, else — across all 4 engines, since
+   * this reads the server's own `GET /api/sessions/:name/status` signal
+   * rather than the pane — `Working` while that status names one of the
+   * genuinely-working reasons above, else `Working` while a send is on its
+   * way.
+   * @param {object} chat - A conversation view's `chat`; `chat.statusBusy`
+   *   is `isSessionStatusBusy(status)` from the session status poll (#3167).
    * @returns {string|null}
    */
   function chatBusyLabel(chat) {
     const live = chat && chat.live;
     if (live && live.activity) return live.activity;
+    if (chat && chat.statusBusy) return 'Working';
     return chat && chat.send && chat.send.kind === 'pending' ? 'Working' : null;
   }
 
@@ -5129,6 +5220,9 @@
       const sessionId = status && status.active && status.sessionId != null ? status.sessionId : null;
       const chat = Object.assign({}, ctx, {
         status: sessionId == null ? 'offline' : (status.idle ? 'idle' : 'active'),
+        // #3167: the universal, engine-agnostic busy signal, read alongside
+        // LIVE_BUSY's own pane-text detection in chatBusyLabel.
+        statusBusy: isSessionStatusBusy(status),
         send: sendOutcome || null,
         inFlight: (sendsInFlight.get(String(project.id)) || 0) > 0
       });
@@ -5160,15 +5254,12 @@
         return;
       }
       const base = `/api/v6/projects/${encodeURIComponent(project.id)}/sessions/${encodeURIComponent(sessionId)}`;
-      // #3135 (CI fix after R2): a closed drawer never needed more than the
-      // pane's own shallow depth, and this is read on every poll (#3047's
-      // 4s cycle) whether the drawer is open or not — recomputed fresh each
-      // time (never a frozen URL captured once) so the very next poll
-      // after the operator opens Under the Hood or Full Screen already
-      // asks for the deep read, with no separate "refresh now" trip.
-      const peekUrl = () => `/api/sessions/${name}/peek?lines=${
-        shell && typeof shell.isHoodExpanded === 'function' && shell.isHoodExpanded() ? PEEK_LINES_DEEP : PEEK_LINES_SHALLOW
-      }`;
+      // #3166: always the deep depth, whether or not Under the Hood is open
+      // — a closed drawer used to read only the shallow depth (#3135), which
+      // silently truncated #v6ChatStream itself since extractLiveTurns parses
+      // chat turns from this same read, not just what the drawer's own raw
+      // panel shows.
+      const peekUrl = () => `/api/sessions/${name}/peek?lines=${PEEK_LINES_DEEP}`;
       // #3076: the listener's state and unread count. Unlike opening the
       // inbox, this read marks nothing read and leaves the unread count
       // alone; while listening, the route also asks the Bridge for loops.
@@ -5201,16 +5292,23 @@
           // scheduler or an explicit "↻ Refresh now" last recorded.
           usagePolls = (usagePolls + 1) % USAGE_EVERY_POLLS;
           if (usagePolls === 0) { loadUsage(); loadUsageProbe(); }
-          const [res, nextStatus] = await Promise.all([api(peekUrl()), api(medusaUrl)]);
+          // #3167: the session status poll runs alongside peek/medusa so the
+          // universal busy signal (chatBusyLabel's chat.statusBusy) stays
+          // live too, not just the pane-text one — set once at load, it
+          // would otherwise never clear or re-arm after the initial read.
+          const [res, nextMedusaStatus, nextSessionStatus] = await Promise.all([
+            api(peekUrl()), api(medusaUrl), api(`/api/sessions/${name}/status`)
+          ]);
           if (mine !== seq || !current || !current.view) return;
           const next = peekView(res);
           const nextLive = liveView(res, current.project, current.view.events);
-          const nextMedusa = medusaView(nextStatus, nextLive, current.view.chat && current.view.chat.medusa);
+          const nextMedusa = medusaView(nextMedusaStatus, nextLive, current.view.chat && current.view.chat.medusa);
           const lastSent = lastSentFor(current.project);
           const thumbs = thumbsFor(current.project, current.view.events, nextLive);
-          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next, live: nextLive, medusa: nextMedusa, lastSent, thumbs }) });
+          const statusBusy = isSessionStatusBusy(nextSessionStatus);
+          current.view = Object.assign({}, current.view, { chat: Object.assign({}, current.view.chat, { peek: next, live: nextLive, medusa: nextMedusa, lastSent, thumbs, statusBusy }) });
           const sh = getShell();
-          if (sh && typeof sh.setLive === 'function') sh.setLive({ peek: next, live: nextLive, medusa: nextMedusa, lastSent, thumbs });
+          if (sh && typeof sh.setLive === 'function') sh.setLive({ peek: next, live: nextLive, medusa: nextMedusa, lastSent, thumbs, statusBusy });
           else if (sh && typeof sh.setPeek === 'function') sh.setPeek(next);
         }, CHAT_POLL_MS);
       }
@@ -9073,7 +9171,9 @@
        * replaced too; `medusa`, when the update carries it, is the latest
        * status.
        * @param {{peek: object|null, live: {turns: Array, question: string|null, activity: string|null}|null,
-       *   medusa?: object|null}} update
+       *   medusa?: object|null, statusBusy?: boolean}} update - `statusBusy` (#3167) is the
+       *   session status poll's own idle===false signal, read by chatBusyLabel alongside
+       *   live.activity; omitted (not merely falsy) keeps whatever is already on screen.
        */
       setLive(update) {
         if (!detail || detail.kind !== 'conversation' || !detail.view) return;
@@ -9082,8 +9182,9 @@
         const name = String((detail.view.project && detail.view.project.name) || '');
         const medusa = update && 'medusa' in update ? update.medusa : detail.view.chat && detail.view.chat.medusa;
         const thumbs = update && update.thumbs ? update.thumbs : (detail.view.chat && detail.view.chat.thumbs);
+        const statusBusy = update && 'statusBusy' in update ? update.statusBusy : (detail.view.chat && detail.view.chat.statusBusy);
         detail = Object.assign({}, detail, {
-          view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { peek, live, medusa, thumbs }) })
+          view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { peek, live, medusa, thumbs, statusBusy }) })
         });
         const traffic = doc.getElementById('v6ChatSwitchboard');
         if (traffic) traffic.innerHTML = switchboardMarkup(switchboardItems(detail.view.events, live));
@@ -9119,10 +9220,19 @@
         paintWaitingOnExtras();
         const a = doc.getElementById('v6ChatActivity');
         const elapsed = syncBusy();
+        const label = busyLabelNow();
         if (a) {
-          const label = busyLabelNow();
           a.innerHTML = chatActivityInner(label, elapsed);
           a.className = `v6-chat-activity${label ? ' is-busy' : ''}`;
+        }
+        // #3167: the Under the Hood header badge mirrors #v6ChatActivity's
+        // own busy state, so it is visible even while the drawer is open
+        // and the activity line's own pill (above the composer) is off
+        // screen below the raw pane.
+        const uth = doc.getElementById('v6UthStatus');
+        if (uth) {
+          uth.className = `v6-uth-status${label ? ' v6-uth-status--busy' : ''}`;
+          uth.textContent = label ? 'Working' : '';
         }
       },
       /**
@@ -9169,15 +9279,6 @@
         render();
       },
       isHistoryOpen() { return historyOpen; },
-      /**
-       * Whether Under the Hood is open or in Full Screen (#3135, CI fix
-       * after R2): the live controller reads this to decide how deep a
-       * scrollback read to ask for — 80 lines closed, 2000 while the
-       * operator can actually see it, never 2000 on every background poll
-       * regardless.
-       * @returns {boolean}
-       */
-      isHoodExpanded() { return chatHoodOpen || hoodFullScreen; },
       /**
        * Forget a chat's composer text once it has been sent.
        * @param {*} [projectId] - The project it was sent to; the chat on screen when omitted.
@@ -9394,6 +9495,7 @@
   global.tcV6HoodKeyAction = hoodKeyAction;
   global.tcV6FormatElapsed = formatElapsed;
   global.tcV6ExtractLiveTurns = extractLiveTurns;
+  global.tcV6IsSessionStatusBusy = isSessionStatusBusy;
   global.tcV6MessageMarkup = messageMarkup;
   global.tcV6UsageMeterModel = usageMeterModel;
   global.tcV6UsageMeterMarkup = usageMeterMarkup;
