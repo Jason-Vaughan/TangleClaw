@@ -464,6 +464,52 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
     });
   });
 
+  describe('renderUsageProbe includes the reset timestamp when present (#3174/Car V654-W1-B)', () => {
+    const { renderUsageProbe } = require('../lib/tc-verbs');
+
+    it('appends "(resets <iso>)" to weekly and 5h when their reset timestamps are non-null', () => {
+      const out = renderUsageProbe({
+        claude: {
+          status: 'configured', observedAt: '2026-11-21T00:00:00.000Z',
+          weeklyRemainingPct: 98, weeklyResetAt: '2026-11-28T08:49:03.000Z',
+          fiveHourRemainingPct: 100, fiveHourResetAt: '2026-11-22T00:55:44.000Z',
+          subTiers: {}
+        }
+      });
+      assert.match(out, /claude: weekly 98% left \(resets 2026-11-28T08:49:03\.000Z\) · 5h 100% left \(resets 2026-11-22T00:55:44\.000Z\) \(as of 2026-11-21T00:00:00\.000Z\)/);
+    });
+
+    it('renders exactly as before this car when reset timestamps are null (no existing assertion shifts)', () => {
+      const out = renderUsageProbe({
+        codex: {
+          status: 'configured', observedAt: '2026-11-21T00:00:00.000Z',
+          weeklyRemainingPct: 90, weeklyResetAt: null,
+          fiveHourRemainingPct: null, fiveHourResetAt: null,
+          subTiers: {}
+        }
+      });
+      assert.match(out, /codex: weekly 90% left · 5h — \(as of 2026-11-21T00:00:00\.000Z\)/);
+      assert.doesNotMatch(out, /resets/);
+    });
+
+    it('appends the reset timestamp on a sub-tier row too', () => {
+      const out = renderUsageProbe({
+        antigravity: {
+          status: 'configured', observedAt: '2026-11-21T00:00:00.000Z',
+          weeklyRemainingPct: 39, weeklyResetAt: null,
+          fiveHourRemainingPct: 88, fiveHourResetAt: null,
+          subTiers: {
+            'claude-and-gpt-models': {
+              weeklyRemainingPct: 100, weeklyResetAt: '2026-11-24T00:21:45.000Z',
+              fiveHourRemainingPct: 100, fiveHourResetAt: '2026-11-17T05:21:45.000Z'
+            }
+          }
+        }
+      });
+      assert.match(out, /claude-and-gpt-models: weekly 100% left \(resets 2026-11-24T00:21:45\.000Z\) · 5h 100% left \(resets 2026-11-17T05:21:45\.000Z\)/);
+    });
+  });
+
   describe('the test client itself (#1960)', () => {
     it('opens a fresh connection per request, so no request can race a closing keep-alive socket', async () => {
       const first = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}`);
