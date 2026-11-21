@@ -4,6 +4,28 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.5.3] - 2026-11-20
+
+### Changed
+- `.v6-conversation-stream`, `.v6-conversation-event`, `.v6-conversation-event.is-assistant`, and `.v6-conversation-content` now span the full center-pane width (`width: 100%; max-width: none`) and wrap long unwrapped paragraphs (`overflow-wrap: anywhere; word-break: normal`) instead of clipping to a narrower column. `#v6ChatActivity`'s busy pill gained a rotating `⟳` spinner and a brand-accent border/tint, and a new `.v6-uth-status--busy` badge is ready for the Under the Hood summary bar's own busy indicator (#3167).
+
+### Fixed
+- Fixed `📜 Charter & Roadmap` classifying every historical release as an upcoming planned one: `GET /api/sprint-waves` now derives `shippedVersions` from `CHANGELOG.md`'s released headings, `docs/releases/v*.md`, and `version.json`, and passes it into `buildSprintWaveSnapshot()` so a shipped version (and its synthesized fallback car/issue rows, previously hardcoded to "Not started" regardless of the release's own classification) renders under **Released Versions** with `Completed` pills instead of **Upcoming Planned Releases** (#3162).
+- Fixed `SqliteSchedulerStore#read()` (`lib/v6/c3-wave-scheduler.js`) returning `createdAt: null`
+  ("Invalid Date" in the Sprint & Cars UI) for a wave run whose `state_json` omitted it, by
+  backfilling from the SQLite `created_at` column — always present, `NOT NULL` — when the parsed
+  record itself is missing it (#3163). Also gave new tmux sessions a wide `200x50` starting window
+  instead of tmux's own `80x24` default, and added `ensureMinWindowWidth`, invoked from
+  `capturePane`, to restore a session's window back to `200x50` whenever a narrow mobile/browser
+  client has shrunk it below 120 columns — so a TUI engine pane no longer stays stuck chopping
+  output mid-line after a narrow client detaches (#3167).
+- Fixed `📈 Kaizen & Reports` showing an empty reports catalog, `Release Commit —`, and `0 PRs / 0 issues` for a shipped sprint: `sprintDataFromWaveRuns` now reports a completed car's recorded PR as `merged` instead of `open` (the only PR source this tracker has, previously left "open" forever once the car was actually done), `GET /api/sprint-waves` and `GET /api/sprint-reports/:version` now populate the Sprint Reports Hub catalog (from `docs/releases/v*.md`) and the real release commit (resolved from the version's own `vX.Y.Z` git tag), and every car in `GET /api/sprint-waves` now carries normalized top-level `carId`, `branch`, `title` and `status` fields alongside its existing ones (#3164).
+- Fixed the Fleet Setup Wizard and Model Attestation card rendering twice: `workspaceVisibility()` showed them both inside the dedicated 🧙 Wizard tab and below an idle `#/overview` screen in Chat mode (a leftover from before Wizard had its own tab). They now render exclusively inside the Wizard tab (#3165).
+- Fixed assistant replies silently vanishing from `#v6ChatStream` whenever Under the Hood was collapsed: the session peek poll used to read only 80 terminal lines while the drawer was closed, and `extractLiveTurns` parses the whole chat from that same read, not just what the drawer's own raw panel shows. The deep (2000-line) scrollback is now read unconditionally. Also clarified the `⌨ Interactive` toggle's tooltip to say explicitly it types into Under the Hood's own live pane, not the chat composer or `>_` Open Hood's separate Classic View page (#3166).
+- Fixed the "Working under the hood…" busy indicator to cover all 4 engines: `#v6ChatActivity` and the new Under the Hood header badge (`.v6-uth-status--busy`) now also light up from the session status poll's own `idle === false` signal, and `LIVE_BUSY` now recognizes Antigravity's "esc to cancel" (previously silently dropped as noise before it was ever checked for activity), a Codex-style "● [HH:MM:SS] ... running" line, and a bare "Running…"/"Thinking…" status line.
+- Fixed `extractMultiChoice` rendering a declarative numbered list (e.g. "What the code is doing right now: / 1. ... / 2. ...") as a bogus `[1] [2] [5 / Other]` multi-choice card: the line preceding the numbers must now actually ask a question or explicitly invite a choice.
+- Fixed chat replies being force-wrapped to the terminal's own column width instead of flowing across the full browser pane: `extractLiveTurns` now unwraps a soft-wrapped continuation line into the line it continues (joined by a space), while still preserving true paragraph breaks, headings, list items and fenced code blocks exactly. Also strips the collapsed background-task footer ("↓ N more") out of replies (#3167).
+
 ## [6.5.2] - 2026-11-20
 
 ### Added

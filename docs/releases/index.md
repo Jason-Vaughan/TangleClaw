@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.5.2 — Full-viewport V6 layout, 3-pane resizers, generic overview, TCC bootstrap recovery, and targeted Medusa wakes](v6.5.2.md)
+- [v6.5.3 — Charter & Roadmap release classification, Kaizen reports catalog, full-width chat, and Wizard/UTH fixes](v6.5.3.md)
 
 ## Recent releases
+
+- [v6.5.2 — Full-viewport V6 layout, 3-pane resizers, generic overview, TCC bootstrap recovery, and targeted Medusa wakes](v6.5.2.md)
 
 - [v6.5.1 — Waiting-On drill-downs, an automated CLI usage probe, the official brand palette, Under the Hood polish, and the Admin Fleet](v6.5.1.md)
 

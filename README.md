@@ -18,7 +18,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
 
-**Latest release:** `v6.5.2` — “A full-viewport V6 layout with interactive 3-pane resizers and an inline top-bar (no more "⋯ More" menu), a generic non-session V6 overview with direct session launch, TCC bootstrap recovery for a duplicate tmux anchor, an end to the idle workload-nudge token-burn loop, and Medusa wake notifications now targeted strictly at the session that owns the next action” ([release status](docs/releases/v6.5.2.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.5.2` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.5.2/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
+**Latest release:** `v6.5.3` — “The Charter & Roadmap panel now classifies every shipped release correctly instead of showing it all as upcoming, Kaizen & Reports gets a real reports catalog and release/PR KPIs for shipped sprints, the chat stream spans the full pane width with a universal 4-engine busy indicator, the Fleet Setup Wizard stops rendering twice, and Under the Hood keeps full scrollback instead of truncating replies when collapsed” ([release status](docs/releases/v6.5.3.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.5.3` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.5.3/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
 
 One AI coding agent is easy. Five are not. They forget what the last session decided, edit the same files, fight over the same ports, and wait silently for an answer you did not know they needed. You end up watching terminals.
 
@@ -52,7 +52,7 @@ TangleClaw is developed with TangleClaw. Its own Builder, Project Manager and re
 
 ```bash
 # macOS. What the installer does, and what you need first: Quick Start, below
-git clone --branch v6.5.2 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.5.3 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw && ./deploy/install.sh
 ```
 
@@ -186,7 +186,7 @@ Most importantly, TangleClaw enforces strict safety boundaries, ensuring that wh
 ## Quick Start
 
 ```bash
-git clone --branch v6.5.2 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.5.3 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw
 ./deploy/install.sh
 ```
