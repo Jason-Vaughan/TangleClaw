@@ -978,6 +978,38 @@ describe('native-sprint-tracker: parseSprintReportSettlement (#3175)', () => {
     assert.equal(result.settled, true);
     assert.deepEqual(result.postMortem, { whatWorked: [], whatDidnt: [], rule283PassCount: 0 });
   });
+
+  it('#3175 (real shape): parses the real sprint-reports generator\'s pm-item/badge markup, with no synthetic ids at all', () => {
+    const rows = Array.from({ length: 16 }, (_, i) => {
+      const n = i + 1;
+      const status = n <= 14
+        ? '<span class="badge badge-green">PASS</span>'
+        : '<span class="badge badge-red">FAIL</span>';
+      return `<tr><td>${n}</td><td>Measure ${n}</td><td>${status}</td><td>detail</td></tr>`;
+    }).join('');
+    const html = '<section class="section" id="postmortem">'
+      + '<div class="pm-item"><h4>Disjoint lanes</h4><p>Zero file collisions across the wave.</p></div>'
+      + '<div class="pm-item warn"><h4>Report settlement drifted</h4><p>v6.5.3 shipped with a live placeholder.</p></div>'
+      + `<table>${rows}</table>`
+      + '</section>';
+    const result = tracker.parseSprintReportSettlement(html);
+    assert.equal(result.settled, true);
+    assert.deepEqual(result.postMortem.whatWorked, ['Disjoint lanes: Zero file collisions across the wave.']);
+    assert.deepEqual(result.postMortem.whatDidnt, ['Report settlement drifted: v6.5.3 shipped with a live placeholder.']);
+    assert.equal(result.postMortem.rule283PassCount, 14);
+  });
+
+  it('#3175: the synthetic ul/table convention wins over the real pm-item/badge shape when BOTH are present in the same section', () => {
+    const html = '<section id="postmortem">'
+      + '<ul id="postmortem-what-worked"><li>Synthetic point</li></ul>'
+      + '<table id="postmortem-rule-283"><tr data-status="pass"><td>1</td></tr></table>'
+      + '<div class="pm-item"><h4>Real point</h4><p>should be ignored</p></div>'
+      + '<span class="badge badge-green">PASS</span><span class="badge badge-green">PASS</span>'
+      + '</section>';
+    const result = tracker.parseSprintReportSettlement(html);
+    assert.deepEqual(result.postMortem.whatWorked, ['Synthetic point']);
+    assert.equal(result.postMortem.rule283PassCount, 1);
+  });
 });
 
 describe('native-sprint-tracker: syncRoadmapWithBackoff', () => {
