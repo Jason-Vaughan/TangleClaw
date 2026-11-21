@@ -828,4 +828,52 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       assert.equal(json(res).created, undefined);
     });
   });
+
+  // #3175 (Car V654-W1-D, Gate 4 settled sprint report enforcement): these
+  // two routes are mounted live by server.js (#2644 router, Ruling A774).
+  // `getSyncStatus`/`getReportsHubHtml` are wired there only when THIS
+  // MACHINE happens to have the real `TangleClaw-Shared` checkout on disk
+  // (server.js's own `fs.existsSync` mount-time guard) -- true on this
+  // operator's own machine, not guaranteed elsewhere (CI, a fresh clone),
+  // so `roadmapSyncStatus`'s presence/content is never asserted here.
+  // `getSprintReportHtml` has NO server.js wiring at all yet (#3175's known
+  // follow-up, outside this car's file envelope -- flagged to the PM) and
+  // so `settled`/`postMortem` cannot be exercised end-to-end from any
+  // machine. These tests instead pin the open-read wiring these routes
+  // already have through the real `handleRequest` path, as a regression
+  // net for #3175's `lib/native-sprint-tracker.js` and
+  // `lib/routes/sprint-wave-routes.js` changes.
+  describe('Sprint Waves & Reports routes (#2644, #3175)', () => {
+    it('GET /api/sprint-waves answers 200 with no live wave runs yet, open to any caller', async () => {
+      // roadmapSyncStatus itself is NOT asserted either way here: whether it
+      // appears depends on whether THIS machine happens to have the real
+      // `TangleClaw-Shared` checkout on disk (server.js's own
+      // `fs.existsSync` mount-time guard, same operator-machine-only
+      // dependency `test/native-sprint-tracker.test.js`'s #3166/#3175 suites
+      // already document) -- never something this sandboxed temp-dir test
+      // controls or should assume either way.
+      const res = await get('/api/sprint-waves', { operator: false });
+      assert.equal(res.statusCode, 200, res.body);
+      const body = json(res);
+      assert.equal(body.ok, true);
+      assert.deepEqual(body.waves, []);
+    });
+
+    it('GET /api/sprint-reports/:version 404s an unknown version through the real handler', async () => {
+      const res = await get('/api/sprint-reports/v0.0.1', { operator: false });
+      assert.equal(res.statusCode, 404, res.body);
+      assert.equal(json(res).code, 'NOT_FOUND');
+    });
+
+    it('GET /api/sprint-reports/:version refuses a malformed version 400 (#3087)', async () => {
+      const res = await get('/api/sprint-reports/not-a-version', { operator: false });
+      assert.equal(res.statusCode, 400, res.body);
+      assert.equal(json(res).code, 'BAD_REQUEST');
+    });
+
+    it('POST /api/sprint-waves/sync requires operator/Master authorization', async () => {
+      const res = await post('/api/sprint-waves/sync', {}, { operator: false });
+      assert.ok([401, 403].includes(res.statusCode), res.body);
+    });
+  });
 });

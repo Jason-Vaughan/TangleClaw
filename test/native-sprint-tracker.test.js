@@ -821,6 +821,24 @@ describe('native-sprint-tracker: buildSprintWaveSnapshot (#3112)', () => {
     assert.equal(snapshot.roadmapSyncStatus.state, 'degraded');
     assert.match(snapshot.roadmapSyncStatus.message, /v6\.4\.1/);
   });
+
+  it('#3175: forwards reportHtml into roadmapSyncStatus only when the caller actually mentions it', () => {
+    const withReport = tracker.buildSprintWaveSnapshot({
+      ...baseInput,
+      syncStatus: { state: 'ok' },
+      hubHtml: '<a href="./v6.4.1/">v6.4.1</a>',
+      reportHtml: null
+    });
+    assert.equal(withReport.roadmapSyncStatus.state, 'degraded');
+    assert.match(withReport.roadmapSyncStatus.message, /missing/);
+
+    const withoutReport = tracker.buildSprintWaveSnapshot({
+      ...baseInput,
+      syncStatus: { state: 'ok' },
+      hubHtml: '<a href="./v6.4.1/">v6.4.1</a>'
+    });
+    assert.deepEqual(withoutReport.roadmapSyncStatus, { state: 'ok', message: null });
+  });
 });
 
 describe('native-sprint-tracker: parseShippedVersionsFromChangelog (#3162)', () => {
@@ -870,6 +888,95 @@ describe('native-sprint-tracker: validateRoadmapSyncStatus (#3166)', () => {
   it('skips the hub check entirely when hubHtml or currentVersion is not supplied, and still reads ok from syncStatus alone', () => {
     assert.deepEqual(tracker.validateRoadmapSyncStatus({ syncStatus: { state: 'ok' } }), { state: 'ok', message: null });
     assert.deepEqual(tracker.validateRoadmapSyncStatus({ currentVersion: 'v6.5.2', syncStatus: { state: 'ok' } }), { state: 'ok', message: null });
+  });
+
+  it('#3175: reads ok when syncStatus, the hub link and the report HTML are all healthy', () => {
+    const result = tracker.validateRoadmapSyncStatus({
+      currentVersion: 'v6.5.4',
+      syncStatus: { state: 'ok' },
+      hubHtml: '<a href="./v6.5.4/">v6.5.4</a>',
+      reportHtml: '<section id="postmortem">settled</section>'
+    });
+    assert.deepEqual(result, { state: 'ok', message: null });
+  });
+
+  it('#3175: fails closed when the report is missing from disk (reportHtml resolved null), even though syncStatus and the hub link both say ok', () => {
+    const result = tracker.validateRoadmapSyncStatus({
+      currentVersion: 'v6.5.4',
+      syncStatus: { state: 'ok' },
+      hubHtml: '<a href="./v6.5.4/">v6.5.4</a>',
+      reportHtml: null
+    });
+    assert.equal(result.state, 'degraded');
+    assert.match(result.message, /v6\.5\.4/);
+    assert.match(result.message, /missing/);
+  });
+
+  it('#3175: fails closed when the report still carries the auto-generated live-tracker marker', () => {
+    const withComment = tracker.validateRoadmapSyncStatus({
+      currentVersion: 'v6.5.4',
+      syncStatus: { state: 'ok' },
+      hubHtml: '<a href="./v6.5.4/">v6.5.4</a>',
+      reportHtml: '<!-- AUTO_GENERATED_LIVE_SPRINT_REPORT --><section id="postmortem"></section>'
+    });
+    assert.equal(withComment.state, 'degraded');
+    assert.match(withComment.message, /not been settled/);
+
+    const withLiveTracking = tracker.validateRoadmapSyncStatus({
+      currentVersion: 'v6.5.4',
+      syncStatus: { state: 'ok' },
+      hubHtml: '<a href="./v6.5.4/">v6.5.4</a>',
+      reportHtml: '<table id="postmortem-rule-283"><tr>LIVE TRACKING</tr></table>'
+    });
+    assert.equal(withLiveTracking.state, 'degraded');
+  });
+
+  it('#3175: skips the report-settlement check entirely when reportHtml is never mentioned, unchanged from before #3175', () => {
+    const result = tracker.validateRoadmapSyncStatus({
+      currentVersion: 'v6.5.4', syncStatus: { state: 'ok' }, hubHtml: '<a href="./v6.5.4/">v6.5.4</a>'
+    });
+    assert.deepEqual(result, { state: 'ok', message: null });
+  });
+});
+
+describe('native-sprint-tracker: parseSprintReportSettlement (#3175)', () => {
+  it('reads settled: false with empty post-mortem fields for a non-string/empty report', () => {
+    assert.deepEqual(tracker.parseSprintReportSettlement(null), {
+      settled: false,
+      postMortem: { whatWorked: [], whatDidnt: [], rule283PassCount: 0 }
+    });
+    assert.deepEqual(tracker.parseSprintReportSettlement(''), {
+      settled: false,
+      postMortem: { whatWorked: [], whatDidnt: [], rule283PassCount: 0 }
+    });
+  });
+
+  it('reads settled: false while either unsettled marker is present, regardless of post-mortem content', () => {
+    const html = '<!-- AUTO_GENERATED_LIVE_SPRINT_REPORT --><section id="postmortem">'
+      + '<ul id="postmortem-what-worked"><li>Parallel lanes</li></ul></section>';
+    assert.equal(tracker.parseSprintReportSettlement(html).settled, false);
+  });
+
+  it('parses whatWorked/whatDidnt list points and the Rule #283 pass count from a settled report', () => {
+    const html = '<section id="postmortem">'
+      + '<ul id="postmortem-what-worked"><li>Disjoint file envelopes</li><li>Fast CI</li></ul>'
+      + '<ul id="postmortem-what-didnt"><li>Report settlement drifted</li></ul>'
+      + '<table id="postmortem-rule-283">'
+      + '<tr data-status="pass"><td>1</td></tr><tr data-status="pass"><td>2</td></tr>'
+      + '<tr data-status="fail"><td>3</td></tr>'
+      + '</table>'
+      + '</section>';
+    const result = tracker.parseSprintReportSettlement(html);
+    assert.equal(result.settled, true);
+    assert.deepEqual(result.postMortem.whatWorked, ['Disjoint file envelopes', 'Fast CI']);
+    assert.deepEqual(result.postMortem.whatDidnt, ['Report settlement drifted']);
+    assert.equal(result.postMortem.rule283PassCount, 2);
+  });
+
+  it('reads empty post-mortem fields, never throws, when the settled report has no postmortem section at all', () => {
+    const result = tracker.parseSprintReportSettlement('<section id="overview">shipped</section>');
+    assert.equal(result.settled, true);
+    assert.deepEqual(result.postMortem, { whatWorked: [], whatDidnt: [], rule283PassCount: 0 });
   });
 });
 
@@ -1287,6 +1394,65 @@ describe('sprint-wave-routes: createSprintWaveRouter', () => {
     const { res, json } = fakeRes();
     await router.handle(req, res);
     assert.equal('roadmapSyncStatus' in json().snapshot, false);
+  });
+
+  it('#3175: GET /api/sprint-waves threads getSprintReportHtml into roadmapSyncStatus, degraded when the report is missing', async () => {
+    let askedFor = null;
+    const router = createSprintWaveRouter({
+      getSprintData: async () => ({ version: 'v6.5.4', waves: [], cars: [], lanes: [], pullRequests: [] }),
+      getSyncStatus: async () => ({ state: 'ok' }),
+      getReportsHubHtml: async () => '<a href="./v6.5.4/">v6.5.4</a>',
+      getSprintReportHtml: async (version) => { askedFor = version; return null; }
+    });
+    const { req } = fakeReq('GET', '/api/sprint-waves');
+    const { res, json } = fakeRes();
+    await router.handle(req, res);
+    assert.equal(askedFor, 'v6.5.4');
+    assert.equal(json().snapshot.roadmapSyncStatus.state, 'degraded');
+    assert.match(json().snapshot.roadmapSyncStatus.message, /missing/);
+  });
+
+  it('#3175: GET /api/sprint-waves reads roadmapSyncStatus ok when getSprintReportHtml resolves a settled report', async () => {
+    const router = createSprintWaveRouter({
+      getSprintData: async () => ({ version: 'v6.5.4', waves: [], cars: [], lanes: [], pullRequests: [] }),
+      getSyncStatus: async () => ({ state: 'ok' }),
+      getReportsHubHtml: async () => '<a href="./v6.5.4/">v6.5.4</a>',
+      getSprintReportHtml: async () => '<section id="postmortem">settled</section>'
+    });
+    const { req } = fakeReq('GET', '/api/sprint-waves');
+    const { res, json } = fakeRes();
+    await router.handle(req, res);
+    assert.deepEqual(json().snapshot.roadmapSyncStatus, { state: 'ok', message: null });
+  });
+
+  it('#3175: GET /api/sprint-reports/:version surfaces settled/postMortem from getSprintReportHtml', async () => {
+    const router = createSprintWaveRouter({
+      getSprintDataForVersion: async (version) => ({ version, cars: [], pullRequests: [] }),
+      getSprintReportHtml: async (version) => (version === 'v6.5.1'
+        ? '<section id="postmortem">'
+          + '<ul id="postmortem-what-worked"><li>Disjoint lanes</li></ul>'
+          + '<ul id="postmortem-what-didnt"><li>Slow CI</li></ul>'
+          + '<table id="postmortem-rule-283"><tr data-status="pass"><td>1</td></tr></table>'
+          + '</section>'
+        : null)
+    });
+    const { req } = fakeReq('GET', '/api/sprint-reports/v6.5.1');
+    const { res, status, json } = fakeRes();
+    await router.handle(req, res);
+    assert.equal(status(), 200);
+    assert.equal(json().report.settled, true);
+    assert.deepEqual(json().report.postMortem, { whatWorked: ['Disjoint lanes'], whatDidnt: ['Slow CI'], rule283PassCount: 1 });
+  });
+
+  it('#3175: GET /api/sprint-reports/:version omits settled/postMortem entirely with no getSprintReportHtml, unchanged from before #3175', async () => {
+    const router = createSprintWaveRouter({
+      getSprintDataForVersion: async (version) => ({ version, cars: [], pullRequests: [] })
+    });
+    const { req } = fakeReq('GET', '/api/sprint-reports/v6.5.1');
+    const { res, json } = fakeRes();
+    await router.handle(req, res);
+    assert.equal('settled' in json().report, false);
+    assert.equal('postMortem' in json().report, false);
   });
 });
 
