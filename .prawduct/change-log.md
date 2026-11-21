@@ -41,6 +41,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-21 — v6.5.4 release cut (Milestone #90), Car V654-W2-REL
+
+<!-- prawduct: type=internal | scope=v654-release -->
+
+- Compiled 5 accepted `changelog.d/` fragments (#3173 ×2 from PRs #3176/#3177; #3174 ×2 from
+  PRs #3176/#3179; #3175 from PR #3178) into `CHANGELOG.md` section `[6.5.4]` via
+  `compileFragments`/`spliceIntoUnreleased`/`_promoteUnreleased`, target version `6.5.4` (minor —
+  the fragment set carries `added` alongside `fixed`, and a minor-tier subsection always wins per
+  the version-bump precedence table). Bumped `version.json` (`6.5.3` → `6.5.4`), updated README
+  pins/banner (prose hand-written here, not generated) and the released-section lock via
+  `scripts/release-prepare.js`, and updated `FEATURES.md`, `ROADMAP.md`, `docs/releases/index.md`
+  and `docs/releases/v6.5.4.md`.
+- Dispatched by `TC-Lane-PM`/`TC-Lane-INT` via Medusa after all 4 Wave 1 cars (PR #3177 @
+  2119a7e8, PR #3176 @ 11774075, PR #3179 @ 875ca06b, PR #3178 @ 5ce080ff) true-merged to
+  `origin/main @ 5ce080ff4c83f050ace83bd66f80a12897fb6ccc`, closing all 3 Milestone #90 issues
+  (#3173–#3175). `LANE_QUEUE.md`'s `W2-REL (Car V654-W2-REL)` row carries the matching
+  file-scope grant.
+- `node scripts/test-stage.js 2 --base origin/main` was not run locally for this car either, on
+  the same PM guidance given for this lane's own Wave 1 car (PR #3179): it spawns 200+ scratch
+  servers that starve `localhost:3102` for the whole fleet, and GitHub Actions Tests CI runs it
+  in the cloud instead. Verified instead with `node scripts/test-stage.js 1` and the targeted
+  release-cut suite (`test/repo-scan.test.js`, `test/docs-parity-gate.test.js`,
+  `test/changelog-fragment-gate.test.js`, `test/release-mode.test.js`).
+
 ## 2026-11-20 — v6.5.3 release cut (Milestone #88), Car V653-W2-REL
 
 <!-- prawduct: type=internal | scope=v653-release -->

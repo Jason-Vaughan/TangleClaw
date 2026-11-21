@@ -4,6 +4,28 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.5.4] - 2026-11-21
+
+### Added
+- Usage probe: `claude -p "/usage"` parsing now picks up the 5-hour session
+  window's own reset line, not just the weekly one, and `tc usage probe`'s
+  rendered output shows each window's reset timestamp alongside its
+  percentage when the CLI reported one (#3174).
+- The engine usage popover (`#v6EngineUsagePopover`) and usage meter (`#v6EngineUsageMeter`) now show each engine's next-reset countdown and timestamp (e.g. "Resets in 4h 48m · 2026-11-22 00:55 UTC") wherever the automated CLI probe reports a `weeklyResetAt`/`fiveHourResetAt`: on each probe bar, including Fable/Antigravity sub-tiers, and in the manual-calibration table row and pill tooltip (#3174).
+
+### Fixed
+- The V6 shell's chat pane could overflow the viewport instead of scrolling internally — `.v6-shell-root`'s `align-items: start` let `.v6-shell-view` grow to its content height rather than stretch to its grid track, clipping the chat stream, Under the Hood, and composer, and sometimes pushing the composer off-screen (#3173).
+- Fixed an oversized saved or drag-resized composer/Under the Hood height being able to push `#v6ChatStream` or `#v6ChatForm`/`#v6ChatInput` off-screen and lock scrolling: `wireComposerResize()` now clamps both `tc_v6_chat_input_height` (min 64px, max `min(260, floor(viewportH * 0.30))`) and `tc_v6_chat_uth_height` (min 80px, max `min(360, floor(viewportH * 0.40))`) through a pure `clampChatPaneHeights` helper (exported as `global.tcV6ClampChatPaneHeights` for unit testing), applied on both restore and every drag-resize measurement (#3173).
+- `roadmapSyncStatus` now fails closed (#3175) when the currently shipped version's
+  `sprint-reports/vX.Y.Z/index.html` is missing from disk, or still carries the
+  auto-generated live-tracker placeholder (`AUTO_GENERATED_LIVE_SPRINT_REPORT` /
+  `LIVE TRACKING`) instead of a settled Gate 4 post-sprint report, in addition to
+  the existing missing-sync-status and unlinked-hub checks. `GET
+  /api/sprint-reports/:version` also now surfaces `settled` and a parsed
+  `postMortem` (`whatWorked`, `whatDidnt`, `rule283PassCount`) when the version's
+  report has settled, so the V6 Kaizen & Reports workspace tab can show the
+  post-mortem in-app.
+
 ## [6.5.3] - 2026-11-20
 
 ### Changed
