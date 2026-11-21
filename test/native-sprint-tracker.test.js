@@ -1194,6 +1194,18 @@ describe('sprint-wave-routes: createSprintWaveRouter', () => {
     assert.equal(json().report.heroKpis.releaseCommit, 'abc123deadbeef');
   });
 
+  it('#3164 (Architect Ruling A859, R2): a null getReleaseCommit never stomps out a releaseCommit getSprintDataForVersion already resolved', async () => {
+    const router = createSprintWaveRouter({
+      // The run's own real releaseCommit, same as sprintDataFromWaveRuns now resolves from v6.5.2's real row.
+      getSprintDataForVersion: async (version) => ({ version, cars: [], pullRequests: [], releaseCommit: 'd173f071c9c71c3758fa4112966fdd88bed96457' }),
+      getReleaseCommit: async () => null
+    });
+    const { req } = fakeReq('GET', '/api/sprint-reports/v6.5.2');
+    const { res, json } = fakeRes();
+    await router.handle(req, res);
+    assert.equal(json().report.heroKpis.releaseCommit, 'd173f071c9c71c3758fa4112966fdd88bed96457');
+  });
+
   it('#3164: getReports/getReleaseCommit never mutate the object getSprintDataForVersion returned', async () => {
     const shared = { version: 'v6.5.1', cars: [], pullRequests: [] };
     const router = createSprintWaveRouter({
@@ -1756,7 +1768,14 @@ describe('native-sprint-tracker: sprintDataFromWaveRuns (#3087, Ruling A774)', (
     assert.equal(dispatch.gate.stage, 'in-progress');
     assert.equal(dispatch.held.stage, 'blocked');
     assert.equal(dispatch.done.stage, 'closed');
-    assert.equal(dispatch.issues.stage, 'unassigned', 'real payload issues win over the closed marker');
+    // #3164 (Architect Ruling A859, R2): a car confirmed done (here,
+    // `status: 'complete'`) now normalizes every one of its own issues to
+    // 'closed', overriding a stale 'open' the payload kept from dispatch
+    // time -- exactly v6.5.1's real rows (`status: 'merged'`, `payload.issues`
+    // still reading 'open'). Before this ruling, a stale real issue state
+    // was trusted over the car's own confirmed-done signal; the ruling
+    // reverses that precedence for a car isMergedCar already confirms done.
+    assert.equal(dispatch.issues.stage, 'closed', 'a confirmed-done car closes its own issues, overriding a stale open state');
     assert.equal(data.cars.find((c) => c.id === 'run').dispatchedAt, '2026-11-15T00:00:00.000Z');
     assert.deepEqual(data.pullRequests, []);
     assert.equal(data.releaseCommit, null);
@@ -1765,6 +1784,131 @@ describe('native-sprint-tracker: sprintDataFromWaveRuns (#3087, Ruling A774)', (
   it('SPRINT_VERSION_RE admits current and X.Y.Z only', () => {
     for (const ok of ['current', '6.3.0', 'v6.2.10']) assert.ok(tracker.SPRINT_VERSION_RE.test(ok), ok);
     for (const bad of ['..', '../etc', '6.3', 'v6.3.0/x', 'latest', '6.3.0 ', '']) assert.ok(!tracker.SPRINT_VERSION_RE.test(bad), JSON.stringify(bad));
+  });
+
+  // #3164, Architect Ruling A859 (R2): the live `v6_wave_runs` table in
+  // `~/.tangleclaw/tangleclaw.db` was inspected directly before writing
+  // these -- each fixture below mirrors a real row's exact shape (v6.5.0
+  // through v6.5.3), not an invented one, because this table has rows
+  // written by more than one code path and the scheduler's own source is
+  // not a complete picture of what is actually persisted.
+  describe('real v6_wave_runs shapes (Architect Ruling A859, R2)', () => {
+    it('reads a run-level "running" status as current, same as "active" (the real v6.5.3 row)', () => {
+      const runs = {
+        old: run('old', 1, 'complete', { a: {} }),
+        live: run('live', 2, 'running', { b: {} })
+      };
+      assert.deepEqual(tracker.sprintDataFromWaveRuns(runs, 'current').cars.map((c) => c.id), ['b']);
+    });
+
+    it('confirms a car done via status "merged" alone (the real v6.5.1 shape), not just "complete"', () => {
+      const data = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', { m: { status: 'merged' } })
+      }, 'current');
+      assert.equal(data.cars[0].confirmedComplete, true);
+    });
+
+    it('confirms a car done via a top-level or payload mergeSha/mergeCommit, even with no recognized status word', () => {
+      const shapes = [
+        { status: 'unknown', mergeSha: '64428741' },
+        { status: 'unknown', mergeCommit: 'd8b145d6' },
+        { status: 'unknown', payload: { mergeSha: 'abc123' } },
+        { status: 'unknown', payload: { mergeCommit: 'def456' } }
+      ];
+      for (const [i, shape] of shapes.entries()) {
+        const data = tracker.sprintDataFromWaveRuns({ r: run('r', 1, 'active', { m: shape }) }, 'current');
+        assert.equal(data.cars[0].confirmedComplete, true, `shape ${i}: ${JSON.stringify(shape)}`);
+      }
+    });
+
+    it('normalizes a top-level car.issues list (bare numbers and "#NNNN" strings) into {id, state} objects', () => {
+      const data = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', { c: { status: 'complete', issues: [3148, '#3149'] } })
+      }, 'current');
+      assert.deepEqual(data.cars[0].issues, [{ id: 3148, state: 'closed' }, { id: 3149, state: 'closed' }]);
+    });
+
+    it('leaves a non-merged car\'s bare issue entries reading "open", never forcing closed', () => {
+      const data = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', { c: { status: 'running', issues: [3148] } })
+      }, 'current');
+      assert.deepEqual(data.cars[0].issues, [{ id: 3148, state: 'open' }]);
+    });
+
+    it('prefers payload.issues over a top-level car.issues list when both are present, never both at once', () => {
+      const data = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', {
+          c: { status: 'complete', issues: [9999], payload: { issues: [{ id: 1, state: 'open', title: 'real' }] } }
+        })
+      }, 'current');
+      assert.deepEqual(data.cars[0].issues, [{ id: 1, state: 'closed', title: 'real' }]);
+    });
+
+    it('reads a car\'s PR number from payload.prNumber, car.openPrNumber or car.prNumber when payload.openPrNumber is absent (the real v6.5.0-v6.5.3 shape)', () => {
+      const viaPayloadPrNumber = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', { c: { status: 'running', payload: { openPrNumber: null, prNumber: 3200 } } })
+      }, 'current');
+      assert.deepEqual(viaPayloadPrNumber.pullRequests, [{ carId: 'c', number: 3200, state: 'open', title: null, lane: null, status: 'running' }]);
+
+      const viaCarPrNumber = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', { c: { status: 'complete', prNumber: 3159, payload: { openPrNumber: null } } })
+      }, 'current');
+      assert.deepEqual(viaCarPrNumber.pullRequests, [{ carId: 'c', number: 3159, state: 'merged', title: null, lane: null, status: 'complete' }]);
+
+      const viaCarOpenPrNumber = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', { c: { status: 'running', openPrNumber: 3169 } })
+      }, 'current');
+      assert.deepEqual(viaCarOpenPrNumber.pullRequests, [{ carId: 'c', number: 3169, state: 'open', title: null, lane: null, status: 'running' }]);
+    });
+
+    it('falls back to car.lane, car.headSha, car.branch and car.title when payload carries none of them (the real v6.5.2/v6.5.3 shape)', () => {
+      const data = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', {
+          c: { status: 'running', lane: 'TC-Lane-A', headSha: '5137820b', branch: 'feat/v653-w1a', title: 'Car title' }
+        })
+      }, 'current');
+      const car = data.cars[0];
+      assert.equal(car.lane, 'TC-Lane-A');
+      assert.equal(car.headSha, '5137820b');
+      assert.equal(car.branch, 'feat/v653-w1a');
+      assert.equal(car.title, 'Car title');
+    });
+
+    it('folds a bare car.reviewer string into {prr: car.reviewer} when neither payload.reviewers nor car.reviewers is an object (the real v6.5.2 shape)', () => {
+      const data = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', { c: { status: 'complete', reviewer: 'TC-Lane-PRR-A' } })
+      }, 'current');
+      assert.deepEqual(data.cars[0].reviewers, { prr: 'TC-Lane-PRR-A' });
+    });
+
+    it('prefers payload.reviewers, then car.reviewers, over a bare car.reviewer string', () => {
+      const viaPayload = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', { c: { reviewer: 'ignored', payload: { reviewers: { oGate: 'A', prr: 'B' } } } })
+      }, 'current');
+      assert.deepEqual(viaPayload.cars[0].reviewers, { oGate: 'A', prr: 'B' });
+
+      const viaCarObject = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', { c: { reviewer: 'ignored', reviewers: { oGate: 'C' } } })
+      }, 'current');
+      assert.deepEqual(viaCarObject.cars[0].reviewers, { oGate: 'C' });
+    });
+
+    it('passes through the run\'s own top-level releaseCommit (the real v6.5.2 shape), instead of always null', () => {
+      const runs = { r: run('r', 1, 'active', { c: {} }) };
+      runs.r.releaseCommit = 'd173f071c9c71c3758fa4112966fdd88bed96457';
+      assert.equal(tracker.sprintDataFromWaveRuns(runs, 'current').releaseCommit, 'd173f071c9c71c3758fa4112966fdd88bed96457');
+    });
+
+    it('falls back to run.metadata.releaseCommit when the run carries no top-level one', () => {
+      const data = tracker.sprintDataFromWaveRuns({
+        r: run('r', 1, 'active', { c: {} }, { releaseCommit: 'abc123' })
+      }, 'current');
+      assert.equal(data.releaseCommit, 'abc123');
+    });
+
+    it('reads releaseCommit null when neither the run nor its metadata carries one, unchanged from before this ruling', () => {
+      assert.equal(tracker.sprintDataFromWaveRuns({ r: run('r', 1, 'active', { c: {} }) }, 'current').releaseCommit, null);
+    });
   });
 });
 
