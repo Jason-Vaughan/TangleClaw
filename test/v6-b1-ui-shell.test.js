@@ -2728,20 +2728,23 @@ describe('Above-the-Hood chat view (#3052)', () => {
   // also answers idle: false with idleReason: null for a row with no reachable
   // pane probe at all (nothing is known, not "it is busy"), and idleReason:
   // 'settling' for a session that IS at rest but hasn't held still long enough
-  // yet to clear detectAtPrompt's wall-clock floor. Only the 3 reasons
-  // lib/medusa-wake.js#_assessActivity sets when it finds the engine mid-turn
-  // count as genuinely busy.
-  describe('tcV6IsSessionStatusBusy (#3167, Ruling A864)', () => {
-    it('is busy only for the 3 genuinely-working idleReason values', () => {
+  // yet to clear detectAtPrompt's wall-clock floor. Only a positive busyMarker
+  // (turn-in-flight) or an active subagent block (agents-running) count as
+  // genuinely busy — #3181 found 'not-at-rest' fires whenever an OPTIONAL
+  // idleMarker is merely absent from the tail (Antigravity's "Press up to
+  // edit queued messages" footer, Codex's own status bar) even when the
+  // session is actually at rest, so it moved out of the busy set.
+  describe('tcV6IsSessionStatusBusy (#3167, Ruling A864; #3181 removed not-at-rest)', () => {
+    it('is busy only for the 2 genuinely-working idleReason values', () => {
       assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'turn-in-flight' }), true);
-      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'not-at-rest' }), true);
       assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'agents-running' }), true);
     });
 
-    it('is NOT busy for idle: false with no real information or a transient settling window', () => {
+    it('is NOT busy for idle: false with no real information, a transient settling window, or a merely-absent optional idle marker', () => {
       assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: null }), false, 'unprobed row');
       assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'settling' }), false, 'at rest, not held still long enough yet');
       assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'pane-writing' }), false, 'transcript moving, not necessarily a turn');
+      assert.equal(G.tcV6IsSessionStatusBusy({ idle: false, idleReason: 'not-at-rest' }), false, '#3181: an absent optional idle marker is not a busy signal');
       assert.equal(G.tcV6IsSessionStatusBusy({ idle: false }), false, 'idleReason absent entirely');
     });
 
@@ -3628,6 +3631,68 @@ describe('tcV6ExtractLiveTurns: the interrupt hint is chrome only in its UI form
     // Ordinary prose that merely uses the word is still just a reply, not activity.
     const prose = plain(G.tcV6ExtractLiveTurns(['> go', 'Running the tests now took a while, and thinking it over, I\'m satisfied.'], 'codex', []));
     assert.equal(prose.activity, null);
+  });
+});
+
+// #3181: `extractLiveTurns`/`tcV6IsSessionStatusBusy`/`chatBusyLabel` read 4
+// distinct conditions as "Working" when the engine was actually idle,
+// introduced by #3167's own busy indicator. Each regression below is one of
+// the 4 from the issue's empirical fleet inspection.
+describe('tcV6ExtractLiveTurns clears stale activity instead of reading 4 false-positive conditions as busy (#3181)', () => {
+  const G = loadV6Shell();
+
+  it('a Claude Code completed-turn timing recap clears activity and does not leak into a reply turn', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['> go', '✻ Baking for 10s… (esc to interrupt)', '✻ Baked for 2m 23s · done 12:57 AM'], 'claude', []));
+    assert.equal(out.activity, null);
+    assert.equal(out.turns.length, 1, 'only the recorded prompt — no reply turn leaked from the chrome');
+    for (const line of ['✻ Churned for 14s · done 12:58 AM', '✻ Cooked for 33s · done 12:46 PM', '✻ Sautéed for 1m 18s · done 6:03 PM']) {
+      assert.equal(plain(G.tcV6ExtractLiveTurns(['> go', line], 'claude', [])).activity, null, line);
+    }
+  });
+
+  it('an Antigravity background /tasks daemon row never leaves activity stuck on once an at-rest footer follows', () => {
+    const shortcuts = plain(G.tcV6ExtractLiveTurns(
+      ['> go', '● [10:21:47] node .../server.mjs running', '? for shortcuts          auto · Gemini 4 Argon · medium · 4 task(s) · /tasks'],
+      'antigravity', []
+    ));
+    assert.equal(shortcuts.activity, null);
+    const queued = plain(G.tcV6ExtractLiveTurns(
+      ['> go', '● [10:21:47] node .../server.mjs running', 'Press up to edit queued messages'], 'antigravity', []
+    ));
+    assert.equal(queued.activity, null);
+  });
+
+  it('an Antigravity active status bar keeps the spinner\'s own label instead of its right-hand model/task chrome', () => {
+    const withSpinner = plain(G.tcV6ExtractLiveTurns(
+      ['> go', '✻ Thinking…', 'esc to cancel          auto · Gemini 4 Argon · medium · 4 task(s) · /tasks'], 'antigravity', []
+    ));
+    assert.match(withSpinner.activity, /Thinking/);
+    assert.doesNotMatch(withSpinner.activity, /Gemini|task\(s\)/);
+    const bare = plain(G.tcV6ExtractLiveTurns(
+      ['> go', 'esc to cancel          auto · Gemini 4 Argon · medium · 4 task(s) · /tasks'], 'antigravity', []
+    ));
+    assert.equal(bare.activity, 'Working…', 'no prior spinner to preserve — a generic fallback label, not the model/task chrome');
+  });
+
+  it('an interactive confirmation menu\'s own "esc to cancel" cancels the menu, not a turn', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(
+      ['> go', '↑/↓ Navigate · tab Amend', 'esc to cancel          auto · Gemini 4 Argon · medium'], 'antigravity', []
+    ));
+    assert.equal(out.activity, null);
+  });
+});
+
+describe('tcV6IsSessionStatusBusy & tcV6ChatBusyLabel: a CLI gate or menu on screen is not "Working" even while the status poll says busy (#3181)', () => {
+  const G = loadV6Shell();
+
+  it('chatBusyLabel does not return Working when an interactive menu is in the live raw lines, even if chat.statusBusy is true', () => {
+    const chat = { statusBusy: true, live: { activity: null, rawLines: ['↑/↓ Navigate · tab Amend', 'esc to cancel          auto · Gemini 4 Argon · medium'] } };
+    assert.equal(G.tcV6ChatBusyLabel(chat), null);
+  });
+
+  it('chatBusyLabel still returns Working for a genuinely busy status with no gate or menu on screen', () => {
+    const chat = { statusBusy: true, live: { activity: null, rawLines: ['✻ Thinking…'] } };
+    assert.equal(G.tcV6ChatBusyLabel(chat), 'Working');
   });
 });
 
