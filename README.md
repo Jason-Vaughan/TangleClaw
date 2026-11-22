@@ -18,7 +18,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
 
-**Latest release:** `v6.5.5` — “The V6 shell's "Working" indicator no longer sticks on for an idle Claude Code, Antigravity, or Codex session, and Under the Hood now reads a TCC-bootstrapped session's own full deep scrollback from its real socket instead of a thin attach-proxy's ~50 visible rows, matching Classic View” ([release status](docs/releases/v6.5.5.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.5.5` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.5.5/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
+**Latest release:** `v6.5.6` — “The V6 chat window gets 4 accessible drag/keyboard resizer bars that trade height between Main Chat, Under the Hood, and the composer, and Under the Hood's toggle bar now stays pinned to the top of its own scroll container instead of scrolling out of reach while open” ([release status](docs/releases/v6.5.6.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.5.6` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.5.6/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
 
 One AI coding agent is easy. Five are not. They forget what the last session decided, edit the same files, fight over the same ports, and wait silently for an answer you did not know they needed. You end up watching terminals.
 
@@ -52,7 +52,7 @@ TangleClaw is developed with TangleClaw. Its own Builder, Project Manager and re
 
 ```bash
 # macOS. What the installer does, and what you need first: Quick Start, below
-git clone --branch v6.5.5 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.5.6 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw && ./deploy/install.sh
 ```
 
@@ -186,7 +186,7 @@ Most importantly, TangleClaw enforces strict safety boundaries, ensuring that wh
 ## Quick Start
 
 ```bash
-git clone --branch v6.5.5 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.5.6 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw
 ./deploy/install.sh
 ```

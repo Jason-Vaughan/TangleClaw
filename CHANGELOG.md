@@ -4,6 +4,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.5.6] - 2026-11-22
+
+### Fixed
+- The V6 chat window's panes had no way to trade space with each other — only `#v6ChatUnderHood`/`#v6ChatPeek`/`#v6ChatInput`'s own tiny native resize grips existed, and Main Chat had none at all. Added 4 accessible drag/keyboard resizer bars at the Main Chat / Under the Hood / Composer boundaries that trade height 1:1 and zero-sum ("Gobble & Fill") between whichever panes are actually open, with a joint viewport budget so neither Under the Hood nor the composer can together push Main Chat or its own controls off-screen. Fixed in `public/v6-shell.js` (#3186).
+- Fixed the Under the Hood `🔧` toggle bar scrolling out of reach and getting stuck open: `.v6-chat-under-hood > summary` is now `position: sticky; top: 0`, pinned to the top of `.v6-chat-under-hood[open]`'s own scroll container (with an opaque surface fill so scrolled content doesn't show through), so the collapse toggle and its Full Screen/Interactive buttons stay reachable regardless of how tall or scrolled the drawer is. Also added `.v6-chat-pane-resizer`/`.v6-chat-pane-resizer-grip` styling (venom-green left/center/right grips on hover, keyboard focus, and drag) for the new two-way drag handles at the Main Chat/Under the Hood/Composer boundaries (#3187).
+
 ## [6.5.5] - 2026-11-21
 
 ### Fixed
