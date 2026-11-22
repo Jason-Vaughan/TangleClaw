@@ -1186,6 +1186,173 @@ describe('_isAntigravitySurveyPrompt / capturePane auto-dismiss (#3111)', () => 
   });
 });
 
+describe('isAlternateScreen / capturePane route the real TCC-authorized session, not the default-server attach proxy (#3182)', () => {
+  /**
+   * A fully fake `tmux` on PATH distinguishing the default server's own
+   * attach-proxy pane (no `-L` flag: `#{alternate_on}`=1,
+   * `#{pane_current_command}`=tmux, the shape `_createTccAttachProxy`'s
+   * `tmux -u attach` produces) from the REAL session on `TCC_SOCKET` (the
+   * `-L <socket>` follow-up calls `_resolveCapturePaneTarget` makes only
+   * once it recognizes that shape) — real tmux is never involved, so this
+   * exercises exactly the branching `lib/tmux.js` does, with no actual
+   * TCC-authorized server to stand up.
+   * @param {string} binDir
+   * @param {{tccAltOn?: string, tccCaptureOutput?: string}} [opts]
+   */
+  function writeTccProxyShim(binDir, opts = {}) {
+    const tccAltOn = opts.tccAltOn === undefined ? '0' : opts.tccAltOn;
+    const tccCaptureOutput = opts.tccCaptureOutput || 'real session line 1\nreal session line 2\n';
+    // Written to a file and `cat`, not inlined via printf: the content can
+    // contain multiple lines, and only a real newline byte (not a shell
+    // escape sequence a quoting layer could mangle) will do.
+    const outputFile = path.join(binDir, 'tcc-capture-output.txt');
+    fs.writeFileSync(outputFile, tccCaptureOutput);
+    fs.writeFileSync(path.join(binDir, 'tmux'), [
+      '#!/bin/sh',
+      'case "$*" in',
+      '  *has-session*) exit 0 ;;',
+      // The TCC_SOCKET follow-up alt-screen read (always carries -L).
+      '  *-L*alternate_on*)',
+      `    echo ${tccAltOn}`,
+      '    exit 0 ;;',
+      // The TCC_SOCKET follow-up capture (always carries -L).
+      '  *-L*capture-pane*)',
+      `    cat ${outputFile}`,
+      '    exit 0 ;;',
+      // The default server's combined alt-screen/command probe (no -L):
+      // the attach-proxy shape every TCC-bootstrapped session's default
+      // pane reports.
+      '  *pane_current_command*)',
+      '    printf "1,tmux\\n"',
+      '    exit 0 ;;',
+      // ensureMinWindowWidth's own default-server read — 200 is >= MIN_TMUX_COLS so no resize fires.
+      '  *window_width*) echo 200; exit 0 ;;',
+      // The default server's own capture-pane must never be reached once the
+      // proxy shape is recognized — a visible failure if it is.
+      '  *capture-pane*) printf "DEFAULT-SERVER-PROXY-WAS-CAPTURED\\n"; exit 0 ;;',
+      '  *) exit 0 ;;',
+      'esac'
+    ].join('\n'), { mode: 0o755 });
+  }
+
+  /** @returns {{restore: () => void}} swaps `process.env.PATH` to the shim dir; call `restore()` in a `finally`. */
+  function withShimOnPath(binDir) {
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    return { restore: () => { process.env.PATH = realPath; } };
+  }
+
+  it('isAlternateScreen reads the REAL session on TCC_SOCKET, not the proxy\'s own always-alternate-screen default-server pane', () => {
+    const name = uniqueSessionName('tcc_3182_isalt');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-3182-shim-'));
+    writeTccProxyShim(binDir, { tccAltOn: '0' });
+    const shim = withShimOnPath(binDir);
+    let result;
+    try {
+      result = tmux.isAlternateScreen(name);
+    } finally {
+      shim.restore();
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+    assert.equal(result, false, 'the real session is not in alternate screen, even though the default-server proxy pane always reports alternate_on=1');
+  });
+
+  it('isAlternateScreen returns true when the REAL TCC_SOCKET session itself is in alternate screen', () => {
+    const name = uniqueSessionName('tcc_3182_isalt_true');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-3182-shim-'));
+    writeTccProxyShim(binDir, { tccAltOn: '1' });
+    const shim = withShimOnPath(binDir);
+    let result;
+    try {
+      result = tmux.isAlternateScreen(name);
+    } finally {
+      shim.restore();
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+    assert.equal(result, true);
+  });
+
+  it('capturePane(session, { lines: 2000 }) captures the REAL session on TCC_SOCKET with -L and -S -2000, returning alternateScreen: false', () => {
+    const name = uniqueSessionName('tcc_3182_capture');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-3182-shim-'));
+    const callLogFile = path.join(binDir, 'calls.log');
+    writeTccProxyShim(binDir, { tccAltOn: '0', tccCaptureOutput: 'line one\nline two\nline three (deep scrollback)\n' });
+    // Wrap the shim to also log every invocation, so the test can assert the
+    // exact capture-pane command actually carried -L <TCC_SOCKET> and -S -2000.
+    const shimPath = path.join(binDir, 'tmux');
+    const shimBody = fs.readFileSync(shimPath, 'utf8');
+    fs.writeFileSync(shimPath, shimBody.replace(
+      "case \"$*\" in",
+      `echo "$*" >> ${callLogFile}\ncase "$*" in`
+    ), { mode: 0o755 });
+    const shim = withShimOnPath(binDir);
+    let result;
+    let calls;
+    try {
+      result = tmux.capturePane(name, { lines: 2000 });
+      calls = fs.readFileSync(callLogFile, 'utf8');
+    } finally {
+      shim.restore();
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+    assert.equal(result.alternateScreen, false);
+    assert.deepEqual(result.lines, ['line one', 'line two', 'line three (deep scrollback)']);
+    assert.match(calls, new RegExp(`-L ${tmux.TCC_SOCKET} capture-pane .* -S -2000`), 'the real capture ran against TCC_SOCKET with the full 2000-line range, not the default server');
+    assert.doesNotMatch(calls, /DEFAULT-SERVER-PROXY-WAS-CAPTURED/, 'the default server\'s own capture-pane was never reached');
+  });
+
+  it('capturePane still captures only the visible pane when the REAL TCC_SOCKET session is itself in alternate screen', () => {
+    const name = uniqueSessionName('tcc_3182_capture_alt');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-3182-shim-'));
+    writeTccProxyShim(binDir, { tccAltOn: '1', tccCaptureOutput: 'visible row only\n' });
+    const shim = withShimOnPath(binDir);
+    let result;
+    try {
+      result = tmux.capturePane(name, { lines: 2000 });
+    } finally {
+      shim.restore();
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+    assert.equal(result.alternateScreen, true);
+    assert.deepEqual(result.lines, ['visible row only']);
+  });
+
+  it('a non-TCC session (no proxy shape) is unaffected: isAlternateScreen/capturePane run against the default server exactly as before', () => {
+    const name = uniqueSessionName('tcc_3182_nonproxy');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-3182-nonproxy-shim-'));
+    fs.writeFileSync(path.join(binDir, 'tmux'), [
+      '#!/bin/sh',
+      'case "$*" in',
+      '  *has-session*) exit 0 ;;',
+      '  *pane_current_command*) printf "0,zsh\\n"; exit 0 ;;', // real pane, not alt-screen, not the proxy shape
+      '  *window_width*) echo 200; exit 0 ;;',
+      '  *capture-pane*) printf "ordinary pane output\\n"; exit 0 ;;',
+      '  *) exit 0 ;;',
+      'esac'
+    ].join('\n'), { mode: 0o755 });
+    const shim = withShimOnPath(binDir);
+    let altScreen;
+    let result;
+    try {
+      altScreen = tmux.isAlternateScreen(name);
+      result = tmux.capturePane(name, { lines: 5 });
+    } finally {
+      shim.restore();
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+    assert.equal(altScreen, false);
+    assert.deepEqual(result.lines, ['ordinary pane output']);
+  });
+
+  it('_isTccAttachProxyPane recognizes exactly the proxy shape, nothing looser', () => {
+    assert.equal(tmux._isTccAttachProxyPane('1,tmux'), true);
+    assert.equal(tmux._isTccAttachProxyPane('0,tmux'), false, 'not alternate-screen: a real tmux-named pane, not the proxy');
+    assert.equal(tmux._isTccAttachProxyPane('1,zsh'), false, 'alternate-screen but not running tmux: a real TUI, not the proxy');
+    assert.equal(tmux._isTccAttachProxyPane(''), false);
+    assert.equal(tmux._isTccAttachProxyPane(null), false);
+  });
+});
+
 describe('ensureTccAnchorAlive (#3130, PRR-A R1 BLOCKING 2b)', () => {
   it('is a no-op when the anchor is already alive', () => {
     startAuthorizedAnchor();
