@@ -4,6 +4,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.5.5] - 2026-11-21
+
+### Fixed
+- The V6 shell's "Working" indicator could stick on for an idle session: a Claude Code completed-turn timing recap, an Antigravity background `/tasks` daemon row above an at-rest footer, an Antigravity status bar's own `esc to cancel` showing its right-hand model/task text instead of the real activity, or an interactive confirmation menu, could all read as busy. Fixed in `public/v6-shell.js` (#3181).
+- Fixed Under the Hood showing only ~50 visible rows instead of full scrollback for a TCC-bootstrapped session (e.g. a TC-Lane-* pane): `isAlternateScreen`/`capturePane` used to query the default server's own pane for such a session, which is really just a thin attach-proxy (`_createTccAttachProxy`'s `tmux -u attach`) that always reports `alternate_on=1`, silently skipping the `-S -2000` scrollback range and returning only the proxy's own visible rows. Both now route through a new `_resolveCapturePaneTarget`, which recognizes that proxy shape (`alternate_on=1` and `pane_current_command=tmux` on the default server — a combination no genuine pane produces) and reads the REAL session's own alternate-screen state and content from `TCC_SOCKET` instead, so Under the Hood now matches Classic View's full deep scrollback (#3182).
+
 ## [6.5.4] - 2026-11-21
 
 ### Added

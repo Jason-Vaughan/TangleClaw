@@ -17,6 +17,11 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.5.5 — Eliminate false-positive V6 Working/busy indicators and fix TCC-proxy scrollback capture
+
+- **Eliminate false-positive V6 Working/busy indicators** (#3181) — `public/v6-shell.js` (`LIVE_NOISE`, `LIVE_BUSY`, `STATUS_BUSY_REASONS`, `isSessionStatusBusy`, `chatBusyLabel`): a Claude Code completed-turn timing recap, an Antigravity background `/tasks` daemon row above an at-rest footer, an Antigravity status bar's own `esc to cancel` showing its right-hand model/task text, and an interactive confirmation menu's navigation line no longer read as busy; `idleReason: 'not-at-rest'` (a session at rest but missing the optional idle marker) is no longer misread as working either.
+- **TCC-proxy full scrollback capture** (#3182) — `lib/tmux.js#_resolveCapturePaneTarget`, wired into `#isAlternateScreen`/`#capturePane`: recognizes a TCC attach-proxy pane (`alternate_on=1` and `pane_current_command=tmux` on the default server — a shape no genuine pane produces) and reads the real session's alternate-screen state and content from `TCC_SOCKET` instead, so Under the Hood's deep scrollback matches Classic View for a TCC-bootstrapped session.
+
 ## v6.5.4 — V6 scroll & chat reachability restoration, per-engine next-reset countdown, and Gate 4 post-sprint report enforcement
 
 - **V6 shell internal scroll and chat reachability** (#3173) — `public/style.css` (`.v6-shell-root`, `.v6-shell-view`): restores `align-self: stretch; height: 100%; min-height: 0; overflow-y: auto` so the chat stream, Under the Hood, and composer scroll within their grid track instead of overflowing the viewport. `public/v6-shell.js#clampChatPaneHeights` (exported as `global.tcV6ClampChatPaneHeights`), wired from `#wireComposerResize`: clamps a saved or drag-resized `tc_v6_chat_input_height`/`tc_v6_chat_uth_height` to viewport-relative bounds so an oversized height can no longer push the chat stream or composer off-screen.
