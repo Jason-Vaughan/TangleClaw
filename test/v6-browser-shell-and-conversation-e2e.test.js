@@ -780,3 +780,57 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
     });
   });
 });
+
+describe('Car V656-W1-B: sticky Under the Hood toggle bar and two-way pane resizer styling (#3187)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  /** @param {string} selector @returns {string} the selector's own `{ ... }` body, or '' if not found. */
+  const body = (selector) => {
+    const m = new RegExp(`(^|\\n)${selector.replace(/[.[\]>="-]/g, '\\$&')} \\{([^}]*)\\}`).exec(css);
+    return m ? m[2] : '';
+  };
+
+  it('pins the Under the Hood <summary> toggle bar to the top of its own scroll container', () => {
+    assert.match(body('.v6-chat-under-hood > summary'), /position: sticky;\s*top: 0;/);
+    assert.match(body('.v6-chat-under-hood > summary'), /z-index: 5;/);
+    assert.match(body('.v6-chat-under-hood > summary'), /background: var\(--v6-surface, #0d0d0d\);/,
+      'an opaque fill behind the sticky bar — without it, content scrolling underneath would show through');
+  });
+
+  it('still carries the toggle bar\'s own pre-existing cursor and spacing, unchanged by the sticky styling', () => {
+    assert.match(body('.v6-chat-under-hood > summary'), /cursor: pointer;/);
+    assert.match(body('.v6-chat-under-hood > summary'), /margin-bottom: 6px;/);
+  });
+
+  it('gives the two-way pane resizer bar a draggable cursor and the touch/selection behavior a drag handle needs', () => {
+    assert.match(body('.v6-chat-pane-resizer'), /cursor: ns-resize;/);
+    assert.match(body('.v6-chat-pane-resizer'), /user-select: none;/);
+    assert.match(body('.v6-chat-pane-resizer'), /touch-action: none;/);
+    assert.match(body('.v6-chat-pane-resizer'), /display: flex;/);
+  });
+
+  it('gives the resizer\'s left/center/right grips their own distinct corner/pill sizes', () => {
+    assert.match(body('.v6-chat-pane-resizer-grip'), /height: 4px;/);
+    assert.match(body('.v6-chat-pane-resizer-grip'), /border-radius: 999px;/);
+    assert.match(css, /\.v6-chat-pane-resizer-grip--left,\s*\.v6-chat-pane-resizer-grip--right \{\s*width: 14px;\s*\}/,
+      'the corner grips share one narrower width');
+    assert.match(body('.v6-chat-pane-resizer-grip--center'), /width: 36px;/, 'the center grip is the wider pill');
+  });
+
+  it('lights the grips venom-green on hover, keyboard focus, and drag — not just one of the three', () => {
+    assert.match(css,
+      /\.v6-chat-pane-resizer:hover \.v6-chat-pane-resizer-grip,\s*\.v6-chat-pane-resizer:focus-visible \.v6-chat-pane-resizer-grip,\s*\.v6-chat-pane-resizer:active \.v6-chat-pane-resizer-grip \{\s*background: var\(--tc-venom-green, #9CF732\);\s*\}/);
+  });
+
+  it('declares both the --top and --bottom edge variants, for the resizer\'s own two placements relative to its neighboring pane', () => {
+    assert.notEqual(css.indexOf('.v6-chat-pane-resizer--top'), -1);
+    assert.notEqual(css.indexOf('.v6-chat-pane-resizer--bottom'), -1);
+  });
+
+  it('preserves the pre-existing stream/peek/input/under-hood rules this sprint must not disturb', () => {
+    assert.match(body('.v6-chat-stream'), /flex: 1 1 0%;\s*min-height: 120px;\s*max-height: none;/);
+    assert.match(body('.v6-chat-peek'), /min-height: 120px;[\s\S]*max-height: 70vh;[\s\S]*resize: vertical;/);
+    assert.match(body('.v6-chat-input'), /border: 2px solid var\(--v6-outline, #3d444d\);/);
+    assert.match(body('.v6-chat-under-hood'), /border: 1\.5px solid var\(--v6-outline, #3d444d\);/);
+    assert.match(body('.v6-chat-under-hood'), /background: var\(--v6-surface, #0d0d0d\);/);
+  });
+});
