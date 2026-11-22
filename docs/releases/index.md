@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.5.4 — V6 scroll & chat reachability restoration, per-engine next-reset countdown, and Gate 4 post-sprint report enforcement](v6.5.4.md)
+- [v6.5.5 — Eliminate false-positive V6 Working/busy indicators and fix TCC-proxy scrollback capture](v6.5.5.md)
 
 ## Recent releases
+
+- [v6.5.4 — V6 scroll & chat reachability restoration, per-engine next-reset countdown, and Gate 4 post-sprint report enforcement](v6.5.4.md)
 
 - [v6.5.3 — Charter & Roadmap release classification, Kaizen reports catalog, full-width chat, and Wizard/UTH fixes](v6.5.3.md)
 

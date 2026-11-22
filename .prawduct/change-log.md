@@ -41,6 +41,31 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-21 — v6.5.5 release cut (Milestone #91), Car V655-W2-REL
+
+<!-- prawduct: type=internal | scope=v655-release -->
+
+- Compiled 2 accepted `changelog.d/` fragments (#3181 from PR #3183; #3182 from PR #3184) into
+  `CHANGELOG.md` section `[6.5.5]` via `compileFragments`/`spliceIntoUnreleased`/
+  `_promoteUnreleased`, target version `6.5.5` (patch — the fragment set is `fixed` only).
+  Bumped `version.json` (`6.5.4` → `6.5.5`), updated README pins/banner (prose hand-written
+  here, not generated) and the released-section lock via `scripts/release-prepare.js`, and
+  updated `FEATURES.md`, `ROADMAP.md`, `docs/releases/index.md` and `docs/releases/v6.5.5.md`.
+- Dispatched by `TC-Lane-PM`/`TC-Lane-INT` via Medusa after both Wave 1 cars (PR #3183 @
+  2d82e1d2, PR #3184 @ 4bee6dc8) true-merged to `origin/main @ 4bee6dc8a87914e7e37fd470faf9a43a342670fb`,
+  closing both Milestone #91 issues (#3181, #3182). `LANE_QUEUE.md`'s `W2-REL (Car V655-W2-REL)`
+  row carries the matching file-scope grant.
+- `node scripts/test-stage.js 2 --base origin/main` was not run locally for this car either, on
+  the same PM guidance given for this sprint's Wave 1/Wave 2 cars: it spawns 200+ scratch
+  servers that starve `localhost:3102` for the whole fleet. The dispatch named
+  `test/release-docs.test.js`/`test/docs-consistency.test.js` for verification; neither file
+  exists in this repo (flagged to `TC-Lane-PM` rather than silently skipped), so verification
+  ran `node scripts/test-stage.js 1` plus the same targeted release-cut suite the v6.5.4 cut
+  used (`test/repo-scan.test.js`, `test/docs-parity-gate.test.js`,
+  `test/changelog-fragment-gate.test.js`, `test/release-mode.test.js`) and the lock/
+  release-prepare-specific tests (`test/changelog-released-immutable.test.js`,
+  `test/release-prepare-script.test.js`, `test/changelog-structure.test.js`) instead.
+
 ## 2026-11-21 — v6.5.4 release cut (Milestone #90), Car V654-W2-REL
 
 <!-- prawduct: type=internal | scope=v654-release -->
