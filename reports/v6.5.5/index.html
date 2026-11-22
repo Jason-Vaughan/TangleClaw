@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TangleClaw Sprint v6.5.5 — Gate 4 Post-Sprint Empirical &amp; 16-Point Rule #283 Audit Report</title>
+  <!-- TANGLECLAW_OG_META_START -->
+  <meta name="description" content="Sprint v6.5.5 (Milestone #91) shipped 3/3 True-Merged Pull Requests (#3183, #3184, #3185 -> main @ b62ebffc18a63f818adad556396a1879833d2b24), closing all 2/2 issues (#3181, #3182) in ~1h 15m (T_eng = 1.25h) with 1.00 avg rounds/PR, 0 CI red runs after ready, and 0 Operator interventions." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="TangleClaw Autonomous Sprint Reports" />
+  <meta property="og:title" content="TangleClaw Sprint v6.5.5 — Gate 4 Post-Sprint Empirical &amp; 16-Point Rule #283 Audit Report" />
+  <meta property="og:description" content="Sprint v6.5.5 (Milestone #91) shipped 3/3 True-Merged Pull Requests (#3183, #3184, #3185 -> main @ b62ebffc18a63f818adad556396a1879833d2b24), closing all 2/2 issues (#3181, #3182) in ~1h 15m (T_eng = 1.25h) with 1.00 avg rounds/PR, 0 CI red runs after ready, and 0 Operator interventions." />
+  <meta property="og:url" content="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.5/" />
+  <meta property="og:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="TangleClaw Sprint v6.5.5 — Gate 4 Post-Sprint Empirical &amp; 16-Point Rule #283 Audit Report" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="TangleClaw Sprint v6.5.5 — Gate 4 Post-Sprint Empirical &amp; 16-Point Rule #283 Audit Report" />
+  <meta name="twitter:description" content="Sprint v6.5.5 (Milestone #91) shipped 3/3 True-Merged Pull Requests (#3183, #3184, #3185 -> main @ b62ebffc18a63f818adad556396a1879833d2b24), closing all 2/2 issues (#3181, #3182) in ~1h 15m (T_eng = 1.25h) with 1.00 avg rounds/PR, 0 CI red runs after ready, and 0 Operator interventions." />
+  <meta name="twitter:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
+  <link rel="icon" type="image/png" href="https://jason-vaughan.github.io/TangleClaw/reports/assets/logo-icon.png" />
+  <link rel="apple-touch-icon" href="https://jason-vaughan.github.io/TangleClaw/reports/assets/apple-touch-icon.png" />
+  <!-- TANGLECLAW_OG_META_END -->
+  <style>
+    :root {
+      --bg: #070b14;
+      --bg-card: #0f172a;
+      --bg-card-alt: #131c31;
+      --border: #1e293b;
+      --border-hi: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #94a3b8;
+      --cyan: #38bdf8;
+      --accent2: #38bdf8;
+      --green: #34d399;
+      --purple: #c084fc;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+      --indigo: #818cf8;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at 15% 0%, #0f1f3d 0%, var(--bg) 45%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.88em;
+      background: rgba(148, 163, 184, 0.14);
+      padding: 0.12rem 0.38rem;
+      border-radius: 5px;
+      color: #e2e8f0;
+    }
+    .topnav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(7, 11, 20, 0.88);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.7rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .topnav-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-weight: 800;
+      font-size: 1.05rem;
+      color: var(--text);
+    }
+    .brand-badge {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--cyan), var(--green));
+      color: #070b14;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 0.82rem;
+    }
+    .nav-links {
+      display: flex;
+      gap: 1.1rem;
+      flex-wrap: wrap;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+    .nav-links a { color: var(--text-muted); transition: color 0.15s; }
+    .nav-links a:hover { color: var(--cyan); text-decoration: none; }
+    .container {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+    .hero {
+      background: linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(30, 27, 75, 0.72));
+      border: 1px solid var(--border-hi);
+      border-radius: 18px;
+      padding: 2.25rem 2rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(52, 211, 153, 0.12);
+      border: 1px solid rgba(52, 211, 153, 0.4);
+      color: var(--green);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 0.28rem 0.75rem;
+      border-radius: 999px;
+      margin-bottom: 0.9rem;
+    }
+    .hero h1 {
+      margin: 0 0 0.65rem;
+      font-size: clamp(1.75rem, 3.2vw, 2.55rem);
+      letter-spacing: -0.02em;
+      line-height: 1.18;
+    }
+    .hero-subtitle {
+      margin: 0 0 1.4rem;
+      color: #cbd5e1;
+      font-size: 1.04rem;
+      max-width: 980px;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.35rem 0.85rem;
+      border-radius: 999px;
+      background: rgba(52, 211, 153, 0.14);
+      border: 1px solid rgba(52, 211, 153, 0.4);
+      color: var(--green);
+      font-size: 0.82rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.55rem 1rem;
+      border-radius: 10px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      border: 1px solid var(--border-hi);
+      background: var(--bg-card);
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .btn:hover { border-color: var(--cyan); transform: translateY(-1px); text-decoration: none; }
+    .btn-primary { background: linear-gradient(135deg, #0284c7, #2563eb); border-color: #38bdf8; color: #fff; }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+      gap: 1rem;
+    }
+    .kpi-card {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.1rem 1.2rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--cyan), var(--green));
+    }
+    .kpi-label {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .kpi-val, .kpi-value {
+      font-size: 1.65rem;
+      font-weight: 800;
+      margin: 0.25rem 0 0.2rem;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    .kpi-sub, .kpi-meta { font-size: 0.82rem; color: #cbd5e1; }
+    .section {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem;
+      margin-bottom: 1.75rem;
+    }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.85rem;
+    }
+    .section-title { margin: 0; font-size: 1.35rem; font-weight: 800; }
+    .section-desc { margin: 0.25rem 0 0; color: var(--text-muted); font-size: 0.9rem; }
+    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 1.25rem; }
+    .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+    .subcard { background: var(--bg-card-alt); border: 1px solid var(--border); border-radius: 12px; padding: 1.2rem; }
+    .subcard h3, .subcard h4 { margin: 0 0 0.6rem; font-size: 1.02rem; }
+    .bar-row { margin-bottom: 0.95rem; }
+    .bar-label-row { display: flex; justify-content: space-between; font-size: 0.84rem; margin-bottom: 0.3rem; gap: 0.5rem; }
+    .bar-track { width: 100%; height: 12px; background: #090d16; border-radius: 999px; overflow: hidden; display: flex; }
+    .bar-fill { height: 100%; }
+    .badge { display: inline-flex; align-items: center; padding: 0.18rem 0.55rem; border-radius: 999px; font-size: 0.74rem; font-weight: 700; letter-spacing: 0.02em; }
+    .badge-cyan, .badge-blue { background: rgba(56, 189, 248, 0.15); color: var(--cyan); border: 1px solid rgba(56, 189, 248, 0.35); }
+    .badge-green { background: rgba(52, 211, 153, 0.15); color: var(--green); border: 1px solid rgba(52, 211, 153, 0.35); }
+    .badge-purple { background: rgba(192, 132, 252, 0.15); color: var(--purple); border: 1px solid rgba(192, 132, 252, 0.35); }
+    .badge-amber { background: rgba(251, 191, 36, 0.15); color: var(--amber); border: 1px solid rgba(251, 191, 36, 0.35); }
+    .badge-rose { background: rgba(251, 113, 133, 0.15); color: var(--rose); border: 1px solid rgba(251, 113, 133, 0.35); }
+    .filter-btn { background: var(--bg-card-alt); border: 1px solid var(--border-hi); color: var(--text-muted); padding: 0.42rem 0.8rem; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+    .filter-btn:hover, .filter-btn.active { background: rgba(56, 189, 248, 0.16); border-color: var(--cyan); color: var(--text); }
+    .search-input { background: var(--bg-card-alt); border: 1px solid var(--border-hi); color: var(--text); padding: 0.48rem 0.85rem; border-radius: 8px; font-size: 0.84rem; min-width: 250px; }
+    .wave-card { background: var(--bg-card-alt); border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.15rem; margin-bottom: 0.9rem; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+    th, td { padding: 0.52rem 0.65rem; text-align: left; border-top: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--text-muted); font-weight: 600; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.04em; border-top: none; }
+    .pm-item { background: rgba(7, 11, 20, 0.55); border: 1px solid var(--border); border-left: 4px solid var(--green); border-radius: 10px; padding: 0.85rem 1rem; font-size: 0.88rem; margin-bottom: 0.75rem; }
+    .pm-item.warn { border-left-color: var(--amber); }
+    .svg-caption { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.4rem; }
+    footer { text-align: center; color: var(--text-muted); font-size: 0.82rem; padding: 2rem 1rem 1rem; border-top: 1px solid var(--border); margin-top: 2rem; }
+  </style>
+</head>
+<body>
+  <header class="topnav">
+    <div class="topnav-inner">
+      <div class="brand">
+        <div class="brand-badge">TC</div>
+        <div>
+          <div style="font-size:0.94rem;">TangleClaw Gate 4 Post-Sprint Empirical Report</div>
+          <div style="font-size:0.72rem;color:var(--text-dim);font-weight:500;">v6.5.5 · Eliminate False-Positive V6 Working / Busy Indicators Across Idle Fleets &amp; Capture Full TCC_SOCKET Scrollback · Shipped @ b62ebffc (2026-11-22 03:48 UTC)</div>
+        </div>
+      </div>
+      <nav class="nav-links" id="navLinks">
+        <a href="../" style="color:var(--accent2);font-weight:700;">← All Sprint Reports</a>
+        <a href="#overview" class="active">Overview</a>
+        <a href="#plain-english" style="color:var(--green);font-weight:700;">Plain-English</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#velocity">Velocity</a>
+        <a href="#deliverables">Deliverables</a>
+        <a href="#telemetry">Telemetry</a>
+        <a href="#postmortem">Post-Mortem</a>
+        <a href="#waves">Wave Explorer</a>
+        <a href="#next-sprint">Next Sprint</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="btn" id="themeBtn" onclick="toggleTheme()" title="Toggle Light/Dark Mode">☀️ Light Mode</button>
+        <button class="btn btn-primary" onclick="window.print()">🖨️ Export PDF</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero" id="overview">
+      <div class="hero-top">
+        <div>
+          <div class="eyebrow">● GATE 4 CERTIFIED RELEASE · MILESTONE #91 (2/2 CLOSED) · TAG v6.5.5 @ b62ebffc · Rulings A882–A888</div>
+          <h1>v6.5.5: Eliminate False-Positive V6 Working / Busy Indicators Across Idle Fleets &amp; Full TCC_SOCKET Scrollback Capture — Post-Sprint Empirical &amp; 16-Point Rule #283 Audit Report</h1>
+          <p class="hero-subtitle">
+            Sprint <strong>v6.5.5</strong> (Milestone <code>#91</code>) shipped <strong>3/3 True-Merged Pull Requests (<code>#3183, #3184, #3185</code> → <code>main @ b62ebffc18a63f818adad556396a1879833d2b24</code>)</strong>, closing all <strong>2/2 issues (<code>#3181, #3182</code>)</strong> in <strong><code>~1h 15m</code></strong> (<code>T_eng = 1.25h</code>) with <strong><code>1.00</code> avg review rounds/PR (3/3 merged on Round 1)</strong>, <strong><code>0</code> mid-sprint Operator interventions</strong>, <strong><code>0</code> CI red runs after ready</strong>, <strong><code>0</code> git merge conflicts</strong>, and <strong><code>0</code> post-merge defects on <code>main</code></strong>.
+          </p>
+        </div>
+        <div class="status-pill">
+          ● Shipped v6.5.5 (3/3 Merged · Milestone #91 Closed)
+        </div>
+      </div>
+
+      <div id="plain-english" class="subcard" style="margin:22px 0;padding:22px 24px;border:1.5px solid rgba(34,197,94,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.96),rgba(20,83,45,0.18));border-radius:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+          <span class="pillar-num" style="color:var(--green);font-size:0.8rem;letter-spacing:0.08em;">📖 PLAIN-ENGLISH SUMMARY · WHAT SHIPPED &amp; HOW THE SPRINT RAN (NO JARGON)</span>
+          <span class="badge badge-green">Gate 4 Certified · OBSR-OGATE-V655-SPRINT-EXIT-8B82CCB4-PASS</span>
+        </div>
+        <h3 style="margin:0 0 12px;font-size:1.22rem;color:var(--text);">Eliminated All 4 False-Positive V6 Working / Busy Indicators Across Idle Fleets &amp; Restored Full 2,000-Line Deep Scrollback in Under the Hood for TCC-Bootstrapped Sessions</h3>
+        <div class="grid-2" style="gap:18px;">
+          <div style="background:rgba(15,23,42,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
+            <h4 style="margin:0 0 8px;color:var(--accent2);font-size:0.98rem;">🛠️ What We Shipped (Everyday Overview)</h4>
+            <ul style="margin:0;padding-left:18px;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
+              <li><strong>Wave 1 · Car V655-W1-A (<code>TC-Lane-A</code> · <code>PR #3183</code> @ <code>6d6de9d1</code> → <code>main @ 2d82e1d2</code>):</strong> Eliminated all 4 false-positive V6 <code>&quot;Working&quot;</code> / busy indicators across idle Claude Code, Antigravity, and Codex sessions (<code>#3181</code>): (1) added <code>LIVE_DONE_RE</code> so completed-turn timing recaps (<code>✻ Baked/Churned/Cooked/Sautéed for ... · done ...</code>) clear spinner activity instead of sticking forever; (2) added <code>LIVE_AT_REST_FOOTER_RE</code> so Antigravity background <code>/tasks</code> daemon rows (<code>● [HH:MM:SS] ... running</code>) above <code>? for shortcuts</code> or <code>Press up to edit queued messages</code> clear <code>activity</code>; (3) guarded <code>esc to cancel</code> status footers and <code>↑/↓ Navigate</code> interactive menus from leaking model/task chrome as busy activity; and (4) removed <code>&apos;not-at-rest&apos;</code> from <code>STATUS_BUSY_REASONS</code> in <code>isSessionStatusBusy</code>.</li>
+              <li><strong>Wave 1 · Car V655-W1-B (<code>TC-Lane-C</code> · <code>PR #3184</code> @ <code>04cb3fcb</code> → <code>main @ 4bee6dc8</code>):</strong> Fixed Under the Hood 50-line truncation on TCC-bootstrapped sessions (<code>#3182</code>) by adding <code>_isTccAttachProxyPane</code> and <code>_resolveCapturePaneTarget</code> in <code>lib/tmux.js</code> so <code>isAlternateScreen</code> and <code>capturePane</code> route through <code>TCC_SOCKET</code> (<code>-L tangleclaw-tcc-authorized</code>) when the default tmux server holds a thin TCC attach proxy (<code>alternate_on=1, pane_current_command=tmux</code>), restoring full 2,000-line deep scrollback in <code>GET /api/sessions/:name/peek?lines=2000</code>.</li>
+              <li><strong>Wave 2 · Car V655-W2-REL (<code>TC-Lane-B</code> · <code>PR #3185</code> @ <code>8b82ccb4</code> → <code>main @ b62ebffc</code>):</strong> Bumped <code>version.json</code> to <code>6.5.5</code>, compiled &amp; drained both <code>changelog.d/3181..3182.*.md</code> fragments into <code>CHANGELOG.md</code>, authored <code>docs/releases/v6.5.5.md</code>, closed Milestone <code>#91</code>, published tag <code>v6.5.5</code>, backed up SQLite, and deployed live to <code>:3102</code>.</li>
+            </ul>
+          </div>
+          <div style="background:rgba(15,23,42,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
+            <h4 style="margin:0 0 8px;color:var(--green);font-size:0.98rem;">⚡ How the Sprint Ran (3/3 Cars Merged on Round 1 · 0 CI Red Runs · 0 Interventions)</h4>
+            <p style="margin:0;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
+              All <strong><code>3/3</code> Sprint PRs (<code>#3183</code>, <code>#3184</code>, <code>#3185</code>) passed O-Gate, A-Gate, R-Gate, and GitHub Actions <code>Tests</code> CI on Round 1 (<code>1.00</code> avg review rounds/PR)</strong>! This marks our <strong>third consecutive sprint (<code>v6.5.3</code>, <code>v6.5.4</code>, <code>v6.5.5</code> — <code>13/13</code> PRs combined) with <code>0</code> CI red runs after ready</strong> and <strong><code>0</code> mid-sprint Operator interventions</strong>.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <!-- TANGLECLAW_ADE_KPI_START -->
+        <div class="kpi-card">
+          <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">1.60/hr · ADE 0.52</div>
+          <div class="kpi-meta kpi-sub">Throughput: <code>1.60 closed/hr</code> (<code>T_eng=1.25h</code>) · Allocated: <code>$1.54/issue</code> (<code>$3.08</code> pool) · Legacy ADE_v1: <code>0.52</code></div>
+        </div>
+        <!-- TANGLECLAW_ADE_KPI_END -->
+        <div class="kpi-card">
+          <div class="kpi-label">Sprint Version &amp; Tag</div>
+          <div class="kpi-value" style="color:var(--accent2)">v6.5.5</div>
+          <div class="kpi-meta">Tag <code>v6.5.5 @ b62ebffc</code> · Base <code>89f6bc09</code> → Shipped <code>b62ebffc</code></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Chartered Wave Cars</div>
+          <div class="kpi-value" style="color:var(--green)">3 / 3</div>
+          <div class="kpi-meta">3 True-Merged (#3183, #3184, #3185) · 0 In Review · 0 Open</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">GitHub Milestone #91</div>
+          <div class="kpi-value" style="color:var(--green)">2 / 2 CLOSED</div>
+          <div class="kpi-meta">100% Chartered Issues Closed (#3181, #3182) · 0 Open</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Operator Interventions</div>
+          <div class="kpi-value" style="color:var(--green)">0</div>
+          <div class="kpi-meta">Zero mid-sprint Operator interventions from Gate 1 to Gate 4</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">PRR &amp; Gate Review Rounds</div>
+          <div class="kpi-value" style="color:var(--green)">1.00 avg</div>
+          <div class="kpi-meta">3 of 3 PRs merged on R1 · 0 post-merge defects on <code>main</code></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Live :3102 Production Parity</div>
+          <div class="kpi-value" style="color:var(--green)">Verified</div>
+          <div class="kpi-meta">Running <code>v6.5.5 @ b62ebffc</code> · All 4 <code>/api/system/health</code> conditions clear</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Total Run Time (Start → Finish)</div>
+          <div class="kpi-value" style="color:var(--green)">1h 15m (T_eng = 1.25h)</div>
+          <div class="kpi-meta">Wave 1 (2 parallel cars): 1h 04m · Wave 2 (W2-REL): 11m · 0 CI red runs · 0 Operator interventions</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">4-Gate Governance</div>
+          <div class="kpi-value" style="color:var(--green)">100% Certified</div>
+          <div class="kpi-meta"><code>OBSR-OGATE-V655-SPRINT-EXIT-8B82CCB4-PASS</code> &amp; <code>Ruling A888: ARC-SPRINT-EXIT-V655-8B82CCB4-PASS</code></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="architecture">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 01 · Multi-Agent Fleet Topology &amp; Wave Architecture</span>
+          <h2 class="section-title">Sprint v6.5.5 Multi-Agent Execution Topology</h2>
+          <p class="section-desc">
+            Parallel Builder lanes (<code>TC-Lane-A</code>, <code>TC-Lane-C</code>, and <code>TC-Lane-B</code> for Wave 2), dedicated PR Reviewer lanes (<code>TC-Lane-PRR-A</code>, <code>TC-Lane-PRR-B</code>), Architect (<code>TC-Lane-Arc</code>), Release Integrator (<code>TC-Lane-INT</code>), Observer (<code>TC-Lane-Obsr</code>), and Project Manager (<code>TC-Lane-PM</code>) executed Sprint <code>v6.5.5</code> across Wave 1 (2 file-disjoint parallel cars) and Wave 2 (single-stream release cut).
+          </p>
+        </div>
+      </div>
+      <div class="grid-3" style="margin-bottom:20px;">
+        <div class="subcard">
+          <span class="pillar-num">PILLAR 01 · PARALLEL FILE-DISJOINT BUILDER WAVES</span>
+          <h4>Zero-Conflict Scoped Cars Across Wave 1</h4>
+          <p>Both Wave 1 cars executed concurrently against disjoint file envelopes (<code>Envelope(W1-A) ∩ Envelope(W1-B) = ∅</code>, <code>6</code> unique files, <code>0</code> git merge conflicts).</p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">PILLAR 02 · 100% ROUND-1 4-GATE VERIFICATION</span>
+          <h4>PRR R-Gate, Architect A-Gate, Observer O-Gate &amp; Integrator CI-Gate</h4>
+          <p>All 3 PRs in Sprint <code>v6.5.5</code> passed exact-head GitHub Actions <code>Tests/test</code> CI, independent PRR review, Architect ruling sign-off, and Observer O-Gate audit on Round 1.</p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">PILLAR 03 · PRE-STAGED GATE 4 REPORT &amp; LIVE :3102 DEPLOY</span>
+          <h4>Zero-Lag Gate 4 Report Settlement &amp; Production Parity</h4>
+          <p>Wave 2 drained all <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md</code>, pre-staged the settled Gate 4 HTML report during CI, deployed <code>:3102</code>, and passed Gate 4 Sprint Exit.</p>
+        </div>
+      </div>
+      <div class="svg-wrap">
+        <div class="svg-caption">
+          <span>Figure 1.1 — TangleClaw Autonomous Fleet Architecture (Sprint v6.5.5)</span>
+          <span>Gate 4 Certified: 2026-11-22 03:48 UTC</span>
+        </div>
+        <svg viewBox="0 0 980 300" width="100%" height="auto" role="img" aria-label="Multi-Agent Fleet Topology">
+          <rect x="0" y="0" width="980" height="300" rx="12" fill="#0b1120" />
+          <rect x="30" y="30" width="210" height="240" rx="10" fill="#111827" stroke="#38bdf8" stroke-width="1.5" />
+          <text x="48" y="60" fill="#38bdf8" font-size="12" font-weight="800">COORDINATORS &amp; GATES</text>
+          <text x="48" y="95" fill="#e2e8f0" font-size="11.5">• TC-Lane-PM (Charter)</text>
+          <text x="48" y="125" fill="#e2e8f0" font-size="11.5">• TC-Lane-Arc (Rulings A882–A888)</text>
+          <text x="48" y="155" fill="#e2e8f0" font-size="11.5">• TC-Lane-INT (3/3 True Merges)</text>
+          <text x="48" y="185" fill="#e2e8f0" font-size="11.5">• TC-Lane-Obsr (16-Pt O-Gate)</text>
+          <rect x="270" y="30" width="380" height="240" rx="10" fill="#111827" stroke="#22c55e" stroke-width="1.5" />
+          <text x="290" y="60" fill="#22c55e" font-size="12" font-weight="800">WAVE 1 &amp; WAVE 2 BUILDER CARS (3/3 MERGED R1)</text>
+          <text x="290" y="95" fill="#e2e8f0" font-size="11.5">• W1-A (TC-Lane-A): PR #3183 -> main @ 2d82e1d2 (Closes #3181)</text>
+          <text x="290" y="130" fill="#e2e8f0" font-size="11.5">• W1-B (TC-Lane-C): PR #3184 -> main @ 4bee6dc8 (Closes #3182)</text>
+          <text x="290" y="165" fill="#34d399" font-size="11.5">• W2-REL (TC-Lane-B): PR #3185 -> main @ b62ebffc (Release v6.5.5)</text>
+          <rect x="690" y="30" width="260" height="240" rx="10" fill="#111827" stroke="#a855f7" stroke-width="1.5" />
+          <text x="710" y="60" fill="#a855f7" font-size="12" font-weight="800">PR REVIEWERS (R-GATE)</text>
+          <text x="710" y="95" fill="#e2e8f0" font-size="11.5">• TC-Lane-PRR-A (PR #3183 R1)</text>
+          <text x="710" y="125" fill="#e2e8f0" font-size="11.5">• TC-Lane-PRR-B (PR #3184, #3185 R1)</text>
+          <text x="710" y="165" fill="#94a3b8" font-size="11">Exact-SHA review &amp; Prawduct</text>
+        </svg>
+      </div>
+    </section>
+
+    <section class="section" id="velocity">
+      <!-- TANGLECLAW_ADE_BANNER_START -->
+      <div id="ade-efficiency-card" class="subcard" style="margin:18px 0;padding:18px 22px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.95),rgba(14,116,144,0.16));border-radius:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+          <span style="color:#38bdf8;font-weight:700;font-size:0.82rem;letter-spacing:0.06em;">📐 AUTONOMOUS DELIVERY EFFICIENCY (ADE) · ORTHOGONAL THROUGHPUT, ALLOCATED COST &amp; LEGACY ADE_v1</span>
+          <span class="badge badge-green" style="font-size:0.78rem;">Throughput = 1.60 Issues/Hr · Allocated = $1.54/Issue · Legacy ADE_v1 = 0.52</span>
+        </div>
+        <div style="font-size:0.90rem;color:#e2e8f0;line-height:1.56;">
+          <strong>1. Orthogonal Efficiency Metrics (Primary Standard):</strong> <strong>Throughput</strong> = <code>W_closed / T_eng = 2 / 1.25h = <strong>1.60 closed issues/hr</strong></code> · <strong>Unit Allocated Cost</strong> = <code>C_alloc / W_closed = $3.08 / 2 = <strong>$1.54/closed issue</strong></code> · <strong>Quality</strong> = <code>100% True Merges on Round 1 (3/3 PRs), 0 Post-Merge Defects</code>.<br/>
+          <strong>2. Disclosed Legacy Composite Index (<code>ADE_v1</code>):</strong> <code>ADE_v1 = W_closed / (T_eng × C_alloc) = 2 / (1.25h × $3.08) = <strong>0.52</strong></code> evaluated across the full engineering window (<code>T_eng = 1.25h</code>).<br/>
+          <strong>3. 3-Tier Operating Cost Basis:</strong> <strong>Tier 1 (Measured Marginal Cash):</strong> <code>$0.00</code> per-run API fee + <code>~$0.03</code> M3 Ultra wall power · <strong>Tier 2 (Allocated Subscription Pool):</strong> <code>$3.08</code> pro-rata allocation (<code>$2.46/hr × 1.25h</code>) · <strong>Tier 3 (Hypothetical API Shadow Estimate):</strong> <code>~$28</code> unmetered equivalent.
+        </div>
+      </div>
+      <!-- TANGLECLAW_ADE_BANNER_END -->
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 02 · Wave Velocity &amp; Execution Timeline</span>
+          <h2 class="section-title">Sprint v6.5.5 Wave Execution Matrix (3/3 Cars True-Merged on Round 1)</h2>
+          <p class="section-desc">Complete wave execution record across Wave 1 (2 parallel cars) and Wave 2 (single-stream release cut).</p>
+        </div>
+      </div>
+      <div class="svg-wrap">
+        <div class="svg-caption">
+          <span>Figure 2.1 — Completed Wave Progress Bar (v6.5.5)</span>
+          <span>3 of 3 Chartered Wave Cars True-Merged (100%)</span>
+        </div>
+        <svg viewBox="0 0 960 180" width="100%" height="auto" role="img" aria-label="Sprint Velocity Chart">
+          <rect x="0" y="0" width="960" height="180" rx="10" fill="#0b1120" />
+          <text x="30" y="45" fill="#38bdf8" font-size="13" font-weight="700">Sprint v6.5.5 Wave Completion (3/3 True-Merged on R1 · Milestone #91 2/2 Closed)</text>
+          <rect x="30" y="70" width="900" height="32" rx="8" fill="#1e293b" />
+          <rect x="30" y="70" width="900" height="32" rx="8" fill="#22c55e" />
+          <text x="30" y="135" fill="#94a3b8" font-size="11.5">Gate 4 Sprint Exit Certified (OBSR-OGATE-V655-SPRINT-EXIT-8B82CCB4-PASS &amp; Ruling A888: ARC-SPRINT-EXIT-V655-8B82CCB4-PASS) at 2026-11-22 03:48 UTC</text>
+        </svg>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Car / Wave</th>
+              <th>Assigned Builder &amp; Reviewer</th>
+              <th>Scoped Issues &amp; Branch</th>
+              <th>Final Merge Status &amp; Gate Receipts</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>W1-A (Car V655-W1-A)</strong></td><td><code>TC-Lane-A / PRR: TC-Lane-PRR-A</code></td><td>Closes #3181 — Eliminate false-positive V6 Working / busy indicators across idle Claude Code, Antigravity, and Codex sessions</td><td><span class="badge badge-green">MERGED (PR #3183 R1 @ 6d6de9d1 -> main @ 2d82e1d2)</span></td></tr>
+            <tr><td><strong>W1-B (Car V655-W1-B)</strong></td><td><code>TC-Lane-C / PRR: TC-Lane-PRR-B</code></td><td>Closes #3182 — Route isAlternateScreen &amp; capturePane through TCC_SOCKET on TCC attach-proxy sessions for full 2,000-line scrollback</td><td><span class="badge badge-green">MERGED (PR #3184 R1 @ 04cb3fcb -> main @ 4bee6dc8)</span></td></tr>
+            <tr><td><strong>W2-REL (Car V655-W2-REL)</strong></td><td><code>TC-Lane-B / PRR: TC-Lane-PRR-B</code></td><td>Release Cut v6.5.5 (Milestone #91 — 2/2 issues #3181–#3182 CLOSED) -> main @ b62ebffc</td><td><span class="badge badge-green">MERGED (PR #3185 R1 @ 8b82ccb4 -> main @ b62ebffc)</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" id="deliverables">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 03 · Chartered Deliverables &amp; File Scope</span>
+          <h2 class="section-title">Sprint v6.5.5 Deliverables Matrix</h2>
+          <p class="section-desc">Each car’s exact issue assignment, branch, verified disjoint file envelope, and 4-gate merge receipts.</p>
+        </div>
+      </div>
+      <div class="svg-wrap">
+        <div class="svg-caption">
+          <span>Figure 3.1 — Deliverables Breakdown by Wave State (v6.5.5)</span>
+          <span>Gate 4 Certified: 2026-11-22 03:48 UTC</span>
+        </div>
+        <svg viewBox="0 0 960 180" width="100%" height="auto" role="img" aria-label="Deliverables Status Chart">
+          <rect x="0" y="0" width="960" height="180" rx="10" fill="#0b1120" />
+          <text x="30" y="50" fill="#22c55e" font-size="13" font-weight="700">Merged Cars: 3 / 3 (100%)</text>
+          <text x="320" y="50" fill="#38bdf8" font-size="13" font-weight="700">Issues Closed: 2 / 2 (Milestone #91 CLOSED)</text>
+          <text x="680" y="50" fill="#34d399" font-size="13" font-weight="700">Post-Merge Defects: 0</text>
+          <text x="30" y="110" fill="#94a3b8" font-size="11.5">All 3 cars verified against exact signed file scopes, O-Gate, A-Gate, R-Gate, and GitHub Actions Tests CI before True-Merge.</text>
+        </svg>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Car</th>
+              <th>Owner / Reviewer</th>
+              <th>Signed Scope &amp; Issues</th>
+              <th>Final State &amp; Gate Receipts</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>W1-A (Car V655-W1-A)</strong></td><td><code>TC-Lane-A / PRR: TC-Lane-PRR-A</code></td><td><code>Closes #3181</code> — Add <code>LIVE_DONE_RE</code>, <code>LIVE_AT_REST_FOOTER_RE</code>, <code>menuActive</code> guard, and remove <code>&apos;not-at-rest&apos;</code> from <code>STATUS_BUSY_REASONS</code> in <code>public/v6-shell.js</code> + unit tests in <code>test/v6-b1-ui-shell.test.js</code> + <code>changelog.d/3181.v6-busy-indicator-false-positives.fixed.md</code></td><td><strong>MERGED</strong> — <code>PR #3183</code> R1 (<code>6d6de9d1</code> &rarr; <code>main @ 2d82e1d28f69261e4a37c8b1d5fcb34cbc5508f6</code>) · O-Gate: <code>OBSR-OGATE-V655-W1A-PR3183-R1-6D6DE9D1-PASS</code> · A-Gate: <code>Ruling A884 (ARC-AGATE-V655-W1A-PR3183-6D6DE9D1-PASS)</code> · R-Gate: <code>PRRA-R1-V655-W1A-PR3183-6D6DE9D1-APPROVE</code> · Tests CI PASS</td></tr>
+            <tr><td><strong>W1-B (Car V655-W1-B)</strong></td><td><code>TC-Lane-C / PRR: TC-Lane-PRR-B</code></td><td><code>Closes #3182</code> — Add <code>_isTccAttachProxyPane</code> and <code>_resolveCapturePaneTarget</code> in <code>lib/tmux.js</code> + unit tests in <code>test/tmux-tcc.test.js</code> + <code>changelog.d/3182.tcc-proxy-full-scrollback-capture.fixed.md</code></td><td><strong>MERGED</strong> — <code>PR #3184</code> R1 (<code>04cb3fcb</code> &rarr; <code>main @ 4bee6dc8a87914e7e37fd470faf9a43a342670fb</code>) · O-Gate: <code>OBSR-OGATE-V655-W1B-PR3184-R1-04CB3FCB-PASS</code> · A-Gate: <code>Ruling A885 (ARC-AGATE-V655-W1B-PR3184-04CB3FCB-PASS)</code> · R-Gate: <code>PRRB-RGATE-V655-W1B-PR3184-04CB3FCB-PASS</code> · Tests CI PASS</td></tr>
+            <tr><td><strong>W2-REL (Car V655-W2-REL)</strong></td><td><code>TC-Lane-B / PRR: TC-Lane-PRR-B</code></td><td>Release Cut <code>v6.5.5</code> (Milestone <code>#91</code>) — Bump <code>version.json</code> (<code>6.5.4</code> &rarr; <code>6.5.5</code>), drain both <code>changelog.d/3181..3182.*.md</code> fragments into <code>CHANGELOG.md</code>, author <code>docs/releases/v6.5.5.md</code>, update <code>FEATURES.md</code>, <code>README.md</code>, <code>ROADMAP.md</code>, <code>.prawduct/change-log.md</code>, and lockfile</td><td><strong>MERGED &amp; DEPLOYED</strong> — <code>PR #3185</code> R1 (<code>8b82ccb4</code> &rarr; <code>main @ b62ebffc18a63f818adad556396a1879833d2b24</code>) · O-Gate: <code>OBSR-OGATE-V655-W2REL-PR3185-R1-8B82CCB4-PASS</code> · A-Gate: <code>Ruling A887 (ARC-AGATE-V655-W2REL-PR3185-8B82CCB4-PASS)</code> · R-Gate: <code>PRRB-RGATE-V655-W2REL-PR3185-8B82CCB4-PASS</code> · Tests CI PASS</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" id="telemetry">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 04 · Wave &amp; Gate Telemetry</span>
+          <h2 class="section-title">Car Completion &amp; End-of-Sprint Maintenance Gate Telemetry</h2>
+          <p class="section-desc">100% completion across all 3 chartered cars and all 4 end-of-sprint maintenance gates.</p>
+        </div>
+      </div>
+      <div class="bar-chart" style="margin-bottom:24px;">
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W1-A (Car V655-W1-A) (TC-Lane-A)</code></strong> — MERGED (PR #3183 R1 -> 2d82e1d2)</span>
+            <span style="color:var(--green)"><strong>100%</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W1-B (Car V655-W1-B) (TC-Lane-C)</code></strong> — MERGED (PR #3184 R1 -> 4bee6dc8)</span>
+            <span style="color:var(--green)"><strong>100%</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W2-REL (Car V655-W2-REL) (TC-Lane-B)</code></strong> — MERGED (PR #3185 R1 -> b62ebffc)</span>
+            <span style="color:var(--green)"><strong>100%</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>Gate 1 (Pre-Dispatch &amp; W1-B Addition)</code></strong> — OBSR-OGATE-V655-GATE1-PASS &amp; OBSR-OGATE-V655-GATE1-W1B-ADDITION-PASS · Rulings A882 &amp; A883 (5/5 P46 Pre-Existence Verified)</span>
+            <span style="color:var(--green)"><strong>100%</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>Gate 3 (Wave 1 Exit -> Wave 2 Release Cut)</code></strong> — OBSR-OGATE-V655-W1-EXIT-4BEE6DC8-PASS · Ruling A886 (2/2 Wave 1 Cars Merged on R1, 0 Rebases)</span>
+            <span style="color:var(--green)"><strong>100%</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>Gate 4 (Sprint Exit, Milestone #91 Closed &amp; Live :3102 Deployed)</code></strong> — OBSR-OGATE-V655-SPRINT-EXIT-8B82CCB4-PASS · Ruling A888 (All 4 /api/system/health Checks Clear)</span>
+            <span style="color:var(--green)"><strong>100%</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="postmortem">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 05 · Gate 4 Empirical Post-Mortem &amp; 16-Point Rule #283 Audit</span>
+          <h2 class="section-title">What Worked, What Didn't &amp; Proven Fixes, 4-Gate Matrix &amp; 16-Point Rule #283 Audit</h2>
+          <p class="section-desc">Final empirical telemetry and process audit certified by <code>TC-Lane-Obsr</code> (<code>OBSR-OGATE-V655-SPRINT-EXIT-8B82CCB4-PASS</code>) and <code>TC-Lane-Arc</code> (<code>Ruling A888: ARC-SPRINT-EXIT-V655-8B82CCB4-PASS</code>).</p>
+        </div>
+      </div>
+      <div class="grid-2" style="margin-bottom:22px;">
+        <div>
+          <h3 style="margin-bottom:12px;color:var(--green);">✅ What Worked Exceptionally Well in v6.5.5</h3>
+          <div class="pm-item">
+            <h4>1. 100% First-Round Approval &amp; Merge Rate Across All 3 Sprint PRs (#3183, #3184, #3185)</h4>
+            <p>Providing exact regex and helper specifications in the sprint charter (<code>LIVE_DONE_RE</code>, <code>LIVE_AT_REST_FOOTER_RE</code>, <code>_isTccAttachProxyPane</code>, <code>_resolveCapturePaneTarget</code>) enabled all 3 Sprint PRs to pass O-Gate, A-Gate, R-Gate, and GitHub Actions <code>Tests</code> CI on Round 1 (<code>1.00</code> avg review rounds/PR).</p>
+          </div>
+          <div class="pm-item">
+            <h4>2. Third Consecutive Sprint With Zero CI Red Runs After Ready (13/13 PRs Across v6.5.3, v6.5.4 &amp; v6.5.5)</h4>
+            <p>Verifying all <code>5/5</code> non-changelog target code/test paths on <code>main @ 89f6bc09</code> at Gate 1 for <code>P46</code> compliance sustained our 13-for-13 streak of zero CI red runs after ready.</p>
+          </div>
+          <div class="pm-item">
+            <h4>3. Empirical 34-Session Fleet Audit &amp; Comma-Delimited tmux display-message Discovery</h4>
+            <p>Auditing all 34 live sessions across 7 operator fleets uncovered all 4 false-positive busy conditions (<code>#3181</code>) and the 50-line TCC attach-proxy truncation (<code>#3182</code>). During <code>Car V655-W1-B</code>, <code>TC-Lane-C</code> also caught that <code>tmux display-message -p</code> sanitizes literal TAB bytes into <code>_</code> and used a comma delimiter instead.</p>
+          </div>
+          <div class="pm-item">
+            <h4>4. Pre-Staging the Settled Gate 4 Report During Wave 2 CI Eliminated Post-Deploy Settlement Lag</h4>
+            <p>Pre-staging the settled Gate 4 HTML report (<code>0</code> <code>LIVE_TRACKING</code> strings, <code>0</code> <code>AUTO_GENERATED_LIVE_TRACKER</code> markers, <code>0</code> unfilled template placeholders, <code>16/16</code> Rule #283 rows) during <code>PR #3185</code> CI ensured <code>GET /api/sprint-waves</code> and <code>GET /api/sprint-reports/v6.5.5</code> report <code>settled: true</code> immediately on deploy.</p>
+          </div>
+        </div>
+        <div>
+          <h3 style="margin-bottom:12px;color:var(--amber);">⚠️ What Didn't Work &amp; Proven Fixes / Top Recommendations (v6.5.5)</h3>
+          <div class="pm-item warn">
+            <h4>1. Wave 2 Dispatch Template Referenced Two Non-Existent Test File Names</h4>
+            <p>The Wave 2 dispatch named <code>test/release-docs.test.js</code> and <code>test/docs-consistency.test.js</code>, neither of which exists in the repository; <code>TC-Lane-B</code> flagged this and ran the real 7-file release-cut test suite (<code>130/130</code> pass). <strong>Fix / Guardrail:</strong> Update the Wave 2 release-cut dispatch template to cite the 7 real release-gate test files (<code>test/repo-scan.test.js</code>, <code>test/docs-parity-gate.test.js</code>, <code>test/changelog-fragment-gate.test.js</code>, <code>test/release-mode.test.js</code>, <code>test/changelog-released-immutable.test.js</code>, <code>test/release-prepare-script.test.js</code>, <code>test/changelog-structure.test.js</code>).</p>
+          </div>
+          <div class="pm-item warn">
+            <h4>2. Pinned -t Call-Site Count (39) in test/tmux.test.js Constrains Edits to lib/tmux.js</h4>
+            <p><code>test/tmux.test.js</code> pins the exact textual count of <code>-t</code> call sites in <code>lib/tmux.js</code> at <code>39</code>; <code>TC-Lane-C</code> avoided touching <code>test/tmux.test.js</code> by factoring both <code>display-message</code> calls through one shared <code>readPane</code> helper. <strong>Fix / Guardrail:</strong> Whenever <code>lib/tmux.js</code> is in a car’s envelope, include <code>test/tmux.test.js</code> in the car’s Gate 1 file envelope (or note the pinned <code>-t</code> call-site count in the car brief).</p>
+          </div>
+          <div class="pm-item warn">
+            <h4>3. Unbounded Local test-stage.js 2 Fan-Out Still Requires Explicit Skip Guidance</h4>
+            <p>Builders still need per-dispatch guidance to skip local <code>node scripts/test-stage.js 2 --base origin/main</code> so it does not spawn 200+ scratch servers on the host. <strong>Fix / Guardrail:</strong> Cap worker concurrency inside <code>scripts/test-stage.js 2</code> so it is safe to run locally without contending with <code>:3102</code>.</p>
+          </div>
+          <div class="pm-item warn">
+            <h4>4. Headless Scratch-Server Browser Verification Helper Needed for V6 Shell UI Cars</h4>
+            <p>As in <code>v6.5.4</code>, UI cars running in headless sessions cannot touch the operator’s live Chrome session under Rule #271.3 and must record browser checks as owed. <strong>Fix / Guardrail:</strong> Provide a self-contained PortHub-leased headless browser/DOM smoke script for V6 shell UI cars.</p>
+          </div>
+        </div>
+      </div>
+
+      <h3 style="margin:20px 0 10px;">4-Gate Release Verification Matrix (Rule #283.5 / Rule #291)</h3>
+      <div class="table-wrap" style="margin-bottom:22px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Gate</th>
+              <th>Owner</th>
+              <th>Verification Scope</th>
+              <th>Final Gate 4 Certified Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Gate 1 · Pre-Dispatch Charter &amp; Envelope Disjointness Gate</strong></td>
+              <td><code>TC-Lane-Obsr</code> &amp; <code>TC-Lane-Arc</code></td>
+              <td>Pairwise file-envelope disjointness (<code>0</code> shared files across Wave 1), <code>P46</code> file-existence check on <code>main @ 89f6bc09</code>, and milestone coverage</td>
+              <td><span class="badge badge-green">PASS</span> Certified (<code>OBSR-OGATE-V655-GATE1-PASS</code>, <code>OBSR-OGATE-V655-GATE1-W1B-ADDITION-PASS</code>, <code>Ruling A882</code> &amp; <code>Ruling A883</code>).</td>
+            </tr>
+            <tr>
+              <td><strong>Gate 2 · Pre-Merge R-Gate, O-Gate, A-Gate &amp; Tests CI Gate</strong></td>
+              <td><code>TC-Lane-PRR-A/B</code>, <code>Obsr</code>, <code>Arc</code>, <code>INT</code></td>
+              <td>Exact-SHA diff review, envelope compliance, architectural invariants, and green GitHub Actions <code>Tests/test</code> CI before True-Merge</td>
+              <td><span class="badge badge-green">PASS</span> All 3 Sprint PRs (<code>#3183, #3184, #3185</code>) certified on Round 1 and True-Merged with 0 post-merge defects.</td>
+            </tr>
+            <tr>
+              <td><strong>Gate 3 · Wave 1 Exit &amp; Milestone Closure Readiness Gate</strong></td>
+              <td><code>TC-Lane-Obsr</code> &amp; <code>TC-Lane-Arc</code></td>
+              <td>Both Wave 1 cars true-merged on <code>main @ 4bee6dc8</code>, 100% of feature issues (<code>#3181, #3182</code>) closed, 0 conflicts, and clear to cut Wave 2 release</td>
+              <td><span class="badge badge-green">PASS</span> Certified (<code>OBSR-OGATE-V655-W1-EXIT-4BEE6DC8-PASS &amp; Ruling A886: ARC-GATE3-V655-W1-EXIT-4BEE6DC8-PASS</code>).</td>
+            </tr>
+            <tr>
+              <td><strong>Gate 4 · Sprint Exit, Pre-Deploy Backup, Live :3102 Deploy &amp; 16-Point Audit</strong></td>
+              <td><code>TC-Lane-Obsr</code>, <code>TC-Lane-Arc</code> &amp; <code>TC-Lane-INT</code></td>
+              <td>Release PR merged (<code>main @ b62ebffc</code>), Milestone #91 CLOSED, pre-deploy SQLite backup verified, <code>:3102</code> deployed on <code>v6.5.5</code>, and settled 16-Point Rule #283 report published</td>
+              <td><span class="badge badge-green">PASS</span> Certified (<code>OBSR-OGATE-V655-SPRINT-EXIT-8B82CCB4-PASS</code> &amp; <code>Ruling A888: ARC-SPRINT-EXIT-V655-8B82CCB4-PASS</code>).</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style="margin:20px 0 10px;">Rule #283 16-Point Governance &amp; Process Audit (Final Gate 4 Measured Results)</h3>
+      <div class="table-wrap">
+        <table id="postmortem-rule-283">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Rule #283 Audit Dimension</th>
+              <th>Verdict</th>
+              <th>Measured Sprint v6.5.5 Telemetry &amp; Feed-Forward Change</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr data-status="pass"><td>1</td><td>Operator interventions + causes</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> 0 mid-sprint Operator interventions across the entire v6.5.5 sprint (Gate 1 -> Wave 1 -> Gate 3 -> Wave 2 Release Cut -> Deploy -> Gate 4). <br/><strong>Suggested Change:</strong> Preserve autonomous 4-gate (O-Gate, A-Gate, R-Gate, Tests CI) execution under TC-Lane-PM and TC-Lane-INT.</td></tr>
+            <tr data-status="pass"><td>2</td><td>Dispatch-to-merge timing</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> ~1h 15m total (18:32 PDT Gate 1 -> ~19:47 PDT PR #3185 merged &amp; deployed): Wave 1 (2 parallel cars, 2 issues) ~1h 04m; Wave 2 (W2-REL PR #3185) ~11m. <br/><strong>Suggested Change:</strong> Keep focused 1-issue Wave 1 cars (3–4 files/car) for rapid surgical bug-fix sprints.</td></tr>
+            <tr data-status="pass"><td>3</td><td>Active vs. allowed Builders &amp; parallelism</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> 2/2 assigned parallel Builder lanes active and productive in Wave 1 (TC-Lane-A on PR #3183, TC-Lane-C on PR #3184) with balanced PRR-A / PRR-B pairings and 0 stalled lanes. <br/><strong>Suggested Change:</strong> Continue pairing parallel Wave 1 cars 1-to-1 across TC-Lane-PRR-A and TC-Lane-PRR-B so R-Gate reviews never serialize.</td></tr>
+            <tr data-status="pass"><td>4</td><td>Forced re-syncs / rebases when main moves</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> 0 forced rebases across Wave 1 (#3183 -> 2d82e1d2, #3184 -> 4bee6dc8 merged cleanly without rebase conflicts). <br/><strong>Suggested Change:</strong> Maintain strict 0-file-overlap Wave 1 envelopes (Envelope(W1-A) ∩ Envelope(W1-B) = ∅).</td></tr>
+            <tr data-status="pass"><td>5</td><td>Open PR age since current main</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> Range 10m–22m across all 3 Sprint PRs (#3183 ~16m, #3184 ~19m, #3185 ~10m). <br/><strong>Suggested Change:</strong> Continue immediate O-Gate, A-Gate, and R-Gate parallel review dispatch upon PR creation.</td></tr>
+            <tr data-status="pass"><td>6</td><td>CI red after ready</td><td><span class="badge badge-green">PASS (0 Red Runs)</span></td><td><strong>Measured:</strong> 0 CI red runs after ready across all 3 Sprint PRs (#3183–#3185) — 3rd consecutive sprint (13/13 PRs across v6.5.3, v6.5.4, and v6.5.5) with 0 CI red runs after Gate 1 P46 pre-existence verification. <br/><strong>Suggested Change:</strong> Keep the Gate 1 git-tree P46 pre-existence check mandatory for every sprint charter.</td></tr>
+            <tr data-status="pass"><td>7</td><td>PRR review rounds / findings by severity</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> 3 PRs (#3183 R1, #3184 R1, #3185 R1) = 1.00 avg rounds/PR (3 of 3 PRs approved and merged on Round 1). <br/><strong>Suggested Change:</strong> Continue providing exact regex/helper specifications in the sprint charter.</td></tr>
+            <tr data-status="pass"><td>8</td><td>Post-merge defects on main</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> 0 post-merge defects across all 3 merged PRs (#3183–#3185). <br/><strong>Suggested Change:</strong> Maintain the 4-gate pre-merge verification contract.</td></tr>
+            <tr data-status="pass"><td>9</td><td>Clears / retries / stalls</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> 0 Builder or Reviewer stalls across the entire sprint. <br/><strong>Suggested Change:</strong> Keep pre-dispatch pane readiness checks active before Wave 1 dispatch.</td></tr>
+            <tr data-status="pass"><td>10</td><td>Wrong triage / scope fields</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> 0 cross-car file collisions and 0 post-PR scope bounces; Car V655-W1-B was added cleanly at Gate 1 (OBSR-OGATE-V655-GATE1-W1B-ADDITION-PASS / Ruling A883) before PR creation. <br/><strong>Suggested Change:</strong> Include test/tmux.test.js alongside lib/tmux.js at Gate 1 whenever -t call sites in lib/tmux.js may change.</td></tr>
+            <tr data-status="pass"><td>11</td><td>Rule breaches / omissions</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> 0 rule breaches across all active lanes (Rule #280, Rule #283, Rule #291, Rule #292, Rule #3112 all upheld). <br/><strong>Suggested Change:</strong> Continue enforcing Rule #291 (4-Gate verification) and Rule #292 (0 unilateral scope drops).</td></tr>
+            <tr data-status="pass"><td>12</td><td>Unlabelled PRs, dirty clones &amp; ownerless worktrees</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> 0 dirty tracked files across active sprint workspaces. <br/><strong>Suggested Change:</strong> Keep worktree hygiene checks in pre-dispatch and post-merge gates.</td></tr>
+            <tr data-status="pass"><td>13</td><td>Release-status lag</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> 0 lag: PR #3185 (@ 8b82ccb4) updated version.json (6.5.5), CHANGELOG.md, FEATURES.md, README.md, ROADMAP.md, docs/releases/v6.5.5.md, docs/releases/index.md, .prawduct/change-log.md, and drained both changelog.d fragments, with the settled Gate 4 report pre-staged during CI. <br/><strong>Suggested Change:</strong> Keep Gate 4 HTML report pre-staging during Wave 2 CI standard practice.</td></tr>
+            <tr data-status="pass"><td>14</td><td>Conflict resolution time</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> 0m — zero git merge conflicts across all 3 PRs (#3183–#3185). <br/><strong>Suggested Change:</strong> Continue Gate 1 pairwise file-disjointness verification.</td></tr>
+            <tr data-status="pass"><td>15</td><td>Wakes / tokens / turns by role &amp; model</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> Observer completed the sprint in 8 switchboard turns with 0 unsolicited noWake CCs and 0 aged exchanges. <br/><strong>Suggested Change:</strong> Preserve strict single-initiator --in-reply-to routing.</td></tr>
+            <tr data-status="pass"><td>16</td><td>4 End-of-Sprint Maintenance Gates</td><td><span class="badge badge-green">PASS</span></td><td><strong>Measured:</strong> (1) LANE_QUEUE.md: &lt; 15 KB; (2) Milestone #91: CLOSED (2/2 issues #3181, #3182 closed, 0 open); (3) Live :3102 Server &amp; System Health: runningVersion=6.5.5, all 4 /api/system/health checks clear; (4) Pre-deploy SQLite backup &amp; #3175 Gate 4 settlement (settled: true, rule283PassCount: 16) verified. <br/><strong>Suggested Change:</strong> Keep live HTTP verification of GET /api/sprint-waves and GET /api/sprint-reports/:version mandatory at Gate 4.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" id="waves">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 06 · Interactive Wave &amp; Deliverable Explorer</span>
+          <h2 class="section-title">Filter &amp; Inspect Every Merged Wave Car in Sprint v6.5.5</h2>
+          <p class="section-desc">Search by car ID, PR number, issue number, lane, or receipt token.</p>
+        </div>
+      </div>
+      <div class="explorer-controls">
+        <input type="text" id="waveSearch" class="search-input" placeholder="Search car (W1-A), PR, issue, lane (TC-Lane-A), or receipt..." oninput="filterWaves()" />
+        <div class="filter-group">
+          <button class="filter-btn active" onclick="setWaveFilter('all', this)">All Wave Cars (3)</button>
+          <button class="filter-btn" onclick="setWaveFilter('wave1', this)">Wave 1 (2 Parallel Cars)</button>
+          <button class="filter-btn" onclick="setWaveFilter('wave2', this)">Wave 2 (Release Cut)</button>
+          <button class="filter-btn" onclick="setWaveFilter('merged', this)">True-Merged (3)</button>
+        </div>
+      </div>
+      <div class="wave-grid" id="waveGrid">
+        <div class="wave-card" data-tags="wave1 merged pr3183 issue3181 lane-a">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">W1-A (Car V655-W1-A) · MERGED (PR #3183 R1 -> 2d82e1d2)</span>
+              <h3>W1-A (Car V655-W1-A) — Eliminate false-positive V6 Working / busy indicators across idle fleets (Closes #3181)</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-A</code></div>
+              <div>Merged: <code>2d82e1d28f69261e4a37c8b1d5fcb34cbc5508f6</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            <strong>Scope &amp; Files:</strong> <code>Closes #3181</code> — Add <code>LIVE_DONE_RE</code>, <code>LIVE_AT_REST_FOOTER_RE</code>, <code>menuActive</code> guard, and remove <code>&apos;not-at-rest&apos;</code> from <code>STATUS_BUSY_REASONS</code> in <code>public/v6-shell.js</code> + unit tests in <code>test/v6-b1-ui-shell.test.js</code> + <code>changelog.d/3181.v6-busy-indicator-false-positives.fixed.md</code><br/>
+            <strong>Gate 2 &amp; Merge Receipts:</strong> <strong>MERGED</strong> — <code>PR #3183</code> R1 (<code>6d6de9d1</code> &rarr; <code>main @ 2d82e1d28f69261e4a37c8b1d5fcb34cbc5508f6</code>) · O-Gate: <code>OBSR-OGATE-V655-W1A-PR3183-R1-6D6DE9D1-PASS</code> · A-Gate: <code>Ruling A884 (ARC-AGATE-V655-W1A-PR3183-6D6DE9D1-PASS)</code> · R-Gate: <code>PRRA-R1-V655-W1A-PR3183-6D6DE9D1-APPROVE</code>
+          </p>
+        </div>
+        <div class="wave-card" data-tags="wave1 merged pr3184 issue3182 lane-c">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">W1-B (Car V655-W1-B) · MERGED (PR #3184 R1 -> 4bee6dc8)</span>
+              <h3>W1-B (Car V655-W1-B) — Capture full CLI scrollback from TCC_SOCKET on TCC-bootstrapped sessions (Closes #3182)</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-C</code></div>
+              <div>Merged: <code>4bee6dc8a87914e7e37fd470faf9a43a342670fb</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            <strong>Scope &amp; Files:</strong> <code>Closes #3182</code> — Add <code>_isTccAttachProxyPane</code> and <code>_resolveCapturePaneTarget</code> in <code>lib/tmux.js</code> + unit tests in <code>test/tmux-tcc.test.js</code> + <code>changelog.d/3182.tcc-proxy-full-scrollback-capture.fixed.md</code><br/>
+            <strong>Gate 2 &amp; Merge Receipts:</strong> <strong>MERGED</strong> — <code>PR #3184</code> R1 (<code>04cb3fcb</code> &rarr; <code>main @ 4bee6dc8a87914e7e37fd470faf9a43a342670fb</code>) · O-Gate: <code>OBSR-OGATE-V655-W1B-PR3184-R1-04CB3FCB-PASS</code> · A-Gate: <code>Ruling A885 (ARC-AGATE-V655-W1B-PR3184-04CB3FCB-PASS)</code> · R-Gate: <code>PRRB-RGATE-V655-W1B-PR3184-04CB3FCB-PASS</code>
+          </p>
+        </div>
+        <div class="wave-card" data-tags="wave2 merged pr3185 release lane-b">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">W2-REL (Car V655-W2-REL) · MERGED (PR #3185 R1 -> b62ebffc)</span>
+              <h3>W2-REL (Car V655-W2-REL) — Release Cut v6.5.5 (version.json, CHANGELOG.md, docs/releases/v6.5.5.md, FEATURES.md, README.md, ROADMAP.md)</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-B</code></div>
+              <div>Merged: <code>b62ebffc18a63f818adad556396a1879833d2b24</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            <strong>Scope &amp; Files:</strong> Release Cut <code>v6.5.5</code> (Milestone <code>#91</code>) — Bump <code>version.json</code> (<code>6.5.4</code> &rarr; <code>6.5.5</code>), drain both <code>changelog.d/3181..3182.*.md</code> fragments into <code>CHANGELOG.md</code>, author <code>docs/releases/v6.5.5.md</code>, update <code>FEATURES.md</code>, <code>README.md</code>, <code>ROADMAP.md</code>, <code>.prawduct/change-log.md</code>, and lockfile<br/>
+            <strong>Gate 2 &amp; Merge Receipts:</strong> <strong>MERGED &amp; DEPLOYED</strong> — <code>PR #3185</code> R1 (<code>8b82ccb4</code> &rarr; <code>main @ b62ebffc18a63f818adad556396a1879833d2b24</code>) · O-Gate: <code>OBSR-OGATE-V655-W2REL-PR3185-R1-8B82CCB4-PASS</code> · A-Gate: <code>Ruling A887 (ARC-AGATE-V655-W2REL-PR3185-8B82CCB4-PASS)</code> · R-Gate: <code>PRRB-RGATE-V655-W2REL-PR3185-8B82CCB4-PASS</code>
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="next-sprint">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 07 · Feed-Forward Recommendations &amp; Operational Guardrails</span>
+          <h2 class="section-title">6 Actionable Feed-Forward Guardrails from Sprint v6.5.5</h2>
+        </div>
+      </div>
+      <div class="grid-3">
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 01 · RELEASE-CUT SUITE NAMES</span>
+          <h4>Cite the Exact 7 Release-Gate Test Files in Wave 2 Dispatches</h4>
+          <p>Standardize Wave 2 dispatches to reference <code>test/repo-scan.test.js</code>, <code>test/docs-parity-gate.test.js</code>, <code>test/changelog-fragment-gate.test.js</code>, <code>test/release-mode.test.js</code>, <code>test/changelog-released-immutable.test.js</code>, <code>test/release-prepare-script.test.js</code>, and <code>test/changelog-structure.test.js</code>.</p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 02 · TMUX CALL-SITE INVARIANT</span>
+          <h4>Include test/tmux.test.js or Note Pinned -t Count When Editing lib/tmux.js</h4>
+          <p>Whenever <code>lib/tmux.js</code> is in a car&apos;s envelope, either include <code>test/tmux.test.js</code> at Gate 1 or document the pinned <code>39</code> <code>-t</code> call-site invariant in the car brief.</p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 03 · PRE-STAGE GATE 4 HTML</span>
+          <h4>Pre-Stage the Settled Gate 4 Report During Wave 2 CI</h4>
+          <p>Pre-staging <code>vX.Y.Z-index.html</code> while Wave 2 CI runs guarantees zero settlement lag when <code>:3102</code> restarts on the new version.</p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 04 · COMMA DELIMITERS IN TMUX</span>
+          <h4>Never Use Literal TAB Delimiters in tmux display-message -p</h4>
+          <p><code>tmux display-message -p</code> sanitizes literal TAB bytes into <code>_</code>; always use comma or explicit printable delimiters when querying multiple pane variables.</p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 05 · P46 TREE VERIFICATION</span>
+          <h4>100% Gate 1 Pre-Existence Check on Target Paths</h4>
+          <p>Keep verifying every target code and test path against <code>git ls-tree HEAD</code> at Gate 1 to sustain our 13-for-13 zero-CI-red-run streak.</p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 06 · ATOMIC GATE 4 SETTLEMENT</span>
+          <h4>Verify /api/sprint-waves &amp; /api/sprint-reports/:version at Exit</h4>
+          <p>Always verify <code>GET /api/sprint-waves</code> (<code>roadmapSyncStatus.state === &quot;ok&quot;</code>) and <code>GET /api/sprint-reports/:version</code> (<code>settled: true</code>, <code>rule283PassCount: 16</code>) before closing Gate 4.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+        <div>
+          <strong>TangleClaw Sprint v6.5.5 Gate 4 Empirical &amp; 16-Point Rule #283 Report</strong> · Certified by <code>TC-Lane-Obsr</code> (<code>OBSR-OGATE-V655-SPRINT-EXIT-8B82CCB4-PASS</code>) &amp; <code>TC-Lane-Arc</code> (<code>Ruling A888: ARC-SPRINT-EXIT-V655-8B82CCB4-PASS</code>)
+        </div>
+        <div>
+          <a href="../" style="color:var(--accent2);">← All Sprint Reports</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+  <script>
+    (function () {
+      const buttons = document.querySelectorAll('.filter-btn');
+      const search = document.getElementById('waveSearch');
+      const cards = document.querySelectorAll('.wave-card');
+      let currentFilter = 'all';
+
+      function applyFilters() {
+        const q = (search && search.value ? search.value : '').trim().toLowerCase();
+        cards.forEach(function (card) {
+          const cardTags = (card.getAttribute('data-tags') || '').split(/\s+/);
+          const cardSearch = (card.getAttribute('data-search') || '') + ' ' + card.innerText.toLowerCase();
+          const matchTag = currentFilter === 'all' || cardTags.indexOf(currentFilter) !== -1;
+          const matchSearch = !q || cardSearch.indexOf(q) !== -1;
+          card.style.display = (matchTag && matchSearch) ? '' : 'none';
+        });
+      }
+
+      window.setWaveFilter = function (tag, btn) {
+        buttons.forEach(function (b) { b.classList.remove('active'); });
+        if (btn) btn.classList.add('active');
+        currentFilter = tag || 'all';
+        applyFilters();
+      };
+      window.filterWaves = function () { applyFilters(); };
+    })();
+  </script>
+</body>
+</html>
