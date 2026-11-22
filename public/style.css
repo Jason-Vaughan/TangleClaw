@@ -4994,10 +4994,73 @@ p.v6-history-secret {
      composer off the footer-anchored viewport. */
   max-height: 45vh;
 }
+/* #3187: pinned to the top of `.v6-chat-under-hood[open]`'s own scroll
+   container (its nearest scrolling ancestor is the `<details>` itself,
+   which gained `overflow: auto` at #3151) — so the toggle bar, Full Screen
+   and Interactive buttons stay reachable no matter how far `#v6ChatPeek` or
+   the drawer's own content has scrolled, instead of scrolling out of view
+   along with everything else inside an open, tall drawer. */
 .v6-chat-under-hood > summary {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--v6-surface, #0d0d0d);
+  padding: 4px 0;
   cursor: pointer;
-  opacity: 0.85;
+  opacity: 0.95;
   margin-bottom: 6px;
+}
+/* #3187 (styling only — the markup and drag/keyboard behavior are a sibling
+   car's own change, public/v6-shell.js's `chatPaneResizerMarkup` and
+   `wireComposerResize`, #3186): a horizontal drag handle at a pane
+   boundary (`#v6ChatStreamResizeBottom`, `#v6ChatHoodResizeTop`,
+   `#v6ChatHoodResizeBottom`, `#v6ChatComposerResizeTop`) — a thin bar with
+   three grip pills that light up venom-green on hover/focus/drag, so
+   "Main Chat", "Under the Hood" and the composer can trade space two ways
+   at any of their shared edges, not just via the tiny native corner handle
+   each pane's own `resize: vertical` already provides. */
+.v6-chat-pane-resizer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 10px;
+  padding: 0 6px;
+  cursor: ns-resize;
+  user-select: none;
+  touch-action: none;
+  border-radius: 4px;
+}
+/* Directional breathing room against whichever pane this resizer sits
+   between — a `--top` handle (the pane it belongs to is above it) keeps
+   its own pane from crowding the handle; `--bottom` is the mirror. */
+.v6-chat-pane-resizer--top {
+  margin-bottom: 2px;
+}
+.v6-chat-pane-resizer--bottom {
+  margin-top: 2px;
+}
+.v6-chat-pane-resizer:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(156, 247, 50, 0.35);
+}
+.v6-chat-pane-resizer-grip {
+  display: block;
+  flex: none;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--v6-outline, #3d444d);
+}
+.v6-chat-pane-resizer-grip--left,
+.v6-chat-pane-resizer-grip--right {
+  width: 14px;
+}
+.v6-chat-pane-resizer-grip--center {
+  width: 36px;
+}
+.v6-chat-pane-resizer:hover .v6-chat-pane-resizer-grip,
+.v6-chat-pane-resizer:focus-visible .v6-chat-pane-resizer-grip,
+.v6-chat-pane-resizer:active .v6-chat-pane-resizer-grip {
+  background: var(--tc-venom-green, #9CF732);
 }
 /* #3167: a badge for the Under the Hood summary bar mirroring
    #v6ChatActivity's busy state — a pulsing dot rather than a second
