@@ -1793,7 +1793,11 @@ describe('tcCreateV6Shell — filter controls (#3046)', () => {
 
   // Restated by #3068: no pills to Ctrl-click; the additive selectGroup API remains.
   it('the additive selectGroup API still adds to the selection, and the picker says how many', () => {
-    const { shell, root } = mountWithProjects();
+    // #3191: parked at a routeless overview — mountShell's own default hash
+    // (#/projects/tc-lane) is itself a project route, and the multi-tab
+    // fleet-sync this car adds would otherwise reconcile this test's own
+    // deliberate selection back to whatever that default route resolves to.
+    const { shell, root } = mountWithProjects({ initialHash: '#/overview' });
     shell.selectGroup('tc-lane', false);
     assert.match(root.innerHTML, /<option value="tc-lane" selected>TC-Lane<\/option>/);
     shell.selectGroup('medusa', true);
@@ -1808,7 +1812,9 @@ describe('tcCreateV6Shell — filter controls (#3046)', () => {
   // Restated by #3068: All Fleets in the picker replaces the All pill.
   it('a remembered fleet is restored on mount, selected in the picker, and All Fleets clears it', () => {
     const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) });
-    const { doc, root } = mountWithProjects({ storage });
+    // #3191: same reason as the test above — a routeless mount so the new
+    // multi-tab fleet-sync has no active project/fleet route to reconcile against.
+    const { doc, root } = mountWithProjects({ storage, initialHash: '#/overview' });
     assert.doesNotMatch(root.innerHTML, /TC-Lane Fleet/, 'a remembered selection is restored on mount');
     assert.match(root.innerHTML, /<option value="medusa" selected>Medusa<\/option>/);
     const el = doc.getElementById('v6FilterFleet');
@@ -2766,8 +2772,11 @@ describe('Above-the-Hood chat view (#3052)', () => {
     // own busy state in the UTH summary bar.
     // #3186: a resizer bar (#v6ChatHoodResizeTop) now sits between
     // </summary> and the verbosity fieldset.
-    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count"><\/span>\s*<span id="v6UthStatus" class="v6-uth-status" aria-hidden="true"><\/span>\s*<button type="button" id="v6ChatHoodFullScreen"[\s\S]*?<\/button>\s*<button type="button" id="v6ChatHoodInteractive"[\s\S]*?<\/button>\s*<\/summary>\s*<div id="v6ChatHoodResizeTop"[^>]*data-chat-resizer="hood-top"[^>]*>[\s\S]*?<\/div>\s*<fieldset class="v6-chat-verbosity">[\s\S]*?<\/fieldset>\s*<section class="v6-chat-tucked"[\s\S]*?<\/section>\s*<section class="v6-chat-switchboard"[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
-    assert.match(G.tcV6ConversationViewMarkup(view({ peek: { lines: [] }, hoodOpen: true })), /<details id="v6ChatUnderHood" class="v6-chat-under-hood" open>/);
+    // #3191: "Hide Medusa & fleet chatter" defaults to checked, so
+    // `is-traffic-hidden` is on the drawer and the tucked-count badge and
+    // both fleet-chatter sections carry `hidden` by default too.
+    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood is-traffic-hidden">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count" hidden><\/span>\s*<span id="v6UthStatus" class="v6-uth-status" aria-hidden="true"><\/span>\s*<button type="button" id="v6ChatHoodFullScreen"[\s\S]*?<\/button>\s*<button type="button" id="v6ChatHoodInteractive"[\s\S]*?<\/button>\s*<\/summary>\s*<div id="v6ChatHoodResizeTop"[^>]*data-chat-resizer="hood-top"[^>]*>[\s\S]*?<\/div>\s*<fieldset class="v6-chat-verbosity">[\s\S]*?<\/fieldset>\s*<section class="v6-chat-tucked" aria-label="Replies tucked away" hidden>[\s\S]*?<\/section>\s*<section class="v6-chat-switchboard" aria-label="Switchboard and Medusa traffic" hidden>[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
+    assert.match(G.tcV6ConversationViewMarkup(view({ peek: { lines: [] }, hoodOpen: true })), /<details id="v6ChatUnderHood" class="v6-chat-under-hood is-traffic-hidden" open>/);
   });
 
   it('wraps both streams in one scroll container', () => {
@@ -2838,7 +2847,7 @@ describe('Above-the-Hood chat, live in the shell (#3052)', () => {
     hood.open = true;
     hood.dispatch('toggle');
     m.shell.setTelemetry(null);
-    assert.match(m.root.innerHTML, /<details id="v6ChatUnderHood" class="v6-chat-under-hood" open>/);
+    assert.match(m.root.innerHTML, /<details id="v6ChatUnderHood" class="v6-chat-under-hood is-traffic-hidden" open>/);
   });
 
   it('scrolls the conversation and the raw output to the bottom on first render', async () => {
@@ -4542,7 +4551,10 @@ describe('composer tightening and two-way resize (#3106)', () => {
 describe('a remembered fleet that is gone does not trap the picker (#3068, cumulative review)', () => {
   it('shows "Fleet not found", and All Fleets then brings the whole tree back', () => {
     const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['gone-fleet']) });
-    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage });
+    // #3191: routeless — mountShell's own default (#/projects/tc-lane) is a
+    // project route the new multi-tab fleet-sync would otherwise reconcile
+    // this test's own deliberate (if stale) selection against.
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage, initialHash: '#/overview' });
     assert.match(root.innerHTML, /<option value="">All Fleets<\/option><option value="" disabled selected>Fleet not found<\/option>/);
     const el = doc.getElementById('v6FilterFleet');
     el.value = '';
@@ -4554,7 +4566,8 @@ describe('a remembered fleet that is gone does not trap the picker (#3068, cumul
 
   it('before the project list loads it says so, and keeps the remembered choice', () => {
     const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) });
-    const { root, shell } = mountShell({ tree: [], storage });
+    // #3191: routeless, same reason as the test above.
+    const { root, shell } = mountShell({ tree: [], storage, initialHash: '#/overview' });
     assert.match(root.innerHTML, /<option value="" disabled selected>Loading fleets…<\/option>/);
     shell.setTree(TWO_GROUP_TREE);
     assert.match(root.innerHTML, /<option value="medusa" selected>Medusa<\/option>/);
@@ -4562,11 +4575,12 @@ describe('a remembered fleet that is gone does not trap the picker (#3068, cumul
   });
 
   it('#3154: getSelectedFleetId names the one known fleet selected, null for none/several/gone', () => {
-    const none = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage() });
+    // #3191: routeless throughout — same reason as the tests above.
+    const none = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage(), initialHash: '#/overview' });
     assert.equal(none.shell.getSelectedFleetId(), null);
-    const one = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) }) });
+    const one = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) }), initialHash: '#/overview' });
     assert.equal(one.shell.getSelectedFleetId(), 'medusa');
-    const gone = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['gone-fleet']) }) });
+    const gone = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['gone-fleet']) }), initialHash: '#/overview' });
     assert.equal(gone.shell.getSelectedFleetId(), null);
   });
 
@@ -4587,9 +4601,13 @@ describe('a remembered fleet that is gone does not trap the picker (#3068, cumul
   });
 
   it('"Several fleets" counts only fleets still there, and one survivor is simply selected', () => {
-    const several = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['tc-lane', 'medusa', 'gone']) }) });
+    // #3191: routeless — same reason as the tests above (the 'several' case
+    // already includes 'tc-lane', mountShell's own default route, so it
+    // never actually collided, but parking it here too keeps both cases
+    // testing the same thing regardless of what that default happens to be).
+    const several = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['tc-lane', 'medusa', 'gone']) }), initialHash: '#/overview' });
     assert.match(several.root.innerHTML, /disabled selected>Several fleets \(2\)</);
-    const single = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa', 'gone']) }) });
+    const single = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa', 'gone']) }), initialHash: '#/overview' });
     assert.match(single.root.innerHTML, /<option value="medusa" selected>Medusa<\/option>/);
     assert.doesNotMatch(single.root.innerHTML, /disabled selected/);
   });
@@ -4783,9 +4801,9 @@ describe('Under the Hood: Full Screen and Interactive CLI Mode (#3135)', () => {
 
   it('the Full Screen button toggles the dark overlay, never the <details> open state, and Escape closes it', () => {
     const { doc, root, keydowns } = mountLiveHood();
-    assert.doesNotMatch(root.innerHTML, /id="v6ChatUnderHood" class="v6-chat-under-hood" style="position:fixed/);
+    assert.doesNotMatch(root.innerHTML, /id="v6ChatUnderHood" class="v6-chat-under-hood is-traffic-hidden" style="position:fixed/);
     doc.getElementById('v6ChatHoodFullScreen').dispatch('click');
-    assert.match(root.innerHTML, /id="v6ChatUnderHood" class="v6-chat-under-hood" style="position:fixed[^"]*"/);
+    assert.match(root.innerHTML, /id="v6ChatUnderHood" class="v6-chat-under-hood is-traffic-hidden" style="position:fixed[^"]*"/);
     assert.doesNotMatch(root.innerHTML, /<details id="v6ChatUnderHood"[^>]* open/, 'the click never also opened/closed the drawer');
     assert.match(root.innerHTML, /id="v6ChatHoodFullScreen"[^>]*title="Exit Full Screen"/);
     keydowns.get('v6ChatUnderHood')({ key: 'Escape' });
@@ -6148,6 +6166,9 @@ describe('the Medusa indicator, live through the controller (#3076)', () => {
     m.doc.getElementById('v6ChatMedusa').dispatch('click');
     assert.equal(m.doc.getElementById('v6ChatUnderHood').open, true);
     assert.equal(m.doc.activeElement, m.doc.getElementById('v6ChatSwitchboard'));
+    // #3191: clicking the indicator also reveals the traffic it exists to
+    // show — `is-traffic-hidden` must be gone by the next render, not just
+    // the drawer open.
     m.shell.setTelemetry(null);
     assert.match(m.root.innerHTML, /<details id="v6ChatUnderHood" class="v6-chat-under-hood" open>/);
   });
@@ -7252,7 +7273,8 @@ describe('the verbosity filter on Under the Hood (#3082)', () => {
     assert.match(live, /Shall I rebase\?/);
     assert.match(live, /Direct answer\./);
     assert.doesNotMatch(live, /Acked and routed/);
-    assert.match(html, /<span id="v6ChatTuckedCount" class="v6-chat-tucked-count">1 tucked<\/span>/);
+    // #3191: "Hide Medusa & fleet chatter" defaults to checked, hiding the badge itself too.
+    assert.match(html, /<span id="v6ChatTuckedCount" class="v6-chat-tucked-count" hidden>1 tucked<\/span>/);
     assert.match(html, /<li class="v6-chat-tucked-item is-chatter"><span class="v6-chat-tucked-kind">Fleet chatter<\/span> <span class="v6-conversation-content">Acked and routed to INT\.<\/span>/);
     assert.match(html, /<input type="checkbox" id="v6ChatShowBlockers" data-verbosity="blockers" checked>/);
     assert.match(html, /<input type="checkbox" id="v6ChatShowMilestones" data-verbosity="milestones" checked>/);
@@ -9508,5 +9530,193 @@ describe('the charter panel never shows a project the operator has left (#3088, 
     held.forEach((release) => release());
     await settle();
     assert.equal(painted.filter(([mode, html]) => mode === 'charter' && /v6CharterActivate-99/.test(html)).length, 0, 'Alpha\'s charter is never painted');
+  });
+});
+
+describe('Car V657-W1-A: UTH traffic filter, scroll pinning, multi-tab fleet sync (#3191)', () => {
+  const G = loadV6Shell();
+
+  describe('tcV6FilterPeekTrafficLines', () => {
+    it('passes every line through unchanged when hideTraffic is false', () => {
+      const lines = ['[TangleClaw Switchboard] wake', 'tc message read', 'hello'];
+      assert.deepEqual(G.tcV6FilterPeekTrafficLines(lines, false), lines);
+    });
+
+    it('drops a switchboard wake notice and its wrapped continuation lines, keeping a genuine reply after it', () => {
+      const lines = [
+        '[TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read. Reply where an answer is needed, BEFORE marking it handled: tc message send --in-reply-to <message-id> <sender-workspace-id> "<reply>".',
+        '  The initiator closes the exchange, so no answer leaves them blocked; tc message owed lists what you owe. Never use /clear as an acknowledgement.',
+        'a genuine reply line'
+      ];
+      assert.deepEqual(plain(G.tcV6FilterPeekTrafficLines(lines, true)), ['a genuine reply line']);
+    });
+
+    it('drops tc message read/send/ack/owed commands, with or without a leading $', () => {
+      for (const cmd of ['tc message read', '$ tc message send tc-lane-pm "hi"', 'tc message ack abc123', 'tc message owed']) {
+        assert.deepEqual(plain(G.tcV6FilterPeekTrafficLines([cmd, 'kept'], true)), ['kept'], cmd);
+      }
+    });
+
+    it('drops every Medusa switchboard receipt line', () => {
+      const receipts = [
+        'Message to tc-lane-pm-80246dee: received. Exchange mx_abc123 (normal, delivered).',
+        'Reported 1 message id(s) handled — they leave your inbox (ids it does not contain are ignored).',
+        'Your switchboard inbox is empty.',
+        '1 message(s) in your inbox:',
+        'Reading does NOT mark these handled. Reply first where an answer is needed.'
+      ];
+      for (const line of receipts) {
+        assert.deepEqual(plain(G.tcV6FilterPeekTrafficLines([line, 'kept'], true)), ['kept'], line);
+      }
+    });
+
+    it('keeps ordinary prose that merely mentions these words mid-sentence, rather than starting the line with them', () => {
+      const lines = ['I ran tc message read earlier, but this whole line is my own reply.'];
+      assert.deepEqual(plain(G.tcV6FilterPeekTrafficLines(lines, true)), lines);
+    });
+
+    it('is a no-op on null/non-array input', () => {
+      assert.deepEqual(plain(G.tcV6FilterPeekTrafficLines(null, true)), []);
+      assert.deepEqual(plain(G.tcV6FilterPeekTrafficLines(undefined, false)), []);
+    });
+  });
+
+  describe('LIVE_TOOL / antigravity noise tightening', () => {
+    it('filters an Antigravity collapsed-actions line that names what it collapsed as tool chrome, not a reply', () => {
+      const out = plain(G.tcV6ExtractLiveTurns(['> go', '… 2 more actions (1 read, 1 command) …', 'A real reply.'], 'antigravity', []));
+      assert.deepEqual(out.turns.map((t) => t.text), ['go', 'A real reply.']);
+    });
+
+    it('filters an Antigravity "Thought for Ns, N tokens" recap as thinking chrome, not a reply', () => {
+      const out = plain(G.tcV6ExtractLiveTurns(['> go', '▸ Thought for 11s, 144 tokens', 'A real reply.'], 'antigravity', []));
+      assert.deepEqual(out.turns.map((t) => t.text), ['go', 'A real reply.']);
+    });
+
+    it('still reads a bare "… N more actions" with nothing after it the same way (the old anchored form)', () => {
+      const out = plain(G.tcV6ExtractLiveTurns(['> go', '… 3 more actions …', 'A real reply.'], 'antigravity', []));
+      assert.deepEqual(out.turns.map((t) => t.text), ['go', 'A real reply.']);
+    });
+  });
+
+  describe('verbosityMarkup / Hide Medusa & fleet chatter checkbox', () => {
+    const view = (chat, extra) => Object.assign({
+      project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: Object.assign({ status: 'active', members: [], hoodOpen: true }, chat || {})
+    }, extra || {});
+
+    it('renders #v6ChatHideHoodTraffic checked by default', () => {
+      const html = G.tcV6ConversationViewMarkup(view());
+      assert.match(html, /<label class="v6-chat-verbosity-option v6-chat-verbosity-option--traffic"><input type="checkbox" id="v6ChatHideHoodTraffic" checked> Hide Medusa &amp; fleet chatter<\/label>/);
+    });
+
+    it('renders it unchecked, and both fleet-chatter sections unhidden, when hideHoodTraffic is explicitly false', () => {
+      const html = G.tcV6ConversationViewMarkup(view({ hideHoodTraffic: false }));
+      assert.match(html, /<input type="checkbox" id="v6ChatHideHoodTraffic"> Hide Medusa &amp; fleet chatter/);
+      assert.match(html, /<section class="v6-chat-tucked" aria-label="Replies tucked away">/);
+      assert.match(html, /<section class="v6-chat-switchboard" aria-label="Switchboard and Medusa traffic">/);
+      assert.doesNotMatch(html, /is-traffic-hidden/);
+    });
+
+    it('filters switchboard traffic out of #v6ChatPeek by default, but not when hideHoodTraffic is false', () => {
+      const chat = { peek: { lines: ['[TangleClaw Switchboard] wake', 'a real reply line'] } };
+      const hidden = G.tcV6ConversationViewMarkup(view(chat));
+      const hiddenPeek = hidden.slice(hidden.indexOf('id="v6ChatPeek"'), hidden.indexOf('</pre>'));
+      assert.doesNotMatch(hiddenPeek, /TangleClaw Switchboard/);
+      assert.match(hiddenPeek, /a real reply line/);
+      const shown = G.tcV6ConversationViewMarkup(view(Object.assign({}, chat, { hideHoodTraffic: false })));
+      const shownPeek = shown.slice(shown.indexOf('id="v6ChatPeek"'), shown.indexOf('</pre>'));
+      assert.match(shownPeek, /TangleClaw Switchboard/);
+    });
+  });
+
+  describe('the Under the Hood group stays pinned to its newest line', () => {
+    function mountWithPeek() {
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const realGet = doc.getElementById;
+      doc.getElementById = (id) => {
+        const el = realGet(id);
+        if (el && id === 'v6ChatPeek' && el.scrollHeight === undefined) {
+          el.scrollHeight = 900; el.clientHeight = 300; el.scrollTop = 0;
+        }
+        return el;
+      };
+      const shell = G.tcCreateV6Shell(doc, { root, window: makeFakeWindow('#/projects/tc-lane'), storage: null });
+      shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [],
+        chat: { status: 'active', hoodOpen: true, hideHoodTraffic: false, peek: { lines: ['x'] } } } });
+      return { doc, root, shell };
+    }
+
+    it('starts pinned to the bottom on mount', () => {
+      const { doc } = mountWithPeek();
+      assert.equal(doc.getElementById('v6ChatPeek').scrollTop, 900);
+    });
+
+    it('scrolling up by hand stops a later targeted redraw from re-pinning it', () => {
+      const { doc, shell } = mountWithPeek();
+      const peek = doc.getElementById('v6ChatPeek');
+      peek.scrollTop = 500; // 900 - 500 - 300 = 100 > 24, and below lastPeekScrollTop(900) - 4
+      peek.dispatch('scroll');
+      shell.setLive({ peek: { lines: ['x', 'y', 'z'] }, live: null });
+      assert.notEqual(doc.getElementById('v6ChatPeek').scrollTop, 900, 'still where the operator left it, not snapped back');
+    });
+
+    it('scrolling back within 24px of the bottom by hand re-pins it, so the next redraw snaps back to newest', () => {
+      const { doc, shell } = mountWithPeek();
+      const peek = doc.getElementById('v6ChatPeek');
+      peek.scrollTop = 500;
+      peek.dispatch('scroll');
+      peek.scrollTop = 890; // 900 - 890 - 300 is negative: within the 24px band
+      peek.dispatch('scroll');
+      shell.setLive({ peek: { lines: ['x'] }, live: null });
+      assert.equal(doc.getElementById('v6ChatPeek').scrollTop, 900);
+    });
+
+    it('the drawer\'s own toggle re-arms the pin even after the operator scrolled away', () => {
+      const { doc } = mountWithPeek();
+      const peek = doc.getElementById('v6ChatPeek');
+      peek.scrollTop = 500;
+      peek.dispatch('scroll');
+      doc.getElementById('v6ChatUnderHood').dispatch('toggle');
+      assert.equal(doc.getElementById('v6ChatPeek').scrollTop, 900, 're-armed and pinned back to the bottom');
+    });
+  });
+
+  describe('multi-tab Fleet sidebar auto-sync to the active route (activeLogicalProjectId)', () => {
+    it('reconciles a stale cross-tab selectedGroups back to the fleet the active conversation belongs to', () => {
+      const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) });
+      const { root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage, initialHash: '#/resources/12/conversation' });
+      shell.setDetail({ kind: 'conversation', view: { project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [], chat: { status: 'active' } } });
+      assert.match(root.innerHTML, /TC-Lane Fleet/, 'reconciled to tc-lane, the fleet TC-Lane-PM (seat 12) actually belongs to');
+      assert.doesNotMatch(root.innerHTML, /Medusa Fleet/);
+      assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['tc-lane'], 'persisted too, so a reload does not revert it');
+    });
+
+    it('reconciles a project route the same way, even with no conversation open', () => {
+      const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) });
+      const { root } = mountShell({ tree: TWO_GROUP_TREE, storage, initialHash: '#/projects/tc-lane' });
+      assert.match(root.innerHTML, /TC-Lane Fleet/);
+      assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['tc-lane']);
+    });
+
+    it('leaves a selection alone when it already includes the active fleet', () => {
+      const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['tc-lane', 'medusa']) });
+      mountShell({ tree: TWO_GROUP_TREE, storage, initialHash: '#/projects/medusa' });
+      assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['tc-lane', 'medusa']);
+    });
+
+    it('leaves an empty selection (All Fleets) alone regardless of route', () => {
+      const storage = makeStorage();
+      mountShell({ tree: TWO_GROUP_TREE, storage, initialHash: '#/projects/medusa' });
+      assert.equal(storage.data.tc_v6_selected_groups, undefined);
+    });
+
+    it('does nothing for a route that names no project at all (e.g. the Overview)', () => {
+      const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) });
+      mountShell({ tree: TWO_GROUP_TREE, storage, initialHash: '#/overview' });
+      assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['medusa']);
+    });
   });
 });

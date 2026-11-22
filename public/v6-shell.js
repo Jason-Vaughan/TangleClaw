@@ -2112,13 +2112,13 @@
         </div>
       </header>
       ${stream}
-      ${liveSession ? `<details id="v6ChatUnderHood" class="v6-chat-under-hood"${chat.hoodOpen ? ' open' : ''}${
+      ${liveSession ? `<details id="v6ChatUnderHood" class="v6-chat-under-hood${chat.hideHoodTraffic !== false ? ' is-traffic-hidden' : ''}"${chat.hoodOpen ? ' open' : ''}${
         // #3135: a dark-palette modal overlay, in lieu of a style.css rule
         // (reserved for Wave 2's own Car) — inline, so it costs nothing when not active.
         chat.hoodFullScreen ? ' style="position:fixed;inset:0;z-index:9000;width:100%;height:100%;max-width:none;max-height:none;'
           + 'margin:0;background:#0b0f0c;color:#e8f0e2;overflow:auto;padding:16px;box-sizing:border-box;"' : ''
       }>
-        <summary>🔧 Under the Hood (Raw CLI &amp; Tool Activity) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count">${tuckedCountText(tuckedTurns(liveTurns, chat.verbosity).length)}</span>
+        <summary>🔧 Under the Hood (Raw CLI &amp; Tool Activity) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count"${chat.hideHoodTraffic !== false ? ' hidden' : ''}>${tuckedCountText(tuckedTurns(liveTurns, chat.verbosity).length)}</span>
           <span id="v6UthStatus" class="v6-uth-status${chatBusyLabel(chat) ? ' v6-uth-status--busy' : ''}" aria-hidden="true">${chatBusyLabel(chat) ? 'Working' : ''}</span>
           <button type="button" id="v6ChatHoodFullScreen" class="btn btn-secondary btn-small v6-chat-hood-fullscreen"
             title="${chat.hoodFullScreen ? 'Exit Full Screen' : 'Full Screen'}" aria-label="${chat.hoodFullScreen ? 'Exit Full Screen' : 'Full Screen'}">
@@ -2130,18 +2130,18 @@
             <span aria-hidden="true">⌨ Interactive</span></button>
         </summary>
         ${chatPaneResizerMarkup('v6ChatHoodResizeTop', 'hood-top', 'top', 'Resize Under the Hood (top)')}
-        ${verbosityMarkup(chat.verbosity)}
-        <section class="v6-chat-tucked" aria-label="Replies tucked away">
+        ${verbosityMarkup(chat.verbosity, chat.hideHoodTraffic)}
+        <section class="v6-chat-tucked" aria-label="Replies tucked away"${chat.hideHoodTraffic !== false ? ' hidden' : ''}>
           <h3 class="v6-chat-switchboard-title">Tucked away</h3>
           <ol id="v6ChatTucked" class="v6-chat-tucked-list">${tuckedMarkup(tuckedTurns(liveTurns, chat.verbosity), chat.thumbs, chat.unfurls)}</ol>
         </section>
-        <section class="v6-chat-switchboard" aria-label="Switchboard and Medusa traffic">
+        <section class="v6-chat-switchboard" aria-label="Switchboard and Medusa traffic"${chat.hideHoodTraffic !== false ? ' hidden' : ''}>
           <h3 class="v6-chat-switchboard-title">Switchboard &amp; Medusa traffic</h3>
           <ol id="v6ChatSwitchboard" class="v6-chat-switchboard-list" tabindex="-1">${switchboardMarkup(switchboardItems(v.events, live))}</ol>
         </section>
         <pre id="v6ChatPeek" class="v6-chat-peek" tabindex="0"${chat.hoodInteractive ? ' style="border:2px solid #9CF732;"' : ''}>${
           chat.hoodInteractive ? '<span id="v6ChatHoodLiveIndicator" style="color:#9CF732;display:block;">LIVE CLI — Type directly into pane</span>' : ''
-        }${chatPeekMarkup(chat.peek)}</pre>
+        }${chatPeekMarkup(chat.peek, { hideTraffic: chat.hideHoodTraffic !== false })}</pre>
         ${chatPaneResizerMarkup('v6ChatHoodResizeBottom', 'hood-bottom', 'bottom', 'Resize Under the Hood (bottom)')}
       </details>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session.
         <button type="button" id="v6ChatStartBanner" class="btn btn-primary btn-small" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>
@@ -2209,8 +2209,14 @@
     /↑\/↓\s*Navigate\b/i
   ]);
 
-  /** Lines that start a tool block: what is indented under them is the tool's output. */
-  const LIVE_TOOL = Object.freeze([/^…\s*\d+\s+more actions?\s*…?$/i, /^[⎿└]/]);
+  /**
+   * Lines that start a tool block: what is indented under them is the
+   * tool's output. #3191: dropped the trailing `\s*…?$` anchor — Antigravity's
+   * own collapsed-actions line names what it collapsed afterward ("… 2 more
+   * actions (1 read, 1 command) …"), which the anchor never matched, so it
+   * leaked into the reply as ordinary prose instead of being read as chrome.
+   */
+  const LIVE_TOOL = Object.freeze([/^…\s*\d+\s+more actions?\b/i, /^[⎿└]/]);
 
   /** Per-engine thinking/tool lines; an unknown engine gets all of them. */
   const LIVE_ENGINE_NOISE = Object.freeze({
@@ -2219,7 +2225,9 @@
     // that merely starts with one of those verbs.
     claude: [/^⏺\s+[A-Za-z][\w.-]*\(/, /^⏺\s+(Ran|Explored|Edited|Read|Searched|Wrote|Updated|Listed|Called|Fetched|Created|Deleted|Added)\b.*[^.!?:]$/, /^[✶✻✽✢]/],
     codex: [/^•\s+(Ran|Explored|Edited|Read|Searched|Updated|Added|Deleted|Called|Running|Listed)\b/, /^▸\s*Thought\b/],
-    antigravity: [/^[○●]/],
+    // #3191: "▸ Thought for 11s, 144 tokens" — Antigravity's own thinking
+    // recap, the same shape Codex's already listed above.
+    antigravity: [/^[○●]/, /^▸\s*Thought\b/],
     aider: [/^Tokens:/, /^Applied edit to /, /^Commit [0-9a-f]{7,}\b/, /^(Repo-map|Main model|Weak model|Git repo|Aider v)\b/, /^Added .+ to the chat\b/]
   });
 
@@ -3331,8 +3339,12 @@
    * @param {object} [verbosity]
    * @returns {string} HTML.
    */
-  function verbosityMarkup(verbosity) {
+  function verbosityMarkup(verbosity, hideHoodTraffic) {
     const v = isVerbosity(verbosity) ? verbosity : VERBOSITY_DEFAULT;
+    // #3191: checked by default — anything other than an explicit `false`
+    // (never seen, never saved) keeps the drawer's Medusa/fleet chatter
+    // tucked away until the operator opts in.
+    const hideTraffic = hideHoodTraffic !== false;
     const box = (id, key, label) => `<label class="v6-chat-verbosity-option"><input type="checkbox" id="${id}" data-verbosity="${key}"${v[key] ? ' checked' : ''}> ${label}</label>`;
     return `<fieldset class="v6-chat-verbosity">
           <legend>Switchboard replies shown in the chat</legend>
@@ -3340,6 +3352,7 @@
           ${box('v6ChatShowBlockers', 'blockers', 'Blockers')}
           ${box('v6ChatShowMilestones', 'milestones', 'Milestones')}
           ${box('v6ChatShowChatter', 'chatter', 'Fleet chatter')}
+          <label class="v6-chat-verbosity-option v6-chat-verbosity-option--traffic"><input type="checkbox" id="v6ChatHideHoodTraffic"${hideTraffic ? ' checked' : ''}> Hide Medusa &amp; fleet chatter</label>
         </fieldset>`;
   }
 
@@ -4427,15 +4440,68 @@
   const CHAT_SEND_KINDS = Object.freeze(['pending', 'ok', 'warning', 'error']);
 
   /**
+   * A `tc message` command the operator typed or the pane echoed (#3191):
+   * read, send, ack or owed — the ones the switchboard protocol asks a
+   * session to run on every wake, which read as noise once the operator
+   * has already turned on "Hide Medusa & fleet chatter".
+   */
+  const TC_MESSAGE_COMMAND_RE = /^\$?\s*tc message (read|send|ack|owed)\b/i;
+
+  /**
+   * A Medusa switchboard receipt line (#3191): what `tc message send`/`read`/
+   * `ack` themselves print back, as opposed to the wake notice a project
+   * receives (that is {@link SWITCHBOARD_TEXT}, filtered separately).
+   */
+  const MEDUSA_RECEIPT_RE = /^Message to .+: received\. Exchange mx_|^Reported \d+ message id\(s\) handled|^Your switchboard inbox is empty|^\d+ message\(s\) in your inbox:|^Reading does NOT mark these handled\b/i;
+
+  /**
+   * Drop Medusa/fleet traffic from Under the Hood's raw output (#3191),
+   * for "Hide Medusa & fleet chatter": a switchboard wake notice and
+   * whatever of its own wrapped continuation lines still {@link fitsNotice}
+   * (the same incremental check `extractLiveTurns` uses for the identical
+   * wrapping, so a notice recognized as one place is recognized in the
+   * other), a `tc message` command, and a Medusa receipt line. Pure —
+   * exposed as `global.tcV6FilterPeekTrafficLines`, called from
+   * {@link chatPeekMarkup} wherever it renders.
+   * @param {string[]|null} lines
+   * @param {boolean} hideTraffic
+   * @returns {string[]}
+   */
+  function filterPeekTrafficLines(lines, hideTraffic) {
+    const list = Array.isArray(lines) ? lines : [];
+    if (!hideTraffic) return list;
+    const out = [];
+    let wakeSoFar = null;
+    list.forEach((raw) => {
+      const text = String(raw);
+      const trimmed = text.trim();
+      const indented = /^\s/.test(text);
+      if (wakeSoFar !== null) {
+        if (indented) {
+          const joined = `${wakeSoFar} ${trimmed}`;
+          if (fitsNotice(joined)) { wakeSoFar = joined; return; }
+        }
+        wakeSoFar = null;
+      }
+      if (SWITCHBOARD_TEXT.test(trimmed)) { wakeSoFar = trimmed; return; }
+      if (TC_MESSAGE_COMMAND_RE.test(trimmed) || MEDUSA_RECEIPT_RE.test(trimmed)) return;
+      out.push(raw);
+    });
+    return out;
+  }
+
+  /**
    * The live output panel's text: the session's last lines, escaped, or what
-   * stands in for them.
+   * stands in for them. #3191: `hideTraffic` runs the lines through
+   * {@link filterPeekTrafficLines} first, for "Hide Medusa & fleet chatter".
    * @param {{lines?: string[], error?: string}|null} peek
+   * @param {{hideTraffic?: boolean}} [opts]
    * @returns {string} HTML-escaped text for a `<pre>`.
    */
-  function chatPeekMarkup(peek) {
+  function chatPeekMarkup(peek, opts) {
     if (!peek) return 'Waiting for output…';
     if (peek.error) return `Could not read live output: ${escapeHtml(peek.error)}`;
-    const lines = Array.isArray(peek.lines) ? peek.lines : [];
+    const lines = filterPeekTrafficLines(Array.isArray(peek.lines) ? peek.lines : [], Boolean(opts && opts.hideTraffic));
     return lines.length ? lines.map((l) => escapeHtml(l)).join('\n') : 'No output yet.';
   }
 
@@ -4762,6 +4828,9 @@
       const queuedPrompts = (extras && extras.queuedPrompts) || [];
       const pending = (extras && extras.pending) || null;
       const verbosity = (extras && extras.verbosity) || VERBOSITY_DEFAULT;
+      // #3191: checked by default — `extras` omitting it entirely (an
+      // older caller, or a test fixture) must still default to hidden.
+      const hideHoodTraffic = !(extras && extras.hideHoodTraffic === false);
       // #3139: "Show preview by default" — global, off unless the operator turned it on.
       const autoPreview = Boolean(extras && extras.autoPreview);
       const v = detail.view || {};
@@ -4771,7 +4840,7 @@
         chat: Object.assign({}, v.chat, {
           draft, hoodOpen, hoodFullScreen, hoodInteractive, streamPinned, fleetArmed, sidebarCollapsed, activityElapsed, telemetry, rename,
           dismissedQuestions, dismissedTodoItems, dismissedFleetTargets, collapsedWaitingOn, knownProjects,
-          queuedPrompts, pending, verbosity, autoPreview
+          queuedPrompts, pending, verbosity, autoPreview, hideHoodTraffic
         })
       }));
     }
@@ -6951,6 +7020,8 @@
     let hoodBuffer = '';
     // #3082: which switchboard-triggered replies the chat shows, kept across visits.
     let verbosity = Object.assign({}, prefs.get('tc_v6_chat_verbosity', VERBOSITY_DEFAULT, isVerbosity));
+    // #3191: Medusa/fleet chatter tucked away by default, kept across visits.
+    let hideHoodTraffic = prefs.get('tc_v6_chat_hide_hood_traffic', true, (x) => typeof x === 'boolean');
     // #3139: global — off by default (Ruling A752's click-to-reveal stays
     // the floor) — whether a chat link auto-unfurls instead of waiting for
     // its own "👁 Preview" click.
@@ -7114,6 +7185,7 @@
       // ask the loader again on entry rather than leaving templates empty.
       if (mode === 'wizard' && !templates.length) loadWorkspacePanel('wizard');
       syncDockedHeader();
+      pinIfPinned();
       const target = opts && opts.focus ? doc.getElementById(opts.focus) : null;
       if (target && typeof target.focus === 'function') target.focus();
     }
@@ -7232,6 +7304,16 @@
     // upward scroll (the 'scroll' listener wireStreamPin wires) ever
     // turns this off, never a poll or a redraw.
     let streamPinned = true;
+    // #3191: the Under the Hood group's own follow-bottom state —
+    // #v6ChatPeek, #v6ChatSwitchboard, #v6ChatTucked and #v6ChatUnderHood
+    // itself all pin or unpin together, off the SAME upward-scroll-only
+    // tracking `wireStreamPin`'s own listener uses for `streamPinned`,
+    // replacing the old one-shot `isAtBottom(peekEl)` check (which read
+    // false whenever the drawer was closed or had just been resized, even
+    // though the operator never scrolled it).
+    let peekPinned = true;
+    let lastStreamScrollTop = 0;
+    let lastPeekScrollTop = 0;
     const raf = typeof options.requestAnimationFrame === 'function' ? options.requestAnimationFrame
       : (win && typeof win.requestAnimationFrame === 'function' ? (fn) => win.requestAnimationFrame(fn) : null);
     // #3106/#3152: persist the composer's and Under the Hood's own
@@ -7314,6 +7396,7 @@
       wireRename();
       wireSidebarRename();
       wireStreamPin();
+      wirePeekPin();
       wireTreeLinks();
       wireOverview();
       wireRichPreviews();
@@ -7643,17 +7726,29 @@
     }
 
     /**
-     * The chat stream's own follow-bottom state (#3135): scrolling up more
-     * than a few pixels turns `streamPinned` off, and scrolling back down
-     * near the bottom (by hand, or via the pill below) turns it back on —
-     * never a poll or a redraw either way. The pill itself jumps straight
-     * to the newest line and re-pins.
+     * The chat stream's own follow-bottom state (#3135, refined #3191):
+     * scrolling up turns `streamPinned` off, and scrolling back down near
+     * the bottom (by hand, or via the pill below) turns it back on — never
+     * a poll or a redraw either way. The pill itself jumps straight to the
+     * newest line and re-pins.
+     *
+     * #3191: unpinning additionally requires `scrollTop` to have genuinely
+     * DECREASED by more than a few pixels since the last 'scroll' event —
+     * not just that the gap from the bottom is now large. A poll or an
+     * async thumbnail/unfurl growing `scrollHeight` underneath a pane whose
+     * `scrollTop` the operator never touched widens that gap on its own,
+     * and the old distance-only check misread that as the operator having
+     * scrolled away.
      */
     function wireStreamPin() {
       const streamEl = doc.getElementById('v6ChatStream');
       if (streamEl) {
+        lastStreamScrollTop = streamEl.scrollTop;
         streamEl.addEventListener('scroll', () => {
-          streamPinned = streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight <= 24;
+          const distanceFromBottom = streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight;
+          if (distanceFromBottom <= 24) streamPinned = true;
+          else if (streamEl.scrollTop < lastStreamScrollTop - 4) streamPinned = false;
+          lastStreamScrollTop = streamEl.scrollTop;
           paintStreamPinIndicator();
         });
       }
@@ -7661,10 +7756,103 @@
       if (pill) {
         pill.addEventListener('click', () => {
           streamPinned = true;
-          pinToBottom(streamEl);
+          pinStream(streamEl);
           paintStreamPinIndicator();
         });
       }
+    }
+
+    /**
+     * `pinToBottom(el)`, plus keeping `lastStreamScrollTop`/
+     * `lastPeekScrollTop` in step with the jump it just made (#3191) — a
+     * programmatic pin never fires the 'scroll' listener that otherwise
+     * keeps either tracker current, so every OTHER caller that jumps one
+     * of these two panes to its bottom must go through here, or the next
+     * genuine scroll event compares against a stale baseline and reads a
+     * real upward scroll as having gone nowhere (or the reverse).
+     * @param {HTMLElement|null} el
+     * @param {boolean} isPeek
+     */
+    function pinTracked(el, track) {
+      pinToBottom(el);
+      if (!el) return;
+      if (track === 'peek') lastPeekScrollTop = el.scrollTop;
+      else if (track === 'stream') lastStreamScrollTop = el.scrollTop;
+    }
+
+    /** `pinTracked` for `#v6ChatStream` specifically — the common case, named for readability at call sites. */
+    function pinStream(el) { pinTracked(el, 'stream'); }
+
+    /**
+     * Pin `#v6ChatPeek`, `#v6ChatSwitchboard`, `#v6ChatTucked` and
+     * `#v6ChatUnderHood` itself to their own bottom (#3191) — synchronously
+     * and, since an unfurl card or a thumbnail can still be expanding one
+     * of them after paint, once more on the next frame. Called only while
+     * `peekPinned` is true; callers check that themselves so a caller that
+     * also needs to know whether it ran doesn't have to re-check it here.
+     * Only `#v6ChatPeek` is actually tracked for the upward-scroll-only
+     * unpin check (it is the group's representative pane) — the other 3
+     * get `pinToBottom` with no tracking at all, same as a plain
+     * `pinToBottom` call would, since nothing reads a "last scroll" for them.
+     */
+    function pinPeekGroup() {
+      const ids = ['v6ChatPeek', 'v6ChatSwitchboard', 'v6ChatTucked', 'v6ChatUnderHood'];
+      ids.forEach((id) => pinTracked(doc.getElementById(id), id === 'v6ChatPeek' ? 'peek' : null));
+      if (raf) {
+        raf(() => {
+          if (!peekPinned) return;
+          ids.forEach((id) => pinTracked(doc.getElementById(id), id === 'v6ChatPeek' ? 'peek' : null));
+        });
+      }
+    }
+
+    /**
+     * Re-pin whichever of `#v6ChatStream` and the Under the Hood group the
+     * operator hasn't scrolled away from by hand (#3191) — called after
+     * every targeted redraw that can grow one of them (never a poll or a
+     * scroll event itself, which only ever change the two pinned flags).
+     */
+    function pinIfPinned() {
+      if (streamPinned) {
+        const stream = doc.getElementById('v6ChatStream');
+        pinStream(stream);
+        if (raf) raf(() => { if (streamPinned) pinStream(stream); });
+      }
+      if (peekPinned) pinPeekGroup();
+    }
+
+    /**
+     * Re-arm `peekPinned` and jump the whole Under the Hood group back to
+     * the bottom (#3191): wired to the drawer's own `toggle` (opening it
+     * should always start at the newest line, never wherever it happened
+     * to be scrolled before it closed) and to `#v6ChatHideHoodTraffic`
+     * changing (revealing or hiding the fleet-chatter sections changes
+     * each pane's content height outright).
+     */
+    function rearmPeekPin() {
+      peekPinned = true;
+      pinPeekGroup();
+    }
+
+    /**
+     * The Under the Hood group's own follow-bottom state (#3191): the same
+     * upward-scroll-only unpin {@link wireStreamPin} uses, tracked off
+     * `#v6ChatPeek`'s own scroll as the group's representative pane, plus
+     * the drawer's `toggle` event re-arming the whole group.
+     */
+    function wirePeekPin() {
+      const peekEl = doc.getElementById('v6ChatPeek');
+      if (peekEl) {
+        lastPeekScrollTop = peekEl.scrollTop;
+        peekEl.addEventListener('scroll', () => {
+          const distanceFromBottom = peekEl.scrollHeight - peekEl.scrollTop - peekEl.clientHeight;
+          if (distanceFromBottom <= 24) peekPinned = true;
+          else if (peekEl.scrollTop < lastPeekScrollTop - 4) peekPinned = false;
+          lastPeekScrollTop = peekEl.scrollTop;
+        });
+      }
+      const hood = doc.getElementById('v6ChatUnderHood');
+      if (hood) hood.addEventListener('toggle', rearmPeekPin);
     }
 
     /**
@@ -8670,13 +8858,52 @@
       // re-wire them itself, the same way wireControls() always does after
       // a full render.
       wireRichPreviews();
+      // #3191: the tucked list growing is content inside the Under the
+      // Hood group — re-pin it (and the stream, harmlessly, if it also
+      // stayed pinned) the same way every other targeted redraw does.
+      pinIfPinned();
+    }
+
+    /**
+     * Apply a new `hideHoodTraffic` value in place (#3191): the drawer's
+     * own class, the two fleet-chatter sections' `hidden` (and the tucked
+     * count badge's), the raw peek re-filtered, and the whole Under the
+     * Hood group re-armed to the bottom — revealing or hiding a section
+     * changes every pane's own content height, the same as the drawer's
+     * own open/close does.
+     * @param {boolean} next
+     */
+    function applyHideHoodTraffic(next) {
+      hideHoodTraffic = Boolean(next);
+      prefs.set('tc_v6_chat_hide_hood_traffic', hideHoodTraffic);
+      const hood = doc.getElementById('v6ChatUnderHood');
+      if (hood && hood.classList) hood.classList.toggle('is-traffic-hidden', hideHoodTraffic);
+      const tuckedSection = typeof doc.querySelector === 'function' ? doc.querySelector('.v6-chat-tucked') : null;
+      if (tuckedSection) tuckedSection.hidden = hideHoodTraffic;
+      const switchboardSection = typeof doc.querySelector === 'function' ? doc.querySelector('.v6-chat-switchboard') : null;
+      if (switchboardSection) switchboardSection.hidden = hideHoodTraffic;
+      const count = doc.getElementById('v6ChatTuckedCount');
+      if (count) count.hidden = hideHoodTraffic;
+      const peekEl = doc.getElementById('v6ChatPeek');
+      const view = detail && detail.kind === 'conversation' ? detail.view : null;
+      if (peekEl && view) {
+        peekEl.innerHTML = (hoodInteractive
+          ? '<span id="v6ChatHoodLiveIndicator" style="color:#9CF732;display:block;">LIVE CLI — Type directly into pane</span>'
+          : '') + chatPeekMarkup(view.chat ? view.chat.peek : null, { hideTraffic: hideHoodTraffic });
+      }
+      rearmPeekPin();
     }
 
     /**
      * Each verbosity checkbox (#3082) shows or tucks its kind of reply, in
-     * place, and is remembered.
+     * place, and is remembered. `#v6ChatHideHoodTraffic` (#3191) is the odd
+     * one out — it doesn't filter `#v6ChatLive`/tucked turns at all, so it
+     * goes through {@link applyHideHoodTraffic} instead of the shared
+     * verbosity-key branch below.
      */
     function wireVerbosity() {
+      const traffic = doc.getElementById('v6ChatHideHoodTraffic');
+      if (traffic) traffic.addEventListener('change', (evt) => applyHideHoodTraffic(Boolean(evt && evt.target ? evt.target.checked : traffic.checked)));
       ['v6ChatShowBlockers', 'v6ChatShowMilestones', 'v6ChatShowChatter'].forEach((id) => {
         const box = doc.getElementById(id);
         if (!box) return;
@@ -8713,6 +8940,9 @@
       const pendingEl = doc.getElementById('v6ChatPending');
       if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSends.filter((p) => p.key === chatTargetKey()), chat.lastSent, chat.thumbs, chat.unfurls);
       wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): same reason as paintTucked's own call.
+      // #3191: recorded/pending content grows #v6ChatStream — re-pin it
+      // (and the peek group, harmlessly, if it also stayed pinned).
+      pinIfPinned();
     }
 
     /**
@@ -8758,6 +8988,12 @@
         }
         chatHoodOpen = true;
         prefs.set('tc_v6_chat_under_hood_open', true);
+        // #3191: the operator clicked THIS to see the traffic — reveal it,
+        // even if "Hide Medusa & fleet chatter" was (as it is by default) on.
+        if (hideHoodTraffic) applyHideHoodTraffic(false);
+        else rearmPeekPin(); // opening the drawer re-arms the pin either way
+        const checkbox = doc.getElementById('v6ChatHideHoodTraffic');
+        if (checkbox) checkbox.checked = false;
         const list = doc.getElementById('v6ChatSwitchboard');
         if (list && typeof list.focus === 'function') list.focus();
       });
@@ -8767,6 +9003,33 @@
     function chatTargetKey() {
       const project = detail && detail.kind === 'conversation' && detail.view ? detail.view.project : null;
       return project && project.id != null ? String(project.id) : null;
+    }
+
+    /**
+     * The logical project (a `tree[i].id`) the active conversation or the
+     * active project/fleet route belongs to (#3191) — a conversation route
+     * only ever names the single seat it talks to, never its owning group,
+     * so finding `P` means walking `tree` the same way {@link chatContext}
+     * does for a direct (non-group) route: the node whose fleets hold that
+     * seat as a member. A project/fleet route's own `projectId` is tried as
+     * a logical id FIRST, since {@link parseRoute} gives the exact same
+     * string whether the operator reached it via its group or directly —
+     * only when that fails to name a `tree` node at all does it fall back
+     * to the same membership walk.
+     * @returns {string|null}
+     */
+    function activeLogicalProjectId() {
+      let seatOrGroupId = null;
+      if (detail && detail.kind === 'conversation' && detail.view && detail.view.project && detail.view.project.id != null) {
+        seatOrGroupId = detail.view.project.id;
+      } else if (currentRoute && (currentRoute.view === 'project' || currentRoute.view === 'fleet') && currentRoute.projectId != null) {
+        seatOrGroupId = currentRoute.projectId;
+      }
+      if (seatOrGroupId == null) return null;
+      if (tree.some((n) => n && String(n.id) === String(seatOrGroupId))) return String(seatOrGroupId);
+      const node = tree.find((n) => n && Array.isArray(n.fleets)
+        && n.fleets.some((f) => f && Array.isArray(f.members) && f.members.some((m) => m && String(m.seatId) === String(seatOrGroupId))));
+      return node ? String(node.id) : null;
     }
 
     /**
@@ -9159,10 +9422,17 @@
       const focusId = active && typeof active.id === 'string' && active.id.startsWith('v6') ? active.id : null;
       const selection = focusId && typeof active.selectionStart === 'number'
         ? [active.selectionStart, active.selectionEnd] : null;
+      const streamEl = doc.getElementById('v6ChatStream');
+      const peekEl = doc.getElementById('v6ChatPeek');
       return {
         scrollTop: (sidebar && sidebar.scrollTop) || 0, focusId, selection,
-        streamAtBottom: isAtBottom(doc.getElementById('v6ChatStream')),
-        peekAtBottom: isAtBottom(doc.getElementById('v6ChatPeek'))
+        // #3191: the exact position, not just an at-bottom boolean — a
+        // pane the operator genuinely scrolled away from returns to where
+        // they left it across a full render, instead of only ever
+        // snapping to the bottom or staying wherever the fresh DOM happens
+        // to start.
+        streamScrollTop: !streamPinned && streamEl ? streamEl.scrollTop : null,
+        peekScrollTop: !peekPinned && peekEl ? peekEl.scrollTop : null
       };
     }
 
@@ -9179,21 +9449,33 @@
       // conversation fetch actually lands.
       const key = chatTargetKey();
       const streamEl = doc.getElementById('v6ChatStream');
+      const peekEl = doc.getElementById('v6ChatPeek');
       const view = detail && detail.kind === 'conversation' ? detail.view : null;
       const loaded = Boolean(streamEl) && Boolean(view)
         && ((Array.isArray(view.events) && view.events.length > 0) || Boolean(view.chat && view.chat.peek));
       const first = key != null && key !== scrolledChatKey;
       if (key != null && loaded) scrolledChatKey = key;
-      // #3135: a reload or a switch to a different chat always starts
-      // pinned — the OLD one-shot `saved.streamAtBottom` check never
-      // reapplied once the header docked out from under it or an async
-      // thumbnail grew the stream after this point; `streamPinned` is
-      // live state the 'scroll' listener keeps current, and render() (its
-      // caller) re-applies it again after `syncDockedHeader()` and once
-      // more next frame, which this single call here cannot.
-      if (first) streamPinned = true;
-      if (streamPinned) pinToBottom(streamEl);
-      if (first || saved.peekAtBottom) pinToBottom(doc.getElementById('v6ChatPeek'));
+      // #3135/#3191: a reload or a switch to a different chat always
+      // starts pinned — the OLD one-shot `saved.streamAtBottom`/
+      // `peekAtBottom` checks never reapplied once the header docked out
+      // from under them or an async thumbnail grew a pane after this
+      // point; `streamPinned`/`peekPinned` are live state the 'scroll'
+      // listeners keep current, and render() (this function's caller)
+      // re-applies them again after `syncDockedHeader()` and once more
+      // next frame, which this single call here cannot.
+      if (first) { streamPinned = true; peekPinned = true; }
+      if (streamPinned) {
+        pinStream(streamEl);
+      } else if (saved.streamScrollTop != null && streamEl) {
+        streamEl.scrollTop = saved.streamScrollTop;
+        lastStreamScrollTop = streamEl.scrollTop;
+      }
+      if (peekPinned) {
+        pinPeekGroup();
+      } else if (saved.peekScrollTop != null && peekEl) {
+        peekEl.scrollTop = saved.peekScrollTop;
+        lastPeekScrollTop = peekEl.scrollTop;
+      }
       paintStreamPinIndicator();
       if (!saved.focusId) return;
       const el = doc.getElementById(saved.focusId);
@@ -9224,6 +9506,16 @@
       const oldDrawerToggle = bar && typeof bar.querySelector === 'function' ? bar.querySelector('.v6-shell-drawer-toggle') : null;
       if (oldDrawerToggle) oldDrawerToggle.remove();
       const title = routeTitle(currentRoute);
+      // #3191: another tab's own `tc_v6_selected_groups` write can leave
+      // THIS tab narrowed to a different fleet than the one it is actually
+      // talking to or looking at — most visibly right after a reload,
+      // which re-reads that now-stale value from storage. Reconcile before
+      // the narrowed set ever reaches filterTree below.
+      const activeLP = activeLogicalProjectId();
+      if (activeLP != null && selectedGroups.size > 0 && !selectedGroups.has(activeLP)) {
+        selectedGroups = new Set([activeLP]);
+        prefs.set('tc_v6_selected_groups', [...selectedGroups]);
+      }
       shownTree = filterTree(tree, { text: filterText, engine: filterEngine, groups: selectedGroups }, projectRows);
       // #3053: the template wizard and attestation pills are not chat
       // content; they stay in the page (and wired) but out of sight.
@@ -9299,7 +9591,7 @@
             knownProjects: [...projectRows.values()],
             queuedPrompts: chatQueues.get(chatTargetKey()) || [],
             pending: pendingSends.filter((p) => p.key === chatTargetKey()),
-            verbosity, autoPreview
+            verbosity, autoPreview, hideHoodTraffic
           })}</div>
           <div id="v6ShellWizard" role="tabpanel" aria-labelledby="v6WorkspaceMode-wizard"${shown.wizard ? '' : ' hidden'}>${wizardMarkup(templates, standaloneProjectsNow(), {
             tab: wizardTab, form: wizardForm, templateId: wizardTemplateId, plan: wizardPlan, status: wizardStatus,
@@ -9319,18 +9611,13 @@
       restoreViewState(saved);
       if (typeof options.onRender === 'function') options.onRender(currentRoute);
       syncDockedHeader();
-      // #3135: re-applied again here, AFTER the header is docked out of
-      // the stream's own flow (moving it can change the stream's
-      // scrollHeight) — restoreViewState's own pin ran before this and so
-      // cannot see that change — and once more on the next frame, by
-      // when a thumbnail or unfurl card still expanding the stream has
-      // usually settled.
-      if (streamPinned) pinToBottom(doc.getElementById('v6ChatStream'));
-      if (raf) {
-        raf(() => {
-          if (streamPinned) pinToBottom(doc.getElementById('v6ChatStream'));
-        });
-      }
+      // #3135/#3191: re-applied again here, AFTER the header is docked out
+      // of the stream's own flow (moving it can change the stream's and
+      // the Under the Hood group's own scrollHeight) — restoreViewState's
+      // own pin ran before this and so cannot see that change — and once
+      // more on the next frame, by when a thumbnail or unfurl card still
+      // expanding one of them has usually settled.
+      pinIfPinned();
     }
 
     function toggleDrawer(force) {
@@ -9599,31 +9886,19 @@
         paintMedusa(medusa);
         const peekEl = doc.getElementById('v6ChatPeek');
         if (peekEl) {
-          const atBottom = isAtBottom(peekEl);
           // #3135 (PRR-B R1 blocking 2a): a plain innerHTML replace here
           // dropped the live-CLI indicator every 4s poll while Interactive
           // Mode was on — it is not part of `chatPeekMarkup`'s own markup,
           // the same way the full render draws it, so it is restored here too.
           peekEl.innerHTML = (hoodInteractive
             ? '<span id="v6ChatHoodLiveIndicator" style="color:#9CF732;display:block;">LIVE CLI — Type directly into pane</span>'
-            : '') + chatPeekMarkup(peek);
-          if (atBottom) pinToBottom(peekEl);
+            : '') + chatPeekMarkup(peek, { hideTraffic: hideHoodTraffic });
         }
-        const stream = doc.getElementById('v6ChatStream');
         const liveEl = doc.getElementById('v6ChatLive');
         if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name, verbosity, thumbsNow(), unfurlsNow());
         wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): setLive runs on every live poll — the bug this finding is actually about.
         paintTucked(live);
         paintRecorded();
-        // #3135 (PRR-B R1 blocking 2b): `streamPinned` is the live state the
-        // operator's own scroll keeps current — a one-shot `isAtBottom`
-        // read here missed async content (an unfurl, a thumbnail) that
-        // grew the stream's height earlier in the SAME poll, unpinning a
-        // chat that was never actually scrolled away from by hand.
-        if (streamPinned) {
-          pinToBottom(stream);
-          if (raf) raf(() => { if (streamPinned) pinToBottom(stream); });
-        }
         paintQuestions();
         paintWaitingOnExtras();
         const a = doc.getElementById('v6ChatActivity');
@@ -9934,6 +10209,7 @@
   global.tcV6UsageProbeRowMarkup = usageProbeRowMarkup;
   global.tcV6UsageProbeMarkup = usageProbeMarkup;
   global.tcV6ExtractCliGates = extractCliGates;
+  global.tcV6FilterPeekTrafficLines = filterPeekTrafficLines;
   global.tcV6ExtractMultiChoice = extractMultiChoice;
   global.tcV6ExtractOperatorTodo = extractOperatorTodo;
   global.tcV6OpenQueuedPrompts = openQueuedPrompts;
