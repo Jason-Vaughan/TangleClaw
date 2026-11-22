@@ -254,7 +254,8 @@
       <span>TangleClaw Autonomous Sprint Reports</span>
     </div>
     <div class="nav-links">
-      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.5/">v6.5.5 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.6/">v6.5.6 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.5/">v6.5.5</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.4/">v6.5.4</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.3/">v6.5.3</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.2/">v6.5.2</a>
@@ -334,8 +335,8 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">Published Sprint Reports</div>
-          <div class="kpi-val">65 Releases</div>
-          <div class="kpi-sub"><code>v5.34.0</code>–<code>v6.5.5</code> + <code>v6.2.2–v6.4.0</code>, <code>v6.0.0–v6.2.1</code>, <code>v5.68.0–v5.71.0</code>, <code>v5.65.0–v5.66.0</code>, <code>v5.62.0–v5.64.0</code>, <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
+          <div class="kpi-val">66 Releases</div>
+          <div class="kpi-sub"><code>v5.34.0</code>–<code>v6.5.6</code> + <code>v6.2.2–v6.4.0</code>, <code>v6.0.0–v6.2.1</code>, <code>v5.68.0–v5.71.0</code>, <code>v5.65.0–v5.66.0</code>, <code>v5.62.0–v5.64.0</code>, <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
@@ -349,18 +350,40 @@
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Release Report</div>
-          <div class="kpi-val" style="color:var(--green);">v6.5.5</div>
-          <div class="kpi-sub">Tag <code>v6.5.5 @ b62ebffc</code> (Merge <code>b62ebffc</code>) · Milestone <code>#91</code> (<code>2/2</code> Closed: <code>#3181, #3182</code>)</div>
+          <div class="kpi-val" style="color:var(--green);">v6.5.6</div>
+          <div class="kpi-sub">Tag <code>v6.5.6 @ 5aa0199a</code> (Merge <code>5aa0199a</code>) · Milestone <code>#92</code> (<code>2/2</code> Closed: <code>#3186, #3187</code>)</div>
         </div>
       </div>
     </section>
 
     <div class="report-list">
+      <!-- v6.5.6 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-green">● Latest Release · Nov 22, 2026 (Rulings A889–A895)</span>
+            <h2 class="report-title"><a href="./v6.5.6/">TangleClaw <code>v6.5.6</code>: “Two-Way Gobble &amp; Fill Chat Pane Resizers &amp; Sticky Under the Hood Toggle”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v6.5.6 → 5aa0199a · 3/3 True Merges (#3188–#3190) &amp; Milestone #92 Closed</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Added top and bottom edge/corner Gobble &amp; Fill neighbor-trading resizer handles (<code>#v6ChatStreamResizeBottom</code>, <code>#v6ChatHoodResizeTop</code>, <code>#v6ChatHoodResizeBottom</code>, <code>#v6ChatComposerResizeTop</code>), 1:1 zero-sum neighbor height trading (<code>tcV6TradeChatPaneHeights</code>), joint <code>input + hood</code> viewport budgeting in <code>clampChatPaneHeights</code>, and drag/keyboard/double-click reset in <code>wireComposerResize</code> (<code>#3186</code>), plus pinned <code>.v6-chat-under-hood &gt; summary</code> sticky at the top (<code>position: sticky; top: 0; z-index: 5</code>) and styled corner/center grip pills in <code>public/style.css</code> (<code>#3187</code>).
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-green">⏱️ T_eng = 0.83h (~50m · 1.00 avg rounds/PR · 0 CI Red Runs)</span>
+          <span class="badge badge-cyan">3/3 True Merges (#3188, #3189, #3190)</span>
+          <span class="badge badge-purple">Milestone #92: 2/2 Issues Closed (#3186, #3187)</span>
+          <span class="badge badge-green">Live :3102 Updated &amp; Gate 4 Certified (OBSR-OGATE-V656-SPRINT-EXIT-5AA0199A-PASS)</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v6.5.6/">Open v6.5.6 Sprint Report →</a>
+        </div>
+      </article>
       <!-- v6.5.5 Card -->
       <article class="report-card">
         <div class="report-header">
           <div>
-            <span class="badge badge-green">● Latest Release · Nov 21, 2026 (Rulings A882–A888)</span>
+            <span class="badge badge-green">● Release · Nov 21, 2026 (Rulings A882–A888)</span>
             <h2 class="report-title"><a href="./v6.5.5/">TangleClaw <code>v6.5.5</code>: “Eliminate False-Positive V6 Working / Busy Indicators Across Idle Fleets &amp; Capture Full TCC_SOCKET Scrollback”</a></h2>
           </div>
           <span class="badge badge-cyan">Tag v6.5.5 → b62ebffc · 3/3 True Merges (#3183–#3185) &amp; Milestone #91 Closed</span>
