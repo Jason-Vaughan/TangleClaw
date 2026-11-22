@@ -2764,7 +2764,9 @@ describe('Above-the-Hood chat view (#3052)', () => {
     // #3167: a v6UthStatus badge (empty/not busy here) now sits between the
     // tucked count and the Full Screen button -- mirrors #v6ChatActivity's
     // own busy state in the UTH summary bar.
-    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count"><\/span>\s*<span id="v6UthStatus" class="v6-uth-status" aria-hidden="true"><\/span>\s*<button type="button" id="v6ChatHoodFullScreen"[\s\S]*?<\/button>\s*<button type="button" id="v6ChatHoodInteractive"[\s\S]*?<\/button>\s*<\/summary>\s*<fieldset class="v6-chat-verbosity">[\s\S]*?<\/fieldset>\s*<section class="v6-chat-tucked"[\s\S]*?<\/section>\s*<section class="v6-chat-switchboard"[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
+    // #3186: a resizer bar (#v6ChatHoodResizeTop) now sits between
+    // </summary> and the verbosity fieldset.
+    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count"><\/span>\s*<span id="v6UthStatus" class="v6-uth-status" aria-hidden="true"><\/span>\s*<button type="button" id="v6ChatHoodFullScreen"[\s\S]*?<\/button>\s*<button type="button" id="v6ChatHoodInteractive"[\s\S]*?<\/button>\s*<\/summary>\s*<div id="v6ChatHoodResizeTop"[^>]*data-chat-resizer="hood-top"[^>]*>[\s\S]*?<\/div>\s*<fieldset class="v6-chat-verbosity">[\s\S]*?<\/fieldset>\s*<section class="v6-chat-tucked"[\s\S]*?<\/section>\s*<section class="v6-chat-switchboard"[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
     assert.match(G.tcV6ConversationViewMarkup(view({ peek: { lines: [] }, hoodOpen: true })), /<details id="v6ChatUnderHood" class="v6-chat-under-hood" open>/);
   });
 
@@ -8711,9 +8713,14 @@ describe('Car V654-W1-C: composer/Under the Hood pane height clamping (#3173)', 
   });
 
   it('tcV6ClampChatPaneHeights tightens the cap on a small viewport: input to 30%, hood to 40%, floor still wins below that', () => {
-    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({ input: 200, hood: 200 }, 400)), { input: 120, hood: 160 }, 'floor(400*0.30)=120, floor(400*0.40)=160');
-    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({ input: 200, hood: 200 }, 100)), { input: 64, hood: 80 }, 'floor(100*0.30)=30 and floor(100*0.40)=40, both below their own floor');
-    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({ input: 200, hood: 200 }, 2000)), { input: 200, hood: 200 }, 'a tall viewport still defers to the 260/360 cap, not 30%/40% of 2000');
+    // #3186: individually 120/160 (below), but together they now exceed the
+    // joint budget (maxCombined = max(64+80, floor(400*0.62)=248) = 248), so
+    // the combined 32px over is trimmed proportionally to each pane's own
+    // room above its floor (inputRoom 56, hoodRoom 80 of 136 total) —
+    // hoodCut round(32*80/136)=19, inputCut 32-19=13 -> hood 141, input 107.
+    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({ input: 200, hood: 200 }, 400)), { input: 107, hood: 141 }, '120/160 individually, trimmed to the 248 joint budget');
+    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({ input: 200, hood: 200 }, 100)), { input: 64, hood: 80 }, 'floor(100*0.30)=30 and floor(100*0.40)=40, both below their own floor — already at the joint budget too (144 == max(144, 62))');
+    assert.deepEqual(plain(G.tcV6ClampChatPaneHeights({ input: 200, hood: 200 }, 2000)), { input: 200, hood: 200 }, 'a tall viewport still defers to the 260/360 cap, not 30%/40% of 2000, and well under its 1240 joint budget');
   });
 
   function withLayoutStubsLocal(doc) {
@@ -8744,8 +8751,134 @@ describe('Car V654-W1-C: composer/Under the Hood pane height clamping (#3173)', 
     const fakeWindow = Object.assign(makeFakeWindow('#/projects/x'), { innerHeight: 400 });
     const shell = G.tcCreateV6Shell(doc, { root, window: fakeWindow, storage });
     shell.setDetail({ kind: 'conversation', view: { project: { id: 1, name: 'P' }, sessionId: 2, events: [], chat: { status: 'active', members: [] } } });
-    assert.equal(doc.getElementById('v6ChatInput').style.height, '120px', 'floor(400*0.30)=120, below the saved 240');
-    assert.equal(doc.getElementById('v6ChatPeek').style.height, '160px', 'floor(400*0.40)=160, below the saved 300');
+    // #3186: 120/160 individually, then joint-budget trimmed the same way
+    // as the pure-function case above (same 400 viewport, same inputs).
+    assert.equal(doc.getElementById('v6ChatInput').style.height, '107px', 'floor(400*0.30)=120, below the saved 240, then joint-trimmed');
+    assert.equal(doc.getElementById('v6ChatPeek').style.height, '141px', 'floor(400*0.40)=160, below the saved 300, then joint-trimmed');
+  });
+});
+
+describe('Car V656-W1-A: Gobble & Fill chat pane resizers (#3186)', () => {
+  const G = loadV6Shell();
+
+  describe('tcV6TradeChatPaneHeights: stream-bottom / hood-top boundary', () => {
+    it('hoodOpen true, drag down: Main Chat gobbles Under the Hood first, within its own room', () => {
+      const out = plain(G.tcV6TradeChatPaneHeights({ stream: 200, hood: 200, input: 100, hoodOpen: true }, 'stream-bottom', 50, 0));
+      assert.deepEqual(out, { stream: 250, hood: 150, input: 100 });
+    });
+
+    it('hoodOpen true, drag down, overflow: Under the Hood hits its floor, the leftover gobbles the composer, zero-sum throughout', () => {
+      const before = { stream: 200, hood: 90, input: 100 };
+      const out = plain(G.tcV6TradeChatPaneHeights(Object.assign({ hoodOpen: true }, before), 'hood-top', 50, 0));
+      assert.deepEqual(out, { stream: 246, hood: 80, input: 64 });
+      assert.equal(out.stream + out.hood + out.input, before.stream + before.hood + before.input, 'zero-sum: nothing created or destroyed');
+    });
+
+    it('hoodOpen false, drag down: Under the Hood never participates — only the composer gobbles', () => {
+      const out = plain(G.tcV6TradeChatPaneHeights({ stream: 200, hood: 80, input: 100, hoodOpen: false }, 'stream-bottom', 30, 0));
+      assert.deepEqual(out, { stream: 230, hood: 80, input: 70 });
+    });
+
+    it('hoodOpen true, drag up: the open neighbor below grows by gobbling Main Chat', () => {
+      const out = plain(G.tcV6TradeChatPaneHeights({ stream: 200, hood: 100, input: 100, hoodOpen: true }, 'hood-top', -50, 0));
+      assert.deepEqual(out, { stream: 150, hood: 150, input: 100 });
+    });
+
+    it('hoodOpen true, drag up, overflow: Main Chat hits its floor — the drag past that point has no further effect', () => {
+      const out = plain(G.tcV6TradeChatPaneHeights({ stream: 130, hood: 100, input: 100, hoodOpen: true }, 'stream-bottom', -50, 0));
+      assert.deepEqual(out, { stream: 120, hood: 110, input: 100 });
+    });
+
+    it('hoodOpen false, drag up: the composer grows by gobbling Main Chat directly, Under the Hood untouched', () => {
+      const out = plain(G.tcV6TradeChatPaneHeights({ stream: 200, hood: 80, input: 100, hoodOpen: false }, 'hood-top', -60, 0));
+      assert.deepEqual(out, { stream: 140, hood: 80, input: 160 });
+    });
+  });
+
+  describe('tcV6TradeChatPaneHeights: hood-bottom / composer-top boundary', () => {
+    it('hoodOpen true, drag down: the composer shrinks and Under the Hood grows by exactly that amount — zero dead space', () => {
+      const out = plain(G.tcV6TradeChatPaneHeights({ stream: 200, hood: 100, input: 150, hoodOpen: true }, 'hood-bottom', 40, 0));
+      assert.deepEqual(out, { stream: 200, hood: 140, input: 110 });
+    });
+
+    it('hoodOpen true, drag up: the composer grows by gobbling Under the Hood first, then Main Chat once Under the Hood floors out', () => {
+      const before = { stream: 200, hood: 90, input: 70 };
+      const out = plain(G.tcV6TradeChatPaneHeights(Object.assign({ hoodOpen: true }, before), 'composer-top', -50, 0));
+      assert.deepEqual(out, { stream: 160, hood: 80, input: 120 });
+      assert.equal(out.stream + out.hood + out.input, before.stream + before.hood + before.input, 'zero-sum: nothing created or destroyed');
+    });
+
+    it('hoodOpen false, drag down: behaves like Main Chat <-> Composer directly', () => {
+      const out = plain(G.tcV6TradeChatPaneHeights({ stream: 200, hood: 80, input: 100, hoodOpen: false }, 'hood-bottom', 30, 0));
+      assert.deepEqual(out, { stream: 230, hood: 80, input: 70 });
+    });
+
+    it('hoodOpen false, drag up: grows the composer upward into Main Chat directly', () => {
+      const out = plain(G.tcV6TradeChatPaneHeights({ stream: 150, hood: 80, input: 70, hoodOpen: false }, 'composer-top', -40, 0));
+      assert.deepEqual(out, { stream: 120, hood: 80, input: 100 });
+    });
+  });
+
+  it('tcV6TradeChatPaneHeights applies the same joint-viewport budget as tcV6ClampChatPaneHeights to its own result', () => {
+    // Same 400px viewport and same post-individual-clamp 120/160 numbers as
+    // the tcV6ClampChatPaneHeights joint-budget test above — reached here
+    // via a trade instead of a direct clamp call, to confirm the trade
+    // helper's own final clamp pass actually applies it.
+    const out = plain(G.tcV6TradeChatPaneHeights({ stream: 120, hood: 150, input: 200, hoodOpen: true }, 'hood-bottom', 10, 400));
+    assert.deepEqual(out, { stream: 120, hood: 141, input: 107 });
+  });
+
+  it('tcV6TradeChatPaneHeights falls back to each pane\'s own floor for a missing/non-finite starting height', () => {
+    const out = plain(G.tcV6TradeChatPaneHeights({ hoodOpen: true }, 'stream-bottom', 20, 0));
+    // With no starting numbers given, every pane defaults to its own floor
+    // (stream 120, hood 80, input 64) -- hood is already AT its floor, so
+    // dragging down has nothing to gobble from it and the drag is a no-op,
+    // rather than shrinking hood below its own minimum.
+    assert.deepEqual(out, { stream: 120, hood: 80, input: 64 });
+  });
+
+  describe('chatPaneResizerMarkup / conversationViewMarkup: all 4 resizers render', () => {
+    const view = (chat, extra) => Object.assign({
+      project: { id: 1, name: 'P' }, sessionId: 2, events: [],
+      chat: Object.assign({ status: 'active', members: [] }, chat || {})
+    }, extra || {});
+
+    it('tcV6ChatPaneResizerMarkup renders an accessible separator with the 3 grip spans', () => {
+      const html = G.tcV6ChatPaneResizerMarkup('v6ChatStreamResizeBottom', 'stream-bottom', 'bottom', 'Resize Main Chat');
+      assert.match(html, /<div id="v6ChatStreamResizeBottom" class="v6-chat-pane-resizer v6-chat-pane-resizer--bottom" role="separator" aria-orientation="horizontal" tabindex="0" data-chat-resizer="stream-bottom" title="Resize Main Chat \(drag or Up\/Down arrows to resize; double-click to reset pane sizes\)" aria-label="Resize Main Chat">/);
+      assert.match(html, /<span class="v6-chat-pane-resizer-grip v6-chat-pane-resizer-grip--left" aria-hidden="true"><\/span><span class="v6-chat-pane-resizer-grip v6-chat-pane-resizer-grip--center" aria-hidden="true"><\/span><span class="v6-chat-pane-resizer-grip v6-chat-pane-resizer-grip--right" aria-hidden="true"><\/span><\/div>/);
+    });
+
+    it('escapes the label rather than trusting it verbatim into the attributes', () => {
+      const html = G.tcV6ChatPaneResizerMarkup('x', 'stream-bottom', 'bottom', '"><script>');
+      assert.doesNotMatch(html, /<script>/);
+    });
+
+    it('places the stream-bottom resizer right after #v6ChatStream, before Under the Hood', () => {
+      const html = G.tcV6ConversationViewMarkup(view());
+      const streamEnd = html.indexOf('id="v6ChatStreamResizeBottom"');
+      const hoodStart = html.indexOf('id="v6ChatUnderHood"');
+      assert.ok(streamEnd > 0 && streamEnd < hoodStart, 'the resizer sits between the two');
+    });
+
+    it('places hood-top right after </summary> and hood-bottom right after #v6ChatPeek, both inside the drawer', () => {
+      const html = G.tcV6ConversationViewMarkup(view());
+      assert.match(html, /<\/summary>\s*<div id="v6ChatHoodResizeTop"[^>]*data-chat-resizer="hood-top"/);
+      assert.match(html, /<\/pre>\s*<div id="v6ChatHoodResizeBottom"[^>]*data-chat-resizer="hood-bottom"[\s\S]*?<\/details>/);
+    });
+
+    it('places composer-top right before <form id="v6ChatForm">, outside the drawer', () => {
+      const html = G.tcV6ConversationViewMarkup(view());
+      assert.match(html, /<div id="v6ChatComposerResizeTop"[^>]*data-chat-resizer="composer-top"[^>]*>[\s\S]*?<\/div>\s*<form id="v6ChatForm"/);
+    });
+
+    it('renders all 4 resizers even while offline, except the two inside the drawer (which only renders live)', () => {
+      const offline = G.tcV6ConversationViewMarkup(view({ status: 'offline' }, { sessionId: null }));
+      assert.match(offline, /data-chat-resizer="stream-bottom"/);
+      assert.match(offline, /data-chat-resizer="composer-top"/);
+      assert.doesNotMatch(offline, /data-chat-resizer="hood-top"/);
+      assert.doesNotMatch(offline, /data-chat-resizer="hood-bottom"/);
+    });
   });
 });
 

@@ -1064,6 +1064,9 @@
   const V6_CHAT_UTH_MAX_HEIGHT = 360;
   const V6_CHAT_UTH_MAX_VIEWPORT_PCT = 0.40;
 
+  /** `#v6ChatStream`'s own floor (#3186), matching `.v6-chat-stream { min-height: 120px; }` in style.css. */
+  const V6_CHAT_STREAM_MIN_HEIGHT = 120;
+
   /**
    * One composer pane height, clamped to `[min, min(maxCap, floor(viewportH * viewportPct))]`
    * (#3173) — `null` for an unreadable `value` (mirrors {@link isFiniteNumber}'s own
@@ -1090,16 +1093,128 @@
    * `#v6ChatForm`/`#v6ChatInput` off-screen or lock scrolling. `viewportH` is taken as a plain
    * argument rather than read from `window` so this stays a pure helper, testable without a real
    * layout — exported as `global.tcV6ClampChatPaneHeights`.
+   *
+   * #3186: individual caps alone still let both panes grow large enough, together, to starve
+   * `#v6ChatStream` and push its own `<summary>` off-screen even though neither pane alone
+   * exceeds its own max — so when both are present and the viewport is known, their COMBINED
+   * height is also capped to `maxCombined`, trimmed proportionally to each pane's own room above
+   * its floor so neither is pushed below it. `maxCombined` itself leaves room for the header,
+   * footer, summary bar and `V6_CHAT_STREAM_MIN_HEIGHT`, never shrinking below the sum of both
+   * floors even on a tiny viewport.
    * @param {{input?: *, hood?: *}} heights
    * @param {number} viewportH
    * @returns {{input: number|null, hood: number|null}}
    */
   function clampChatPaneHeights(heights, viewportH) {
     const h = heights || {};
-    return {
-      input: clampChatPaneHeight(h.input, V6_CHAT_INPUT_MIN_HEIGHT, V6_CHAT_INPUT_MAX_HEIGHT, V6_CHAT_INPUT_MAX_VIEWPORT_PCT, viewportH),
-      hood: clampChatPaneHeight(h.hood, V6_CHAT_UTH_MIN_HEIGHT, V6_CHAT_UTH_MAX_HEIGHT, V6_CHAT_UTH_MAX_VIEWPORT_PCT, viewportH)
-    };
+    let input = clampChatPaneHeight(h.input, V6_CHAT_INPUT_MIN_HEIGHT, V6_CHAT_INPUT_MAX_HEIGHT, V6_CHAT_INPUT_MAX_VIEWPORT_PCT, viewportH);
+    let hood = clampChatPaneHeight(h.hood, V6_CHAT_UTH_MIN_HEIGHT, V6_CHAT_UTH_MAX_HEIGHT, V6_CHAT_UTH_MAX_VIEWPORT_PCT, viewportH);
+    const vh = Number(viewportH);
+    if (input !== null && hood !== null && Number.isFinite(vh) && vh > 0) {
+      const maxCombined = Math.max(V6_CHAT_INPUT_MIN_HEIGHT + V6_CHAT_UTH_MIN_HEIGHT, Math.floor(vh * 0.62));
+      const over = input + hood - maxCombined;
+      if (over > 0) {
+        const inputRoom = input - V6_CHAT_INPUT_MIN_HEIGHT;
+        const hoodRoom = hood - V6_CHAT_UTH_MIN_HEIGHT;
+        const totalRoom = inputRoom + hoodRoom;
+        if (totalRoom > 0) {
+          const hoodCut = Math.min(hoodRoom, Math.round(over * (hoodRoom / totalRoom)));
+          const inputCut = Math.min(inputRoom, over - hoodCut);
+          hood -= hoodCut;
+          input -= inputCut;
+        }
+      }
+    }
+    return { input, hood };
+  }
+
+  /**
+   * "Gobble & Fill" (#3186): a drag at one of the 4 pane-boundary resizers
+   * trades height 1:1, zero-sum, with whichever neighbor is actually open —
+   * never the chat window's overall height, only how the SAME total space
+   * splits between `#v6ChatStream`, Under the Hood and the composer. Pure
+   * and DOM-free (state is passed in, not measured) so it is testable
+   * without a real layout — exported as `global.tcV6TradeChatPaneHeights`.
+   * @param {{stream?: number, hood?: number, input?: number, hoodOpen?: boolean}} state
+   *   - `stream`/`hood`/`input` are the panes' CURRENT measured heights;
+   *   missing/non-finite ones fall back to their own floor, since that is
+   *   the same "nothing more to gobble from it" state as already being there.
+   * @param {'stream-bottom'|'hood-top'|'hood-bottom'|'composer-top'} boundary
+   * @param {number} deltaY - Positive = dragged down, negative = dragged up.
+   * @param {number} viewportH
+   * @returns {{input: number|null, hood: number|null, stream: number}}
+   */
+  function tradeChatPaneHeights(state, boundary, deltaY, viewportH) {
+    const s = state || {};
+    const hoodOpen = Boolean(s.hoodOpen);
+    const dy = Number(deltaY) || 0;
+    let stream = Number.isFinite(s.stream) ? s.stream : V6_CHAT_STREAM_MIN_HEIGHT;
+    let input = Number.isFinite(s.input) ? s.input : V6_CHAT_INPUT_MIN_HEIGHT;
+    let hood = Number.isFinite(s.hood) ? s.hood : V6_CHAT_UTH_MIN_HEIGHT;
+    // Shrinks `value` by at most `amount`, never below `min`.
+    const shrink = (value, min, amount) => Math.max(min, value - Math.max(0, amount));
+
+    if (boundary === 'stream-bottom' || boundary === 'hood-top') {
+      if (dy > 0) {
+        // Main Chat grows downward by gobbling its open neighbor(s) below,
+        // in order: Under the Hood first (if open), then the composer.
+        let remaining = dy;
+        if (hoodOpen) {
+          const next = shrink(hood, V6_CHAT_UTH_MIN_HEIGHT, remaining);
+          remaining -= hood - next;
+          hood = next;
+        }
+        if (remaining > 0) {
+          const next = shrink(input, V6_CHAT_INPUT_MIN_HEIGHT, remaining);
+          remaining -= input - next;
+          input = next;
+        }
+        stream += dy - remaining;
+      } else if (dy < 0) {
+        // The immediate open neighbor below (Under the Hood if open, else
+        // the composer) grows upward by gobbling Main Chat.
+        const next = shrink(stream, V6_CHAT_STREAM_MIN_HEIGHT, -dy);
+        const gobbled = stream - next;
+        stream = next;
+        if (hoodOpen) hood += gobbled; else input += gobbled;
+      }
+    } else if (boundary === 'hood-bottom' || boundary === 'composer-top') {
+      if (hoodOpen) {
+        if (dy > 0) {
+          // The composer shrinks by exactly what it gives up; Under the
+          // Hood grows downward by that same amount — zero dead space.
+          const next = shrink(input, V6_CHAT_INPUT_MIN_HEIGHT, dy);
+          hood += input - next;
+          input = next;
+        } else if (dy < 0) {
+          // The composer grows upward, gobbling Under the Hood first, then
+          // Main Chat once Under the Hood hits its own floor.
+          let remaining = -dy;
+          const nextHood = shrink(hood, V6_CHAT_UTH_MIN_HEIGHT, remaining);
+          remaining -= hood - nextHood;
+          hood = nextHood;
+          if (remaining > 0) {
+            const nextStream = shrink(stream, V6_CHAT_STREAM_MIN_HEIGHT, remaining);
+            remaining -= stream - nextStream;
+            stream = nextStream;
+          }
+          input += -dy - remaining;
+        }
+      } else if (dy > 0) {
+        // Under the Hood is closed — this boundary is really Main Chat <->
+        // Composer directly, same as stream-bottom's own !hoodOpen branch.
+        const next = shrink(input, V6_CHAT_INPUT_MIN_HEIGHT, dy);
+        stream += input - next;
+        input = next;
+      } else if (dy < 0) {
+        const next = shrink(stream, V6_CHAT_STREAM_MIN_HEIGHT, -dy);
+        input += stream - next;
+        stream = next;
+      }
+    }
+
+    const clamped = clampChatPaneHeights({ input, hood }, viewportH);
+    return { input: clamped.input, hood: clamped.hood, stream: Math.max(V6_CHAT_STREAM_MIN_HEIGHT, stream) };
   }
 
   /**
@@ -1846,6 +1961,22 @@
   }
 
   /**
+   * An accessible horizontal resizer bar at a chat pane boundary (#3186):
+   * drag, `ArrowUp`/`ArrowDown`, or double-click to reset (wired in
+   * {@link wireComposerResize}). The 3 grip spans are decorative only —
+   * the bar itself is the draggable, focusable `role="separator"`.
+   * @param {string} id
+   * @param {'stream-bottom'|'hood-top'|'hood-bottom'|'composer-top'} boundary
+   * @param {'top'|'bottom'} edge
+   * @param {string} label
+   * @returns {string} HTML.
+   */
+  function chatPaneResizerMarkup(id, boundary, edge, label) {
+    const safeLabel = escapeHtml(label);
+    return `<div id="${id}" class="v6-chat-pane-resizer v6-chat-pane-resizer--${edge}" role="separator" aria-orientation="horizontal" tabindex="0" data-chat-resizer="${boundary}" title="${safeLabel} (drag or Up/Down arrows to resize; double-click to reset pane sizes)" aria-label="${safeLabel}"><span class="v6-chat-pane-resizer-grip v6-chat-pane-resizer-grip--left" aria-hidden="true"></span><span class="v6-chat-pane-resizer-grip v6-chat-pane-resizer-grip--center" aria-hidden="true"></span><span class="v6-chat-pane-resizer-grip v6-chat-pane-resizer-grip--right" aria-hidden="true"></span></div>`;
+  }
+
+  /**
    * Render the B2 Conversation View for one legacy project (#3022
    * deliverable e): its replayed conversation events and an ADR 0026
    * "Open Hood" link to the live terminal page. With no live session it
@@ -1902,7 +2033,7 @@
       <button type="button" id="v6ChatJumpLatest" class="v6-chat-jump-latest"${chat.streamPinned === false ? '' : ' hidden'}
         style="position:sticky;bottom:8px;left:100%;transform:translateX(-100%);z-index:5;white-space:nowrap;"
         aria-label="Jump to newest messages">↓ Newest</button>
-    </div>`;
+    </div>${chatPaneResizerMarkup('v6ChatStreamResizeBottom', 'stream-bottom', 'bottom', 'Resize Main Chat')}`;
     // A member reached directly is still the project's delegate when it is
     // the one the delegate resolution picks (#3053).
     const delegateMode = chat.mode === 'delegate'
@@ -1998,6 +2129,7 @@
             aria-label="Interactive CLI: type directly into this drawer's own live pane">
             <span aria-hidden="true">⌨ Interactive</span></button>
         </summary>
+        ${chatPaneResizerMarkup('v6ChatHoodResizeTop', 'hood-top', 'top', 'Resize Under the Hood (top)')}
         ${verbosityMarkup(chat.verbosity)}
         <section class="v6-chat-tucked" aria-label="Replies tucked away">
           <h3 class="v6-chat-switchboard-title">Tucked away</h3>
@@ -2010,11 +2142,13 @@
         <pre id="v6ChatPeek" class="v6-chat-peek" tabindex="0"${chat.hoodInteractive ? ' style="border:2px solid #9CF732;"' : ''}>${
           chat.hoodInteractive ? '<span id="v6ChatHoodLiveIndicator" style="color:#9CF732;display:block;">LIVE CLI — Type directly into pane</span>' : ''
         }${chatPeekMarkup(chat.peek)}</pre>
+        ${chatPaneResizerMarkup('v6ChatHoodResizeBottom', 'hood-bottom', 'bottom', 'Resize Under the Hood (bottom)')}
       </details>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session.
         <button type="button" id="v6ChatStartBanner" class="btn btn-primary btn-small" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>
         <a class="v6-chat-classic-launch" href="#/">Open Classic View to launch ${escapeHtml(name)}</a></p>`}
       ${waitingOnMarkup(waitingOnModel(live, chat, v.events, liveTurns, chat.knownProjects), chat.collapsedWaitingOn)}
       ${chatActivityMarkup(chatBusyLabel(chat), chat.activityElapsed)}
+      ${chatPaneResizerMarkup('v6ChatComposerResizeTop', 'composer-top', 'top', 'Resize Composer')}
       <form id="v6ChatForm" class="v6-chat-composer" data-action="send-chat-form" aria-label="Message ${escapeHtml(name)}">
         <div id="v6ChatAttachments" class="v6-chat-attachments" aria-live="polite">${attachmentChipsMarkup(chat.attachments)}</div>
         <div id="v6ChatInputWrap" class="v6-chat-input-wrap">
@@ -8823,6 +8957,78 @@
         prefs.set('tc_v6_chat_uth_height', clamped);
         if (hood.style && clamped !== measuredHood) hood.style.height = `${clamped}px`;
       };
+      // #3186: the 4 "Gobble & Fill" pane-boundary resizers — drag,
+      // Up/Down arrow keys, and double-click reset, all driven by the pure
+      // {@link tradeChatPaneHeights} helper. Wired unconditionally (every
+      // mount gets fresh `<div data-chat-resizer>` elements from the same
+      // full re-render that gives `input`/`stream`/`hood` their own fresh
+      // nodes above, so there is nothing stale to double-wire) rather than
+      // gated on `ResizeObserver` like the measure-and-persist loop below
+      // it, which is a separate mechanism.
+      const underHood = doc.getElementById('v6ChatUnderHood');
+      const currentHeights = () => ({
+        stream: stream.offsetHeight || V6_CHAT_STREAM_MIN_HEIGHT,
+        input: (input.style && parseFloat(input.style.height)) || input.offsetHeight || V6_CHAT_INPUT_MIN_HEIGHT,
+        hood: hood ? ((hood.style && parseFloat(hood.style.height)) || hood.offsetHeight || V6_CHAT_UTH_MIN_HEIGHT) : V6_CHAT_UTH_MIN_HEIGHT,
+        hoodOpen: Boolean(underHood && underHood.open)
+      });
+      const applyTrade = (baseline, boundary, deltaY) => {
+        const result = tradeChatPaneHeights(baseline, boundary, deltaY, viewportH());
+        if (input.style && result.input !== null) input.style.height = `${result.input}px`;
+        if (hood && hood.style && result.hood !== null) hood.style.height = `${result.hood}px`;
+        // The drawer itself (not just its own `#v6ChatPeek` pane) can carry
+        // a stale inline height from an older resize scheme — clear it so
+        // <summary> is never trapped below the fold by it.
+        if (underHood && underHood.style && typeof underHood.style.removeProperty === 'function') underHood.style.removeProperty('height');
+        if (result.input !== null) prefs.set('tc_v6_chat_input_height', result.input);
+        if (result.hood !== null) prefs.set('tc_v6_chat_uth_height', result.hood);
+      };
+      const resetPaneSizes = () => {
+        // `null` reads back as unreadable (same as never set) through
+        // `isFiniteNumber`'s own accept check — makePrefs has no delete.
+        prefs.set('tc_v6_chat_input_height', null);
+        prefs.set('tc_v6_chat_uth_height', null);
+        if (input.style) input.style.height = '';
+        if (hood && hood.style) hood.style.height = '';
+        if (underHood && underHood.style) underHood.style.height = '';
+      };
+      ['stream-bottom', 'hood-top', 'hood-bottom', 'composer-top'].forEach((boundary) => {
+        const idByBoundary = {
+          'stream-bottom': 'v6ChatStreamResizeBottom', 'hood-top': 'v6ChatHoodResizeTop',
+          'hood-bottom': 'v6ChatHoodResizeBottom', 'composer-top': 'v6ChatComposerResizeTop'
+        };
+        const el = doc.getElementById(idByBoundary[boundary]);
+        if (!el) return;
+        let dragBaseline = null;
+        let dragStartY = 0;
+        const onMove = (evt) => {
+          if (!dragBaseline) return;
+          const y = evt && typeof evt.clientY === 'number' ? evt.clientY : dragStartY;
+          applyTrade(dragBaseline, boundary, y - dragStartY);
+        };
+        const onUp = () => {
+          dragBaseline = null;
+          if (win && typeof win.removeEventListener === 'function') {
+            win.removeEventListener('pointermove', onMove);
+            win.removeEventListener('pointerup', onUp);
+          }
+        };
+        el.addEventListener('pointerdown', (evt) => {
+          dragStartY = evt && typeof evt.clientY === 'number' ? evt.clientY : 0;
+          dragBaseline = currentHeights();
+          if (win && typeof win.addEventListener === 'function') {
+            win.addEventListener('pointermove', onMove);
+            win.addEventListener('pointerup', onUp);
+          }
+          if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+        });
+        el.addEventListener('keydown', (evt) => {
+          if (!evt) return;
+          if (evt.key === 'ArrowDown') { applyTrade(currentHeights(), boundary, 16); evt.preventDefault(); }
+          else if (evt.key === 'ArrowUp') { applyTrade(currentHeights(), boundary, -16); evt.preventDefault(); }
+        });
+        el.addEventListener('dblclick', resetPaneSizes);
+      });
       if (composerInputResizeObserver && typeof composerInputResizeObserver.disconnect === 'function') composerInputResizeObserver.disconnect();
       if (composerHoodResizeObserver && typeof composerHoodResizeObserver.disconnect === 'function') composerHoodResizeObserver.disconnect();
       if (typeof global.ResizeObserver !== 'function') return;
@@ -9721,6 +9927,8 @@
   global.tcV6CreateLiveController = createLiveController;
   global.tcV6ClampSidebarWidth = clampSidebarWidth;
   global.tcV6ClampChatPaneHeights = clampChatPaneHeights;
+  global.tcV6TradeChatPaneHeights = tradeChatPaneHeights;
+  global.tcV6ChatPaneResizerMarkup = chatPaneResizerMarkup;
   global.tcV6PruneStaleChatDrafts = pruneStaleChatDrafts;
   global.tcV6IsAlwaysPreviewLink = isAlwaysPreviewLink;
   global.tcV6UsageProbeRowMarkup = usageProbeRowMarkup;
