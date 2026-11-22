@@ -17,6 +17,11 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.5.6 — Two-way Gobble & Fill chat pane resizers and a sticky Under the Hood toggle
+
+- **Gobble & Fill chat pane resizers** (#3186) — `public/v6-shell.js#tradeChatPaneHeights`/`#chatPaneResizerMarkup`: 4 accessible drag/keyboard resizer bars at the Main Chat / Under the Hood / Composer boundaries trade height 1:1 and zero-sum between whichever panes are open, with a joint viewport budget so neither Under the Hood nor the composer can together push Main Chat or its own controls off-screen.
+- **Sticky Under the Hood toggle bar and resizer styling** (#3187) — `public/style.css` (`.v6-chat-under-hood > summary`, `.v6-chat-pane-resizer`, `.v6-chat-pane-resizer-grip`): the collapse toggle and its Full Screen/Interactive buttons stay pinned to the top of the drawer's own scroll container via `position: sticky` regardless of scroll position; the new resizer bars get venom-green grip styling on hover, keyboard focus, and drag.
+
 ## v6.5.5 — Eliminate false-positive V6 Working/busy indicators and fix TCC-proxy scrollback capture
 
 - **Eliminate false-positive V6 Working/busy indicators** (#3181) — `public/v6-shell.js` (`LIVE_NOISE`, `LIVE_BUSY`, `STATUS_BUSY_REASONS`, `isSessionStatusBusy`, `chatBusyLabel`): a Claude Code completed-turn timing recap, an Antigravity background `/tasks` daemon row above an at-rest footer, an Antigravity status bar's own `esc to cancel` showing its right-hand model/task text, and an interactive confirmation menu's navigation line no longer read as busy; `idleReason: 'not-at-rest'` (a session at rest but missing the optional idle marker) is no longer misread as working either.

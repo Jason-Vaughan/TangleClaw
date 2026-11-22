@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.5.5 — Eliminate false-positive V6 Working/busy indicators and fix TCC-proxy scrollback capture](v6.5.5.md)
+- [v6.5.6 — Two-way Gobble & Fill chat pane resizers and a sticky Under the Hood toggle](v6.5.6.md)
 
 ## Recent releases
+
+- [v6.5.5 — Eliminate false-positive V6 Working/busy indicators and fix TCC-proxy scrollback capture](v6.5.5.md)
 
 - [v6.5.4 — V6 scroll & chat reachability restoration, per-engine next-reset countdown, and Gate 4 post-sprint report enforcement](v6.5.4.md)
 

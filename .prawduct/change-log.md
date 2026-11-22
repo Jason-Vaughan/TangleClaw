@@ -41,6 +41,28 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-22 — v6.5.6 release cut (Milestone #92), Car V656-W2-REL
+
+<!-- prawduct: type=internal | scope=v656-release -->
+
+- Compiled 2 accepted `changelog.d/` fragments (#3186 from PR #3189; #3187 from PR #3188) into
+  `CHANGELOG.md` section `[6.5.6]` via `compileFragments`/`spliceIntoUnreleased`/
+  `_promoteUnreleased`, target version `6.5.6` (patch — the fragment set is `fixed` only).
+  Bumped `version.json` (`6.5.5` → `6.5.6`), updated README pins/banner (prose hand-written
+  here, not generated) and the released-section lock via `scripts/release-prepare.js`, and
+  updated `FEATURES.md`, `ROADMAP.md`, `docs/releases/index.md` and `docs/releases/v6.5.6.md`.
+- Dispatched by `TC-Lane-PM`/`TC-Lane-INT` via Medusa after both Wave 1 cars (PR #3189 @
+  d2191e95, PR #3188 @ ba6e792b) true-merged to `origin/main @ d2191e9588bd1e7c9d90c17ed2bf11405a3b829e`,
+  closing both Milestone #92 issues (#3186, #3187). `LANE_QUEUE.md`'s `W2-REL (Car V656-W2-REL)`
+  row carries the matching file-scope grant. This dispatch's own test list (`PM` corrected after
+  the v6.5.5 car flagged two named files that did not exist) matched real repo files exactly.
+- `node scripts/test-stage.js 2 --base origin/main` was not run locally for this car either, on
+  the same PM guidance given for this sprint's prior cars. Verified with `node
+  scripts/test-stage.js 1` and `node --test test/repo-scan.test.js test/docs-parity-gate.test.js
+  test/changelog-fragment-gate.test.js test/release-mode.test.js
+  test/changelog-released-immutable.test.js test/release-prepare-script.test.js
+  test/changelog-structure.test.js`.
+
 ## 2026-11-21 — v6.5.5 release cut (Milestone #91), Car V655-W2-REL
 
 <!-- prawduct: type=internal | scope=v655-release -->
