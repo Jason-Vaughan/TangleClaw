@@ -834,3 +834,57 @@ describe('Car V656-W1-B: sticky Under the Hood toggle bar and two-way pane resiz
     assert.match(body('.v6-chat-under-hood'), /background: var\(--v6-surface, #0d0d0d\);/);
   });
 });
+
+describe('Car V657-W1-B: "Hide Medusa & fleet chatter" toggle styling and hidden-traffic layout (#3192)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  /** @param {string} selector @returns {string} the selector's own `{ ... }` body, or '' if not found. */
+  const body = (selector) => {
+    const m = new RegExp(`(^|\\n)${selector.replace(/[.[\]>="-]/g, '\\$&')} \\{([^}]*)\\}`).exec(css);
+    return m ? m[2] : '';
+  };
+
+  it('sets the "Hide Medusa & fleet chatter" option visually apart from the other verbosity checkboxes, not just one more item in the list', () => {
+    const rule = body('.v6-chat-verbosity-option--traffic');
+    assert.notEqual(rule, '', '.v6-chat-verbosity-option--traffic must be declared');
+    assert.match(rule, /border-radius: 999px;/, 'a pill, matching the "pill highlight" the dispatch asked for');
+    assert.match(rule, /border-left: 1px solid var\(--v6-outline, #3d444d\);/, 'a divider line separating it from the reply-kind checkboxes');
+    assert.match(rule, /background: rgba\(156, 247, 50, 0\.08\);/, 'a brand-accent tint, distinguishing it from the plain checkboxes');
+  });
+
+  it('suppresses .v6-chat-tucked/.v6-chat-switchboard/.v6-chat-tucked-count entirely when Under the Hood carries is-traffic-hidden', () => {
+    assert.match(css,
+      /\.v6-chat-under-hood\.is-traffic-hidden \.v6-chat-tucked,\s*\.v6-chat-under-hood\.is-traffic-hidden \.v6-chat-switchboard,\s*\.v6-chat-under-hood\.is-traffic-hidden \.v6-chat-tucked-count,\s*\.v6-chat-tucked\[hidden\],\s*\.v6-chat-switchboard\[hidden\] \{\s*display: none !important;\s*\}/,
+      'all five selectors must share one display:none!important rule, exactly as dispatched');
+  });
+
+  it('also catches the plain [hidden] attribute form directly, not only the is-traffic-hidden class on the drawer', () => {
+    // The two forms are independent triggers for the same zero-space rule:
+    // is-traffic-hidden is set on #v6ChatUnderHood by the default-checked
+    // toggle, while [hidden] is the attribute each section itself carries
+    // either way — a future caller that sets one without the other (or a
+    // browser applying its own UA default against a competing flex/block
+    // rule) must still get display:none, not a layout-breaking gap.
+    assert.match(css, /\.v6-chat-tucked\[hidden\][\s\S]{0,400}display: none !important;/);
+    assert.match(css, /\.v6-chat-switchboard\[hidden\][\s\S]{0,400}display: none !important;/);
+  });
+
+  it('never weakens the suppression to a plain display: none that a later, more specific flex/block rule could override', () => {
+    // The dispatch's whole point ("cleanly suppresses layout display
+    // regardless of flex/block display rules") is the !important; a
+    // regression here would silently let .v6-chat-tucked/.v6-chat-switchboard
+    // reserve space again once hidden.
+    const ruleStart = css.indexOf('.v6-chat-under-hood.is-traffic-hidden .v6-chat-tucked,');
+    assert.notEqual(ruleStart, -1);
+    const ruleBody = css.slice(ruleStart, css.indexOf('}', ruleStart) + 1);
+    assert.match(ruleBody, /display: none !important;/);
+  });
+
+  it('leaves the pre-existing .v6-chat-tucked/.v6-chat-switchboard margin rules intact — this only adds a [hidden]/is-traffic-hidden override, not a replacement', () => {
+    assert.match(body('.v6-chat-tucked'), /margin-bottom: 6px;/);
+    assert.match(body('.v6-chat-switchboard'), /margin-bottom: 6px;/);
+  });
+
+  it('still carries the sticky Under the Hood summary toggle bar this sprint must not disturb (#3187)', () => {
+    assert.match(body('.v6-chat-under-hood > summary'), /position: sticky;\s*top: 0;/);
+  });
+});

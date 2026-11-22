@@ -5817,6 +5817,35 @@ p.v6-history-secret {
 .v6-chat-verbosity-fixed {
   opacity: 0.75;
 }
+/* #3192 (styling only — the checkbox's own markup/behavior is a sibling
+   car's v6-shell.js change, #3191): "Hide Medusa & fleet chatter" is a
+   different KIND of control from the three reply-kind filters already in
+   `.v6-chat-verbosity` — it hides whole Under the Hood sections, not just
+   which chat replies show — so it gets its own pill and a left divider,
+   pushed to the far end of the fieldset's flex-wrap row, rather than
+   reading as one more same-kind checkbox in the list. */
+.v6-chat-verbosity-option--traffic {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-left: 1px solid var(--v6-outline, #3d444d);
+  border-radius: 999px;
+  background: rgba(156, 247, 50, 0.08);
+}
+/* #3192: hidden Medusa/fleet traffic must take zero vertical space inside
+   Under the Hood, not just visually disappear — `!important` because
+   `[hidden]` alone is only a UA-stylesheet default and must win over any
+   flex/block display rule these sections or their container carry. Both
+   forms are covered: the class on `#v6ChatUnderHood` (set whenever the
+   default-checked toggle is on) and the plain `[hidden]` attribute these
+   sections carry either way, so a selector that misses one still catches
+   the other. */
+.v6-chat-under-hood.is-traffic-hidden .v6-chat-tucked,
+.v6-chat-under-hood.is-traffic-hidden .v6-chat-switchboard,
+.v6-chat-under-hood.is-traffic-hidden .v6-chat-tucked-count,
+.v6-chat-tucked[hidden],
+.v6-chat-switchboard[hidden] {
+  display: none !important;
+}
 .v6-chat-tucked {
   margin-bottom: 6px;
 }
