@@ -2066,7 +2066,13 @@
     /\|\s*(?:Opus|Sonnet|Haiku|Claude|GPT|Gemini)\b[^|]*\|\s*\d+%\s*left\s*$/i,
     // #3167: a collapsed background-task footer, naming how many more lines
     // are hidden — chrome about the TUI's own display, not the reply.
-    /^↓\s*\d+\s+more\b/i
+    /^↓\s*\d+\s+more\b/i,
+    // #3181: Antigravity's queued-message hint, its new-task/clear-to-save
+    // hint, and an interactive confirmation menu's own navigation line —
+    // chrome about the TUI, never the reply.
+    /^Press up to edit queued messages\b/i,
+    /\bnew task\?\s*\/clear to save\b/i,
+    /↑\/↓\s*Navigate\b/i
   ]);
 
   /** Lines that start a tool block: what is indented under them is the tool's output. */
@@ -2096,6 +2102,29 @@
    * enough — a reply can say them.
    */
   const LIVE_BUSY = /^esc to (cancel|interrupt)\b|\(esc to (cancel|interrupt)\)\s*$|^[\u2736\u273B\u273D\u2722]|^[\u2800-\u28FF]|^\u25CF\s*\[\d{1,2}:\d{2}:\d{2}\].*\brunning\b|^(Running|Thinking)\u2026?\s*$/i;
+
+  /**
+   * #3181: a Claude Code completed-turn timing recap (`\u273B Baked for 2m 23s
+   * \u00B7 done 12:57 AM`, `\u273B Churned for 14s \u00B7 done 12:58 AM`) matches
+   * `LIVE_BUSY`'s own leading-glyph test above right above the bare `\u276F`
+   * prompt, and \u2014 unlike a genuinely busy spinner line \u2014 never gets
+   * superseded by a later line that clears it, so it stuck as
+   * `live.activity` forever after the turn actually ended. Checked, and
+   * returned on, before `LIVE_BUSY` ever sees the line.
+   */
+  const LIVE_DONE_RE = /^(?:[\u2736\u273B\u273D\u2722]\s+)?\S+\s+for\s+\d+[hms0-9\s]*(?:\u00B7\s*done\b|$)|\b\u00B7\s*done\s+\d{1,2}:\d{2}/i;
+
+  /**
+   * #3181: a footer that means the engine is at rest, not working \u2014 the
+   * Claude Code / Codex idle markers already named elsewhere, Antigravity's
+   * "Press up to edit queued messages" and its "new task?/clear to save"
+   * hint, an interactive menu's own `\u2191/\u2193 Navigate` line, and a status bar's
+   * trailing "| Model | NN% left". A background `/tasks` daemon tray row
+   * (`\u25CF [HH:MM:SS] ... running`) rendered just above one of these never
+   * gets the chance to clear `activity` on its own, since nothing after it
+   * says the session went idle \u2014 this line does that instead.
+   */
+  const LIVE_AT_REST_FOOTER_RE = /\?\s*for shortcuts\b|^Press up to edit queued messages\b|\bnew task\?\s*\/clear to save\b|\u2191\/\u2193\s*Navigate\b|\|\s*(?:Opus|Sonnet|Haiku|Claude|GPT|Gemini)\b[^|]*\|\s*\d+%\s*left\s*$/i;
 
   /** A prompt line: `> text`, `❯ text` or `› text`, possibly inside a box border. */
   const LIVE_PROMPT = /^(?:│\s*)?(?:>|❯|›)\s?(.*?)\s*│?$/;
@@ -2340,6 +2369,11 @@
     // An indented line belongs to whatever started the block above it: a tool
     // line's output is noise, an assistant line's continuation is reply.
     let block = null;
+    // #3181: whether an interactive confirmation menu (`↑/↓ Navigate`) is on
+    // screen — while it is, the status bar's own `esc to cancel` cancels the
+    // MENU, not a turn in flight, so it must not read as busy. Reset on a
+    // new prompt or reply line, same as `activity`.
+    let menuActive = false;
     // Whether a wake, not the operator, set the session going (#3082): its
     // replies until the operator next speaks are switchboard-triggered.
     let woken = false;
@@ -2441,6 +2475,7 @@
         // operator speaking: it neither ends nor starts anything.
         if (said) {
           activity = null;
+          menuActive = false;
           answered = true;
           woken = false;
           echo = recordedAs(said);
@@ -2465,7 +2500,40 @@
       // record holds; those lines are still the prompt, not a reply.
       if (echo && (knownLines.has(text) || echo.includes(squash(text)) || LONG_PROMPT_NOTE.test(text) || (echoCut && indented))) return;
       echo = null;
+      // #3181: a completed-turn timing recap ("✻ Baked for 2m 23s · done
+      // 12:57 AM") matches LIVE_BUSY's own leading-glyph test below — check
+      // and return on it first so it clears any prior spinner activity
+      // instead of sticking as busy forever after the turn actually ended.
+      if (LIVE_DONE_RE.test(text) || /^[✶✻✽✢]\s+Thought for\b/i.test(text)) {
+        activity = null;
+        block = null;
+        return;
+      }
+      // #3181: an interactive confirmation menu is on screen — its own
+      // `esc to cancel` (handled below) cancels the MENU, not a turn.
+      if (/↑\/↓\s*Navigate\b/i.test(text)) {
+        menuActive = true;
+        activity = null;
+        block = null;
+        return;
+      }
+      // #3181: an at-rest footer (idle markers, the queued-message hint)
+      // means the session went idle since whatever last set `activity` —
+      // a background `/tasks` daemon tray row rendered just above one of
+      // these never gets another chance to clear it on its own.
+      if (LIVE_AT_REST_FOOTER_RE.test(text)) activity = null;
       if (LIVE_BUSY.test(text) && !/Thought for/i.test(text)) {
+        if (/^esc to (cancel|interrupt)\b/i.test(text)) {
+          // #3181: a menu's own cancel hint never reads as busy; otherwise
+          // never strip "esc to cancel" to read its own right-hand
+          // model/task chrome ("auto · Gemini 4 Argon · medium · 4
+          // task(s) · /tasks") as the activity label — keep whatever
+          // genuine spinner label was already set, or fall back to a
+          // generic one.
+          if (menuActive) { activity = null; return; }
+          activity = activity || 'Working…';
+          return;
+        }
         activity = text.replace(/^[✶✻✽✢⠀-⣿\s]+/, '')
           .replace(/\s*\(?esc to (cancel|interrupt)\)?/i, '')
           .replace(/^●\s*\[\d{1,2}:\d{2}:\d{2}\]\s*/, '').replace(/\s*running\s*$/i, '')
@@ -2492,6 +2560,7 @@
       }
       block = 'reply';
       activity = null;
+      menuActive = false;
       appendReplyLine(text.replace(LIVE_BULLET, ''), LIVE_BULLET.test(text));
     });
     flush();
@@ -3822,16 +3891,22 @@
 
   /**
    * The `idleReason` values `GET /api/sessions/:name/status` reports that
-   * mean an engine is GENUINELY working (#3167, Ruling A864): exactly the
-   * three `lib/medusa-wake.js#_assessActivity` sets when it finds the
-   * engine mid-turn. `idle === false` ALONE is not enough — the same route
-   * also reports `idle: false` with `idleReason: null` for a row with no
-   * reachable pane probe at all (nothing is known, not "it is busy"), and
-   * `idleReason: 'settling'` for a session that IS at rest but has not
-   * held still long enough yet to clear `lib/sessions.js#detectAtPrompt`'s
-   * wall-clock floor — both would have been misread as busy without this.
+   * mean an engine is GENUINELY working (#3167, Ruling A864, narrowed by
+   * #3181): a positive `busyMarker` (`turn-in-flight`) or an active
+   * subagent block (`agents-running`) — `_assessActivity` setting either
+   * one really does mean mid-turn. `idle === false` ALONE is not enough —
+   * the same route also reports `idle: false` with `idleReason: null` for a
+   * row with no reachable pane probe at all (nothing is known, not "it is
+   * busy"), `idleReason: 'settling'` for a session that IS at rest but has
+   * not held still long enough yet to clear
+   * `lib/sessions.js#detectAtPrompt`'s wall-clock floor, and (#3181)
+   * `idleReason: 'not-at-rest'` for a session that is also at rest in fact
+   * but merely lacked the OPTIONAL `idleMarker` (`? for shortcuts` / `·
+   * Ready ·`) in its 15-line tail — Antigravity's `Press up to edit queued
+   * messages` footer and Codex's own status bar both omit it while
+   * genuinely idle. All three would have been misread as busy without this.
    */
-  const STATUS_BUSY_REASONS = new Set(['turn-in-flight', 'not-at-rest', 'agents-running']);
+  const STATUS_BUSY_REASONS = new Set(['turn-in-flight', 'agents-running']);
 
   /** @param {{idle?: boolean, idleReason?: string|null}|null} s @returns {boolean} */
   function isSessionStatusBusy(s) {
@@ -3852,7 +3927,17 @@
   function chatBusyLabel(chat) {
     const live = chat && chat.live;
     if (live && live.activity) return live.activity;
-    if (chat && chat.statusBusy) return 'Working';
+    if (chat && chat.statusBusy) {
+      // #3181: the status poll's own `turn-in-flight`/`agents-running`
+      // signal can still be true while a CLI gate (a permission prompt, a
+      // trust prompt, a numbered selector) or an interactive confirmation
+      // menu is actually what is on screen waiting on the operator — that
+      // is not a turn in flight, whatever the poll says.
+      const rawLines = live && Array.isArray(live.rawLines) ? live.rawLines : null;
+      const waitingOnOperator = rawLines
+        && (extractCliGates(rawLines) || rawLines.some((l) => /↑\/↓\s*Navigate\b/i.test(l)));
+      if (!waitingOnOperator) return 'Working';
+    }
     return chat && chat.send && chat.send.kind === 'pending' ? 'Working' : null;
   }
 
@@ -9613,6 +9698,7 @@
   global.tcV6FormatElapsed = formatElapsed;
   global.tcV6ExtractLiveTurns = extractLiveTurns;
   global.tcV6IsSessionStatusBusy = isSessionStatusBusy;
+  global.tcV6ChatBusyLabel = chatBusyLabel;
   global.tcV6MessageMarkup = messageMarkup;
   global.tcV6UsageMeterModel = usageMeterModel;
   global.tcV6UsageMeterMarkup = usageMeterMarkup;
