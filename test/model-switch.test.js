@@ -534,6 +534,140 @@ describe('lib/model-switch — switchSessionModel', () => {
       assert.equal(savedConfig.engine, 'claude', 'project.json#engine must track the target, never stay on the stale value');
       assert.equal(savedConfig.model, 'claude-sonnet-5');
     });
+
+    // PRR-A R1 finding 1 (PR #3237): `updateSessionEngine`'s own default
+    // must resolve to a REAL write, not stay a no-op forever waiting on a
+    // store method that doesn't exist — and convergence must actually run
+    // whenever a session row's `engine_id` differs from the target, not
+    // only in the narrow case `sameProvider`'s own computation happens to
+    // produce.
+    it('updateSessionEngine (no deps override): a falsy session.engine_id falls back to project.engineId for sameProvider, then the REAL raw-SQLite fallback (store.getDb()) persists the convergence', async () => {
+      store.projects.update(project.id, { engine_id: 'claude' });
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+      // `sessions.start` requires a truthy engineId, so the only way to
+      // reach the state `activeEngineId` falls back to `project.engineId`
+      // (session.engineId falsy) is a raw write after creation — simulating
+      // a legacy/corrupted row.
+      store.getDb().prepare('UPDATE sessions SET engine_id = ? WHERE id = ?').run('', session.id);
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, {
+        ...target(),
+        checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+        setDesiredProfile: () => {},
+        recordCheckpoint: () => {},
+        reconcile: () => ({ ok: true, state: 'verified' })
+      });
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.sameProvider, true, 'falls back to project.engineId ("claude"), matching the target — a same-provider reconcile');
+      // No store.sessions.update/updateEngine method exists (confirmed
+      // against lib/store/sessions.js) — this only persists if the raw
+      // SQLite UPDATE through store.getDb() actually ran.
+      assert.equal(store.sessions.get(session.id).engineId, 'claude', 'the real DB row is converged, not left at the falsy value');
+    });
+
+    it('cross-provider relaunch: converges the SUCCESSOR session row\'s engine_id when launchSession leaves it on the wrong value', async () => {
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+      let successorId = null;
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+        ...target(),
+        checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+        triggerWrap: () => ({ ok: true, lifecycleCompleted: true, sessionId: session.id }),
+        killSession: () => {
+          store.sessions.kill(session.id, 'test switch (#3216)', store.SESSION_STOP_SOURCES.MODEL_SWITCH);
+          return { error: null };
+        },
+        // Simulate a real launch that creates the successor row but — the
+        // exact bug this convergence check exists to correct — persists
+        // the WRONG engine_id on it.
+        launchSession: () => {
+          const successor = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'y', primePrompt: null });
+          successorId = successor.id;
+          return { error: null };
+        }
+      });
+      assert.equal(result.ok, true, result.error);
+      assert.ok(successorId, 'a successor session row must have been created by the stub');
+      assert.equal(
+        store.sessions.get(successorId).engineId, 'fake',
+        'the successor row is converged to the target engine, not left at the wrong value the stub persisted'
+      );
+    });
+
+    it('cross-provider relaunch: a successor row already correct is left untouched (no spurious write)', async () => {
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+      let successorId = null;
+      let updateCalls = 0;
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+        ...target(),
+        checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+        triggerWrap: () => ({ ok: true, lifecycleCompleted: true, sessionId: session.id }),
+        killSession: () => {
+          store.sessions.kill(session.id, 'test switch (#3216)', store.SESSION_STOP_SOURCES.MODEL_SWITCH);
+          return { error: null };
+        },
+        launchSession: () => {
+          const successor = store.sessions.start({ projectId: project.id, engineId: 'fake', tmuxSession: 'y', primePrompt: null });
+          successorId = successor.id;
+          return { error: null };
+        },
+        updateSessionEngine: () => { updateCalls += 1; }
+      });
+      assert.equal(result.ok, true, result.error);
+      assert.equal(updateCalls, 0, 'already correct — no convergence write needed');
+      assert.equal(store.sessions.get(successorId).engineId, 'fake');
+    });
+  });
+
+  // PRR-A R1 finding 2 (PR #3237): a `project.json` read/write failure
+  // after SQLite's own `projects.engine_id` was already updated must not
+  // leave the two split.
+  describe('_applyToProjectConfig rollback — project.json write fails after SQLite already updated (#3216)', () => {
+    it('saveProjectConfig throws: SQLite engine_id is rolled back to the PREVIOUS value, and the error propagates', async () => {
+      store.projects.update(project.id, { engine_id: 'claude' });
+      store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+      await assert.rejects(
+        () => modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, {
+          ...target(),
+          checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+          setDesiredProfile: () => {},
+          recordCheckpoint: () => {},
+          reconcile: () => ({ ok: true, state: 'verified' }),
+          saveProjectConfig: () => { throw new Error('disk full'); }
+        }),
+        /disk full/
+      );
+      assert.equal(store.projects.get(project.id).engineId, 'claude', 'rolled back to the value before this call — never left naming the new engine while project.json failed to update');
+    });
+
+    it('loadProjectConfig throws: SQLite engine_id is rolled back the same way', async () => {
+      store.projects.update(project.id, { engine_id: 'claude' });
+      store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+      await assert.rejects(
+        () => modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, {
+          ...target(),
+          checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+          setDesiredProfile: () => {},
+          recordCheckpoint: () => {},
+          reconcile: () => ({ ok: true, state: 'verified' }),
+          loadProjectConfig: () => { throw new Error('EACCES'); }
+        }),
+        /EACCES/
+      );
+      assert.equal(store.projects.get(project.id).engineId, 'claude');
+    });
+
+    it('a cross-provider switch rolling back still restores the PREVIOUS (different) engine, not the target', async () => {
+      store.projects.update(project.id, { engine_id: 'antigravity' });
+      store.sessions.start({ projectId: project.id, engineId: 'antigravity', tmuxSession: 'x', primePrompt: null });
+      await assert.rejects(
+        () => modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+          ...target(),
+          checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+          saveProjectConfig: () => { throw new Error('disk full'); }
+        }),
+        /disk full/
+      );
+      assert.equal(store.projects.get(project.id).engineId, 'antigravity', 'restored to what it was before this switch attempt, not left on the target engine');
+    });
   });
 
   it('same-provider: refuses (EFFORT_UNSUPPORTED_BY_ENGINE) before mutating project.json or sending any tmux keys, when the engine adapter does not support effortMode (PRR-A Round 5 BLOCKING 3, #2598)', async () => {
