@@ -4497,7 +4497,13 @@ describe('sessions', () => {
         // Flush until the deferred call (which genuinely needs the real
         // scan for this path) settles -- unlike the other tests here, this
         // one is not expected to be fast, and does not assert that it is.
-        for (let i = 0; i < 50 && calls.length === 0; i++) {
+        // R4: the pre-scan itself now yields every 20 files
+        // (snapshotExistingSessionIdsAsync), so the real scan can take
+        // hundreds of setImmediate ticks on a machine with heavy history
+        // -- poll with a generous wall-clock bound instead of a fixed
+        // tick count.
+        const deadline = Date.now() + 20000;
+        while (calls.length === 0 && Date.now() < deadline) {
           await new Promise((resolve) => setImmediate(resolve));
         }
         assert.equal(calls.length, 1, 'the deferred launch eventually completed');
@@ -6416,5 +6422,105 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
         sessionsLib.launchSession = origLaunch;
       }
     });
+  });
+});
+
+describe('POST /api/sessions/:project { async: true } holds its single-flight claim through a WebUI continuation (#3216 R4)', () => {
+  let server;
+  let http;
+  let operatorHeaders;
+  let sessionsLib;
+  let base;
+
+  function request(method, urlPath, body) {
+    return new Promise((resolve, reject) => {
+      const addr = server.address();
+      const bodyStr = body !== undefined ? JSON.stringify(body) : null;
+      const headers = { 'Content-Type': 'application/json', ...operatorHeaders(server) };
+      if (bodyStr !== null) headers['Content-Length'] = Buffer.byteLength(bodyStr);
+      const req = http.request({ hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let parsed;
+          try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+          resolve({ status: res.statusCode, body: parsed });
+        });
+      });
+      req.on('error', reject);
+      if (bodyStr !== null) req.write(bodyStr);
+      req.end();
+    });
+  }
+
+  before(async () => {
+    // #3216 R4: each top-level describe in this file owns its own store
+    // lifecycle (`describe('stored launch blockers...')`'s own identical
+    // before/after is the established convention) — `describe('sessions',
+    // ...)`'s own `after()` already closed the store this one inherited by
+    // the time a LATER top-level block runs.
+    base = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-webui-single-flight-'));
+    store._setBasePath(base);
+    store.init();
+    http = require('node:http');
+    ({ operatorHeaders } = require('./_shared-docs-callers'));
+    const { createServer } = require('../server');
+    sessionsLib = require('../lib/sessions');
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    try { store.close(); } catch { /* already closed */ }
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it('a second async launch for the same project, issued while the first\'s launchWebuiSession continuation is still pending, is refused 409', async () => {
+    const conn = store.openclawConnections.create({
+      name: 'webui-single-flight-conn', host: '192.0.2.50', sshUser: 'user', sshKeyPath: '/tmp/key',
+      auditSecret: 'webui-single-flight-secret', defaultMode: 'webui', availableAsEngine: true
+    });
+    const dir = path.join(store._getBasePath(), 'projects', 'webui-single-flight-proj');
+    fs.mkdirSync(dir, { recursive: true });
+    store.projects.create({ name: 'webui-single-flight-proj', path: dir, engine: `openclaw:${conn.id}` });
+    // launchSession's own `engines.resolveProfile`/availability check runs
+    // before the webui branch -- stubbed the same way
+    // `describe('POST /api/sessions/:project diagnostic enrichment')`
+    // already does for an ordinary engine, so this never needs a real
+    // openclaw-cli binary on PATH.
+    const enginesModule = require('../lib/engines');
+    const origDetectEngine = enginesModule.detectEngine;
+    enginesModule.detectEngine = () => ({ available: true, path: '/fake/bin/openclaw-cli' });
+    const origLaunchWebuiSession = sessionsLib.launchWebuiSession;
+    let resolveWebui = null;
+    sessionsLib.launchWebuiSession = () => new Promise((resolve) => { resolveWebui = resolve; });
+    try {
+      const first = await request('POST', '/api/sessions/webui-single-flight-proj', { async: true });
+      assert.equal(first.status, 202);
+      // Poll for the stub's OWN invocation (resolveWebui captured) rather
+      // than a fixed tick count -- launchSession's webui branch returns
+      // long before any tmux work, but the exact number of event-loop
+      // phases between this HTTP response settling and the deferred
+      // setImmediate actually running is not something to hardcode.
+      const deadline = Date.now() + 5000;
+      while (!resolveWebui && Date.now() < deadline) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.ok(resolveWebui, 'launchWebuiSession was called -- the deferred launch reached the webui branch');
+      const second = await request('POST', '/api/sessions/webui-single-flight-proj', { async: true });
+      assert.equal(second.status, 409, JSON.stringify(second.body));
+      assert.equal(second.body.code, 'ALREADY_STARTING');
+    } finally {
+      if (resolveWebui) {
+        resolveWebui({ error: null, session: { id: 999999, engineId: `openclaw:${conn.id}`, startedAt: new Date().toISOString() } });
+      }
+      sessionsLib.launchWebuiSession = origLaunchWebuiSession;
+      enginesModule.detectEngine = origDetectEngine;
+      // Flush the (now-resolved) continuation so it does not leak into
+      // a later test as an unawaited background promise.
+      await new Promise((resolve) => setImmediate(resolve));
+    }
   });
 });
