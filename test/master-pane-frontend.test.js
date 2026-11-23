@@ -1470,6 +1470,69 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
             term.fireWrite();
           });
         });
+
+        // #3218 R-Gate R12 BLOCKER 1 — R11 gave _hasMasterRadioDialogSignature
+        // its own "no chrome below" lifecycle guard but never gave
+        // _hasMasterNumberedDialogSignature the same one, reasoning the
+        // mandatory cursor glyph was specific enough alone. True for a
+        // FRESH false positive, but readMasterTerminalSnapshot reads the
+        // full active buffer including retained SCROLLBACK: once a real
+        // numbered dialog resolves, its own cursor/sibling rows stay
+        // sitting in `now` forever, with a fresh prompt/composer and a
+        // completed reply appearing below them -- permanently blocking
+        // retirement (both fallback timers re-arm forever once "dialog"
+        // sticks).
+        describe('a resolved numbered dialog retained in scrollback above a completed turn no longer blocks retirement (#3218 R-Gate R12 BLOCKER 1)', () => {
+          const { DIALOG_PANE, CX_DIALOG_PANE, CX_IDLE_PANE } = require('./_wake-fixtures');
+
+          it('Claude: DIALOG_PANE resolving with "first" completed below it retires and dispatches "second" immediately', async () => {
+            const term = makeFakeTerm(['$ ']);
+            const { doc, sandbox } = mountChatWorkspace(term);
+            const input = doc.getElementById('masterChatInput');
+            input.value = 'first';
+            await sandbox.sendMasterChatMessage();
+            input.value = 'second';
+            await sandbox.sendMasterChatMessage();
+
+            // The dialog is first active -- must fail closed (R10 BLOCKER
+            // B's own guarantee, reconfirmed here as the starting point).
+            term.setLines(DIALOG_PANE.slice());
+            term.fireWrite();
+            assert.deepEqual(term.pasted, ['first\r'], 'the active dialog must not retire while showing');
+
+            // The dialog resolves: its own rows stay in scrollback, with a
+            // completed "first" turn and a fresh trailing prompt below them.
+            term.setLines([...DIALOG_PANE, '$ first', 'first-reply', '$ ']);
+            term.fireWrite();
+            assert.deepEqual(term.pasted, ['first\r', 'second\r'],
+              'a resolved dialog retained in scrollback must not permanently block retirement once real chrome returns below it');
+
+            term.setLines([...DIALOG_PANE, '$ first', 'first-reply', '$ second', 'second-reply', '$ ']);
+            term.fireWrite();
+          });
+
+          it('Codex: CX_DIALOG_PANE resolving with "first" completed and CX_IDLE_PANE composer/idle chrome below it retires and dispatches "second" immediately', async () => {
+            const term = makeFakeTerm(['$ ']);
+            const { doc, sandbox } = mountChatWorkspace(term);
+            const input = doc.getElementById('masterChatInput');
+            input.value = 'first';
+            await sandbox.sendMasterChatMessage();
+            input.value = 'second';
+            await sandbox.sendMasterChatMessage();
+
+            term.setLines(CX_DIALOG_PANE.slice());
+            term.fireWrite();
+            assert.deepEqual(term.pasted, ['first\r'], 'the active dialog must not retire while showing');
+
+            term.setLines([...CX_DIALOG_PANE, '› first', 'first-reply', ...CX_IDLE_PANE]);
+            term.fireWrite();
+            assert.deepEqual(term.pasted, ['first\r', 'second\r'],
+              'a resolved Codex dialog retained in scrollback, with its own composer/idle chrome returned below it, must not permanently block retirement');
+
+            term.setLines([...CX_DIALOG_PANE, '› first', 'first-reply', '› second', 'second-reply', ...CX_IDLE_PANE]);
+            term.fireWrite();
+          });
+        });
       });
     });
   });

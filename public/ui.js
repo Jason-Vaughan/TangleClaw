@@ -8705,25 +8705,48 @@ const MASTER_ENGINE_DIALOG_SUBSTRINGS = ['enter to confirm', '↑↓ to select']
 const MASTER_ENGINE_RADIO_DIALOG_RE = /^●\s+\S+.*\s+○\s+\S+/;
 
 /**
- * Whether `trimmedLines` (each already `.trim()`-med) shows a genuine
- * numbered-selector dialog (#3218 R-Gate R11 BLOCKER 1) — R10's own
- * `[❯›]` cursor glyph before `\d+\.\s` was OPTIONAL, so an ordinary
+ * Whether `nowLines` shows a genuine numbered-selector dialog (#3218
+ * R-Gate R11 BLOCKER 1, given the same resolved-dialog lifecycle guard
+ * as {@link _hasMasterRadioDialogSignature} in R12 BLOCKER 1) — R10's
+ * own `[❯›]` cursor glyph before `\d+\.\s` was OPTIONAL, so an ordinary
  * numbered reply list (`"1. Install dependencies"`, `"2. Run tests"`,
  * no cursor anywhere) matched it exactly as well as a real dialog's
  * highlighted option (`"❯ 1. Yes"`) did. The cursor is now MANDATORY:
  * a bare numbered line never signals a dialog on its own, only a line a
  * real selector actually highlights does — paired with a sibling
- * numbered option row or the dialog's own help-row phrasing elsewhere
- * in the snapshot, so a single stray cursor-like glyph can't coincide
- * with an unrelated numbered line and read as a dialog by itself.
+ * numbered option row or the dialog's own help-row phrasing.
+ *
+ * R11 shipped this WITHOUT the "no chrome below" guard {@link
+ * _hasMasterRadioDialogSignature} already had, on the reasoning that the
+ * mandatory cursor was specific enough on its own — true for a FRESH
+ * false positive, but `readMasterTerminalSnapshot` reads the full
+ * active buffer including retained SCROLLBACK: once a real numbered
+ * dialog resolves, its own cursor/sibling rows stay sitting in `now`
+ * forever, with a fresh prompt/composer and a completed reply appearing
+ * BELOW them. Checked the same way as the radio case: find the LAST
+ * line among the cursor row, a sibling numbered option, or the help-row
+ * phrasing — not just "does one exist anywhere", so a sibling/help row
+ * belonging to an unrelated EARLIER, already-resolved dialog can't
+ * anchor the check — then require no bare prompt or Codex composer line
+ * sits AFTER it.
+ * @param {string[]} nowLines
  * @param {string[]} trimmedLines
  * @returns {boolean}
  */
-function _hasMasterNumberedDialogSignature(trimmedLines) {
+function _hasMasterNumberedDialogSignature(nowLines, trimmedLines) {
   if (!trimmedLines.some((t) => /^[❯›]\s*\d+\.\s/.test(t))) return false;
+  let lastSignalIndex = -1;
+  for (let i = 0; i < trimmedLines.length; i++) {
+    const t = trimmedLines[i];
+    if (/^[❯›]\s*\d+\.\s/.test(t) || /^\d+\.\s/.test(t) || MASTER_ENGINE_DIALOG_SUBSTRINGS.some((s) => t.includes(s))) lastSignalIndex = i;
+  }
   const hasSiblingOption = trimmedLines.some((t) => /^\d+\.\s/.test(t));
   const hasHelpRow = trimmedLines.some((t) => MASTER_ENGINE_DIALOG_SUBSTRINGS.some((s) => t.includes(s)));
-  return hasSiblingOption || hasHelpRow;
+  if (!hasSiblingOption && !hasHelpRow) return false;
+  for (let i = lastSignalIndex + 1; i < nowLines.length; i++) {
+    if (_isMasterPromptLine(nowLines[i]) || _isMasterComposerLine(nowLines[i])) return false;
+  }
+  return true;
 }
 
 /**
@@ -8771,7 +8794,7 @@ function _hasMasterRadioDialogSignature(nowLines, trimmedLines) {
  */
 function _isMasterEngineDialog(nowLines) {
   const trimmedLines = nowLines.map((line) => String(line || '').trim());
-  return _hasMasterNumberedDialogSignature(trimmedLines) || _hasMasterRadioDialogSignature(nowLines, trimmedLines);
+  return _hasMasterNumberedDialogSignature(nowLines, trimmedLines) || _hasMasterRadioDialogSignature(nowLines, trimmedLines);
 }
 
 /**
