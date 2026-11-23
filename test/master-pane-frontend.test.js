@@ -489,6 +489,7 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
       /** Built lazily (not at describe-registration time, before the outer before() hook has read `js`). */
       function partition(delta, turns) {
         return new Function(`
+          const MASTER_TERMINAL_PROMPT_PREFIX = /^(?:.*?(?:Admin-PM|tangleclaw-master)\\s*[:>$❯#]|[\\s>$❯#%]+)\\s*/i;
           ${liftDeclaration(js, 'function isMasterTerminalEchoLine(')}
           ${liftDeclaration(js, 'function _partitionMasterTerminalDelta(')}
           return _partitionMasterTerminalDelta;
@@ -599,7 +600,9 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
           ${liftDeclaration(js, 'function _clearMasterTurnTimers(')}
           ${liftDeclaration(js, 'function _retireOldestMasterTurn(')}
           ${liftDeclaration(js, 'function _masterTerminalLineDelta(')}
+          const MASTER_TERMINAL_PROMPT_PREFIX = /^(?:.*?(?:Admin-PM|tangleclaw-master)\\s*[:>$❯#]|[\\s>$❯#%]+)\\s*/i;
           ${liftDeclaration(js, 'function isMasterTerminalEchoLine(')}
+          ${liftDeclaration(js, 'function _isMasterPromptLine(')}
           ${liftDeclaration(js, 'function _partitionMasterTerminalDelta(')}
           ${liftDeclaration(js, 'function syncMasterAssistantTurnsFromTerminal(')}
           ${liftDeclaration(js, 'function _dispatchNextQueuedMasterSend(')}
@@ -981,6 +984,96 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
         assert.equal(assistantTurns.length, 1, 'the echo-only turn never got a bubble of its own -- it had no content');
         assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'second-reply');
+      });
+
+      // #3218 R-Gate R8 BLOCKING 1 — the two regressions both reviewers
+      // named. The settle/no-reply fallbacks are deliberately raised past
+      // this test's own waits (real model TTFT/inter-chunk pauses routinely
+      // exceed naive short windows) so ONLY the prompt-return signal can
+      // retire the turn here — proving it, not just the fallback.
+      it('o) delayed first output: a reply after an initial pause does not retire while generating -- only prompt-return does', async () => {
+        const savedSettle = globalThis.TC_MASTER_TURN_SETTLE_MS;
+        const savedNoReply = globalThis.TC_MASTER_TURN_NO_REPLY_MS;
+        globalThis.TC_MASTER_TURN_SETTLE_MS = 10000;
+        globalThis.TC_MASTER_TURN_NO_REPLY_MS = 10000;
+        try {
+          const term = makeFakeTerm(['$ ']);
+          const { doc, sandbox } = mountChatWorkspace(term);
+          const input = doc.getElementById('masterChatInput');
+
+          input.value = 'first';
+          await sandbox.sendMasterChatMessage();
+          input.value = 'second';
+          await sandbox.sendMasterChatMessage();
+
+          // First output arrives only after a real delay -- a model's own
+          // time-to-first-token, well past any naive short window.
+          await new Promise((r) => setTimeout(r, 20));
+          term.setLines(['$ ', 'first', 'first-reply-starting']);
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r'], 'still generating -- the delayed reply must not have retired it');
+
+          // Time passes with it quiet too -- still no retirement, since
+          // there is no prompt yet.
+          await new Promise((r) => setTimeout(r, 20));
+          assert.deepEqual(term.pasted, ['first\r'], 'quiet time passing alone must never retire -- only the prompt returning does');
+
+          // The reply finishes and the terminal returns to its prompt.
+          term.setLines(['$ ', 'first', 'first-reply-starting', '$ ']);
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'the prompt returning retires the turn and dispatches the next one immediately');
+
+          const stream = doc.getElementById('masterChatStream');
+          const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+          assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply-starting',
+            'the trailing prompt line itself is never rendered as part of the reply');
+        } finally {
+          globalThis.TC_MASTER_TURN_SETTLE_MS = savedSettle;
+          globalThis.TC_MASTER_TURN_NO_REPLY_MS = savedNoReply;
+        }
+      });
+
+      it('p) inter-chunk streaming pause: a pause between streamed chunks does not retire while generating -- only prompt-return does', async () => {
+        const savedSettle = globalThis.TC_MASTER_TURN_SETTLE_MS;
+        const savedNoReply = globalThis.TC_MASTER_TURN_NO_REPLY_MS;
+        globalThis.TC_MASTER_TURN_SETTLE_MS = 10000;
+        globalThis.TC_MASTER_TURN_NO_REPLY_MS = 10000;
+        try {
+          const term = makeFakeTerm(['$ ']);
+          const { doc, sandbox } = mountChatWorkspace(term);
+          const input = doc.getElementById('masterChatInput');
+
+          input.value = 'first';
+          await sandbox.sendMasterChatMessage();
+          input.value = 'second';
+          await sandbox.sendMasterChatMessage();
+
+          term.setLines(['$ ', 'first', 'Thinking']);
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r']);
+
+          // A pause between streamed chunks -- still generating.
+          await new Promise((r) => setTimeout(r, 20));
+          term.setLines(['$ ', 'first', 'Thinking', 'still working']);
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r'], 'a second chunk after a pause must not have retired the turn');
+
+          // Another pause -- still not done.
+          await new Promise((r) => setTimeout(r, 20));
+          assert.deepEqual(term.pasted, ['first\r'], 'quiet time passing alone must never retire mid-stream');
+
+          // It finally completes and returns to the prompt.
+          term.setLines(['$ ', 'first', 'Thinking', 'still working', '$ ']);
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'the prompt returning retires the turn for real');
+
+          const stream = doc.getElementById('masterChatStream');
+          const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+          assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'Thinking\nstill working');
+        } finally {
+          globalThis.TC_MASTER_TURN_SETTLE_MS = savedSettle;
+          globalThis.TC_MASTER_TURN_NO_REPLY_MS = savedNoReply;
+        }
       });
     });
   });

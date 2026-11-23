@@ -8453,25 +8453,37 @@ let _masterSettleTimer = null;
 let _masterNoReplyTimer = null;
 
 /**
- * How long a turn's content must sit unchanged before it's considered
- * settled (#3218 R-Gate R7), overridable per `globalThis.TC_MASTER_TURN_SETTLE_MS`
- * (tests use a small value to stay fast).
+ * A CONSERVATIVE fallback only (#3218 R-Gate R8) — the PRIMARY retirement
+ * signal is the terminal actually returning to its prompt (see {@link
+ * _isMasterPromptLine}), trustworthy regardless of how long generation
+ * took. This is how long a turn's content may sit unchanged with NO
+ * prompt ever appearing before it's retired anyway, overridable per
+ * `globalThis.TC_MASTER_TURN_SETTLE_MS` (tests use a small value to stay
+ * fast). R7's own 150ms default assumed "quiet" meant "done" — real model
+ * output routinely pauses well past 150ms BETWEEN streamed chunks while
+ * still mid-reply, which this fallback must never mistake for completion;
+ * raised by two orders of magnitude so it only ever fires for a CLI that
+ * genuinely never prints a prompt again.
  * @returns {number}
  */
 function _masterTurnSettleMs() {
   const v = typeof globalThis !== 'undefined' ? globalThis.TC_MASTER_TURN_SETTLE_MS : undefined;
-  return Number.isFinite(v) && v >= 0 ? v : 150;
+  return Number.isFinite(v) && v >= 0 ? v : 15000;
 }
 
 /**
- * How long a dispatched turn may go with NO reply content at all before
- * it's retired anyway (#3218 R-Gate R7), overridable per
- * `globalThis.TC_MASTER_TURN_NO_REPLY_MS`.
+ * A CONSERVATIVE fallback only (#3218 R-Gate R8) — how long a dispatched
+ * turn may go with NO reply content AND no prompt return at all before
+ * it's retired anyway, overridable per `globalThis.TC_MASTER_TURN_NO_REPLY_MS`.
+ * R7's own 800ms default assumed a model's time-to-first-token could
+ * never exceed it — real models routinely take several seconds, which
+ * this fallback must never mistake for "never going to reply"; raised well
+ * past realistic TTFT so it only ever fires for a genuinely stuck session.
  * @returns {number}
  */
 function _masterTurnNoReplyMs() {
   const v = typeof globalThis !== 'undefined' ? globalThis.TC_MASTER_TURN_NO_REPLY_MS : undefined;
-  return Number.isFinite(v) && v >= 0 ? v : 800;
+  return Number.isFinite(v) && v >= 0 ? v : 30000;
 }
 
 /** Clears both turn-lifecycle timers, if armed. @returns {void} */
@@ -8534,10 +8546,37 @@ function _masterTerminalLineDelta(beforeLines, nowLines) {
  * @param {string} sentText
  * @returns {boolean}
  */
+/**
+ * A run of prompt-ish decoration a terminal prints alongside whatever it's
+ * showing — a named prompt then a delimiter (`"Admin-PM > "`,
+ * `"tangleclaw-master$ "`), or just bare prompt characters (`"$ "`,
+ * `"❯ "`). Shared by {@link isMasterTerminalEchoLine} (what's left after
+ * stripping it must equal the sent text, to recognize an echo) and {@link
+ * _isMasterPromptLine} (what's left after stripping it must be NOTHING AT
+ * ALL, to recognize the terminal sitting at a bare, idle prompt — #3218
+ * R-Gate R8).
+ */
+const MASTER_TERMINAL_PROMPT_PREFIX = /^(?:.*?(?:Admin-PM|tangleclaw-master)\s*[:>$❯#]|[\s>$❯#%]+)\s*/i;
+
 function isMasterTerminalEchoLine(line, sentText) {
   if (line === sentText) return true;
-  const stripped = line.replace(/^(?:.*?(?:Admin-PM|tangleclaw-master)\s*[:>$❯#]|[\s>$❯#%]+)\s*/i, '').trim();
+  const stripped = line.replace(MASTER_TERMINAL_PROMPT_PREFIX, '').trim();
   return stripped === sentText;
+}
+
+/**
+ * Whether `line` is NOTHING but the terminal's own idle prompt — no real
+ * content survives stripping {@link MASTER_TERMINAL_PROMPT_PREFIX} off it
+ * (#3218 R-Gate R8). The PRIMARY signal a dispatched command has actually
+ * finished and control returned to the shell, trustworthy regardless of
+ * how long generation took — unlike a fixed "gone quiet for N ms" timer,
+ * which a real model's time-to-first-token or an inter-chunk streaming
+ * pause can both comfortably outlast while still legitimately mid-reply.
+ * @param {string} line
+ * @returns {boolean}
+ */
+function _isMasterPromptLine(line) {
+  return String(line || '').replace(MASTER_TERMINAL_PROMPT_PREFIX, '').trim() === '';
 }
 
 /**
@@ -8588,21 +8627,18 @@ function _partitionMasterTerminalDelta(delta, turns) {
  * turn still waiting on a reply shows no bubble at all (#3218 R-Gate
  * R2/R4/R5).
  *
- * #3218 R-Gate R7 BLOCKING 1: retirement is timer-driven, not another
- * `onWriteParsed`/`onRender` callback (R6's own model, which assumed a
- * quiet round would always get a follow-up callback to notice it was
- * quiet in — a real terminal fires that event only on an actual write or
- * render, so once the final reply line lands and the terminal goes
- * genuinely silent, no such follow-up is guaranteed at all). The oldest
- * turn's bucket CONTENT (not just its length — a same-line streaming
- * update can change text without changing line count) is compared
- * against what it was last sync; any change (re)starts {@link
- * _masterSettleTimer}, and clears {@link _masterNoReplyTimer} for good
- * once that content is non-empty. {@link _masterNoReplyTimer}, armed
- * when the turn was first dispatched, independently retires an
- * echo-only/no-reply turn after its own (longer) timeout, since the
- * settle timer alone would never even start for a turn that never gets
- * any content.
+ * #3218 R-Gate R8 BLOCKING 1: the PRIMARY retirement signal is the
+ * terminal genuinely returning to its own idle prompt (the oldest turn's
+ * newest line, once its own echo is already accounted for, being nothing
+ * but prompt decoration — {@link _isMasterPromptLine}) — trustworthy
+ * regardless of how long generation actually took, unlike R7's own
+ * "gone quiet for N ms" timers, which a real model's time-to-first-token
+ * or an inter-chunk streaming pause can both comfortably outlast while
+ * still legitimately mid-reply. That trailing prompt line is stripped
+ * from what actually renders into the bubble — it is the terminal's own
+ * idle state, never part of the reply. {@link _masterSettleTimer}/{@link
+ * _masterNoReplyTimer} (R7) remain as CONSERVATIVE FALLBACKS ONLY, for a
+ * CLI that genuinely never prints a prompt again.
  * @param {object} term
  * @returns {void}
  */
@@ -8611,6 +8647,13 @@ function syncMasterAssistantTurnsFromTerminal(term) {
   const now = readMasterTerminalSnapshot(term);
   const delta = _masterTerminalLineDelta(_masterActiveBaseline, now);
   const buckets = _partitionMasterTerminalDelta(delta, _masterActiveTurns);
+  const oldest = _masterActiveTurns[0];
+  let oldestAtPrompt = false;
+  if (oldest && delta.length > 0 && buckets[0].length > 0 && _isMasterPromptLine(buckets[0][buckets[0].length - 1])) {
+    oldestAtPrompt = true;
+    buckets[0] = buckets[0].slice(0, -1);
+  }
+
   const stream = document.getElementById('masterChatStream');
   let renderedAny = false;
   _masterActiveTurns.forEach((turn, i) => {
@@ -8629,9 +8672,13 @@ function syncMasterAssistantTurnsFromTerminal(term) {
   });
   if (renderedAny && stream) stream.scrollTop = stream.scrollHeight;
 
-  const oldest = _masterActiveTurns[0];
   if (!oldest) return;
-  const oldestContent = buckets[0] ? buckets[0].join('\n') : '';
+  if (oldestAtPrompt) {
+    _retireOldestMasterTurn(term, now);
+    return;
+  }
+
+  const oldestContent = buckets[0].join('\n');
   if (oldestContent === oldest._lastContent) return;
   oldest._lastContent = oldestContent;
   if (oldestContent !== '' && _masterNoReplyTimer != null) {
