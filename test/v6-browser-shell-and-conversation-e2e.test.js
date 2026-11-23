@@ -32,6 +32,7 @@ const { execFileSync } = require('node:child_process');
 const store = require('../lib/store');
 const { handleRequest } = require('../server');
 const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
+const loadApiHelperGlobals = require('./_api-helper-globals');
 const { initRepo } = require('./_temp-repo');
 
 /**
@@ -1187,6 +1188,329 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.equal(store.projects.getByName('e2e-3205-repair-then-launch'), null, 'the stale old name must resolve to nothing, so a launch can never silently target it');
     });
   });
+
+  /**
+   * Car V659-W2-C, Issue #3203 (Ruling A927's own deferred mounted E2E):
+   * the real public/v6-shell.js offline hero markup (PR #3227, merged) is
+   * now live, so the hand-built FIXTURES above (Car V659-W1-C,
+   * "mounted-DOM fixture coverage for the 4 offline/recovery states") are
+   * superseded for these 3 scenarios by mounting the production code
+   * itself — the whole point Ruling A927 deferred. The fixtures stay; they
+   * covered a CSS/wiring contract while #3203's own markup had no owning
+   * car yet, and that is still a true, useful statement about them.
+   *
+   * mountOfflineShell extends Car V659-W2-B's own mountShell() (this
+   * file's top-level describe) with the 4 options #3203 needs that the
+   * conversation/scroll-pin tests above never did — onStartSession,
+   * onOpenProjectSettings, onViewOfflineHistory, onReturnToStartCard —
+   * wired exactly as public/ui.js wires them (checked directly, not
+   * assumed): `onStartSession(projectName) { v6Live.startSession(...) }`,
+   * `onOpenProjectSettings(projectName) { openSettings(...) }`,
+   * `onViewOfflineHistory`/`onReturnToStartCard` likewise. Settings is a
+   * spy here, not a call into the real openSettings — see the #3214
+   * describe below for why.
+   */
+  describe('Car V659-W2-C: Issue #3203 mounted offline hero, starting/failed launch transitions, and offline history (Ruling A927 deferred mounted E2E)', () => {
+    /**
+     * @param {string} initialHash
+     * @returns {object}
+     */
+    function mountOfflineShell(initialHash) {
+      const G = loadV6Shell();
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const win = makeFakeWindow(initialHash);
+      const { api, apiMutate, calls } = liveApi();
+      const pending = [];
+      let shell = null;
+      const readFileAsBase64 = async (file) => Buffer.from(file.content).toString('base64');
+      const openedSettingsFor = [];
+      const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, operatorHeaders: async () => ({}), readFileAsBase64, storage: null });
+      shell = G.tcCreateV6Shell(doc, {
+        root, window: win,
+        onLaunchTemplate: (id) => pending.push(live.launchTemplate(id)),
+        onRender: (route) => pending.push(live.handleRoute(route)),
+        onSendChat: (text) => pending.push(live.sendChat(text)),
+        onChangeDelegate: (nodeId, projectId) => pending.push(live.changeDelegate(nodeId, projectId)),
+        onRefreshChat: () => pending.push(live.refresh()),
+        onAttachFiles: (files) => pending.push(live.attachFiles(files)),
+        onRemoveAttachment: (i) => pending.push(live.removeAttachment(i)),
+        onRenameProject: (oldName, newName, opts) => pending.push(live.renameProject(oldName, newName, opts)),
+        onStartSession: (name) => { pending.push(live.startSession(name)); },
+        onOpenProjectSettings: (name) => { openedSettingsFor.push(name); },
+        onViewOfflineHistory: (name) => { pending.push(live.viewOfflineHistory(name)); },
+        onReturnToStartCard: (name) => live.returnToStartCard(name),
+        storage: null
+      });
+      pending.push(live.handleRoute(shell.getRoute()));
+      const settle = async () => { while (pending.length) await pending.shift(); };
+      return { G, shell, root, win, live, calls, settle, doc, openedSettingsFor };
+    }
+
+    it('a project with no active session renders the real offline hero — Start, View History and Edit Properties, no diagnostic yet', async () => {
+      const projectId = seedProject('e2e-3203-hero');
+      const { root, settle } = mountOfflineShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      assert.match(root.innerHTML, /class="v6-chat-offline-hero" role="status"/);
+      assert.match(root.innerHTML, /id="v6ChatStartHero"/);
+      assert.match(root.innerHTML, /id="v6ChatViewHistoryHero"/);
+      assert.match(root.innerHTML, /id="v6ChatEditPropertiesHero"/);
+      assert.doesNotMatch(root.innerHTML, /v6-chat-offline-hero-diagnostic/, 'no failure yet, so no diagnostic box');
+    });
+
+    it('clicking Start transitions the hero through "starting" synchronously, then to "failed" with Retry once a real launch is refused', async () => {
+      const projectId = seedProject('e2e-3203-starting-failed');
+      // Deliberately unresolvable engine: launchSession's own engine-
+      // resolution check (lib/sessions.js) fails this FAST and
+      // synchronously (verified directly: ~2ms, no tmux/process spawn),
+      // before ever reaching the parts of the launch path this sandbox
+      // has no real engine binary or tmux session for — the same
+      // proportionality V659-W1-C's own test above already explains.
+      store.getDb().prepare('UPDATE projects SET engine_id = ? WHERE id = ?').run('does-not-exist-engine', projectId);
+      const { doc, root, settle } = mountOfflineShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      doc.getElementById('v6ChatStartHero').dispatch('click');
+      // startSession's own synchronous prefix — launchState.set('starting')
+      // then showChat()/render() — runs before its first `await
+      // apiMutate(...)` yields control, so "starting" must already be on
+      // screen here, before settle() lets the launch call resolve.
+      assert.match(root.innerHTML, /class="v6-chat-offline-hero is-starting"/, 'is-starting must be on the OUTER hero (the CSS spinner selector targets it there), synchronously');
+      assert.match(root.innerHTML, /id="v6ChatStartHero"[^>]*disabled/, 'Start must disable itself while already starting, not stay re-clickable');
+      await settle();
+      assert.match(root.innerHTML, /v6-chat-offline-hero-pill is-failed">Launch Failed/, 'the unresolvable engine must fail the REAL launch route, not silently succeed');
+      assert.match(root.innerHTML, /v6-chat-offline-hero-diagnostic-message">Not started: Engine &quot;does-not-exist-engine&quot; not found/, 'the server\'s real refusal reason must reach the diagnostic box');
+      assert.match(root.innerHTML, /id="v6ChatRetryLaunchHero"/, 'Retry Launch must be offered after a failed attempt');
+    });
+
+    it('View Previous Conversation loads the project\'s real persisted B2 events (history -> conversation/events), and Return to Start Card restores the hero', async () => {
+      const projectId = seedProject('e2e-3203-history');
+      // An ENDED session, not an active one — #3203's own viewOfflineHistory
+      // doc comment (public/v6-shell.js) is explicit that GET .../history
+      // names the most recent session row "regardless of status".
+      const sessionId = store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at, ended_at) VALUES (?, 'claude', 'ended', 'webui', datetime('now'), datetime('now'))"
+      ).run(projectId).lastInsertRowid;
+      await send('POST', `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`, {
+        body: { launchId: 'l1', seq: 1, tier: 'A', adapter: 'claude', role: 'user', content: 'what happened while I was away?' }
+      });
+      const { doc, root, settle } = mountOfflineShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+      await settle();
+      assert.match(root.innerHTML, /class="v6-chat-offline-history" aria-label/);
+      assert.match(root.innerHTML, /what happened while I was away\?/, 'the REAL persisted event, fetched via the real history + conversation/events routes, must actually render');
+      assert.ok(doc.getElementById('v6ChatOfflineHistoryReturnTop'), 'the Return to Start Card control must be present');
+      doc.getElementById('v6ChatOfflineHistoryReturnTop').dispatch('click');
+      await settle();
+      assert.match(root.innerHTML, /class="v6-chat-offline-hero" role="status"/, 'Return to Start Card must restore the hero, in place');
+    });
+  });
+
+  /**
+   * Car V659-W2-C, Issue #3214: `openSettings` (public/ui.js) has too many
+   * top-level dependencies (state, esc, apiMutate, DOM) to invoke directly
+   * — the SAME documented constraint test/settings-modal-silentprime.test.js
+   * and test/engine-model-picker.test.js already work around with
+   * source-level liftBody()/liftDeclaration() assertions, the latter
+   * already covering #settingsEngineCards' 4 engines, #settingsModelSelect
+   * and #settingsEffortSelect + #settingsPathHealthBadge in detail
+   * (#3214 R-Gate R1/R5/R6 describes in that file). Neither file is in
+   * this car's envelope to extend further, and re-deriving that coverage
+   * here would duplicate it, not add to it.
+   *
+   * What a MOUNTED shell genuinely can prove, and does here, is the half
+   * of the integration that belongs to it: that the real v6ChatSettings
+   * control calls options.onOpenProjectSettings with the correct project
+   * name — the exact call public/ui.js wires to `openSettings(projectName)`
+   * (`onOpenProjectSettings(projectName) { openSettings(projectName); }`,
+   * checked directly). This is the shell's own reachability contract, not
+   * a stand-in for testing openSettings' render.
+   */
+  describe('Car V659-W2-C: Issue #3214 mounted shell reaches Settings with the correct project name', () => {
+    it('the chat header\'s Settings control calls onOpenProjectSettings with THIS chat\'s own project name', async () => {
+      const projectId = seedProject('e2e-3214-settings-reachability');
+      const G = loadV6Shell();
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const win = makeFakeWindow(`#/resources/${projectId}/conversation`);
+      const { api, apiMutate } = liveApi();
+      const pending = [];
+      let shell = null;
+      const openedSettingsFor = [];
+      const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, operatorHeaders: async () => ({}), readFileAsBase64: async () => '', storage: null });
+      shell = G.tcCreateV6Shell(doc, {
+        root, window: win,
+        onRender: (route) => pending.push(live.handleRoute(route)),
+        onOpenProjectSettings: (name) => { openedSettingsFor.push(name); },
+        storage: null
+      });
+      pending.push(live.handleRoute(shell.getRoute()));
+      while (pending.length) await pending.shift();
+      const settingsBtn = doc.getElementById('v6ChatSettings');
+      assert.ok(settingsBtn, 'the header\'s Settings control must be mounted, offline session or not');
+      settingsBtn.dispatch('click');
+      assert.deepEqual(openedSettingsFor, ['e2e-3214-settings-reachability'], 'must reach onOpenProjectSettings with exactly this chat\'s own project name');
+    });
+  });
+
+  /**
+   * Car V659-W2-C, Issue #3218: `tcBindMasterDropzone`/
+   * `tcSanitizeMasterAttachmentFilename` (public/api-helper.js, PR #3229,
+   * merged) are already exhaustively unit-tested in isolation
+   * (test/master-control-bar.test.js) against a SYNTHETIC panel/frame
+   * pair. What that suite cannot prove, and this does, is that the ids
+   * `tcBindMasterDropzone`'s own fallback resolution hardcodes
+   * (`"masterPanel"` -> `"masterFrame"`) and the nesting its positioning
+   * fix (#3218 R3) depends on both match the REAL public/index.html
+   * markup — read directly below, not assumed.
+   *
+   * Note (#3218 Wave 2 dependency, checked directly): `tcBindMasterDropzone`
+   * is not yet CALLED from any production page script — grepped
+   * public/ui.js, public/session.js and public/v6-shell.js, no call site
+   * exists. Wiring it up is Car V659-W2-D's own deliverable, once this
+   * car's sibling PRs land. So "mounted" here means against the real
+   * index.html markup and real api-helper.js globals, which is everything
+   * actually live right now — not a page that calls it yet, which does
+   * not exist to mount against.
+   */
+  describe('Car V659-W2-C: Issue #3218 tcBindMasterDropzone against the real index.html markup and nesting', () => {
+    it('public/index.html\'s #masterPanel/#masterFrame markup matches tcBindMasterDropzone\'s own fallback id resolution and nesting assumptions', () => {
+      const htmlSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+      assert.match(htmlSrc, /<div id="masterPanel" class="master-panel"/, '#masterPanel must exist with this exact id — tcBindMasterDropzone\'s default prefix is "masterPanel"');
+      assert.match(htmlSrc, /<iframe id="masterFrame"/, 'the fallback frame lookup for the "masterPanel" prefix is literally "masterFrame" (public/api-helper.js)');
+      const panelIdx = htmlSrc.indexOf('<div id="masterPanel"');
+      const frameIdx = htmlSrc.indexOf('id="masterFrame"', panelIdx);
+      const wrapIdx = htmlSrc.lastIndexOf('<div class="master-frame-wrap">', frameIdx);
+      assert.ok(wrapIdx > panelIdx && wrapIdx < frameIdx,
+        '#masterFrame must sit inside a .master-frame-wrap, nested one level below #masterPanel — this is exactly the "frame\'s real parent is not panelEl" shape the mounted test below exercises');
+    });
+
+    /**
+     * The exact `<div id="masterPanel" ...> ... </div>` fragment of
+     * `html`, depth-matched rather than a fixed-size window or the next
+     * literal `</div>` — this repo's own `liftBody`/`liftDeclaration`
+     * (test/helpers/lift.js) do the same for a JS function's braces;
+     * this is that technique for an HTML element's own nested divs.
+     * @param {string} html
+     * @returns {string}
+     */
+    function extractMasterPanelBlock(html) {
+      const openTag = /<div[^>]*\bid="masterPanel"[^>]*>/.exec(html);
+      assert.ok(openTag, '#masterPanel must exist');
+      let depth = 1;
+      const tagRe = /<div\b[^>]*>|<\/div>/g;
+      tagRe.lastIndex = openTag.index + openTag[0].length;
+      let tag;
+      while (depth > 0 && (tag = tagRe.exec(html))) {
+        depth += tag[0].startsWith('</') ? -1 : 1;
+      }
+      return html.slice(openTag.index, tagRe.lastIndex);
+    }
+
+    /**
+     * A minimal tag-stack HTML -> mini-DOM builder, bounded to exactly the
+     * shapes `public/index.html`'s own `#masterPanel` block uses (nested
+     * elements, every one explicitly closed, no scripts/styles) — not a
+     * general HTML parser. Comments are stripped first; only `id`/`class`
+     * attributes are read, which is all `tcBindMasterDropzone` itself
+     * reads off these elements (per `withIdParsingInnerHTML`'s own
+     * limitation, learned the hard way earlier this car: it builds FLAT
+     * id stand-ins, never real nesting, so it cannot stand in here).
+     * @param {object} doc
+     * @param {string} html
+     * @returns {object} The root element.
+     */
+    function buildTreeFromRealHtml(doc, html) {
+      const clean = html.replace(/<!--[\s\S]*?-->/g, '');
+      const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+      const stack = [];
+      let root = null;
+      let match;
+      while ((match = tagRe.exec(clean))) {
+        const [, closing, tag, attrs] = match;
+        if (closing) { stack.pop(); continue; }
+        const el = doc.createElement(tag);
+        el.style = {};
+        const idMatch = /\bid="([^"]*)"/.exec(attrs);
+        const classMatch = /\bclass="([^"]*)"/.exec(attrs);
+        if (idMatch) { el.id = idMatch[1]; doc._register(el); }
+        if (classMatch) el.className = classMatch[1];
+        if (stack.length) stack[stack.length - 1].appendChild(el);
+        else root = el;
+        stack.push(el);
+      }
+      return root;
+    }
+
+    it('mounted against the REAL #masterPanel markup (parsed from public/index.html, not a hand-built tree), it positions both unpositioned ancestors, survives a real bubbling drop delivering the file exactly once, and restores the frame\'s pointer-events', () => {
+      const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+      const block = extractMasterPanelBlock(indexHtml);
+      const { doc } = makeDocument([]);
+      /** Captures every listener a target registers, by type. */
+      function captureAddEventListener(target) {
+        const handlers = {};
+        const real = typeof target.addEventListener === 'function' ? target.addEventListener.bind(target) : null;
+        target.addEventListener = (type, fn) => {
+          (handlers[type] = handlers[type] || []).push(fn);
+          if (real) real(type, fn);
+        };
+        return handlers;
+      }
+      const docHandlers = captureAddEventListener(doc);
+      // Build the real tree FIRST, consuming the createElement calls that
+      // parsing it needs, THEN wrap createElement to capture the NEXT one
+      // — the dropzone overlay tcBindMasterDropzone itself creates. Doing
+      // this in the other order would wrongly capture #masterPanel (the
+      // tree's own first element) as "the overlay" instead.
+      const panelEl = buildTreeFromRealHtml(doc, block);
+      assert.equal(panelEl.id, 'masterPanel', 'the parsed root must be the real #masterPanel element');
+      const panelHandlers = captureAddEventListener(panelEl);
+      const frameEl = doc.getElementById('masterFrame');
+      assert.ok(frameEl, '#masterFrame must have parsed out of the real markup');
+
+      let overlay = null;
+      let overlayHandlers = null;
+      const realCreateElement = doc.createElement.bind(doc);
+      doc.createElement = (tag) => {
+        const el = realCreateElement(tag);
+        if (!overlayHandlers) { overlay = el; overlayHandlers = captureAddEventListener(el); }
+        return el;
+      };
+
+      const G = loadApiHelperGlobals();
+      G.Blob = Blob;
+      G.File = File;
+      const delivered = [];
+      G.tcBindMasterDropzone({ doc, panelEl, prefix: 'masterPanel', onUpload: (f, sanitized) => delivered.push(sanitized) });
+
+      assert.equal(panelEl.style.position, 'relative', '#masterPanel has no position rule in public/style.css — it must get one, as the overlay\'s own containing block');
+      assert.equal(doc.getElementById('masterPanelBar').parentNode, panelEl, 'sanity: the real nesting parsed correctly — .master-status-row is a direct child of #masterPanel');
+      const frameWrap = frameEl.parentNode;
+      assert.equal(frameWrap.className, 'master-frame-wrap', '#masterFrame\'s real parent, parsed from the real markup, is .master-frame-wrap — not #masterPanel directly');
+      assert.equal(frameWrap.style.position, 'relative', '.master-frame-wrap has no position rule either, and it — not #masterPanel — is #masterFrame\'s REAL parent');
+      assert.ok(overlay, 'the overlay must have been created');
+      assert.equal(overlay.parentNode, panelEl, 'the overlay must mount as a direct child of #masterPanel, matching where tcBindMasterDropzone appends it');
+
+      docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+      assert.equal(overlay.classList.contains('hidden'), false, 'revealed on a file drag over the real page');
+      assert.equal(frameEl.style.pointerEvents, 'none', 'the real #masterFrame iframe must stop intercepting pointer input while the drag is live');
+
+      // A real drop fires at the overlay (the actual target under the
+      // cursor) and then bubbles to the panel's own drop listener — the
+      // SAME event object reaching both, exactly as a real browser
+      // bubble would. Must deliver the one dropped file exactly once.
+      const fileA = { name: 'Screenshot 2026-11-23 at 8.00.00 AM.png' };
+      const evt = { preventDefault: () => {}, dataTransfer: { files: [fileA] } };
+      overlayHandlers.drop[0](evt);
+      panelHandlers.drop[0](evt);
+      assert.deepEqual(delivered, ['Screenshot-2026-11-23-at-8.00.00-AM.png'], 'exactly one delivery, sanitized, even though the real bubble reaches both drop listeners');
+      assert.equal(frameEl.style.pointerEvents, '', 'restored once the drop is handled, not left stuck at none');
+    });
+  });
 });
 
 describe('Car V656-W1-B: sticky Under the Hood toggle bar and two-way pane resizer styling (#3187)', () => {
@@ -1499,5 +1823,60 @@ describe('Car V659-W1-C: mounted-DOM fixture coverage for the 4 offline/recovery
       return fired;
     });
     assert.deepEqual(wired, [true, true, true], 'all three per-row actions must be independently wireable');
+  });
+});
+
+/**
+ * Car V659-W2-C R2 (#3218, R-Gate R1 BLOCKING 1/2, WARNING 1): the Admin
+ * Fleet chat workspace PR #3231 (Car V659-W2-E, addMasterChatWorkspace in
+ * public/ui.js) mounts into #masterPanel needs a bounded height budget
+ * (BLOCKING 1) and the attach button override (BLOCKING 2) this car's own
+ * public/style.css additions provide — pinned here as a stylesheet
+ * contract, same pattern the other Car-named describes in this file
+ * already use for their own CSS.
+ */
+describe('Car V659-W2-C R2: Master chat workspace height budget and attach-button positioning (#3218)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  /**
+   * @param {string} selector @returns {string} the selector's own `{ ... }` body, or '' if not found.
+   * Escapes `^` too, unlike this file's other copies of this helper — the
+   * fleet-start-button selectors below are `[id^="..."]` attribute
+   * selectors, and an unescaped `^` outside a character class asserts
+   * "start of string" (no `m` flag here), which can never match mid-pattern
+   * and silently returns '' for every caller, not just this one.
+   */
+  const body = (selector) => {
+    const m = new RegExp(`(^|\\n)${selector.replace(/[.[\]>="^-]/g, '\\$&')} \\{([^}]*)\\}`).exec(css);
+    return m ? m[2] : '';
+  };
+
+  it('.master-panel.open becomes a flex column with a scroll safety net, so the chat workspace and #masterFrame can share its 80vh', () => {
+    const rule = body('.master-panel.open');
+    assert.match(rule, /display: flex;/);
+    assert.match(rule, /flex-direction: column;/);
+    assert.match(rule, /overflow-y: auto;/);
+  });
+
+  it('.master-chat-workspace and .master-chat-stream each get a bounded height budget, not an unbounded flex share', () => {
+    const workspace = body('.master-chat-workspace');
+    assert.match(workspace, /max-height: 38vh;/);
+    assert.match(workspace, /flex: 0 1 auto;/);
+    const stream = body('.master-chat-stream');
+    assert.match(stream, /flex: 1 1 auto;/);
+    assert.match(stream, /min-height: 72px;/);
+    assert.match(stream, /max-height: 24vh;/);
+    assert.match(stream, /overflow-y: auto;/, 'the stream must scroll internally rather than push the composer/terminal off-budget');
+  });
+
+  it('.master-chat-composer positions #masterChatAttachBtn/.v6-chat-attach-btn inline, not as an escaping absolute overlay', () => {
+    assert.match(body('.master-chat-composer'), /position: relative;/);
+    const override = body('.master-chat-composer .v6-chat-attach-btn,\n.master-chat-composer #masterChatAttachBtn');
+    assert.match(override, /position: static;/);
+    assert.match(override, /flex: 0 0 auto;/);
+  });
+
+  it('the per-row fleet-start buttons ([id^="v6TreeStartFleet-"]/[id^="v6OverviewStartFleet-"]) still carry their own styling', () => {
+    const rule = body('[id^="v6TreeStartFleet-"],\n[id^="v6OverviewStartFleet-"]');
+    assert.match(rule, /border-radius: var\(--radius-pill\);/);
   });
 });
