@@ -5443,6 +5443,42 @@ describe('Car V659-W2-D: sidebar member row actions (#3205)', () => {
     assert.doesNotMatch(root.innerHTML, /id="v6TreeMemberStart-m0-0-1"/, 'wrapping');
   });
 
+  it('an OFFLINE member whose last session crashed or left work (attention, but no live session) keeps its per-row Start and is included in bulk Start Fleet (#3205/#3215 R3)', () => {
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    shell.setProjects([
+      { id: 11, name: 'TC-Lane-A', session: null, sessionHealth: { status: 'crashed' } },
+      { id: 12, name: 'TC-Lane-PM', session: { active: false }, sessionHealth: { state: 'left-work' } },
+      { id: 21, name: 'Medusa-PM', session: { active: true } }
+    ]);
+    assert.match(root.innerHTML, /is-attention/, 'really reads as attention, not plainly offline');
+    assert.match(root.innerHTML, /id="v6TreeMemberStart-m0-0-0"/, 'crashed, per-row Start');
+    assert.match(root.innerHTML, /id="v6TreeMemberStart-m0-0-1"/, 'left-work, per-row Start');
+    assert.match(root.innerHTML, /id="v6TreeStartFleet-f0-0"[^>]*>▶ Start Fleet \(2\)<\/button>/, 'both crashed/left-work members count as the fleet\'s offline total');
+  });
+
+  it('an ACTIVE member presenting as attention, wrapping, or starting is excluded from bulk Start Fleet, even though its state alone would read the same as the crashed/left-work case (#3205/#3215 R3)', () => {
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    shell.setProjects([
+      { id: 11, name: 'TC-Lane-A', session: { active: true, launchBlocker: 'needs an approval' } },
+      { id: 12, name: 'TC-Lane-PM', session: { active: true, wrapping: { stale: true, step: 'summarizing' } } },
+      { id: 21, name: 'Medusa-PM', session: null }
+    ]);
+    // Only Medusa-PM (a real offline member, its own fleet) is startable;
+    // TC-Lane-A/PM's fleet has nothing eligible, so it shows no button at all.
+    assert.doesNotMatch(root.innerHTML, /id="v6TreeStartFleet-f0-0"/, 'TC-Lane fleet: both members active, nothing to start');
+    assert.match(root.innerHTML, /id="v6TreeStartFleet-f1-0"[^>]*>▶ Start Fleet \(1\)<\/button>/, 'Medusa fleet unaffected');
+  });
+
+  it('a member mid-launch (this UI\'s own optimistic "starting" state) is excluded from Start even when its underlying session.active still reads false', () => {
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    shell.setProjects([
+      { id: 11, name: 'TC-Lane-A', session: null, launchStatus: { status: 'starting' } },
+      { id: 12, name: 'TC-Lane-PM', session: null }, { id: 21, name: 'Medusa-PM', session: null }
+    ]);
+    assert.doesNotMatch(root.innerHTML, /id="v6TreeMemberStart-m0-0-0"/);
+    assert.match(root.innerHTML, /id="v6TreeStartFleet-f0-0"[^>]*>▶ Start Offline \(1\)<\/button>/, 'only TC-Lane-PM counts as offline — TC-Lane-A is mid-launch');
+  });
+
   it('Edit Session Properties and Start call the same real onOpenProjectSettings/onStartSession callbacks the Overview screen uses', () => {
     const settingsCalls = [];
     const startCalls = [];

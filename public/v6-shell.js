@@ -371,7 +371,7 @@
         // Start only while there's no live session to disturb (offline,
         // starting already covers its own disabled state, and a failed
         // launch is exactly when Retry matters most).
-        const canStart = !info || !MEMBER_ALREADY_ACTIVE_STATES.includes(info.state);
+        const canStart = _memberCanStart(info);
         const actionsMarkup = `<div class="v6-tree-member-actions">
           ${sidebarRenameControlMarkup(memberKey, m.role, memberIdSuffix, rename)}
           <button type="button" id="v6TreeEditProps-${memberIdSuffix}" class="v6-tree-action-btn" data-open-settings="${escapeHtml(m.role)}"
@@ -397,7 +397,7 @@
         if (!seated.length) return '';
         const offline = seated.filter((m) => {
           const info = typeof options.memberInfo === 'function' ? options.memberInfo(m.seatId) : null;
-          return !info || !MEMBER_ALREADY_ACTIVE_STATES.includes(info.state);
+          return _memberCanStart(info);
         });
         if (!offline.length) return '';
         const label = offline.length === seated.length ? `▶ Start Fleet (${seated.length})` : `▶ Start Offline (${offline.length})`;
@@ -4713,19 +4713,39 @@
   });
 
   /**
-   * #3205/#3215 R2: a member in any of these `memberIndicators` states
-   * already has (or very recently had) a session underneath it — `live`
-   * and `starting`/`wrapping` only ever occur while `session.active` is
-   * true, and `attention` can too (a launch blocker, a stuck wrap); its
-   * one other cause (the LAST session merely crashed, no current one at
-   * all) is deliberately left just as non-startable here, matching this
-   * ruling's own stated eligibility rather than re-deriving `live` from
-   * the raw row a second, narrower way. `offline` and this file's own
-   * `failed` (a launch THIS UI attempted and the server refused) are the
-   * only states Start/Start Fleet ever act on — `failed` stays startable
-   * so Retry keeps working.
+   * #3205/#3215 R3: the FALLBACK eligibility list only, for an `info`
+   * object a test fixture built by hand without a `sessionActive` field
+   * (every real one, from `memberIndicators`, always carries one — see
+   * {@link _memberCanStart}). Deliberately excludes `attention`: that
+   * state alone can arise with NO active session at all (the LAST one
+   * merely crashed or left work), so this list can never be the one
+   * place that decides eligibility — only the explicit `sessionActive`
+   * check on the real path can tell "a live session is attention" apart
+   * from "no session, but something to look into".
    */
-  const MEMBER_ALREADY_ACTIVE_STATES = Object.freeze(['live', 'attention', 'wrapping', 'starting']);
+  const MEMBER_ALREADY_ACTIVE_STATES = Object.freeze(['live', 'wrapping', 'starting']);
+
+  /**
+   * Whether Start / Start Fleet may act on this member (#3205/#3215 R3).
+   * Prefers the real signal — `info.sessionActive` (set by
+   * `memberIndicators` from the row's own `session.active`) — over the
+   * coarser `state` alone: `state === 'attention'` can mean either "an
+   * active session needs a look" (not startable) or "the last session
+   * crashed/left work, nothing is running now" (startable, and exactly
+   * when Start matters most). `state === 'starting'` is excluded
+   * regardless of `sessionActive` — this file's OWN optimistic
+   * `launchStatus` override, set the instant a Start click fires, before
+   * the server has necessarily reported a live session at all.
+   * @param {{state: string, sessionActive?: boolean}|null} info
+   * @returns {boolean}
+   */
+  function _memberCanStart(info) {
+    if (!info) return true;
+    if (typeof info.sessionActive === 'boolean') {
+      return !info.sessionActive && info.state !== 'starting';
+    }
+    return !MEMBER_ALREADY_ACTIVE_STATES.includes(info.state);
+  }
 
   /** @param {*} v - A reason the server gave as text or as `{message}`. @returns {string} */
   function reasonText(v) {
@@ -4802,7 +4822,12 @@
     if (state === 'attention') title = `Needs attention: ${reason}`;
     else if (state === 'wrapping' && wrap.step) title = `Wrapping (${wrap.step})`;
     else if (state === 'failed') title = launchFailureMessage;
-    return { state, glyph: MEMBER_STATES[state].glyph, title, medusa, engine };
+    // #3205/#3215 R3: the raw signal `state` alone cannot carry — `sh`
+    // (sessionHealth) can push `state` to 'attention' from a CRASHED or
+    // left-work LAST session even when there is no current one at all
+    // (`live` false), so excluding every 'attention' row from Start was
+    // over-broad: it also blocked the exact case Start/Retry exists for.
+    return { state, glyph: MEMBER_STATES[state].glyph, title, medusa, engine, sessionActive: live };
   }
 
   /** The Medusa link symbol's title, by state. */
@@ -8514,7 +8539,7 @@
                 if (!m.seatId) return false;
                 const row = projectRows.get(String(m.seatId));
                 const info = row ? memberIndicators(row, engineHealth) : null;
-                return !info || !MEMBER_ALREADY_ACTIVE_STATES.includes(info.state);
+                return _memberCanStart(info);
               }).map((m) => m.role);
               // #3215 R2: stashed for `startFleet`'s own fallback — the
               // real production wiring (`public/ui.js`'s
