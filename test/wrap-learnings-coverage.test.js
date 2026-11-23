@@ -125,11 +125,16 @@ describe('learnings-coverage.evaluate', () => {
     /**
      * Where `_managedFallbackPath` resolves for this test's own `root`
      * fixture, under a scratch `managedWorkspacesDir` rather than the real
-     * `~/.tangleclaw/workspaces`.
+     * `~/.tangleclaw/workspaces`. `store: null` is the EXPLICIT opt-out
+     * from the canonical-name lookup (PRR-A R-Gate R4, PR #3239):
+     * omitting `store` entirely would default to the REAL `../store`,
+     * which — uninitialized in this test file — throws and (correctly,
+     * since R4) fails CLOSED rather than falling back to the basename
+     * these tests actually want to exercise.
      * @returns {string}
      */
     function fallbackDeps() {
-      return { managedWorkspacesDir: managedRoot };
+      return { managedWorkspacesDir: managedRoot, store: null };
     }
 
     function writeFallback(content, mtimeMs) {
@@ -262,10 +267,30 @@ describe('learnings-coverage.evaluate', () => {
       // `evaluate(projectPath, paths, scope)` with NO 4th argument at all —
       // `deps.store` is always `undefined` there, so `_resolveProjectName`
       // must default to the REAL `../store` in that case, not stay inert.
-      it('_resolveProjectName: deps.store omitted entirely (undefined, not null) defaults to the REAL store', () => {
-        const unregisteredPath = `/tmp/tc-learnings-coverage-never-registered-${Date.now()}`;
-        // No `store` key at all — distinct from `{ store: null }` above.
-        assert.equal(coverage._resolveProjectName(unregisteredPath, {}), null, 'the real store has no project at this path, so this still falls through to null');
+      // Needs a genuinely INITIALIZED real store (unlike every other test
+      // in this file, which passes `store: null` to opt out): an
+      // uninitialized store throws on `getByPath`, which — correctly,
+      // since R4 — reads as `LOOKUP_FAILED`, not the "confirmed
+      // unregistered" `null` this test means to verify.
+      describe('deps.store omitted entirely (undefined, not null) defaults to the REAL, initialized store', () => {
+        let tmpDir;
+
+        before(() => {
+          tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-learnings-cov-realstore-default-'));
+          store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+          store.init();
+        });
+
+        after(() => {
+          store.close();
+          fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('resolves null (confirmed unregistered), not LOOKUP_FAILED, for a path the real store genuinely has no project at', () => {
+          const unregisteredPath = `/tmp/tc-learnings-coverage-never-registered-${Date.now()}`;
+          // No `store` key at all — distinct from `{ store: null }` above.
+          assert.equal(coverage._resolveProjectName(unregisteredPath, {}), null, 'the real store looked and found nothing — confirmed unregistered, safe to fall back to basename');
+        });
       });
 
       it('_managedFallbackCandidatePaths: the canonical name is the ONLY candidate once resolved — basename is never also checked', () => {
@@ -280,6 +305,45 @@ describe('learnings-coverage.evaluate', () => {
           managedWorkspacesDir: '/mw', store: null
         });
         assert.deepEqual(paths, [path.join('/mw', 'checkout-dir', REL)]);
+      });
+
+      // PRR-A R-Gate R4 (PR #3239): a THROWING lookup is NOT the same as a
+      // confirmed-absent one — falling back to the basename on a thrown
+      // error would re-open the exact cross-project leak risk BLOCKING 2
+      // closed, since a thrown lookup tells us nothing about whether a
+      // DIFFERENT project is registered under this checkout's basename.
+      it('_resolveProjectName: a THROWING store lookup resolves LOOKUP_FAILED, never null', () => {
+        const name = coverage._resolveProjectName('/Users/x/Documents/Projects/checkout-dir', {
+          store: { projects: { getByPath: () => { throw new Error('store closed'); } } }
+        });
+        assert.notEqual(name, null);
+        assert.equal(typeof name, 'symbol');
+      });
+
+      it('_managedFallbackCandidatePaths: fails CLOSED (no candidate at all) when the store lookup throws — never guesses the basename', () => {
+        const paths = coverage._managedFallbackCandidatePaths('/Users/x/Documents/Projects/checkout-dir', REL, {
+          managedWorkspacesDir: '/mw',
+          store: { projects: { getByPath: () => { throw new Error('store closed'); } } }
+        });
+        assert.deepEqual(paths, []);
+      });
+
+      it('evaluate(): a throwing store lookup never reads or mirrors an unrelated basename-matching fallback file', () => {
+        // An unrelated file sitting at exactly the basename-derived
+        // managed path — belongs to whatever OTHER project happens to
+        // share this checkout's basename, and must never be read for
+        // THIS project when the canonical lookup itself failed.
+        const unrelatedAbs = path.join(managedRoot, path.basename(root), REL);
+        fs.mkdirSync(path.dirname(unrelatedAbs), { recursive: true });
+        fs.writeFileSync(unrelatedAbs, `# Learnings\n\n## ${today} — belongs to a DIFFERENT project entirely\nBody.\n`);
+
+        const throwingDeps = {
+          managedWorkspacesDir: managedRoot,
+          store: { projects: { getByPath: () => { throw new Error('store closed'); } } }
+        };
+        const r = coverage.evaluate(root, [REL], { startedAtMs }, throwingDeps);
+        assert.equal(r.verdict, 'uncovered', 'the unrelated basename-matching file must never be read as this project\'s own coverage');
+        assert.doesNotMatch(r.reason, /managed workspace fallback/, 'no managed-fallback candidate was even attempted');
       });
 
       it('_managedFallbackCandidatePaths: a single candidate when the canonical name and the basename agree', () => {
