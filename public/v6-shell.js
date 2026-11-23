@@ -8306,6 +8306,15 @@
     // it may hold watches the CURRENT #v6ChatStream node, a brand new DOM
     // node each time (`render` is a full `root.innerHTML = …` replace).
     let chatScrollCoordinator = null;
+    // #3206/#3209 R4: this render's own bound `tcV6CreateAnimatedEllipsisController`
+    // handles (Car V6510-W1-D, public/api-helper.js) — stopped and replaced
+    // every time `wireEllipsisLoaders` runs again (every render, via
+    // `wireControls`), same reason as `chatScrollCoordinator` above: each
+    // controller's own interval timer ticks against the CURRENT DOM node it
+    // mounted into, a brand new one every render (`render` is a full
+    // `root.innerHTML = …` replace) — a controller left running from the
+    // PREVIOUS render would keep ticking against a now-detached node forever.
+    let ellipsisControllers = [];
     const raf = typeof options.requestAnimationFrame === 'function' ? options.requestAnimationFrame
       : (win && typeof win.requestAnimationFrame === 'function' ? (fn) => win.requestAnimationFrame(fn) : null);
     // #3106/#3152: persist the composer's and Under the Hood's own
@@ -8330,7 +8339,40 @@
       return win && win.location ? win.location.hash : '';
     }
 
+    /**
+     * (Re)bind `tcV6CreateAnimatedEllipsisController` (Car V6510-W1-D,
+     * public/api-helper.js) to every currently-mounted shared-helper
+     * ellipsis indicator (#3206/#3209 R4). `v6EllipsisLoadingMarkup`'s
+     * delegated path renders `tcV6AnimatedEllipsisMarkup`'s STATIC markup
+     * only (its own `data-v6-loading-stem` attribute is what tells it apart
+     * from this file's own CSS-driven `.v6-chat-activity-dots` fallback,
+     * which carries no such attribute and needs no JS binding at all — its
+     * animation is pure CSS) — the 1/2/3-dot CYCLE only exists once a
+     * controller is actually mounted on top of it, since PR #3241's own
+     * `.v6-loading-ellipsis` CSS is deliberately layout-only (see that
+     * car's own comment in `public/style.css`). Every PREVIOUS render's
+     * controllers are stopped first: `root.innerHTML` just replaced the
+     * nodes they were ticking against, but a controller's own
+     * `setInterval` never stops itself just because its DOM target was
+     * removed.
+     * @returns {void}
+     */
+    function wireEllipsisLoaders() {
+      ellipsisControllers.forEach((c) => { if (c && typeof c.stop === 'function') c.stop(); });
+      ellipsisControllers = [];
+      if (typeof global.tcV6CreateAnimatedEllipsisController !== 'function') return;
+      if (!root || typeof root.querySelectorAll !== 'function') return;
+      root.querySelectorAll('.v6-loading-indicator').forEach((el) => {
+        if (typeof el.getAttribute !== 'function' || el.getAttribute('data-v6-loading-stem') === null) return;
+        const containerEl = el.parentNode;
+        if (!containerEl) return;
+        const label = el.getAttribute('data-v6-loading-stem') || '';
+        ellipsisControllers.push(global.tcV6CreateAnimatedEllipsisController({ doc, containerEl, label, win }));
+      });
+    }
+
     function wireControls() {
+      wireEllipsisLoaders();
       wireWorkspaceModes();
       if (workspaceVisibility(workspaceMode, Boolean(detail && detail.kind === 'conversation')).panel) wireWorkspacePanel(workspaceMode);
       const skipLink = doc.getElementById('v6ShellSkipLink');

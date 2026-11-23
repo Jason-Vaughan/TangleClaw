@@ -18,7 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
+const { makeDocument, makeElement, withIdParsingInnerHTML } = require('./_mini-dom');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'v6-shell.js'), 'utf8');
 
@@ -9373,6 +9373,119 @@ describe('tcV6EllipsisLoadingMarkup — context-specific animated loading indica
     assert.equal(typeof G.tcV6AnimatedEllipsisMarkup, 'undefined', 'the shared helper really is absent in this sandbox');
     const html = G.tcV6EllipsisLoadingMarkup('Loading chat');
     assert.doesNotMatch(html, /fake-shared-ellipsis/);
+  });
+});
+
+// #3206/#3209 R4 — binding tcV6CreateAnimatedEllipsisController (Car
+// V6510-W1-D) to a mounted shared-helper ellipsis indicator, with
+// cleanup on re-render. A full tcCreateV6Shell mount, not just the
+// standalone markup function — the controller only matters once
+// something has actually MOUNTED the markup into a live DOM.
+describe('wireEllipsisLoaders — binding the shared animated-ellipsis controller (#3206/#3209 R4)', () => {
+  /** loadV6Shell, but with fake tcV6* globals pre-set BEFORE the module runs. */
+  function loadV6ShellWithSharedHelpers(fakes) {
+    const sandbox = { console };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    Object.assign(sandbox, fakes);
+    vm.createContext(sandbox);
+    vm.runInContext(SRC, sandbox);
+    return sandbox;
+  }
+
+  /** A fake tcV6AnimatedEllipsisMarkup that carries data-v6-loading-stem, same as the real helper. */
+  function fakeAnimatedEllipsisMarkup(label) {
+    return `<span class="v6-loading-indicator" data-v6-loading-stem="${label}" data-v6-loading-state="loading">${label}</span>`;
+  }
+
+  /**
+   * withIdParsingInnerHTML, extended to ALSO build a real, class-and-
+   * attribute-queryable child node for each `.v6-loading-indicator` the
+   * rendered markup string contains. The shared stub's own `innerHTML`
+   * setter only ever recognizes `id="..."` markers (all production code
+   * elsewhere needs) — `wireEllipsisLoaders` is the first thing here that
+   * finds an element by CLASS instead, so this test file extends it
+   * locally rather than widening the shared stub for one caller.
+   */
+  function withEllipsisParsingInnerHTML(el, doc) {
+    withIdParsingInnerHTML(el, doc);
+    const idDescriptor = Object.getOwnPropertyDescriptor(el, 'innerHTML');
+    Object.defineProperty(el, 'innerHTML', {
+      configurable: true,
+      get: idDescriptor.get,
+      set(v) {
+        idDescriptor.set.call(el, v);
+        const re = /<span class="v6-loading-indicator" data-v6-loading-stem="([^"]*)"[^>]*>/g;
+        let m;
+        while ((m = re.exec(String(v))) !== null) {
+          const node = makeElement('span', doc);
+          node.className = 'v6-loading-indicator';
+          node.setAttribute('data-v6-loading-stem', m[1]);
+          el.appendChild(node);
+        }
+      }
+    });
+    return el;
+  }
+
+  function mountWithFakeController() {
+    const calls = [];
+    const Gd = loadV6ShellWithSharedHelpers({
+      tcV6AnimatedEllipsisMarkup: fakeAnimatedEllipsisMarkup,
+      tcV6CreateAnimatedEllipsisController: (opts) => {
+        const stopped = { value: false };
+        calls.push({ opts, stopped });
+        return { setLabel() {}, stop() { stopped.value = true; }, fail() {} };
+      }
+    });
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withEllipsisParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('#/projects/tc-lane');
+    const shell = Gd.tcCreateV6Shell(doc, { root, window: win, storage: null });
+    return { shell, doc, root, calls };
+  }
+
+  it('binds a controller to a mounted shared-helper ellipsis indicator', () => {
+    const { shell, calls } = mountWithFakeController();
+    shell.setDetail({ kind: 'loading', label: 'Loading chat' });
+    assert.equal(calls.length, 1, 'exactly one controller bound for the one mounted indicator');
+    assert.equal(calls[0].opts.label, 'Loading chat');
+    assert.equal(calls[0].stopped.value, false);
+  });
+
+  it('stops the PREVIOUS render\'s controller before binding a new one on re-render', () => {
+    const { shell, calls } = mountWithFakeController();
+    shell.setDetail({ kind: 'loading', label: 'Loading chat' });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].stopped.value, false);
+    shell.setDetail({ kind: 'loading', label: 'Loading settings' });
+    assert.equal(calls[0].stopped.value, true, 'the first render\'s controller is stopped once the DOM it ticked against is replaced');
+    assert.equal(calls.length, 2, 'a second controller is bound for the new render');
+    assert.equal(calls[1].opts.label, 'Loading settings');
+    assert.equal(calls[1].stopped.value, false);
+  });
+
+  it('stops every bound controller once the route no longer shows any ellipsis indicator at all', () => {
+    const { shell, calls } = mountWithFakeController();
+    shell.setDetail({ kind: 'loading', label: 'Loading chat' });
+    assert.equal(calls.length, 1);
+    shell.setDetail(null);
+    assert.equal(calls[0].stopped.value, true, 'no ellipsis indicator remains, so the stale controller must still be stopped');
+    assert.equal(calls.length, 1, 'nothing new to bind — no indicator is mounted');
+  });
+
+  it('never attempts to bind when the shared controller helper is not loaded', () => {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('#/projects/tc-lane');
+    const shell = loadV6Shell().tcCreateV6Shell(doc, { root, window: win, storage: null });
+    // No crash, and this file's own CSS-driven fallback markup renders instead.
+    shell.setDetail({ kind: 'loading', label: 'Loading chat' });
+    assert.match(root.innerHTML, /v6-chat-activity-dots/);
   });
 });
 
