@@ -10308,6 +10308,19 @@ describe('Car V659-W1-B: centered offline startup hero (#3203)', () => {
     assert.match(m.root.innerHTML, /id="v6ChatEditPropertiesHero"/);
   });
 
+  it('aligns with sibling Car V659-W1-C\'s CSS (#3203 R4): a .v6-chat-offline-hero-card wrapper, .v6-chat-offline-hero-title on the heading, and is-starting on the OUTER hero while launching', async () => {
+    const m = mountHero();
+    await m.settle();
+    assert.match(m.root.innerHTML, /<div class="v6-chat-offline-hero" role="status"[^>]*>\s*<div class="v6-chat-offline-hero-card">/, 'the card must be the hero\'s direct child, where the CSS centers it');
+    assert.match(m.root.innerHTML, /<h2 class="v6-chat-offline-hero-heading v6-chat-offline-hero-title">/);
+    assert.doesNotMatch(m.root.innerHTML, /class="v6-chat-offline-hero is-starting"/, 'not starting at rest');
+    m.doc.getElementById('v6ChatStartHero').dispatch('click');
+    // Synchronous up to startSession's first await: the "starting" render
+    // already landed before settle() ever runs the apiMutate microtask.
+    assert.match(m.root.innerHTML, /class="v6-chat-offline-hero is-starting"/, 'is-starting must be on the outer hero, where PR #3226\'s spinner selector targets it');
+    await m.settle();
+  });
+
   it('Start Session from the hero launches it, the same real action the header\'s own Start button triggers', async () => {
     const m = mountHero();
     await m.settle();

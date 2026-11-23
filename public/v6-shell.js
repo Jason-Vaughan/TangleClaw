@@ -2128,12 +2128,20 @@
             data-action="view-offline-history">🕓 View Previous Conversation</button>
           ${editButton}
         </div>`;
-    return `<div class="v6-chat-offline-hero" role="status" aria-label="${escapeHtml(name)} is offline">
-      <h2 class="v6-chat-offline-hero-heading">${escapeHtml(name)} is offline
-        <span class="v6-chat-offline-hero-pill ${pillClass}">${escapeHtml(pillLabel)}</span>
-      </h2>
-      <p class="v6-chat-offline-hero-subtitle">This session is not running. Start it to resume your workspace, or inspect its previous conversation and settings.</p>
-      ${actions}
+    // #3203 R4: aligned with sibling Car V659-W1-C's CSS (PR #3226,
+    // public/style.css) -- `.v6-chat-offline-hero` is the outer centering
+    // flex container, `is-starting` on IT (not only the pill) is what its
+    // `.is-starting .v6-chat-offline-hero-title::after` spinner selector
+    // targets, and `.v6-chat-offline-hero-card` is the column card that
+    // CSS centers inside it.
+    return `<div class="v6-chat-offline-hero${starting ? ' is-starting' : ''}" role="status" aria-label="${escapeHtml(name)} is offline">
+      <div class="v6-chat-offline-hero-card">
+        <h2 class="v6-chat-offline-hero-heading v6-chat-offline-hero-title">${escapeHtml(name)} is offline
+          <span class="v6-chat-offline-hero-pill ${pillClass}">${escapeHtml(pillLabel)}</span>
+        </h2>
+        <p class="v6-chat-offline-hero-subtitle">This session is not running. Start it to resume your workspace, or inspect its previous conversation and settings.</p>
+        ${actions}
+      </div>
     </div>`;
   }
 
