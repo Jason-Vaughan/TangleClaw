@@ -477,6 +477,57 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
       assert.match(masterSection, /document\.getElementById\('masterPanelUploadInput'\)/);
     });
 
+    // #3218 R-Gate R6 BLOCKING 1 — _partitionMasterTerminalDelta's own
+    // check-order fix, exercised DIRECTLY with a 2-turn array. The live
+    // app never actually calls it with more than one turn any more (the
+    // serialized send queue guarantees _masterActiveTurns never exceeds
+    // length 1 — see _dispatchNextQueuedMasterSend's own doc), but the
+    // function is still a general-purpose utility whose own correctness
+    // for a multi-turn input is worth pinning directly, independent of
+    // whether today's only caller happens to exercise that branch.
+    describe('_partitionMasterTerminalDelta — direct, multi-turn (#3218 R-Gate R6 BLOCKING 1)', () => {
+      /** Built lazily (not at describe-registration time, before the outer before() hook has read `js`). */
+      function partition(delta, turns) {
+        return new Function(`
+          ${liftDeclaration(js, 'function isMasterTerminalEchoLine(')}
+          ${liftDeclaration(js, 'function _partitionMasterTerminalDelta(')}
+          return _partitionMasterTerminalDelta;
+        `)()(delta, turns);
+      }
+
+      it('two turns with DIFFERENT sentText partition correctly', () => {
+        const turns = [{ sentText: 'first' }, { sentText: 'second' }];
+        const buckets = partition(['first', 'first-reply', 'second', 'second-reply'], turns);
+        assert.deepEqual(buckets, [['first-reply'], ['second-reply']]);
+      });
+
+      it('two turns with the SAME sentText still partition correctly — R5\'s bug checked the NEXT turn\'s echo before confirming the CURRENT turn\'s own echo was consumed', () => {
+        const turns = [{ sentText: 'status' }, { sentText: 'status' }];
+        const buckets = partition(['status', 'first-reply', 'status', 'second-reply'], turns);
+        assert.deepEqual(buckets, [['first-reply'], ['second-reply']],
+          'turn 1 must get its own reply and echo consumed BEFORE the identical "status" line is ever considered turn 2\'s echo');
+      });
+
+      // Documents a genuine, UNRESOLVED residual limitation at this
+      // function's own level: a line identical to the NEXT turn's
+      // sentText is indistinguishable from that turn's real echo once
+      // the CURRENT turn's own echo has already been consumed — a raw
+      // line buffer carries no sequence metadata telling "reply" apart
+      // from "echo" beyond text equality. This is exactly why the live
+      // app never actually calls this function with more than one turn
+      // any more (R6 BLOCKING 1's OTHER half): the serialized send queue
+      // (_dispatchNextQueuedMasterSend) never pastes a second turn's text
+      // into the terminal until the first has fully retired, so this
+      // ambiguity never arises in practice, even though fixing the check
+      // ORDER alone cannot make it vanish at the function level.
+      it('a turn\'s own reply line identical to the NEXT turn\'s sentText IS still mistaken for that turn\'s echo — a known, documented limit of this function alone', () => {
+        const turns = [{ sentText: 'foo' }, { sentText: 'bar' }];
+        const buckets = partition(['foo', 'bar', 'bar', 'bar-reply'], turns);
+        assert.deepEqual(buckets, [[], ['bar', 'bar-reply']],
+          'the ambiguity is real at this level; only the serialized send queue upstream prevents it from ever mattering');
+      });
+    });
+
     // #3218 R-Gate R2 BLOCKING 3: a behavioral run of the whole send/readback
     // path against a DOM harness + a fake xterm `term`, not a source regex —
     // the dispatch's own ask. `.v6-conversation-event.is-user`/`is-assistant`
@@ -514,6 +565,7 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         const sandbox = new Function('document', `
           ${liftDeclaration(js, 'function appendMasterChatTurn(')}
           ${liftDeclaration(js, 'function readMasterTerminalSnapshot(')}
+          let _masterSendQueue = [];
           let _masterActiveTurns = [];
           let _masterActiveBaseline = [];
           let _masterActiveDispose = null;
@@ -521,6 +573,7 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
           ${liftDeclaration(js, 'function isMasterTerminalEchoLine(')}
           ${liftDeclaration(js, 'function _partitionMasterTerminalDelta(')}
           ${liftDeclaration(js, 'function syncMasterAssistantTurnsFromTerminal(')}
+          ${liftDeclaration(js, 'function _dispatchNextQueuedMasterSend(')}
           ${liftDeclaration(js, 'async function sendMasterChatMessage(')}
           ${liftDeclaration(js, 'function addMasterChatWorkspace(')}
           return { addMasterChatWorkspace, sendMasterChatMessage };
@@ -605,11 +658,17 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
 
         input.value = 'first';
         await sandbox.sendMasterChatMessage();
-        // turn 1's reply lands before the operator sends a second message.
+        // turn 1's reply lands, and the real terminal's own write event
+        // fires for it (#3218 R-Gate R6: a real terminal can't put bytes
+        // into the buffer without ALSO firing the write event that notifies
+        // this), before the operator sends a second message.
         term.setLines(['$ ', 'first', 'first-reply']);
+        term.fireWrite();
+        // A second, quiet write (no new lines) idle-settles turn 1,
+        // retiring it and dispatching turn 2 to the terminal for real.
+        term.fireWrite();
 
         input.value = 'second';
-        // Must finalize turn 1 (using turn 1's own beforeLines/sentText) before starting turn 2.
         await sandbox.sendMasterChatMessage();
         term.setLines(['$ ', 'first', 'first-reply', 'second', 'second-reply']);
         term.fireWrite();
@@ -621,28 +680,29 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'second-reply');
       });
 
-      // #3218 R-Gate R5 BLOCKING 1 — the delayed-overlapping-sends repro:
-      // BOTH sends happen while the terminal buffer is still at its
-      // original baseline, before either turn's echo (let alone reply)
-      // has arrived. R4's model disposed turn 1's listener the moment turn
-      // 2 was sent, so when the buffer finally emitted everything in one
-      // batch, only turn 2's listener fired and turn 1's reply fell
-      // straight into turn 2's bubble, unstripped, with turn 1 getting no
-      // bubble of its own at all.
-      it('g) two sends before ANY output arrives still land in two separate bubbles once the buffer catches up', async () => {
+      // #3218 R-Gate R6 BLOCKING 1 — the delayed-overlapping-sends repro,
+      // updated for the serialized-queue model: a send made while another
+      // is still in flight queues rather than pasting into the terminal
+      // immediately, so there is never more than one turn's text actually
+      // sitting in the terminal's own input stream unresolved at once.
+      it('g) two sends before ANY output arrives still land in two separate bubbles, the second dispatched only once the first retires', async () => {
         const term = makeFakeTerm(['$ ']);
         const { doc, sandbox } = mountChatWorkspace(term);
         const input = doc.getElementById('masterChatInput');
 
         input.value = 'first';
         await sandbox.sendMasterChatMessage();
-        // No term.setLines() call here — the buffer is still exactly ['$ ']
-        // when the second send happens, same as the repro.
-
+        // The operator sends a second message before ANY output has
+        // arrived for the first — it queues rather than pasting immediately.
         input.value = 'second';
         await sandbox.sendMasterChatMessage();
+        assert.deepEqual(term.pasted, ['first\r'], 'the second send has not reached the terminal yet');
 
-        // Only now does the pty emit both turns' echoes and replies together.
+        term.setLines(['$ ', 'first', 'first-reply']);
+        term.fireWrite();
+        term.fireWrite(); // idle settle: turn 1 retires, turn 2 is dispatched for real
+        assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'turn 2 only reaches the terminal once turn 1 retires');
+
         term.setLines(['$ ', 'first', 'first-reply', 'second', 'second-reply']);
         term.fireWrite();
 
@@ -664,6 +724,17 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         await sandbox.sendMasterChatMessage();
         input.value = 'three';
         await sandbox.sendMasterChatMessage();
+        assert.deepEqual(term.pasted, ['one\r'], 'two and three are queued, not yet pasted');
+
+        term.setLines(['$ ', 'one', 'one-reply']);
+        term.fireWrite();
+        term.fireWrite(); // retires "one", dispatches "two"
+        assert.deepEqual(term.pasted, ['one\r', 'two\r']);
+
+        term.setLines(['$ ', 'one', 'one-reply', 'two', 'two-reply']);
+        term.fireWrite();
+        term.fireWrite(); // retires "two", dispatches "three"
+        assert.deepEqual(term.pasted, ['one\r', 'two\r', 'three\r']);
 
         term.setLines(['$ ', 'one', 'one-reply', 'two', 'two-reply', 'three', 'three-reply']);
         term.fireWrite();
@@ -674,6 +745,109 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'one-reply');
         assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'two-reply');
         assert.equal(assistantTurns[2].querySelector('.v6-conversation-content').text, 'three-reply');
+      });
+
+      // #3218 R-Gate R6 BLOCKING 1 — the exact repro named in the dispatch:
+      // two back-to-back IDENTICAL commands. R5's partition order checked
+      // the NEXT turn's echo before confirming the CURRENT turn's own echo
+      // had even been consumed, so the first "status" (turn 1's own echo)
+      // was mistaken for turn 2's, skipping turn 1's echo consumption
+      // entirely. Also exercises the serialized queue: turn 2's identical
+      // "status" is never pasted until turn 1 retires, so there is no
+      // actual overlap in the terminal stream for the fixed check order to
+      // even need to resolve.
+      it('i) two back-to-back IDENTICAL commands still produce two separate, correctly attributed bubbles', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'status';
+        await sandbox.sendMasterChatMessage();
+        term.setLines(['$ ', 'status', 'first-reply']);
+        term.fireWrite();
+        term.fireWrite(); // idle settle: retires turn 1, dispatches turn 2
+
+        input.value = 'status';
+        await sandbox.sendMasterChatMessage();
+        term.setLines(['$ ', 'status', 'first-reply', 'status', 'second-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 2);
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply');
+        assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'second-reply');
+      });
+
+      // #3218 R-Gate R6 — the named architectural ambiguity: turn 1's own
+      // reply text happens to read EXACTLY the same as turn 2's about-to-
+      // be-sent command. A raw PTY stream genuinely cannot tell these
+      // apart if both turns were ever live in it at once; the serialized
+      // queue sidesteps the ambiguity by construction instead — turn 2's
+      // "bar" is never pasted until turn 1 (whose own reply happens to
+      // read "bar") has already retired, so there is only ever one turn's
+      // text in the stream to interpret at any moment.
+      it('j) turn 1\'s reply text equal to turn 2\'s command text is never cross-attributed', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'foo';
+        await sandbox.sendMasterChatMessage();
+        term.setLines(['$ ', 'foo', 'bar']);
+        term.fireWrite();
+        term.fireWrite(); // idle settle: retires turn 1 before turn 2 is ever sent
+
+        input.value = 'bar';
+        await sandbox.sendMasterChatMessage();
+        term.setLines(['$ ', 'foo', 'bar', 'bar', 'bar-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 2);
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'bar',
+          'turn 1\'s own reply, unaffected by turn 2\'s later identical command text');
+        assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'bar-reply');
+      });
+
+      // #3218 R-Gate R6 BLOCKING 2 — turn retirement, baseline advancement
+      // and listener disposal: the shared listener must not keep listening
+      // forever once the conversation goes idle with nothing queued, and a
+      // LATER send must take a fresh baseline rather than reuse a stale one
+      // left over from a retired turn (what actually bounds memory and
+      // protects a later turn's delta from scrollback rollover corrupting
+      // it, since a retired turn's lines are baked into history and never
+      // recomputed again).
+      it('k) a retired turn disposes the shared listener; a later send re-arms it with a FRESH baseline', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'first';
+        await sandbox.sendMasterChatMessage();
+        assert.equal(term._hooks.length, 1, 'the first send arms the shared listener');
+        term.setLines(['$ ', 'first', 'first-reply']);
+        term.fireWrite();
+        term.fireWrite(); // idle settle: turn 1 retires; queue is empty, so the listener disposes
+        assert.equal(term._hooks.length, 0, 'the shared listener disposes once idle with nothing queued');
+
+        // The buffer changes shape entirely while nothing is listening —
+        // scrollback rollover, or simply time passing.
+        term.setLines(['$ ']);
+
+        input.value = 'second';
+        await sandbox.sendMasterChatMessage();
+        assert.equal(term._hooks.length, 1, 'a new send re-arms a fresh listener');
+        term.setLines(['$ ', 'second', 'second-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 2);
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply');
+        assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'second-reply',
+          'the second turn\'s content came from the buffer AT SEND TIME, not a stale baseline left over from turn 1');
       });
     });
   });

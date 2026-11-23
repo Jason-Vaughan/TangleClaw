@@ -8376,33 +8376,53 @@ function readMasterTerminalSnapshot(term) {
 }
 
 /**
- * The FIFO queue of in-flight sends (#3218 R-Gate R5 BLOCKING 1) — every
- * send stays queued here, sharing ONE listener and ONE baseline, rather
- * than R4's model of disposing the previous turn's listener and replacing
- * it outright on the next send. That was exactly the bug: two sends before
- * ANY output had arrived left turn 1 with no listener left to catch its
- * own reply, so when the pty's buffer finally emitted both turns' echoes
- * and replies together, only turn 2's (sole remaining) listener fired, its
- * echo check never matched turn 1's sent text, and turn 1's reply landed
- * unstripped inside turn 2's bubble while turn 1 got none at all.
- * @type {{sentText: string, assistantTurnEl: (object|null)}[]}
+ * Outbound sends queued here, never pasted into the terminal immediately
+ * (#3218 R-Gate R6 BLOCKING 1) — R5's model pasted every send the moment
+ * the operator made it, sharing one listener across however many turns
+ * were simultaneously in flight. That left a genuine ambiguity a raw,
+ * undifferentiated PTY stream cannot resolve: a line that happens to read
+ * the same text as the NEXT queued turn's own sent text is indistinguishable
+ * from that turn's real echo, whether it's a REPEATED identical command
+ * ("status" twice) or turn 1's reply text just happening to read the same
+ * as turn 2's about-to-be-sent command. The only way to remove that
+ * ambiguity by construction, rather than guess harder at it, is to never
+ * have more than one turn's text sitting in the terminal's own input
+ * stream unresolved at a time — so a send made while another is still
+ * active queues here instead, and {@link _dispatchNextQueuedMasterSend}
+ * pastes it for real only once the turn ahead of it has retired.
+ * @type {string[]}
+ */
+let _masterSendQueue = [];
+
+/**
+ * The turn currently in flight — at most one entry, by construction of
+ * the serialized queue above (kept as an array only because {@link
+ * _partitionMasterTerminalDelta} already has this shape; never expect
+ * more than one here).
+ * @type {{sentText: string, assistantTurnEl: (object|null), _lastBucketLen: number}[]}
  */
 let _masterActiveTurns = [];
 
 /**
- * The snapshot taken right before the FIRST still-queued turn was sent —
- * shared across the whole queue, never per-turn, so {@link
- * syncMasterAssistantTurnsFromTerminal}'s delta always spans every turn
- * still waiting on a reply, not just the most recent one.
+ * The snapshot taken right before the active turn's own `paste`/`input`
+ * call — advanced forward (#3218 R-Gate R6 BLOCKING 2) only when that
+ * turn RETIRES, never on every sync, so a still-active turn's own delta
+ * keeps being recomputed from scratch against the SAME fixed point (each
+ * sync's bucket is the turn's full reply-so-far, safe to overwrite the
+ * bubble's `textContent` with) — but a retired turn's lines are baked
+ * into history and never recomputed again, which is what actually bounds
+ * memory and keeps a later turn's delta from ever being corrupted by an
+ * earlier one's content if the pty's scrollback later rolls over it.
  * @type {string[]}
  */
 let _masterActiveBaseline = [];
 
 /**
- * The shared listener's own `dispose()`, armed only while {@link
- * _masterActiveTurns} is non-empty — one subscription for the whole queue,
- * armed when the queue goes from empty to non-empty, never re-armed (and
- * never disposed) just because another send joins an already-active queue.
+ * The shared listener's own `dispose()` — armed on first dispatch, and
+ * disposed once BOTH {@link _masterActiveTurns} and {@link
+ * _masterSendQueue} are empty, so nothing keeps listening once the
+ * conversation goes fully idle; a later send re-arms a fresh one rather
+ * than reusing anything left over.
  * @type {Function|null}
  */
 let _masterActiveDispose = null;
@@ -8453,15 +8473,21 @@ function isMasterTerminalEchoLine(line, sentText) {
 
 /**
  * Partition one shared delta of new terminal lines across every queued
- * turn, in order (#3218 R-Gate R5 BLOCKING 1). Walks the delta with a
- * single "currently receiving" pointer: a line that echoes the NEXT
- * queued turn's `sentText` (and that turn's own echo has not already been
- * consumed) advances the pointer and is dropped as that turn's echo; a
- * line that echoes the CURRENT turn's `sentText` (not yet consumed) is
- * dropped the same way; everything else is appended to whichever turn is
- * currently receiving. Re-derived from the full shared delta on every
- * call (never accumulated), so re-running it as more output streams in is
- * naturally idempotent — the same replay just lands on the same buckets.
+ * turn, in order (#3218 R-Gate R5 BLOCKING 1, R6 BLOCKING 1). Walks the
+ * delta with a single "currently receiving" pointer: a line is checked
+ * against the CURRENT turn's own echo FIRST — if that echo has not been
+ * consumed yet, THIS line is it, full stop, regardless of what it reads
+ * like. Only once the current turn's echo is already consumed does a
+ * line get checked against the NEXT queued turn's echo (advancing the
+ * pointer); everything else is appended to whichever turn is currently
+ * receiving. The order matters: checking the NEXT turn's echo before
+ * confirming the CURRENT one was already seen (R5's bug) mistook a
+ * repeated IDENTICAL command's own echo for the next turn's, skipping
+ * the current turn's echo consumption entirely and leaving it with no
+ * bubble while everything after landed in the wrong one. Re-derived from
+ * the full shared delta on every call (never accumulated), so re-running
+ * it as more output streams in is naturally idempotent — the same replay
+ * just lands on the same buckets.
  * @param {string[]} delta
  * @param {{sentText: string}[]} turns
  * @returns {string[][]} One bucket of lines per `turns` entry, same order.
@@ -8471,12 +8497,12 @@ function _partitionMasterTerminalDelta(delta, turns) {
   const echoed = turns.map(() => false);
   let idx = 0;
   for (const line of delta) {
-    if (idx + 1 < turns.length && !echoed[idx + 1] && isMasterTerminalEchoLine(line, turns[idx + 1].sentText)) {
-      idx += 1;
+    if (!echoed[idx] && isMasterTerminalEchoLine(line, turns[idx].sentText)) {
       echoed[idx] = true;
       continue;
     }
-    if (!echoed[idx] && isMasterTerminalEchoLine(line, turns[idx].sentText)) {
+    if (echoed[idx] && idx + 1 < turns.length && !echoed[idx + 1] && isMasterTerminalEchoLine(line, turns[idx + 1].sentText)) {
+      idx += 1;
       echoed[idx] = true;
       continue;
     }
@@ -8486,12 +8512,24 @@ function _partitionMasterTerminalDelta(delta, turns) {
 }
 
 /**
- * Diff the terminal's current output against {@link _masterActiveBaseline}
- * (shared across the whole queue), partition it across every entry in
- * {@link _masterActiveTurns}, and render (or update, as more output
- * streams in) each turn's OWN assistant bubble, created lazily on its
- * first reply line so a turn still waiting on a reply shows no bubble at
- * all (#3218 R-Gate R2/R4/R5).
+ * Diff the terminal's current output against {@link _masterActiveBaseline},
+ * partition it across every entry in {@link _masterActiveTurns} (at most
+ * one, by construction — see {@link _masterSendQueue}), and render each
+ * turn's OWN assistant bubble, created lazily on its first reply line so a
+ * turn still waiting on a reply shows no bubble at all (#3218 R-Gate
+ * R2/R4/R5).
+ *
+ * #3218 R-Gate R6 BLOCKING 2: once the OLDEST turn's own bucket has
+ * stopped GROWING across two consecutive syncs (its length is unchanged
+ * from the last call, having been non-zero at least once) it is
+ * considered idle-settled: retired from {@link _masterActiveTurns},
+ * {@link _masterActiveBaseline} advances past it for good, and whatever
+ * is next in {@link _masterSendQueue} gets dispatched for real.
+ * `delta.length` alone can't signal "no new content this round" — it's
+ * always recomputed fresh against the SAME fixed baseline, so it stays
+ * constant (not zero) for as long as a turn has replied at all, until
+ * something genuinely new appears; only comparing this round's bucket
+ * LENGTH against the previous round's actually detects a quiet round.
  * @param {object} term
  * @returns {void}
  */
@@ -8501,11 +8539,10 @@ function syncMasterAssistantTurnsFromTerminal(term) {
   const delta = _masterTerminalLineDelta(_masterActiveBaseline, now);
   const buckets = _partitionMasterTerminalDelta(delta, _masterActiveTurns);
   const stream = document.getElementById('masterChatStream');
-  if (!stream) return;
   let renderedAny = false;
   _masterActiveTurns.forEach((turn, i) => {
     if (buckets[i].length === 0) return;
-    if (!turn.assistantTurnEl) {
+    if (stream && !turn.assistantTurnEl) {
       const bubble = document.createElement('li');
       bubble.className = 'v6-conversation-event is-assistant';
       const content = document.createElement('span');
@@ -8514,10 +8551,68 @@ function syncMasterAssistantTurnsFromTerminal(term) {
       stream.appendChild(bubble);
       turn.assistantTurnEl = bubble;
     }
-    turn.assistantTurnEl.querySelector('.v6-conversation-content').textContent = buckets[i].join('\n');
+    if (turn.assistantTurnEl) turn.assistantTurnEl.querySelector('.v6-conversation-content').textContent = buckets[i].join('\n');
     renderedAny = true;
   });
-  if (renderedAny) stream.scrollTop = stream.scrollHeight;
+  if (renderedAny && stream) stream.scrollTop = stream.scrollHeight;
+
+  const oldest = _masterActiveTurns[0];
+  if (!oldest) return;
+  const oldestLen = buckets[0] ? buckets[0].length : 0;
+  const settled = oldestLen > 0 && oldestLen === oldest._lastBucketLen;
+  oldest._lastBucketLen = oldestLen;
+  if (settled) {
+    _masterActiveTurns.shift();
+    _masterActiveBaseline = now;
+    _dispatchNextQueuedMasterSend(term);
+  }
+}
+
+/**
+ * Paste the next queued send (if any) into the terminal for real, now that
+ * nothing is in flight — taking a FRESH baseline snapshot right before
+ * pasting (never a stale one left over from a retired turn, so a buffer
+ * that changed shape in between, scrollback rollover included, is never
+ * mistaken for new output belonging to this turn). Arms the shared
+ * listener on first use; disposes it once the queue is genuinely empty
+ * too, so nothing keeps listening once the conversation goes idle
+ * (#3218 R-Gate R6 BLOCKING 2).
+ * @param {object} term
+ * @returns {void}
+ */
+function _dispatchNextQueuedMasterSend(term) {
+  if (_masterActiveTurns.length > 0) return;
+  const text = _masterSendQueue.shift();
+  if (text === undefined) {
+    if (typeof _masterActiveDispose === 'function') _masterActiveDispose();
+    _masterActiveDispose = null;
+    return;
+  }
+  _masterActiveBaseline = readMasterTerminalSnapshot(term);
+  let delivered = false;
+  if (term) {
+    try {
+      if (typeof term.paste === 'function') { term.paste(`${text}\r`); delivered = true; }
+      else if (typeof term.input === 'function') { term.input(`${text}\r`); delivered = true; }
+    } catch (err) {
+      delivered = false;
+    }
+  }
+  if (!delivered) {
+    appendMasterChatTurn('assistant', 'Could not deliver that to the Admin-PM terminal — open Under the Hood and type it there directly.');
+    _dispatchNextQueuedMasterSend(term);
+    return;
+  }
+  _masterActiveTurns.push({ sentText: text, assistantTurnEl: null, _lastBucketLen: 0 });
+  syncMasterAssistantTurnsFromTerminal(term);
+  if (!_masterActiveDispose) {
+    const hook = term && typeof term.onWriteParsed === 'function' ? term.onWriteParsed.bind(term)
+      : term && typeof term.onRender === 'function' ? term.onRender.bind(term) : null;
+    if (hook) {
+      const disposable = hook(() => syncMasterAssistantTurnsFromTerminal(term));
+      _masterActiveDispose = disposable && typeof disposable.dispose === 'function' ? disposable.dispose.bind(disposable) : null;
+    }
+  }
 }
 
 /**
@@ -8537,10 +8632,11 @@ function syncMasterAssistantTurnsFromTerminal(term) {
  * `.input()` is a fallback for a build that wires it differently. The
  * reply readback listens via `term.onWriteParsed`/`term.onRender` (real
  * xterm.js Terminal events) — an event subscription, never a repeating
- * poll, shared by every send still queued in {@link _masterActiveTurns}
- * rather than re-subscribed per send (#3218 R-Gate R5 BLOCKING 1). None of
- * this is independently verified against a live ttyd session in this
- * environment — flagged in the PR.
+ * poll. A send made while another is still in flight queues rather than
+ * pasting immediately (#3218 R-Gate R6 BLOCKING 1 — see {@link
+ * _masterSendQueue}'s own doc for why). None of this is independently
+ * verified against a live ttyd session in this environment — flagged in
+ * the PR.
  * @returns {Promise<void>}
  */
 async function sendMasterChatMessage() {
@@ -8555,42 +8651,8 @@ async function sendMasterChatMessage() {
   const win = frame && frame.contentWindow;
   const term = win && (win.term || win.terminal);
 
-  // #3218 R-Gate R5 BLOCKING 1: join the shared queue rather than finalizing
-  // and disposing whatever send came before — two sends landing before
-  // ANY terminal output had arrived must BOTH still have a live listener
-  // when that output finally shows up. The baseline is only taken once,
-  // right before the FIRST still-queued turn's own paste/input call, when
-  // the queue goes from empty to non-empty; a send that joins an already-
-  // active queue reuses it, so the shared delta still spans every turn
-  // still waiting on a reply.
-  const joiningActiveQueue = _masterActiveTurns.length > 0;
-  if (!joiningActiveQueue) _masterActiveBaseline = readMasterTerminalSnapshot(term);
-
-  let delivered = false;
-  if (term) {
-    try {
-      if (typeof term.paste === 'function') { term.paste(`${text}\r`); delivered = true; }
-      else if (typeof term.input === 'function') { term.input(`${text}\r`); delivered = true; }
-    } catch (err) {
-      delivered = false;
-    }
-  }
-  if (!delivered) {
-    appendMasterChatTurn('assistant', 'Could not deliver that to the Admin-PM terminal — open Under the Hood and type it there directly.');
-    return;
-  }
-
-  const turn = { sentText: text, assistantTurnEl: null };
-  _masterActiveTurns.push(turn);
-  syncMasterAssistantTurnsFromTerminal(term);
-  if (!joiningActiveQueue) {
-    const hook = term && typeof term.onWriteParsed === 'function' ? term.onWriteParsed.bind(term)
-      : term && typeof term.onRender === 'function' ? term.onRender.bind(term) : null;
-    if (hook) {
-      const disposable = hook(() => syncMasterAssistantTurnsFromTerminal(term));
-      _masterActiveDispose = disposable && typeof disposable.dispose === 'function' ? disposable.dispose.bind(disposable) : null;
-    }
-  }
+  _masterSendQueue.push(text);
+  _dispatchNextQueuedMasterSend(term);
 }
 
 /**
