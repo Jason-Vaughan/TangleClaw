@@ -1,19 +1,28 @@
 # V6 Workspace Five-Tab Functional & UX Architecture Audit, and Design Backlog
 
+**SSOT Master Document Registry**: `V6_FIVE_TAB_UX_AUDIT_AND_BACKLOG`, document id
+`12a47503-e6bd-4058-9ba3-4bcc23978152`, group `TangleClaw-shared`
+(`a5c992b7-0565-4421-bca4-1c991d8712a5`) — verified against the live registry
+(`GET /api/shared-docs?groupId=...`) before citing it here, not copied from the dispatch
+unverified. Mirror path: `/Users/jasonvaughan/Documents/Projects/Shared/TangleClaw-Shared/v6-five-tab-ux-audit-and-backlog.md`.
+
 Car V6511-W1-A, Sprint v6.5.11 Wave 1. Implements Issue #3210 Deliverables 1 and 3 (Milestone
 #105 — v6.5.11). Deliverable 2, the `Sprint & Cars` Kanban/6-Gate layout consolidation this
 audit's Section 3 specifies, lands in sibling Cars V6511-W1-B and V6511-W1-C.
 
 Every function name, DOM id, route and CSS class cited below was read directly from
-`public/v6-shell.js`, `public/ui.js`, `public/sprint-wave-ui.js` and `public/style.css` on this
-car's base commit (`676f5ff5`) — nothing here is restated from the issue or a prior dispatch
-without independently checking it against the live source first. Two citations this audit was
-asked to make — `FleetPack v1alpha1` / Rulings A893 / A897 (#3194) in Section 2d, and Rule #285 /
-Rule #402 in Section 2c — name governance artifacts that exist in TangleClaw's own
-rules/rulings system, not in this repository's git history; grepping this repo for them
-(`public/`, `docs/`, `.prawduct/`, `CLAUDE.md`) found nothing. Those two sections state what the
-real code actually does and flag the ruling/rule reference as an open point for the Operator or
-the Architect to confirm, rather than inventing what an unverifiable external artifact says.
+`public/v6-shell.js`, `public/ui.js`, `public/sprint-wave-ui.js`, `public/style.css` and
+`lib/v6/fleet-template-spec.js` on this car's base commit (`676f5ff5`) — nothing here is restated
+from the issue or a prior dispatch without independently checking it against the live source
+first. Section 2d's `FleetPack v1alpha1` comparison is grounded in GitHub Issue #3194's own text
+(fetched directly, not assumed) — its status there is **"Proposed — Not authorized for immediate
+implementation,"** assigned to the future **Milestone #94 (v6.6.0)**, with most of its own
+acceptance criteria still unchecked; the comparison below is accordingly "current shipped code vs.
+that issue's own proposed, not-yet-authorized design," never two systems that already coexist.
+Rule #285 / Rule #402 in Section 2c name a governance artifact that exists in TangleClaw's own
+rules system, not in this repository's git history or its public GitHub issues; checked both and
+found nothing, so that section still states what the real code does and flags the rule reference
+as an open point for the Operator or the Architect, rather than inventing its content.
 
 ## Section 1 — Executive Summary & Reference Experience Benchmark (`Chat`)
 
@@ -45,9 +54,14 @@ against, not an incidental convenience.
   keys, or double-click-to-reset — one coherent, accessible (`role="separator"`,
   `aria-orientation`) resize model for the whole pane stack, not per-panel ad hoc sizing.
 
-The other four tabs render a **fleet-wide panel**, not a project's own detail, through one shared
-plumbing function, `workspacePanelContent(mode, result, ui)` (`public/v6-shell.js:808`) — which is
-also where their biggest functional gap from `Chat` becomes visible: `workspacePanelContent` has a
+The other four tabs do not all dispatch the same way. `workspaceVisibility(mode, inChat)`
+(`public/v6-shell.js:547`) returns `panel: true` for `sprint`/`charter`/`kaizen` — routed to the
+shared `v6WorkspacePanel` region (`workspaceRegionId`, `public/v6-shell.js:554`) — but `wizard:
+true` for `Wizard` alone, routed to its own `v6ShellWizard` region; Wizard is not a fourth
+"fleet-wide panel" sharing that plumbing, it is a genuinely different region. The three that DO
+share it render through one function, `workspacePanelContent(mode, result, ui)`
+(`public/v6-shell.js:808`) — which is also where their biggest functional gap from `Chat` becomes
+visible: `workspacePanelContent` has a
 PLAIN BUILT-IN rendering for `sprint`/`charter`/`kaizen` (a bare `<ul class="v6-workspace-list">`,
 lines 829-864) that is used ONLY as a fallback when a richer, separately-loaded renderer
 (`window.TangleClawSprintWaveUi`, lazily loaded from `/sprint-wave-ui.js` at
@@ -62,7 +76,7 @@ lines 829-864) that is used ONLY as a fallback when a richer, separately-loaded 
 |---|---|
 | **Responsibility** | A single project/fleet-member's own conversation — the shell's `detail` region, not a fleet-wide panel (`workspaceVisibility`, `public/v6-shell.js:547`: `mode === 'chat'` returns `{detail: true, panel: false}`). |
 | **Interaction model** | Full-height view inside the workspace, reached by route (`#/resources/:id/conversation`) or by selecting a sidebar/tree member — not a drawer or modal. |
-| **What works today** | `conversationViewMarkup` end to end: offline hero + starting/failed transitions (`offlineHeroMarkup`), View Previous Conversation / Return to Start Card for a closed session (`offlineHistoryMarkup`, `public/v6-shell.js:2176`, backed by `viewOfflineHistory`/`returnToStartCard`, `public/v6-shell.js:6926`/`6992`), the B2 live+recorded stream with scroll-pin (`#v6ChatJumpLatest`), the inline engine picker (`#v6ChatEngineSelect`), attachments, and the Gobble & Fill resizers. This is a genuinely complete, single-screen workflow — confirmed by this sprint's own mounted E2E (Car V659-W2-C, PR #3232) actually driving a live launch refusal and a real persisted-history load through it, not by inspection alone. |
+| **What works today** | `conversationViewMarkup` end to end: offline hero + starting/failed transitions (`offlineHeroMarkup`), View Previous Conversation / Return to Start Card for a closed session (`offlineHistoryMarkup`, `public/v6-shell.js:2176`, backed by `viewOfflineHistory`/`returnToStartCard`, `public/v6-shell.js:6926`/`6992`), the B2 live+recorded stream with scroll-pin (`#v6ChatJumpLatest`), the inline engine picker (`#v6ChatEngineSelect`), attachments, and the Gobble & Fill resizers. This is a genuinely complete, single-screen workflow — confirmed by this sprint's own mounted E2E (Car V659-W2-C, PR #3232) actually driving a live launch refusal and a real persisted-history load through the mounted V6Shell offline hero, and (PR #3232 R2) by parsing the real `#masterPanel` markup from `public/index.html` itself for the sibling dropzone verification, not by inspection alone. |
 | **Falls back to Classic View for** | Nothing found in `conversationViewMarkup` itself that routes back to Classic View — the fallbacks in this tab are internal (hero → history → hero), not cross-view. |
 | **Self-service vs. governance** | Start/Retry/attach/send are direct operator actions with no confirmation step in the UI. The one real governance interlock visible from this tab is server-side: `_stoppedLaunchRefusal` (`lib/sessions.js:154`) blocks a launch into a STOPPED assignment via `controlGate.checkMutation`, and that refusal surfaces through the SAME failed-hero diagnostic path an ordinary engine-not-found failure does — the operator sees one consistent "it was refused, here's why" UI regardless of whether the refusal came from a broken config or a governance HOLD/STOP. |
 
@@ -103,7 +117,7 @@ lines 829-864) that is used ONLY as a fallback when a richer, separately-loaded 
 | **Interaction model** | Dedicated full tab (moved here at #3165 specifically to stop duplicating itself under Chat's idle `#/overview` screen, per the comment at `public/v6-shell.js:536-540`). |
 | **What works today** | `wizardMarkup` (`public/v6-shell.js:1671`) composes `wizardStandaloneMarkup`/`wizardConvertMarkup`/`wizardTemplatesMarkup`/`wizardFleetSpecMarkup`/`fleetWizardMarkup`, wired to real controller methods: `createWorkspaceProject` (`public/v6-shell.js:7262`, `POST /api/projects` or `/api/projects/attach`), `convertToFleet` (`7289`), `provisionFleet` (`7337`), and `launchTemplate`'s own live-preview fetch (`7223`, `POST /api/v6/fleet-templates/:id/plan`). `afterWizardAction` (`7247`) is the one real cross-tab seam: every successful workflow returns the operator to `Chat` on the newly created project/seat, not to an idle Wizard screen. |
 | **Self-service vs. governance** | `startFleet` (`public/v6-shell.js:7183`) is the one real example of a lightweight self-service confirmation in this tab's neighborhood: the header's Start Fleet button arms on the first click and only fires on a second click within ten seconds (`wireStart`, `public/v6-shell.js:8066-8080`) — a debounce against an accidental bulk-start, not a governance approval; no HOLD/STOP-style server check was found gating any Wizard workflow specifically (only the ordinary per-session launch refusal every `POST /api/sessions/:name` call already goes through). |
-| **FleetPack v1alpha1 forward compatibility (open — not independently verified)** | The dispatch for this car names `FleetPack v1alpha1` and Rulings A893/A897 (#3194) as the compatibility target for `wizardMarkup`/`onCreateWorkspaceProject`/`onConvertToFleet`/`onProvisionFleet`/the Fleet Spec tab. None of `FleetPack`, `A893`, `A897`, or `#3194` appear anywhere in this repository (`public/`, `docs/`, `.prawduct/`, `CLAUDE.md` — all checked directly), which is consistent with them being TangleClaw's own cross-project rulings rather than repo-local artifacts, but means this audit cannot independently confirm what those rulings require. What IS verifiable from the code: `provisionFleet(args)` (`public/v6-shell.js:7337`) and `wizardFleetSpecMarkup` already take a `spec`/`args` shape through `POST /api/v6/fleet-spec/*`-style routes rather than a flat form, which is at minimum not hostile to a structured spec format landing underneath it later — but whether it already matches `FleetPack v1alpha1`'s actual shape is an open question for the Architect or Operator to confirm, not a finding of this audit. |
+| **`FleetPack v1alpha1` compatibility — current `fleet-spec v1.0` vs. Issue #3194's own proposed `PG-1..PG-4` guardrails (verified against both the live code and the issue's real text)** | GitHub Issue #3194 is real (fetched directly, not assumed) and names `lib/v6/fleet-template-spec.js` (`#3115`, `SCHEMA_VERSION = '1.0'`, line 35) as the exact module it proposes evolving to `schemaVersion: "1.1"` / `"FleetPack v1alpha1"` — it is NOT a separate, already-existing competing format, and the issue's own status is **"Proposed — Not authorized for immediate implementation"** (Milestone #94, v6.6.0), so every `PG-*` item below is a comparison against a not-yet-authorized design, not a second shipped system. The Wizard's real wiring (`onCreateWorkspaceProject`/`onConvertToFleet`/`onProvisionFleet`, `public/v6-shell.js:7262/7289/7337`; `wizardFleetSpecMarkup`, `public/v6-shell.js:1612`) talks to the REAL routes — `GET /api/v6/fleet-templates/bundled-specs`, `POST /api/v6/fleet-templates/validate-spec`, `POST /api/v6/fleet-templates/apply-spec`, and `GET /api/v6/projects/:id/fleet-spec` for export (`loadBundledFleetSpecs`/`requestValidateFleetSpec`/`applyFleetSpec`/`exportFleetSpec`, `public/v6-shell.js:7404/7418/7433/7464`) — not the `/api/v6/fleet-spec/*` paths an earlier review round for this car described; grepped `server.js`/`lib/routes/*.js` directly and those paths do not exist. **`PG-1` (portable spec vs. local binding):** NOT separated today — `fleet-template-spec.js` has no `basePath`/`groupId`-style local-binding fields of its own, but it also has no `FleetBinding`-style split; the issue proposes introducing one, it is not bypassing an existing one. **`PG-2` (symbolic seat addressing):** substantially ALREADY TRUE, which the issue's own "converging onto the canonical schema" framing implies but is worth stating plainly: every bundled template seat (`public/v6-shell.js` / `lib/v6/fleet-template-spec.js:497-506`) already uses symbolic `seatId`s — `pm`, `architect`, `builder-a`..`builder-d`, `prr-a`, `prr-b`, `integrator`, `observer` — validated as required and unique (`_validateSeat`, `lib/v6/fleet-template-spec.js:103-117`), never a raw SQLite `project.id`. **`PG-3` (logical paths, no host-specific leakage):** PARTIALLY true today — export already redacts absolute host paths (`_PATH_RE`, `lib/v6/fleet-template-spec.js:301`, replacing `/Users/...`/`/home/...` with `<path-redacted>`) and strips secret-shaped fields (`_SECRET_KEY_RE`), but redaction is not the same as the issue's proposed logical substitution tokens (`${FLEET_SHARED_DIR}`, `${SEAT_WORKSPACE_DIR}`) that would let an exported spec re-resolve to a NEW host's own paths on import — today a redacted path is simply gone, not replaced with something reusable. **`PG-4` (dual-schema / `v1.0` back-compat):** NOT present — `validateFleetSpec` rejects any `schemaVersion` other than the exact literal `'1.0'` (`lib/v6/fleet-template-spec.js:257-258`); there is no `apiVersion`/`kind` envelope, no dual-schema discriminator, and no code path that recognizes `"tangleclaw.io/v1alpha1"` anywhere in this repository (checked `lib/`, `public/`, `server.js` directly) — Issue #3194's own acceptance criteria list this as future work, not a gap in otherwise-complete support. **Bottom line for the Operator/Architect:** the current Wizard is closer to PG-2 than a first read of the issue suggests, and meaningfully short of PG-1/PG-3/PG-4 — but since Issue #3194 is explicitly not yet authorized, closing that gap now would be scope the current v6.5.11 milestone was not asked to take on; this is a finding for prioritization, not a defect in the current code. |
 
 ## Section 3 — `Sprint & Cars` Cohesive Layout Specification (for Cars V6511-W1-B & V6511-W1-C)
 
@@ -122,22 +136,39 @@ stacked blocks with no shared layout context between them:
 different numbers of cards, so the grid's own height is set by its TALLEST column, and every
 shorter column leaves dead space below its last card down to that height. `.sprint-gate-matrix`
 then starts a flat `margin-top: 12px` below the WHOLE grid (`public/style.css:6360`), regardless
-of how much of that grid's height was actually dead space in shorter columns. Two consolidations,
-both low-risk (CSS/layout-only, no new markup required beyond what `_gateMatrix`/
-`renderSprintWaveBoard` already emit):
+of how much of that grid's height was actually dead space in shorter columns.
 
-1. **Reclaim the per-column dead space.** Give `.sprint-wave-column` `align-self: start` (or
-   equivalent) so a short column's content hugs its own top rather than stretching to the grid's
-   height, and move the row-level visual weight into `.sprint-wave-column`'s own bottom border/
-   background rather than relying on grid auto-stretch to imply "this lane is done." This is the
-   dead whitespace the dispatch names BETWEEN the Kanban and the matrix as currently perceived —
-   most of it is actually INSIDE the grid, in shorter columns, not in the 12px margin below it.
-2. **Make the matrix read as the Kanban's own footer, not a second, unrelated table.** Reduce
-   `.sprint-gate-matrix`'s `margin-top` once (1) above removes the inflated grid height, add a
-   `border-top` matching `.sprint-wave-board`'s own visual language instead of the current flat
-   `border-bottom` per cell, and consider a sticky `.sprint-gate-car` first column (the car id) so
-   a wide 6-gate matrix scrolls horizontally without losing the row's own identity — `overflow-x:
-   auto` is already set (`public/style.css:6361`), so this is additive, not a rewrite.
+**Correction (R-Gate R1 BLOCKING 2):** the prior revision of this section proposed
+`align-self: start` on `.sprint-wave-column` to "reclaim" the dead space below a short column.
+That is wrong and is withdrawn here, not softened: `align-self` on a grid ITEM changes whether
+that item stretches to fill its own cell, but it does **not** change the grid's own row-track
+height — the row is still sized by the TALLEST column's content either way, `.sprint-gate-matrix`
+still starts exactly where it did, and the empty space below a short column just becomes visually
+obvious instead of stretched-and-hidden. It reclaims nothing; it only redecorates the same
+whitespace. Two real structural options instead, both grounded in what `renderSprintWaveBoard`/
+`_gateMatrix` (`public/sprint-wave-ui.js:93`/`258`) currently emit:
+
+1. **(Recommended — lower risk, CSS/layout-only, no markup change) Put the board and the matrix
+   side by side, not stacked.** `workspacePanelMarkup` already emits them back to back
+   (`<div class="sprint-wave-board">...</div><table class="sprint-gate-matrix">...</table>`) with
+   no wrapping element between them — wrap that same pair in a 2-column split
+   (`display: grid; grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr); gap: 16px;` on
+   whichever container `workspacePanelMarkup` already wraps them in, or a new one if it wraps them
+   in none) on a desktop-width viewport, falling back to the current stacked order below a
+   reasonable breakpoint (e.g. `768px`) since `.sprint-gate-matrix` already has `overflow-x: auto`
+   (`public/style.css:6361`) for a narrow matrix on its own line. This directly removes the
+   "stranded below the tallest column" problem, because the matrix is no longer below the board at
+   all on a desktop-width screen — no column-height trick needed, and no new per-card markup.
+2. **(A larger, genuinely more cohesive alternative — not low-risk, a separate future car's scope)
+   Collapse empty/zero-car lifecycle columns to a compact summary header and embed each car's own
+   6-gate pills (`G0`/`A-Gate`/`O-Gate`/`PRR-Gate`/`CI`/`I-Gate`, `GATES`,
+   `public/sprint-wave-ui.js:130-137`) directly into that car's own `.sprint-wave-card`
+   (`public/sprint-wave-ui.js:99`), rather than a second table at all. This is the design that
+   actually reads as "one board," but it requires new per-card markup in `renderSprintWaveBoard`
+   itself (not just `public/style.css`), a column-collapse interaction/empty-state decision, and
+   touches the same test-locked gate-matrix contract this file's own comment (`public/sprint-wave-ui.js:119-121`)
+   warns is a SEPARATE contract from the Kanban cards — correctly scoped as a later slice's work,
+   not this low-risk car's.
 3. **Telemetry placement.** `.sprint-kpi-row`/`.sprint-kpi-card` (Kaizen's own hero figures,
    `public/sprint-wave-ui.js:68-70`) are a DIFFERENT renderer (`renderKaizenLedgerPanel`) than the
    Sprint board's — if "active milestone telemetry" in this car's own panel is a new requirement,
@@ -152,7 +183,7 @@ both low-risk (CSS/layout-only, no new markup required beyond what `_gateMatrix`
 | Item | Scope | Risk | Operator decision point |
 |---|---|---|---|
 | Surface which renderer drew a `sprint`/`kaizen` panel (rich vs. built-in fallback) | `public/v6-shell.js`'s `workspacePanelContent`/the panel wrapper; one small UI marker, no behavior change | Low — additive, read-only indicator | Approve the exact wording/placement (a small badge vs. a one-line caption) |
-| Section 3's two-part layout consolidation (dead whitespace + matrix-as-footer) | `public/style.css` only, scoped to `.sprint-wave-*`/`.sprint-gate-*` | Low — CSS-only, no markup or route change | Approve the direction in Section 3 before V6511-W1-B/C implement it |
+| Section 3's recommended side-by-side Kanban/6-gate-matrix split (option 1) | `public/style.css` only, scoped to the container `.sprint-wave-board`/`.sprint-gate-matrix` already share, plus a responsive breakpoint | Low — CSS-only, no markup or route change | Approve option 1 (recommended) vs. option 2's larger per-card consolidation (Section 3) before V6511-W1-B/C implement it |
 
 **P1 — real functional gaps an operator will eventually hit**
 
@@ -167,4 +198,4 @@ both low-risk (CSS/layout-only, no new markup required beyond what `_gateMatrix`
 | Item | Scope | Risk | Operator decision point |
 |---|---|---|---|
 | Reconcile this sprint's informal "R-Gate" shorthand with the code's own `PRR-Gate` label (Section 2, `Sprint & Cars`) | Communication/terminology only — `public/sprint-wave-ui.js`'s `GATES` array is already internally consistent | None — no code change implied unless the Operator wants the DISPLAY label changed | Keep `PRR-Gate` as shown, or rename the displayed label |
-| Confirm `FleetPack v1alpha1` compatibility for the Wizard's Fleet Spec tab against Rulings A893/A897 (#3194) | Cannot be scoped further without the ruling text | Unknown | Operator/Architect supplies or points to the ruling text so a follow-up car can verify fit |
+| Close the `PG-1`/`PG-3`/`PG-4` gaps Section 2d identified (local-binding separation, logical path tokens, dual-schema `apiVersion`/`kind` support), once Issue #3194 is actually authorized | `lib/v6/fleet-template-spec.js`, `public/v6-shell.js`'s Wizard wiring, `server.js`'s `/api/v6/fleet-templates/*` routes | Medium-to-high — a real schema migration (`1.0` → `1.1`), not CSS/doc work | Issue #3194 itself is "Proposed — Not authorized" (Milestone #94, v6.6.0) — this stays P2/deferred until the Operator/Architect actually authorizes that milestone's work; nothing in v6.5.11 depends on it |
