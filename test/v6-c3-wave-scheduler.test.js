@@ -664,6 +664,22 @@ describe('validateParallelWavePlan', () => {
       throwsCode(() => validateParallelWavePlan({ cars, builderLanes: malformed }), 'BUILDER_LANES_INVALID');
     });
   }
+
+  // #3213 R-Gate R3 BLOCKING 1 (R4) — the error message must never
+  // serialize the caller-supplied value: JSON.stringify throws its own
+  // native TypeError on a BigInt or a circular object, which would crash
+  // before need() ever got a chance to raise BUILDER_LANES_INVALID.
+  it('rejects builderLanes: [1n] (a BigInt) with BUILDER_LANES_INVALID, not a native TypeError from serializing it', () => {
+    const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
+    throwsCode(() => validateParallelWavePlan({ cars, builderLanes: [1n] }), 'BUILDER_LANES_INVALID');
+  });
+
+  it('rejects builderLanes: [<a circular object>] with BUILDER_LANES_INVALID, not a native TypeError from serializing it', () => {
+    const circular = {};
+    circular.self = circular;
+    const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
+    throwsCode(() => validateParallelWavePlan({ cars, builderLanes: [circular] }), 'BUILDER_LANES_INVALID');
+  });
 });
 
 describe('WaveScheduler#createRun — optional parallel-sharding enforcement (metadata.enforceParallelSharding)', () => {
