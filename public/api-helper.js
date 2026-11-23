@@ -4609,6 +4609,33 @@
   }
 
   /**
+   * Normalizes `file.name` to its sanitized form IN PLACE (#3218 R2
+   * BLOCKING 2) — a real `File`'s `name` is a read-only accessor, so a
+   * plain assignment would silently no-op; `Object.defineProperty` is
+   * what actually overrides it. This exists so an EXISTING 1-argument
+   * `onUpload(file)` caller that reads `file.name` directly (e.g.
+   * `public/ui.js`'s `uploadMasterAttachment`) gets the
+   * `SAFE_FILENAME_RE`-compliant name automatically, with no call-site
+   * change of its own. Never throws: a `File`-like object a test
+   * constructs as non-configurable keeps its raw name, and
+   * `file.sanitizedName` still carries the correct value for a caller
+   * that reads that explicitly instead.
+   * @param {File} file
+   * @param {string} sanitizedName
+   */
+  function _tcNormalizeAttachmentFilename(file, sanitizedName) {
+    if (!file) return;
+    const rawName = file.name;
+    if (rawName !== sanitizedName) {
+      try {
+        Object.defineProperty(file, 'name', { value: sanitizedName, configurable: true, enumerable: true });
+      } catch (_) { /* raw name kept; sanitizedName below still carries the safe value */ }
+    }
+    file.rawName = rawName;
+    file.sanitizedName = sanitizedName;
+  }
+
+  /**
    * One dropped/pasted file, sanitized and handed to `onUpload` the same
    * way the file-picker `change` handler below does — the one place both
    * paths share so a filename never reaches `onUpload` two different ways.
@@ -4621,6 +4648,7 @@
       if (!file) return;
       const sanitized = tcSanitizeMasterAttachmentFilename(file.name, taken);
       taken.add(sanitized);
+      _tcNormalizeAttachmentFilename(file, sanitized);
       onUpload(file, sanitized);
     });
   }
@@ -4654,6 +4682,11 @@
       overlay.id = `${prefix}DropzoneOverlay`;
       overlay.className = 'master-dropzone-overlay hidden';
       overlay.setAttribute('aria-hidden', 'true');
+      // #3218 R2 BLOCKING 1: inline, not left to public/style.css (a
+      // different car's envelope — Car V659-W1-C) — the overlay must
+      // cover #masterFrame immediately, not depend on an external
+      // stylesheet that may not have landed yet.
+      if (overlay.style) overlay.style.cssText = 'position:absolute;inset:0;z-index:20;pointer-events:auto;';
       panelEl.appendChild(overlay);
     }
 
@@ -4679,7 +4712,19 @@
       hide();
     };
     const onDrop = (evt) => {
-      if (evt.preventDefault) evt.preventDefault();
+      // #3218 R2 BLOCKING 1: `onDrop` is registered on BOTH `overlay` and
+      // `panelEl`, and `overlay` is a CHILD of `panelEl` — a real `drop`
+      // fired at the overlay bubbles straight up to the panel's own
+      // listener too, delivering (and so uploading) every file TWICE.
+      // `stopPropagation` is the real fix; the `_tcMasterDropHandled` flag
+      // on the event object itself is the belt-and-suspenders fallback for
+      // a DOM (this file's own mini-DOM test harness included) where
+      // `stopPropagation` either doesn't exist or is a no-op that never
+      // actually stops the bubble.
+      if (evt && evt._tcMasterDropHandled) return;
+      if (evt) evt._tcMasterDropHandled = true;
+      if (evt && typeof evt.stopPropagation === 'function') evt.stopPropagation();
+      if (evt && evt.preventDefault) evt.preventDefault();
       hide();
       const files = evt && evt.dataTransfer && evt.dataTransfer.files;
       if (files && files.length) _tcDeliverMasterAttachmentFiles(files, onUpload);
@@ -4913,7 +4958,11 @@
         uploadBtn.addEventListener('click', () => uploadInput.click());
         uploadInput.addEventListener('change', () => {
           const file = uploadInput.files && uploadInput.files[0];
-          if (file && deps.onUpload) deps.onUpload(file, tcSanitizeMasterAttachmentFilename(file.name));
+          if (file && deps.onUpload) {
+            const sanitized = tcSanitizeMasterAttachmentFilename(file.name);
+            _tcNormalizeAttachmentFilename(file, sanitized);
+            deps.onUpload(file, sanitized);
+          }
           uploadInput.value = '';
         });
       }

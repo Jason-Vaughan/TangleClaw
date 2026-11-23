@@ -241,6 +241,28 @@ describe('#768 the bar behaves', () => {
     assert.equal(uploaded[0][1], 'Screenshot-2026-11-22-at-9.15.00-PM.png');
   });
 
+  // #3218 R2 BLOCKING 2: an EXISTING 1-argument onUpload(file) caller —
+  // public/ui.js's uploadMasterAttachment(file) reads file.name directly,
+  // never the 2nd sanitizedName argument this change added — must receive
+  // the SAFE_FILENAME_RE-compliant name through that same file.name read,
+  // with no call-site change of its own.
+  it('a 1-argument onUpload(file) caller reading file.name gets the sanitized name, not the raw one (#3218)', () => {
+    const { doc, ids } = makeDocument(['masterPanelBar']);
+    withIdParsingInnerHTML(ids.masterPanelBar, doc);
+    const names = [];
+    const bar = G.tcCreateMasterControlBar({
+      doc, rootId: 'masterPanelBar', prefix: 'masterPanel', onUpload: (f) => names.push(f.name)
+    });
+    bar.mount();
+    const input = doc.getElementById('masterPanelUploadInput');
+    const file = { name: 'Screenshot 2026-11-22 at 9.15.00 PM.png' };
+    input.files = [file];
+    input.dispatch('change');
+    assert.deepEqual(names, ['Screenshot-2026-11-22-at-9.15.00-PM.png']);
+    assert.equal(file.name, 'Screenshot-2026-11-22-at-9.15.00-PM.png', 'the file object itself is normalized in place');
+    assert.equal(file.rawName, 'Screenshot 2026-11-22 at 9.15.00 PM.png', 'the original name is still recoverable from .rawName');
+  });
+
   it('paints the model pill from a real fetch', async () => {
     // BEHAVIOURAL, because the source-pin version of this was itself a review
     // finding: `assert.match(UI, /masterBar\.loadModel\(/)` stays green for
@@ -1793,7 +1815,11 @@ describe('#3218 tcBindMasterDropzone', () => {
 
   it('drop on the overlay delivers both non-image and image files, with sanitized names, and hides the overlay', () => {
     const uploaded = [];
-    const { docHandlers, overlayHandlers, overlay } = mountDropzone((file, sanitized) => uploaded.push([file.name, sanitized]));
+    // `file.rawName` (set by #3218 R2's own in-place normalization), not
+    // `file.name` — by the time `onUpload` runs, `file.name` has ALREADY
+    // been overwritten to the sanitized value (BLOCKING 2), so reading it
+    // here would just compare the sanitized name to itself.
+    const { docHandlers, overlayHandlers, overlay } = mountDropzone((file, sanitized) => uploaded.push([file.rawName, sanitized]));
     docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
     assert.equal(overlay.classList.contains('hidden'), false, 'revealed before the drop');
     let prevented = false;
@@ -1806,11 +1832,28 @@ describe('#3218 tcBindMasterDropzone', () => {
       ['notes (draft).log', 'notes-draft.log'],
       ['Screenshot 2026-11-22 at 9.15.00 PM.png', 'Screenshot-2026-11-22-at-9.15.00-PM.png']
     ], 'both the non-image and the image file must be delivered, sanitized, never restricted to image/*');
+    assert.equal(fileA.name, 'notes-draft.log', 'file.name itself must be normalized in place, for a 1-argument onUpload(file) caller');
+    assert.equal(fileB.name, 'Screenshot-2026-11-22-at-9.15.00-PM.png');
+  });
+
+  // #3218 R2 BLOCKING 1: the same physical drop, bubbling from overlay to
+  // panelEl exactly as a real DOM drop event would (both listeners
+  // registered, overlay nested inside panelEl) — must upload each file
+  // only ONCE, not twice.
+  it('a drop on the overlay that then bubbles to panelEl (both listeners firing on the SAME event) uploads each file only once', () => {
+    const uploaded = [];
+    const { overlayHandlers, panelHandlers } = mountDropzone((file, sanitized) => uploaded.push(sanitized));
+    const evt = { preventDefault: () => {}, dataTransfer: { files: [{ name: 'once.png' }] } };
+    // A real bubble invokes the TARGET's listener first, then the
+    // ancestor's, with the identical Event object throughout.
+    overlayHandlers.drop[0](evt);
+    panelHandlers.drop[0](evt);
+    assert.deepEqual(uploaded, ['once.png'], 'exactly one upload, not two, for the one file in the one drop');
   });
 
   it('paste on the panel delivers both image and non-image clipboard files (clipboardData.files form)', () => {
     const uploaded = [];
-    const { panelHandlers } = mountDropzone((file, sanitized) => uploaded.push([file.name, sanitized]));
+    const { panelHandlers } = mountDropzone((file, sanitized) => uploaded.push([file.rawName, sanitized]));
     const fileA = { name: 'log (1).txt' };
     const fileB = { name: 'clip.png' };
     panelHandlers.paste[0]({ clipboardData: { files: [fileA, fileB] } });
@@ -1819,7 +1862,7 @@ describe('#3218 tcBindMasterDropzone', () => {
 
   it('paste also reads clipboardData.items when .files is empty (the items.kind === "file" form)', () => {
     const uploaded = [];
-    const { panelHandlers } = mountDropzone((file, sanitized) => uploaded.push([file.name, sanitized]));
+    const { panelHandlers } = mountDropzone((file, sanitized) => uploaded.push([file.rawName, sanitized]));
     const fileItem = { kind: 'file', getAsFile: () => ({ name: 'pasted.png' }) };
     const textItem = { kind: 'string', getAsFile: () => null };
     panelHandlers.paste[0]({ clipboardData: { files: [], items: [textItem, fileItem] } });
