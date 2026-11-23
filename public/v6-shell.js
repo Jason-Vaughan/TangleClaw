@@ -633,7 +633,7 @@
     const m = WORKSPACE_MODES.find((x) => x.key === mode);
     if (!m || mode === 'chat' || mode === 'wizard') return '';
     return `<h2 class="v6-workspace-panel-title">${escapeHtml(m.label)}</h2>
-      ${typeof content === 'string' && content ? content : '<p class="v6-workspace-empty" role="status">Loading…</p>'}${typeof extra === 'string' ? extra : ''}`;
+      ${typeof content === 'string' && content ? content : `<p class="v6-workspace-empty" role="status">${v6EllipsisLoadingMarkup('Loading')}</p>`}${typeof extra === 'string' ? extra : ''}`;
   }
 
   /** What a train launch status line can be (each is a CSS modifier). */
@@ -949,7 +949,7 @@
     const member = String(data.member || '');
     const fleet = data.fleet || { name: '', count: 1 };
     const option = (value, label, on) => `<option value="${value}"${on ? ' selected' : ''}>${label}</option>`;
-    const status = data.status === 'loading' ? 'Loading…'
+    const status = data.status === 'loading' ? v6EllipsisLoadingMarkup('Retrieving history')
       : data.status === 'error' ? `Could not load history: ${escapeHtml(data.error || 'the server refused it')}`
         : data.status === 'ready' ? historyCountLine(data) : '';
     const items = Array.isArray(data.items) ? data.items : [];
@@ -1625,7 +1625,7 @@
     const list = fleetWizardMarkup(templates);
     if (!templateId) return list;
     const engineOptions = WIZARD_ENGINES.map((e) => `<option value="${e}"${(f.engine || 'claude') === e ? ' selected' : ''}>${e}</option>`).join('');
-    const planHtml = plan ? fleetPlanMarkup(plan) : '<p class="v6-workspace-empty">Loading plan…</p>';
+    const planHtml = plan ? fleetPlanMarkup(plan) : `<p class="v6-workspace-empty">${v6EllipsisLoadingMarkup('Loading plan')}</p>`;
     return `${list}
       <form id="v6WizardProvisionForm" class="v6-wizard-form" aria-label="Provision this fleet">
         <label class="v6-wizard-field">Fleet name<input type="text" id="v6WizardFleetName" class="filter-input" value="${escapeHtml(f.fleetName || '')}" maxlength="48" required></label>
@@ -1659,7 +1659,7 @@
         <p class="v6-wizard-bundled-spec-desc">${escapeHtml(spec.metadata.description)}</p>
         <button type="button" id="v6WizardUseBundled-${escapeHtml(id)}" class="btn btn-secondary btn-small" data-bundled-id="${escapeHtml(id)}">Use this template</button>
       </div>`;
-    }).join('') : '<p class="v6-workspace-empty">Loading bundled templates…</p>';
+    }).join('') : `<p class="v6-workspace-empty">${v6EllipsisLoadingMarkup('Loading bundled templates')}</p>`;
     const banner = ecosystem
       ? `<p class="v6-wizard-marketplace-banner"><span aria-hidden="true">🌐</span> <a href="${escapeHtml(ecosystem.marketplaceUrl)}" target="_blank" rel="noopener noreferrer">Browse Community Fleet Templates on TangleClaw.com</a></p>`
       : '';
@@ -1950,7 +1950,9 @@
       + `<table class="v6-usage-table"><thead><tr><th scope="col">Engine</th><th scope="col">5h</th><th scope="col">Week</th><th scope="col">Sprint</th><th scope="col">Sessions</th><th scope="col">Left</th><th scope="col">Set % left</th></tr></thead>`
       + `<tbody>${model.engines.map(row).join('')}</tbody></table>`
       + usageProbeMarkup(ui && ui.probe, ui && ui.probeInterval)
-      + `<p id="v6EngineUsageStatus" class="v6-usage-status${status ? ` is-${escapeHtml(status.kind)}` : ''}" role="status">${status ? escapeHtml(status.message) : ''}</p></div>`;
+      + `<p id="v6EngineUsageStatus" class="v6-usage-status${status ? ` is-${escapeHtml(status.kind)}` : ''}" role="status">${
+        status ? (status.kind === 'pending' ? v6EllipsisLoadingMarkup(status.message) : escapeHtml(status.message)) : ''
+      }</p></div>`;
   }
 
   /** Each engine's real account/usage page (#3132) — an external link, never fetched by this page. */
@@ -1967,6 +1969,36 @@
 
   /** A probe status that found nothing usable, worded for the operator (#3132) — `lib/usage-windows.js#USAGE_PROBE_STATUSES`'s other two values. */
   const USAGE_PROBE_STATUS_LABELS = Object.freeze({ 'not-present': 'Not present', 'not-configured': 'Not configured' });
+
+  /**
+   * "Last probed <timestamp> UTC" plus any non-fatal note or error a probe
+   * result carries (#3208 — surface a per-provider refresh error and its
+   * last reading's timestamp instead of a bare status badge with no
+   * context). `lib/usage-windows.js#_probeResult`'s own contract: `error`
+   * is set for a caught exception OR a parsed-but-empty read, on ANY
+   * status including `'configured'`, and `observedAt` is always a real
+   * timestamp (never null) once a probe has run at all.
+   *
+   * NOTE (#3208 scope limit): this renders whatever the server's `result`
+   * carries; it cannot make a FAILED probe attempt preserve a PRIOR
+   * successful reading, because `lib/usage-windows.js#_refreshUsageProbeUncached`
+   * unconditionally overwrites its own store with the latest result,
+   * success or not — fixing that is a `lib/usage-windows.js` change, outside
+   * this car's file scope (`public/v6-shell.js`/`test/v6-b1-ui-shell.test.js`
+   * only). Flagged in the PR rather than silently claimed as done.
+   * @param {object|null} result
+   * @returns {string} HTML, or `''` when there is nothing to show.
+   */
+  function usageProbeFootnote(result) {
+    if (!result) return '';
+    const parts = [];
+    if (result.observedAt) {
+      const ms = Date.parse(result.observedAt);
+      if (Number.isFinite(ms)) parts.push(`Last probed ${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`);
+    }
+    if (result.error) parts.push(escapeHtml(result.error));
+    return parts.length ? `<span class="v6-usage-probe-footnote">${parts.join(' · ')}</span>` : '';
+  }
 
   /**
    * One engine's row in the automated CLI usage probe section (#3132): a
@@ -1990,7 +2022,7 @@
     if (result.status !== 'configured') {
       const label = USAGE_PROBE_STATUS_LABELS[result.status] || result.status;
       return `<li class="v6-usage-probe-row" data-engine="${engine.key}"><span class="v6-usage-probe-name">${escapeHtml(engine.name)}</span>`
-        + `<span class="v6-usage-probe-badge is-${escapeHtml(result.status)}">${escapeHtml(label)}</span>${link}</li>`;
+        + `<span class="v6-usage-probe-badge is-${escapeHtml(result.status)}">${escapeHtml(label)}</span>${usageProbeFootnote(result)}${link}</li>`;
     }
     // #3174: each bar's own next-reset countdown + timestamp, when the probe
     // reported one for that window — clicking the usage indicator should
@@ -2016,7 +2048,7 @@
         + `<span class="v6-usage-probe-bars">${bar(sub.weeklyRemainingPct, 'Week', sub.weeklyResetAt)}${bar(sub.fiveHourRemainingPct, '5h', sub.fiveHourResetAt)}</span></li>`;
     }).join('');
     return `<li class="v6-usage-probe-row" data-engine="${engine.key}"><span class="v6-usage-probe-name">${escapeHtml(engine.name)}</span>`
-      + `<span class="v6-usage-probe-bars">${bar(result.weeklyRemainingPct, 'Week', result.weeklyResetAt)}${bar(result.fiveHourRemainingPct, '5h', result.fiveHourResetAt)}</span>${link}</li>${subTierRows}`;
+      + `<span class="v6-usage-probe-bars">${bar(result.weeklyRemainingPct, 'Week', result.weeklyResetAt)}${bar(result.fiveHourRemainingPct, '5h', result.fiveHourResetAt)}</span>${usageProbeFootnote(result)}${link}</li>${subTierRows}`;
   }
 
   /**
@@ -4450,6 +4482,27 @@
   const TRAILING_ELLIPSIS = /\s*(?:\.{1,3}|…)\s*$/;
 
   /**
+   * A context-specific, accessibly-animated loading indicator (#3207): a
+   * label (announced to assistive tech) plus the same CSS-driven `...`
+   * ellipsis `.v6-chat-activity-dots::after` already animates for the chat
+   * composer's busy line (#3057) — `public/style.css`'s existing keyframe
+   * and `prefers-reduced-motion: reduce` override apply here for free,
+   * with no new CSS and no JS timer of any kind. Any trailing dots already
+   * on `label` are stripped first (the same {@link TRAILING_ELLIPSIS} the
+   * busy line already normalizes), so a caller may pass either
+   * `"Loading chat"` or `"Loading chat..."` without ever doubling the dots.
+   * @param {string} label - E.g. `"Loading chat"`, `"Retrieving history"`.
+   * @param {string} [className] - Extra class on the wrapping `<span>`, for a caller's own layout.
+   * @returns {string} HTML.
+   */
+  function v6EllipsisLoadingMarkup(label, className) {
+    const text = String(label || '').replace(TRAILING_ELLIPSIS, '') || 'Loading';
+    return `<span class="v6-loading-indicator${className ? ` ${className}` : ''}" data-ellipsis-loading="true">`
+      + `<span class="v6-chat-activity-label">${escapeHtml(text)}</span>`
+      + `<span class="v6-chat-activity-dots" aria-hidden="true"></span></span>`;
+  }
+
+  /**
    * Elapsed time for the busy indicator (#3057): `0s`, `59s`, `1m 12s`, `1h 2m`.
    * @param {number} ms
    * @returns {string}
@@ -5285,7 +5338,7 @@
     if (detail.kind === 'knowledge') return knowledgeBaseMarkup(detail.help);
     if (detail.kind === 'platform') return platformViewMarkup(detail.view);
     if (detail.kind === 'whatif') return whatIfMarkup(detail.view);
-    if (detail.kind === 'loading') return '<p class="v6-detail-loading" role="status">Loading…</p>';
+    if (detail.kind === 'loading') return `<p class="v6-detail-loading" role="status">${v6EllipsisLoadingMarkup(detail.label || 'Loading')}</p>`;
     if (detail.kind === 'error') return `<p class="v6-detail-error" role="alert">${escapeHtml(detail.message)}</p>`;
     return '';
   }
@@ -5685,7 +5738,12 @@
      * @returns {Promise<{ok: boolean, error?: string}>}
      */
     async function refreshUsageProbeAction() {
-      const res = await api('/api/usage/refresh', { method: 'POST', body: JSON.stringify({}) });
+      // #3208: was a raw api(url, {method, body}) call with no Content-Type
+      // header — Express's body-parser refuses a POST body lacking
+      // `application/json` outright, so "Refresh now" failed every time.
+      // apiMutate sets that header (and the operator proof when a route
+      // needs one) the same way every other mutation on this page already does.
+      const res = await apiMutate('/api/usage/refresh', 'POST', {});
       if (!res) return { ok: false, error: api.lastError || 'the server refused it' };
       const sh = getShell();
       if (sh && typeof sh.setUsageProbe === 'function') sh.setUsageProbe(res);
@@ -5706,7 +5764,8 @@
      * @returns {Promise<{ok: boolean, interval?: string, error?: string}>}
      */
     async function setUsageProbeIntervalAction(interval) {
-      const res = await api('/api/usage/probe/interval', { method: 'POST', body: JSON.stringify({ interval }) });
+      // #3208: same missing-Content-Type bug as refreshUsageProbeAction above.
+      const res = await apiMutate('/api/usage/probe/interval', 'POST', { interval });
       if (!res) return { ok: false, error: api.lastError || 'the server refused it' };
       await loadUsageProbe();
       return { ok: true, interval: res.interval };
@@ -6758,7 +6817,7 @@
       }
       if (route.view === 'settings') {
         shell.setAttestation(null);
-        shell.setDetail({ kind: 'loading' });
+        shell.setDetail({ kind: 'loading', label: 'Loading settings' });
         await loadSettings(route, mine);
         // #3201: Settings never resolves a chat, so it has no poll of its
         // own to piggyback the sidebar refresh on.
@@ -6797,7 +6856,7 @@
           : null);
         return;
       }
-      shell.setDetail({ kind: 'loading' });
+      shell.setDetail({ kind: 'loading', label: 'Loading chat' });
       await loadConversation(project, mine, chatContext(route, project));
     }
 
@@ -11150,6 +11209,7 @@
   global.tcV6MessageMarkup = messageMarkup;
   global.tcV6UsageMeterModel = usageMeterModel;
   global.tcV6UsageMeterMarkup = usageMeterMarkup;
+  global.tcV6EllipsisLoadingMarkup = v6EllipsisLoadingMarkup;
   global.tcV6LongPromptCommand = longPromptCommand;
   global.tcV6RecordedText = recordedText;
   global.tcV6ArrangeRecorded = arrangeRecorded;
@@ -11175,6 +11235,7 @@
   global.tcV6PruneStaleChatDrafts = pruneStaleChatDrafts;
   global.tcV6IsAlwaysPreviewLink = isAlwaysPreviewLink;
   global.tcV6UsageProbeRowMarkup = usageProbeRowMarkup;
+  global.tcV6UsageProbeFootnote = usageProbeFootnote;
   global.tcV6UsageProbeMarkup = usageProbeMarkup;
   global.tcV6ExtractCliGates = extractCliGates;
   global.tcV6FilterPeekTrafficLines = filterPeekTrafficLines;

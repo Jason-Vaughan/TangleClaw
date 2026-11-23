@@ -5824,7 +5824,8 @@ describe('the history panel in the mounted shell (#3066)', () => {
     const m = mount();
     m.doc.getElementById('v6SidebarFutureSlot').dispatch('click');
     assert.deepEqual(m.loads, [{ scope: 'member', kind: 'summaries', q: '' }]);
-    assert.match(m.root.innerHTML, /role="status">Loading…</);
+    // #3207: context-specific animated ellipsis indicator, not static "Loading…" text.
+    assert.match(m.root.innerHTML, /role="status"><span class="v6-loading-indicator" data-ellipsis-loading="true"><span class="v6-chat-activity-label">Retrieving history<\/span><span class="v6-chat-activity-dots" aria-hidden="true"><\/span><\/span><\/p>/);
     m.doc.getElementById('v6HistoryScope').value = 'fleet';
     m.doc.getElementById('v6HistoryKind').value = 'transcripts';
     m.doc.getElementById('v6HistorySearch').value = '  deploy ';
@@ -8691,7 +8692,8 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     assert.deepEqual(asked, [], 'Chat needs no panel');
     doc.getElementById('v6WorkspaceMode-sprint').dispatch('click');
     assert.deepEqual(asked, ['sprint']);
-    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<p class="v6-workspace-empty" role="status">Loading…<\/p>/);
+    // #3207: context-specific animated ellipsis indicator, not static "Loading…" text.
+    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<p class="v6-workspace-empty" role="status"><span class="v6-loading-indicator" data-ellipsis-loading="true"><span class="v6-chat-activity-label">Loading<\/span><span class="v6-chat-activity-dots" aria-hidden="true"><\/span><\/span><\/p>/);
     shell.setWorkspacePanel('sprint', '<div>board</div>');
     assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<h2 class="v6-workspace-panel-title">Sprint &amp; Cars<\/h2>\s*<div>board<\/div>/);
     shell.setWorkspacePanel('kaizen', '<div>report</div>');
@@ -8959,6 +8961,23 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
     assert.doesNotMatch(html, /<img src=x/);
   });
 
+  // #3207: a pending calibration/refresh message gets the animated ellipsis
+  // treatment, not plain escaped text — an "ok"/"error" message stays plain.
+  it('a pending status message renders the animated ellipsis indicator, escaped; ok/error stay plain text', () => {
+    const pending = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, status: { kind: 'pending', message: 'Refreshing usage probe…' } });
+    assert.match(pending, /<p id="v6EngineUsageStatus" class="v6-usage-status is-pending" role="status">/);
+    assert.match(pending, /<span class="v6-chat-activity-label">Refreshing usage probe<\/span><span class="v6-chat-activity-dots" aria-hidden="true"><\/span>/);
+    const ok = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, status: { kind: 'ok', message: 'Usage probe refreshed.' } });
+    assert.match(ok, /<p id="v6EngineUsageStatus" class="v6-usage-status is-ok" role="status">Usage probe refreshed\.<\/p>/);
+    assert.doesNotMatch(ok, /v6-chat-activity-dots/);
+  });
+
+  it('a pending status message with unsafe characters is still escaped through the ellipsis indicator', () => {
+    const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, status: { kind: 'pending', message: 'Setting auto-refresh to <b>15m</b>…' } });
+    assert.doesNotMatch(html, /<b>15m<\/b>/);
+    assert.match(html, /Setting auto-refresh to &lt;b&gt;15m&lt;\/b&gt;/);
+  });
+
   /** A shell with the meter, its calibrate action recorded. */
   function mountMeter(calibrate) {
     const { doc } = makeDocument([]);
@@ -9098,6 +9117,69 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
   });
 });
 
+// #3207 (Car V6510-W1-B, UI-004): a shared, context-labelled animated
+// loading indicator, replacing every static "Loading…" text this file's
+// own render functions used to emit.
+describe('tcV6EllipsisLoadingMarkup — context-specific animated loading indicator (#3207)', () => {
+  const G = loadV6Shell();
+  const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+
+  it('renders a label span (announced) and a CSS-animated dots span (hidden from assistive tech)', () => {
+    const html = G.tcV6EllipsisLoadingMarkup('Loading chat');
+    assert.match(html, /^<span class="v6-loading-indicator" data-ellipsis-loading="true"><span class="v6-chat-activity-label">Loading chat<\/span><span class="v6-chat-activity-dots" aria-hidden="true"><\/span><\/span>$/);
+  });
+
+  it('strips a trailing "..."/"…" from the label so the animated dots are never doubled', () => {
+    for (const label of ['Connecting...', 'Connecting..', 'Connecting.', 'Connecting…', 'Connecting']) {
+      const html = G.tcV6EllipsisLoadingMarkup(label);
+      assert.match(html, /v6-chat-activity-label">Connecting</, label);
+    }
+  });
+
+  it('falls back to "Loading" for an empty, null or non-string label', () => {
+    for (const label of ['', null, undefined, '...']) {
+      assert.match(G.tcV6EllipsisLoadingMarkup(label), /v6-chat-activity-label">Loading</, String(label));
+    }
+  });
+
+  it('escapes the label', () => {
+    const html = G.tcV6EllipsisLoadingMarkup('<img src=x onerror=alert(1)>');
+    assert.doesNotMatch(html, /<img src=x/);
+    assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  });
+
+  it('accepts an extra class for the caller\'s own layout', () => {
+    const html = G.tcV6EllipsisLoadingMarkup('Loading', 'my-extra-class');
+    assert.match(html, /class="v6-loading-indicator my-extra-class"/);
+  });
+
+  it('reuses the existing chat-activity dots animation and reduced-motion override — no new CSS', () => {
+    assert.match(CSS, /\.v6-chat-activity-dots::after \{[\s\S]*?animation: v6-chat-dots 1\.2s steps\(4, end\) infinite;/);
+    assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{\s*\.v6-chat-activity-dots::after \{ animation: none; width: auto; \}/);
+  });
+});
+
+// `detailMarkup`/`loadRouteDetail`/`handleRoute` are closure-private to
+// `createLiveController`, with no `global.tcV6*` export — same constraint
+// other source-level pins in this file already work around. The 2
+// call-site labels are pinned here; `detailMarkup`'s own rendering of
+// `detail.kind === 'loading'` is already exercised end to end by the
+// "the shell asks for a panel..." and "the charter panel never shows..."
+// mounted-shell tests above, which now assert the animated markup directly.
+describe('#3207 call sites — loadRouteDetail/handleRoute pass a context label for the loading detail state', () => {
+  it('the chat route sets { kind: "loading", label: "Loading chat" } before loadConversation', () => {
+    assert.match(SRC, /shell\.setDetail\(\{ kind: 'loading', label: 'Loading chat' \}\);\s*\n\s*await loadConversation\(/);
+  });
+
+  it('the settings route sets { kind: "loading", label: "Loading settings" } before loadSettings', () => {
+    assert.match(SRC, /shell\.setDetail\(\{ kind: 'loading', label: 'Loading settings' \}\);\s*\n\s*await loadSettings\(/);
+  });
+
+  it('detailMarkup falls back to plain "Loading" when no label is given', () => {
+    assert.match(SRC, /detail\.kind === 'loading'\) return `<p class="v6-detail-loading" role="status">\$\{v6EllipsisLoadingMarkup\(detail\.label \|\| 'Loading'\)\}<\/p>`;/);
+  });
+});
+
 // ── Car V651-W2-B (#3133, #3132, #3139): persisted layout, the automated
 // usage probe's own UI, and inline video previews ──
 
@@ -9208,6 +9290,36 @@ describe('Car V651-W2-B: the automated CLI usage probe\'s own UI (#3132)', () =>
     assert.match(html, /data-engine="antigravity"><span class="v6-usage-probe-name">Antigravity<\/span><span class="v6-usage-probe-badge is-unknown">Not probed yet<\/span>/);
     assert.match(html, /href="https:\/\/chatgpt\.com\/codex\/settings\/usage"/);
     assert.match(html, /href="https:\/\/antigravity\.google\/"/);
+    // #3208: a partial-failure row must surface ITS OWN error text, not a
+    // bare badge with no context.
+    assert.match(html, /is-not-present">Not present<\/span><span class="v6-usage-probe-footnote">claude: command not found<\/span>/);
+    assert.match(html, /is-not-configured">Not configured<\/span><span class="v6-usage-probe-footnote">no recognizable quota item<\/span>/);
+  });
+
+  // #3208: tcV6UsageProbeFootnote — the per-provider "last probed" timestamp
+  // and non-fatal note/error lib/usage-windows.js#_probeResult always
+  // carries, surfaced instead of silently dropped.
+  it('tcV6UsageProbeFootnote renders the last-probed timestamp and any note, escaped; nothing for a null result', () => {
+    assert.equal(G.tcV6UsageProbeFootnote(null), '');
+    assert.equal(G.tcV6UsageProbeFootnote({ observedAt: null, error: null }), '', 'nothing to show');
+    assert.equal(
+      G.tcV6UsageProbeFootnote({ observedAt: '2026-11-22T13:05:00Z', error: null }),
+      '<span class="v6-usage-probe-footnote">Last probed 2026-11-22 13:05 UTC</span>'
+    );
+    assert.equal(
+      G.tcV6UsageProbeFootnote({ observedAt: '2026-11-22T13:05:00Z', error: 'parsed but empty' }),
+      '<span class="v6-usage-probe-footnote">Last probed 2026-11-22 13:05 UTC · parsed but empty</span>'
+    );
+    assert.doesNotMatch(G.tcV6UsageProbeFootnote({ observedAt: null, error: '<b>unsafe</b>' }), /<b>unsafe<\/b>/);
+    assert.match(G.tcV6UsageProbeFootnote({ observedAt: null, error: '<b>unsafe</b>' }), /&lt;b&gt;unsafe&lt;\/b&gt;/);
+  });
+
+  it('a configured provider\'s row also carries its own last-probed footnote', () => {
+    const html = G.tcV6UsageProbeMarkup({
+      claude: { status: 'configured', weeklyRemainingPct: 62, fiveHourRemainingPct: 80, observedAt: '2026-11-22T13:05:00Z' },
+      codex: null, antigravity: null
+    }, '30m');
+    assert.match(html, /Last probed 2026-11-22 13:05 UTC/);
   });
 
   it('the refresh-cadence selector offers 15m/30m/1h/Manual, with the current one selected', () => {
@@ -9236,19 +9348,9 @@ describe('Car V651-W2-B: the automated CLI usage probe\'s own UI (#3132)', () =>
     const timers = [];
     const live = G.tcV6CreateLiveController({
       getShell: () => shell,
-      api: async (url, init) => {
+      api: async (url) => {
         calls.push(url);
         if (url === '/api/usage/probe') return probeSnapshot;
-        if (url === '/api/usage/refresh') {
-          mutations.push({ url, method: init.method });
-          probeSnapshot = { usage: { claude: { status: 'configured', weeklyRemainingPct: 77, fiveHourRemainingPct: 90 }, codex: null, antigravity: null }, interval: probeSnapshot.interval };
-          return probeSnapshot;
-        }
-        if (url === '/api/usage/probe/interval') {
-          mutations.push({ url, method: init.method, body: JSON.parse(init.body) });
-          probeSnapshot = Object.assign({}, probeSnapshot, { interval: JSON.parse(init.body).interval });
-          return { interval: JSON.parse(init.body).interval };
-        }
         if (url === '/api/projects') return { projects: [{ id: 12, name: 'P', engine: { id: 'claude' } }] };
         if (/\/status$/.test(url)) return { active: true, sessionId: 1 };
         if (url === '/api/usage/windows') return { resetSchedule: { nextWeeklyResetAt: 'x', hoursUntilWeeklyReset: 1 }, byProviderModel: {}, calibration: {} };
@@ -9256,7 +9358,24 @@ describe('Car V651-W2-B: the automated CLI usage probe\'s own UI (#3132)', () =>
         if (/conversation\/events/.test(url)) return { events: [] };
         return null;
       },
-      apiMutate: async () => { throw new Error('the probe routes never go through apiMutate'); },
+      // #3208: "Refresh now" and the interval selector go through apiMutate
+      // now (it sets Content-Type: application/json, which the raw api()
+      // call these used to make never did — Express's body-parser refused
+      // the POST outright, so neither control worked at all). This stub
+      // records exactly what a real apiMutate call sends: (url, method, body
+      // as a PLAIN OBJECT, never a pre-stringified string).
+      apiMutate: async (url, method, body) => {
+        mutations.push({ url, method, body });
+        if (url === '/api/usage/refresh') {
+          probeSnapshot = { usage: { claude: { status: 'configured', weeklyRemainingPct: 77, fiveHourRemainingPct: 90 }, codex: null, antigravity: null }, interval: probeSnapshot.interval };
+          return probeSnapshot;
+        }
+        if (url === '/api/usage/probe/interval') {
+          probeSnapshot = Object.assign({}, probeSnapshot, { interval: body.interval });
+          return { interval: body.interval };
+        }
+        return null;
+      },
       storage: null, setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {}
     });
     const { doc } = makeDocument([]);
@@ -9271,12 +9390,12 @@ describe('Car V651-W2-B: the automated CLI usage probe\'s own UI (#3132)', () =>
     assert.match(doc.getElementById('v6EngineUsageSlot').innerHTML, /is-not-configured">Not configured/);
     doc.getElementById('v6UsageProbeRefresh').dispatch('click');
     await new Promise((r) => setImmediate(r));
-    assert.ok(mutations.some((m) => m.url === '/api/usage/refresh' && m.method === 'POST'));
+    assert.ok(mutations.some((m) => m.url === '/api/usage/refresh' && m.method === 'POST'), 'through apiMutate, which always carries Content-Type: application/json');
     assert.match(doc.getElementById('v6EngineUsageSlot').innerHTML, /77% left/, 'the refreshed snapshot redrew the probe section');
     doc.getElementById('v6UsageProbeInterval').value = '1h';
     doc.getElementById('v6UsageProbeInterval').dispatch('change');
     await new Promise((r) => setImmediate(r));
-    assert.deepEqual(mutations.filter((m) => m.url === '/api/usage/probe/interval'), [{ url: '/api/usage/probe/interval', method: 'POST', body: { interval: '1h' } }]);
+    assert.deepEqual(plain(mutations.filter((m) => m.url === '/api/usage/probe/interval')), [{ url: '/api/usage/probe/interval', method: 'POST', body: { interval: '1h' } }]);
     // Every 15th chat read (the same cadence #3085's own meter refreshes on) re-reads the probe too.
     const before = calls.filter((c) => c === '/api/usage/probe').length;
     const poll = timers[timers.length - 1];
@@ -10145,7 +10264,8 @@ describe('the charter panel never shows a project the operator has left (#3088, 
     withIdParsingInnerHTML(doc.getElementById('v6WorkspacePanel'), doc);
     doc.getElementById('v6WorkspaceMode-charter').dispatch('click');
     assert.doesNotMatch(doc.getElementById('v6WorkspacePanel').innerHTML, /charter of A/);
-    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /Loading…/);
+    // #3207: the animated ellipsis indicator's label is plain "Loading" — the dots span supplies the "…".
+    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /v6-chat-activity-label">Loading</);
   });
 
   it('drops a charter read that finishes after the operator moved to another project', async () => {
