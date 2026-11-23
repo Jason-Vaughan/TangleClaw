@@ -8695,33 +8695,83 @@ function _isMasterEngineBusy(nowLines) {
 const MASTER_ENGINE_DIALOG_SUBSTRINGS = ['enter to confirm', '↑↓ to select'];
 
 /**
- * A numbered OR bulleted selector option — `"❯ 1. Yes"` / `"› 1. Yes"` /
- * `"  2. No, quit"` (Claude's/Codex's own permission dialogs), or a
- * `●`/`○` radio marker (antigravity/Gemini-CLI's `"● Yes   ○ No"`) —
- * measured in `test/_wake-fixtures.js`'s `DIALOG_PANE`/`CX_DIALOG_PANE`/
- * `AG_DIALOG_PANE` (#3218 R-Gate R10). Deliberately structural rather
- * than matching the loose words "Yes,"/"No,"/"Allow" a model's own reply
- * could legitimately open a sentence with.
+ * A structural radio-choice row — `"● Yes   ○ No"` (antigravity/Gemini-
+ * CLI's own real dialog capture) — anchored to the row's OWN start so
+ * ordinary prose that merely mentions both glyphs in passing (a status
+ * line, `"Status: ○ pending, ● complete"`) never matches (#3218 R-Gate
+ * R11 BLOCKER 1: R10's own `[●○]` test matched either glyph ANYWHERE in
+ * ANY line, with no structure required at all).
  */
-const MASTER_ENGINE_DIALOG_OPTION_RE = /^(?:[❯›]\s*)?\d+\.\s|[●○]/;
+const MASTER_ENGINE_RADIO_DIALOG_RE = /^●\s+\S+.*\s+○\s+\S+/;
 
 /**
- * Whether ANY line of the CURRENT terminal snapshot shows an active
- * permission/confirmation dialog (#3218 R-Gate R10 BLOCKER B) — checked
- * UNSCOPED (not confined to {@link _masterChromeStartIndex}'s chrome
- * region), since a dialog's own selector rows REPLACE the normal
- * prompt/composer chrome entirely, leaving no anchor to scope against.
- * Structural selector-option patterns and the one real dialog's own
- * help-row phrasing, never the loose "Do you want"/"Yes,"/"No,"/"Allow"
- * wording a model's own reply could legitimately contain.
+ * Whether `trimmedLines` (each already `.trim()`-med) shows a genuine
+ * numbered-selector dialog (#3218 R-Gate R11 BLOCKER 1) — R10's own
+ * `[❯›]` cursor glyph before `\d+\.\s` was OPTIONAL, so an ordinary
+ * numbered reply list (`"1. Install dependencies"`, `"2. Run tests"`,
+ * no cursor anywhere) matched it exactly as well as a real dialog's
+ * highlighted option (`"❯ 1. Yes"`) did. The cursor is now MANDATORY:
+ * a bare numbered line never signals a dialog on its own, only a line a
+ * real selector actually highlights does — paired with a sibling
+ * numbered option row or the dialog's own help-row phrasing elsewhere
+ * in the snapshot, so a single stray cursor-like glyph can't coincide
+ * with an unrelated numbered line and read as a dialog by itself.
+ * @param {string[]} trimmedLines
+ * @returns {boolean}
+ */
+function _hasMasterNumberedDialogSignature(trimmedLines) {
+  if (!trimmedLines.some((t) => /^[❯›]\s*\d+\.\s/.test(t))) return false;
+  const hasSiblingOption = trimmedLines.some((t) => /^\d+\.\s/.test(t));
+  const hasHelpRow = trimmedLines.some((t) => MASTER_ENGINE_DIALOG_SUBSTRINGS.some((s) => t.includes(s)));
+  return hasSiblingOption || hasHelpRow;
+}
+
+/**
+ * Whether `nowLines` shows a genuine radio-selector dialog (#3218
+ * R-Gate R11 BLOCKER 1) — a structural radio-choice row ({@link
+ * MASTER_ENGINE_RADIO_DIALOG_RE}) or the dialog's own help-row phrasing
+ * ({@link MASTER_ENGINE_DIALOG_SUBSTRINGS}), AND only when no bare
+ * prompt or Codex composer line ({@link _isMasterPromptLine}, {@link
+ * _isMasterComposerLine}) sits BELOW whichever of those two signals is
+ * the LAST one found in the snapshot — real chrome returning below
+ * stale dialog text means the dialog has already resolved. The numbered
+ * case above needs no such guard: its mandatory cursor glyph is already
+ * specific enough on its own, where "enter to confirm"/"↑↓ to select"
+ * alone is comparatively weaker and worth the extra check.
+ * @param {string[]} nowLines
+ * @param {string[]} trimmedLines
+ * @returns {boolean}
+ */
+function _hasMasterRadioDialogSignature(nowLines, trimmedLines) {
+  let lastSignalIndex = -1;
+  for (let i = 0; i < trimmedLines.length; i++) {
+    const t = trimmedLines[i];
+    if (MASTER_ENGINE_RADIO_DIALOG_RE.test(t) || MASTER_ENGINE_DIALOG_SUBSTRINGS.some((s) => t.includes(s))) lastSignalIndex = i;
+  }
+  if (lastSignalIndex === -1) return false;
+  for (let i = lastSignalIndex + 1; i < nowLines.length; i++) {
+    if (_isMasterPromptLine(nowLines[i]) || _isMasterComposerLine(nowLines[i])) return false;
+  }
+  return true;
+}
+
+/**
+ * Whether the CURRENT terminal snapshot shows an active permission/
+ * confirmation dialog (#3218 R-Gate R10 BLOCKER B, narrowed in R11
+ * BLOCKER 1) — checked UNSCOPED (not confined to {@link
+ * _masterChromeStartIndex}'s chrome region), since a dialog's own
+ * selector rows REPLACE the normal prompt/composer chrome entirely,
+ * leaving no anchor to scope against. Two independent structural
+ * signatures ({@link _hasMasterNumberedDialogSignature}, {@link
+ * _hasMasterRadioDialogSignature}), never the loose "Do you
+ * want"/"Yes,"/"No,"/"Allow" wording, or a bare `[●○]`-anywhere test, a
+ * model's own reply could legitimately contain.
  * @param {string[]} nowLines
  * @returns {boolean}
  */
 function _isMasterEngineDialog(nowLines) {
-  return nowLines.some((line) => {
-    const trimmed = String(line || '').trim();
-    return MASTER_ENGINE_DIALOG_OPTION_RE.test(trimmed) || MASTER_ENGINE_DIALOG_SUBSTRINGS.some((s) => trimmed.includes(s));
-  });
+  const trimmedLines = nowLines.map((line) => String(line || '').trim());
+  return _hasMasterNumberedDialogSignature(trimmedLines) || _hasMasterRadioDialogSignature(nowLines, trimmedLines);
 }
 
 /**
@@ -8895,7 +8945,33 @@ function syncMasterAssistantTurnsFromTerminal(term) {
     // reply whose own EARLIER content happens to read "Ready", with more
     // reply after it, is never touched; only the trailing chrome that
     // actually triggered retirement is.
-    while (buckets[0].length > 0 && _isMasterChromeLine(buckets[0][buckets[0].length - 1])) {
+    //
+    // #3218 R-Gate R11 BLOCKER 2: that strip alone matched by PREDICATE
+    // only, with no bound at all — a SINGLE write delivering echo + a
+    // genuine final reply of exactly "Ready" + the completion prompt all
+    // at once produced a bucket of `['Ready']` (the trailing prompt
+    // itself is consumed as "old" by the multiset delta whenever it is
+    // byte-identical to the turn's own baseline prompt, never even
+    // reaching the bucket), and the loop still popped "Ready" off the
+    // end, since _isMasterChromeLine cannot tell a real reply of exactly
+    // "Ready" apart from a second chrome line once the real chrome is
+    // already gone. A bare line-COUNT budget is not enough either (it
+    // would still spend its one unit of budget popping "Ready" itself in
+    // exactly this shape) — strip is now bound to actual MEMBERSHIP in
+    // `now`'s own chrome region (`now.slice(chromeStart)`), consumed by
+    // multiset count exactly like {@link _masterTerminalLineDelta}: a
+    // bucket's trailing line is only ever chrome if it is a real
+    // occurrence of a line genuinely sitting in that region, never merely
+    // because some OTHER chrome line used to be there.
+    const chromeStart = _masterChromeStartIndex(now);
+    const chromeRemaining = new Map();
+    for (const line of now.slice(chromeStart)) chromeRemaining.set(line, (chromeRemaining.get(line) || 0) + 1);
+    while (buckets[0].length > 0) {
+      const last = buckets[0][buckets[0].length - 1];
+      if (!_isMasterChromeLine(last)) break;
+      const remaining = chromeRemaining.get(last) || 0;
+      if (remaining <= 0) break;
+      chromeRemaining.set(last, remaining - 1);
       buckets[0] = buckets[0].slice(0, -1);
     }
   }

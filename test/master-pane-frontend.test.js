@@ -608,11 +608,13 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
           const MASTER_ENGINE_BUSY_SUBSTRINGS = ['esc to interrupt', 'esc to cancel'];
           const MASTER_ENGINE_BUSY_EXACT_LINES = ['Working', 'Thinking'];
           const MASTER_ENGINE_DIALOG_SUBSTRINGS = ['enter to confirm', '↑↓ to select'];
-          const MASTER_ENGINE_DIALOG_OPTION_RE = /^(?:[❯›]\\s*)?\\d+\\.\\s|[●○]/;
+          const MASTER_ENGINE_RADIO_DIALOG_RE = /^●\\s+\\S+.*\\s+○\\s+\\S+/;
           ${liftDeclaration(js, 'function _isMasterEngineIdleMarkerLine(')}
           ${liftDeclaration(js, 'function _isMasterComposerLine(')}
           ${liftDeclaration(js, 'function _masterChromeStartIndex(')}
           ${liftDeclaration(js, 'function _isMasterEngineBusy(')}
+          ${liftDeclaration(js, 'function _hasMasterNumberedDialogSignature(')}
+          ${liftDeclaration(js, 'function _hasMasterRadioDialogSignature(')}
           ${liftDeclaration(js, 'function _isMasterEngineDialog(')}
           ${liftDeclaration(js, 'function _isMasterEngineBlocking(')}
           ${liftDeclaration(js, 'function _isMasterEngineIdle(')}
@@ -1377,6 +1379,96 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
               term.fireWrite();
             });
           }
+        });
+
+        // #3218 R-Gate R11 BLOCKER 1 — R10's own dialog regex made the
+        // selector-cursor glyph OPTIONAL before a number, and matched a
+        // bare ●/○ glyph ANYWHERE in any line with no structure required
+        // at all. Both false-positived on ordinary reply content that
+        // merely happens to look similar, permanently blocking retirement
+        // (the fallback timers re-arm forever once a "dialog" is seen).
+        describe('ordinary numbered-list and radio-symbol prose replies are not mistaken for dialogs (#3218 R-Gate R11 BLOCKER 1)', () => {
+          it('a numbered-list reply (no selector cursor glyph) retires immediately at the trailing prompt and preserves the full list text', async () => {
+            const term = makeFakeTerm(['$ ']);
+            const { doc, sandbox } = mountChatWorkspace(term);
+            const input = doc.getElementById('masterChatInput');
+            input.value = 'first';
+            await sandbox.sendMasterChatMessage();
+            input.value = 'second';
+            await sandbox.sendMasterChatMessage();
+
+            term.setLines(['$ first', 'Here are the steps:', '1. Install dependencies', '2. Run tests', '$ ']);
+            term.fireWrite();
+            assert.deepEqual(term.pasted, ['first\r', 'second\r'],
+              'an ordinary numbered list -- no selector cursor glyph -- must not be mistaken for a dialog and block retirement');
+
+            const stream = doc.getElementById('masterChatStream');
+            const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+            assert.equal(assistantTurns.length, 1);
+            assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text,
+              'Here are the steps:\n1. Install dependencies\n2. Run tests',
+              'the full numbered list renders intact, only the trailing prompt stripped as chrome');
+
+            // Drain "second" so nothing lingers.
+            term.setLines(['$ first', 'Here are the steps:', '1. Install dependencies', '2. Run tests', '$ second', 'second-reply', '$ ']);
+            term.fireWrite();
+          });
+
+          it('a radio-symbol prose reply (no structural radio-choice row) retires immediately and preserves the full text', async () => {
+            const term = makeFakeTerm(['$ ']);
+            const { doc, sandbox } = mountChatWorkspace(term);
+            const input = doc.getElementById('masterChatInput');
+            input.value = 'first';
+            await sandbox.sendMasterChatMessage();
+            input.value = 'second';
+            await sandbox.sendMasterChatMessage();
+
+            term.setLines(['$ first', 'Status: ○ pending, ● complete', '$ ']);
+            term.fireWrite();
+            assert.deepEqual(term.pasted, ['first\r', 'second\r'],
+              'a bare ●/○ mention in prose -- no structural radio-choice row -- must not be mistaken for a dialog');
+
+            const stream = doc.getElementById('masterChatStream');
+            const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+            assert.equal(assistantTurns.length, 1);
+            assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'Status: ○ pending, ● complete');
+
+            term.setLines(['$ first', 'Status: ○ pending, ● complete', '$ second', 'second-reply', '$ ']);
+            term.fireWrite();
+          });
+        });
+
+        // #3218 R-Gate R11 BLOCKER 2 — the trailing chrome strip had no
+        // bound: a SINGLE write delivering echo + a genuine final reply
+        // of exactly "Ready" + the completion prompt all at once produced
+        // a bucket of ['Ready', '$ ']; the strip popped the trailing
+        // prompt, then ALSO popped "Ready" right after it, since
+        // _isMasterChromeLine cannot tell a real reply of exactly "Ready"
+        // apart from a second chrome line once the first is gone.
+        describe('a single write delivering echo + a reply of exactly "Ready" + completion chrome all at once (#3218 R-Gate R11 BLOCKER 2)', () => {
+          it('retires the turn and renders "Ready" intact, not stripped as a second chrome line', async () => {
+            const term = makeFakeTerm(['$ ']);
+            const { doc, sandbox } = mountChatWorkspace(term);
+            const input = doc.getElementById('masterChatInput');
+            input.value = 'first';
+            await sandbox.sendMasterChatMessage();
+            input.value = 'second';
+            await sandbox.sendMasterChatMessage();
+
+            term.setLines(['$ first', 'Ready', '$ ']);
+            term.fireWrite();
+            assert.deepEqual(term.pasted, ['first\r', 'second\r'],
+              'a single write delivering echo + reply + completion chrome together must still retire');
+
+            const stream = doc.getElementById('masterChatStream');
+            const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+            assert.equal(assistantTurns.length, 1);
+            assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'Ready',
+              'the reply "Ready" must survive -- only the trailing prompt is chrome, not the reply line above it');
+
+            term.setLines(['$ first', 'Ready', '$ second', 'second-reply', '$ ']);
+            term.fireWrite();
+          });
         });
       });
     });
