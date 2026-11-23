@@ -5569,4 +5569,314 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       assert.equal(out.state, 'ready');
     });
   });
+
+  describe('preflightSessionLaunch (#3202)', () => {
+    let sessions;
+    let tmux;
+    let wrapRunRegistry;
+    let controlGate;
+    let projDir;
+    let projectsDir;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+      tmux = require('../lib/tmux');
+      wrapRunRegistry = require('../lib/wrap-run-registry');
+      controlGate = require('../lib/control-gate');
+      // #3202's own describe sits after `describe('sessions', ...)` has
+      // already closed, so its `projectsDir` local is out of scope — the
+      // STORE it configured is still live (a file-scoped singleton), and
+      // `store._getBasePath()` is the same value that outer block's own
+      // `tmpDir` was, so this resolves the identical directory.
+      projectsDir = path.join(store._getBasePath(), 'projects');
+
+      projDir = path.join(projectsDir, 'preflight-test');
+      fs.mkdirSync(projDir, { recursive: true });
+      store.projects.create({ name: 'preflight-test', path: projDir, engine: 'claude' });
+    });
+
+    it('the healthy project reads ok:true with every check recorded', () => {
+      const result = sessions.preflightSessionLaunch('preflight-test');
+      assert.equal(result.ok, true);
+      assert.equal(result.project, 'preflight-test');
+      assert.equal(result.code, null);
+      assert.equal(result.category, null);
+      assert.equal(result.canEditProperties, false);
+      assert.ok(result.checks.length > 0);
+      assert.ok(result.checks.every((c) => c.ok === true), `expected every check to pass: ${JSON.stringify(result.checks)}`);
+    });
+
+    it('workspace_missing / WORKSPACE_MISSING: project not registered', () => {
+      const result = sessions.preflightSessionLaunch('no-such-project-exists');
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'WORKSPACE_MISSING');
+      assert.equal(result.category, 'workspace_missing');
+      assert.equal(result.canEditProperties, true);
+      assert.ok(result.remediation);
+    });
+
+    it('workspace_missing / WORKSPACE_MISSING: configured path does not exist on disk', () => {
+      const missingDir = path.join(projectsDir, 'preflight-missing-path');
+      store.projects.create({ name: 'preflight-missing-path', path: missingDir, engine: 'claude' });
+      const result = sessions.preflightSessionLaunch('preflight-missing-path');
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'WORKSPACE_MISSING');
+      assert.equal(result.category, 'workspace_missing');
+    });
+
+    it('workspace_missing / WORKSPACE_MISSING: configured path is a file, not a directory', () => {
+      const filePath = path.join(projectsDir, 'preflight-not-a-dir.txt');
+      fs.writeFileSync(filePath, 'not a directory');
+      store.projects.create({ name: 'preflight-not-a-dir', path: filePath, engine: 'claude' });
+      const result = sessions.preflightSessionLaunch('preflight-not-a-dir');
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'WORKSPACE_MISSING');
+    });
+
+    it('filesystem_permission_denied / TCC_PERMISSION_DENIED: an unreadable workspace directory', () => {
+      // A real EACCES from chmod 0 — the same shape this check exists to
+      // catch (an `ls` that is refused, not one that hangs), reached without
+      // needing a real TCC-protected macOS directory. Skipped under root,
+      // where chmod 0 does not actually block the owner from reading.
+      if (process.getuid && process.getuid() === 0) return;
+      const blockedDir = path.join(projectsDir, 'preflight-blocked');
+      fs.mkdirSync(blockedDir, { recursive: true });
+      store.projects.create({ name: 'preflight-blocked', path: blockedDir, engine: 'claude' });
+      fs.chmodSync(blockedDir, 0o000);
+      try {
+        const result = sessions.preflightSessionLaunch('preflight-blocked');
+        assert.equal(result.ok, false);
+        assert.equal(result.code, 'TCC_PERMISSION_DENIED');
+        assert.equal(result.category, 'filesystem_permission_denied');
+        assert.ok(result.retryable);
+      } finally {
+        fs.chmodSync(blockedDir, 0o755);
+      }
+    });
+
+    it('engine_binary_missing / ENGINE_BINARY_MISSING: the configured engine has no resolvable profile', () => {
+      const dir = path.join(projectsDir, 'preflight-bad-engine');
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name: 'preflight-bad-engine', path: dir, engine: 'claude' });
+      const result = sessions.preflightSessionLaunch('preflight-bad-engine', { engineOverride: 'no-such-engine-at-all' });
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'ENGINE_BINARY_MISSING');
+      assert.equal(result.category, 'engine_binary_missing');
+    });
+
+    it('engine_auth_or_config_invalid / ENGINE_CONFIG_INVALID: malformed .tangleclaw/project.json', () => {
+      const dir = path.join(projectsDir, 'preflight-malformed-config');
+      fs.mkdirSync(path.join(dir, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), '{ not valid json');
+      store.projects.create({ name: 'preflight-malformed-config', path: dir, engine: 'claude' });
+      const result = sessions.preflightSessionLaunch('preflight-malformed-config');
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'ENGINE_CONFIG_INVALID');
+      assert.equal(result.category, 'engine_auth_or_config_invalid');
+    });
+
+    it('engine_auth_or_config_invalid / ENGINE_CONFIG_INVALID: an unconfirmable selected model', () => {
+      const dir = path.join(projectsDir, 'preflight-bad-model');
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name: 'preflight-bad-model', path: dir, engine: 'claude' });
+      store.projectConfig.save(dir, { model: 'definitely-not-a-real-model-id' });
+      const result = sessions.preflightSessionLaunch('preflight-bad-model');
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'ENGINE_CONFIG_INVALID');
+      assert.equal(result.category, 'engine_auth_or_config_invalid');
+    });
+
+    it('launch_blocked_or_timeout / LAUNCH_BLOCKED: the lane is HELD', () => {
+      const orig = controlGate.checkMutation;
+      controlGate.checkMutation = () => ({ status: 423, code: 'CONTROL_HELD', message: 'this lane is on HOLD: test', details: {} });
+      try {
+        const result = sessions.preflightSessionLaunch('preflight-test');
+        assert.equal(result.ok, false);
+        assert.equal(result.code, 'LAUNCH_BLOCKED');
+        assert.equal(result.category, 'launch_blocked_or_timeout');
+      } finally {
+        controlGate.checkMutation = orig;
+      }
+    });
+
+    it('launch_blocked_or_timeout / LAUNCH_BLOCKED: the lane is STOPPED', () => {
+      const orig = controlGate.checkMutation;
+      controlGate.checkMutation = () => ({ status: 423, code: 'CONTROL_STOPPED', message: 'this lane is STOPPED: test', details: {} });
+      try {
+        const result = sessions.preflightSessionLaunch('preflight-test');
+        assert.equal(result.ok, false);
+        assert.equal(result.code, 'LAUNCH_BLOCKED');
+      } finally {
+        controlGate.checkMutation = orig;
+      }
+    });
+
+    it('launch_blocked_or_timeout / LAUNCH_BLOCKED: a governed wrap is running', () => {
+      const orig = wrapRunRegistry.get;
+      wrapRunRegistry.get = () => ({ running: true, stale: false });
+      try {
+        const result = sessions.preflightSessionLaunch('preflight-test');
+        assert.equal(result.ok, false);
+        assert.equal(result.code, 'LAUNCH_BLOCKED');
+        assert.equal(result.category, 'launch_blocked_or_timeout');
+        assert.ok(result.retryable);
+      } finally {
+        wrapRunRegistry.get = orig;
+      }
+    });
+
+    it('launch_blocked_or_timeout / LAUNCH_TIMEOUT: an existing session whose tmux probe never answers', () => {
+      const dir = path.join(projectsDir, 'preflight-wedged');
+      fs.mkdirSync(dir, { recursive: true });
+      const project = store.projects.create({ name: 'preflight-wedged', path: dir, engine: 'claude' });
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'preflight-wedged-tmux' });
+      const origProbe = tmux.probeSession;
+      tmux.probeSession = () => ({ answered: false, live: false, cause: 'read-timed-out' });
+      try {
+        const result = sessions.preflightSessionLaunch('preflight-wedged');
+        assert.equal(result.ok, false);
+        assert.equal(result.code, 'LAUNCH_TIMEOUT');
+        assert.equal(result.category, 'launch_blocked_or_timeout');
+        assert.ok(result.retryable);
+      } finally {
+        tmux.probeSession = origProbe;
+        store.sessions.markCrashed(session.id, 'test cleanup');
+      }
+    });
+  });
+
+  describe('GET /api/sessions/:project/preflight (#3202)', () => {
+    let server;
+    let http;
+    let operatorHeaders;
+    let projectsDir;
+
+    function request(method, urlPath) {
+      return new Promise((resolve, reject) => {
+        const addr = server.address();
+        const headers = operatorHeaders(server);
+        const req = http.request({ hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers }, (res) => {
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf8');
+            let parsed;
+            try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+            resolve({ status: res.statusCode, body: parsed });
+          });
+        });
+        req.on('error', reject);
+        req.end();
+      });
+    }
+
+    before(async () => {
+      http = require('node:http');
+      ({ operatorHeaders } = require('./_shared-docs-callers'));
+      const { createServer } = require('../server');
+      projectsDir = path.join(store._getBasePath(), 'projects');
+
+      const dir = path.join(projectsDir, 'preflight-route-test');
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name: 'preflight-route-test', path: dir, engine: 'claude' });
+
+      server = createServer();
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    });
+
+    after(async () => {
+      await new Promise((resolve) => server.close(resolve));
+    });
+
+    it('returns 200 with the structured preflight payload for a healthy project', async () => {
+      const res = await request('GET', '/api/sessions/preflight-route-test/preflight');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.ok, true);
+      assert.equal(res.body.project, 'preflight-route-test');
+    });
+
+    it('returns 404 when the project row does not exist', async () => {
+      const res = await request('GET', '/api/sessions/no-such-project-at-all/preflight');
+      assert.equal(res.status, 404);
+      assert.equal(res.body.code, 'NOT_FOUND');
+    });
+
+    it('returns 200 with ok:false and a structured diagnostic for an unhealthy project', async () => {
+      const dir = path.join(projectsDir, 'preflight-route-unhealthy');
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name: 'preflight-route-unhealthy', path: dir, engine: 'no-such-engine-anywhere' });
+      const res = await request('GET', '/api/sessions/preflight-route-unhealthy/preflight');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.ok, false);
+      assert.equal(res.body.code, 'ENGINE_BINARY_MISSING');
+      assert.equal(res.body.canEditProperties, true);
+    });
+  });
+
+  describe('POST /api/sessions/:project diagnostic enrichment (#3202)', () => {
+    let server;
+    let http;
+    let operatorHeaders;
+    let projectsDir;
+
+    function request(method, urlPath, body) {
+      return new Promise((resolve, reject) => {
+        const addr = server.address();
+        const bodyStr = body !== undefined ? JSON.stringify(body) : null;
+        const headers = { 'Content-Type': 'application/json', ...operatorHeaders(server) };
+        if (bodyStr !== null) headers['Content-Length'] = Buffer.byteLength(bodyStr);
+        const req = http.request({ hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers }, (res) => {
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf8');
+            let parsed;
+            try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+            resolve({ status: res.statusCode, body: parsed });
+          });
+        });
+        req.on('error', reject);
+        if (bodyStr !== null) req.write(bodyStr);
+        req.end();
+      });
+    }
+
+    before(async () => {
+      http = require('node:http');
+      ({ operatorHeaders } = require('./_shared-docs-callers'));
+      const { createServer } = require('../server');
+      projectsDir = path.join(store._getBasePath(), 'projects');
+      server = createServer();
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    });
+
+    after(async () => {
+      await new Promise((resolve) => server.close(resolve));
+    });
+
+    it('a launch against an unregistered project still returns the plain 404 (no diagnostic — this happens before launchSession runs)', async () => {
+      const res = await request('POST', '/api/sessions/no-such-project-at-all');
+      assert.equal(res.status, 404);
+      assert.equal(res.body.code, 'NOT_FOUND');
+      assert.equal(res.body.diagnostic, undefined);
+    });
+
+    it('a launch whose configured engine has no profile attaches a structured ENGINE_BINARY_MISSING diagnostic', async () => {
+      const dir = path.join(projectsDir, 'preflight-launch-bad-engine');
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name: 'preflight-launch-bad-engine', path: dir, engine: 'no-such-engine-anywhere' });
+      const res = await request('POST', '/api/sessions/preflight-launch-bad-engine');
+      assert.equal(res.body.diagnostic.code, 'ENGINE_BINARY_MISSING');
+      assert.equal(res.body.diagnostic.category, 'engine_binary_missing');
+      assert.equal(res.body.canEditProperties, true);
+      assert.ok(res.body.remediation);
+    });
+    // Model/effort-check and malformed-config enrichment (ENGINE_CONFIG_INVALID)
+    // are exercised directly against launchSession's own return objects, not
+    // over HTTP: they need a real engine CLI/tmux to reach that deep into the
+    // launch pipeline in this environment, which `preflightSessionLaunch`'s
+    // own unit tests above already cover for the identical underlying check
+    // without that dependency. This block proves the ROUTE's enrichment
+    // wiring (`_withDiagnostic`), not the check logic itself.
+  });
 });
