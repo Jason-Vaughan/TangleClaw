@@ -6524,3 +6524,50 @@ describe('POST /api/sessions/:project { async: true } holds its single-flight cl
     }
   });
 });
+
+describe('#3216 R5: snapshotExistingSessionIdsAsync matches the sync version exactly (PRR-A\'s own finding — the encoded transcript directory is not injective)', () => {
+  const profileReconciler = require('../lib/profile-reconciler');
+  let claudeHome;
+
+  beforeEach(() => {
+    claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-r5-claude-home-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(claudeHome, { recursive: true, force: true });
+  });
+
+  it('absent: no history at all for this project — both resolve an empty set', async () => {
+    const projectPath = '/Users/jasonvaughan/never-launched-anywhere';
+    const syncResult = profileReconciler.snapshotExistingSessionIds(projectPath, 'claude', { claudeHome });
+    const asyncResult = await profileReconciler.snapshotExistingSessionIdsAsync(projectPath, 'claude', { claudeHome });
+    assert.deepEqual([...syncResult], []);
+    assert.deepEqual([...asyncResult], []);
+  });
+
+  it('colliding: the project\'s own encoded directory also holds a DIFFERENT project\'s session (a different cwd) — only the real match is included, by either version', async () => {
+    const projectPath = '/Users/jasonvaughan/colliding-project';
+    const dir = path.join(claudeHome, 'projects', projectPath.replace(/[/.]/g, '-'));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'session-mine.jsonl'), `${JSON.stringify({ cwd: projectPath })}\n`);
+    fs.writeFileSync(path.join(dir, 'session-other.jsonl'), `${JSON.stringify({ cwd: '/Users/jasonvaughan/a-different-real-path' })}\n`);
+    const syncResult = profileReconciler.snapshotExistingSessionIds(projectPath, 'claude', { claudeHome });
+    const asyncResult = await profileReconciler.snapshotExistingSessionIdsAsync(projectPath, 'claude', { claudeHome });
+    assert.deepEqual([...syncResult], ['session-mine']);
+    assert.deepEqual([...asyncResult], ['session-mine']);
+  });
+
+  it('alternate/split: this project\'s own real history is split between its expected encoded directory and a totally differently-named one (e.g. an older Claude Code encoding scheme) — BOTH ids are found, by either version', async () => {
+    const projectPath = '/Users/jasonvaughan/split-history-project';
+    const expectedDir = path.join(claudeHome, 'projects', projectPath.replace(/[/.]/g, '-'));
+    fs.mkdirSync(expectedDir, { recursive: true });
+    fs.writeFileSync(path.join(expectedDir, 'session-A.jsonl'), `${JSON.stringify({ cwd: projectPath })}\n`);
+    const altDir = path.join(claudeHome, 'projects', 'totally-unrelated-old-encoding');
+    fs.mkdirSync(altDir, { recursive: true });
+    fs.writeFileSync(path.join(altDir, 'session-B.jsonl'), `${JSON.stringify({ cwd: projectPath })}\n`);
+    const syncResult = profileReconciler.snapshotExistingSessionIds(projectPath, 'claude', { claudeHome });
+    const asyncResult = await profileReconciler.snapshotExistingSessionIdsAsync(projectPath, 'claude', { claudeHome });
+    assert.deepEqual([...syncResult].sort(), ['session-A', 'session-B']);
+    assert.deepEqual([...asyncResult].sort(), ['session-A', 'session-B']);
+  });
+});
