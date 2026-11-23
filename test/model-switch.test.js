@@ -696,6 +696,41 @@ describe('lib/model-switch — switchSessionModel', () => {
       assert.equal(store.projects.get(project.id).engineId, 'claude', 'rolled back to the value before this call — never left naming the new engine while project.json failed to update');
     });
 
+    // PRR-A R-Gate R5 finding 2 (PR #3237): raw-byte restoration must
+    // apply even when saveProjectConfig is a CUSTOM test double, as long
+    // as it actually touches the real on-disk file — e.g. one that
+    // truncates/partially writes project.json (simulating ENOSPC mid-
+    // write) before throwing. The object-based round-trip via the
+    // injected saveProjectConfig itself cannot recover from this, since
+    // calling that SAME throwing double again would just throw again.
+    it('saveProjectConfig truncates the real project.json then throws: the ORIGINAL bytes are restored, not the truncated partial write', async () => {
+      store.projects.update(project.id, { engine_id: 'claude' });
+      store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+      const configDir = path.join(projectPath, '.tangleclaw');
+      const configPath = path.join(configDir, 'project.json');
+      fs.mkdirSync(configDir, { recursive: true });
+      const originalRaw = '{\n  "engine": "antigravity",\n  "customField": "keep-me"\n}\n';
+      fs.writeFileSync(configPath, originalRaw);
+      await assert.rejects(
+        () => modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, {
+          ...target(),
+          checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+          setDesiredProfile: () => {},
+          recordCheckpoint: () => {},
+          reconcile: () => ({ ok: true, state: 'verified' }),
+          saveProjectConfig: (p) => {
+            // Simulates a real partial write (e.g. ENOSPC mid-write):
+            // some bytes actually landed on disk before the failure.
+            fs.writeFileSync(path.join(p, '.tangleclaw', 'project.json'), '{\n  "engine": "cla');
+            throw new Error('ENOSPC');
+          }
+        }),
+        /ENOSPC/
+      );
+      assert.equal(fs.readFileSync(configPath, 'utf8'), originalRaw, 'the exact ORIGINAL bytes are restored, not the truncated partial write the throwing double left behind');
+      assert.equal(store.projects.get(project.id).engineId, 'claude');
+    });
+
     it('loadProjectConfig throws: SQLite engine_id is rolled back the same way', async () => {
       store.projects.update(project.id, { engine_id: 'claude' });
       store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
@@ -1280,6 +1315,44 @@ describe('lib/model-switch — switchSessionModel', () => {
     // so nothing is lost, even though the overall call failed.
     assert.equal(result.wipBranch, `wip/${project.name}-outage-9999`);
     assert.equal(store.projects.get(project.id).engineId, 'claude', 'engine must NOT be switched when termination failed');
+  });
+
+  // PRR-A R-Gate R5 finding 2 (PR #3237): outage-takeover's own
+  // _applyToProjectConfig call (after the kill already succeeded) gets
+  // the SAME raw-byte rollback as boundary mode — a partial write that
+  // truncates the real project.json before throwing is restored to its
+  // ORIGINAL bytes, not left truncated.
+  it('outage-takeover: saveProjectConfig truncates the real project.json then throws — the ORIGINAL bytes are restored', async () => {
+    initRepo(projectPath, ['-q']);
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'committed.txt'), 'a\n');
+    execFileSync('git', ['add', '-A'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: projectPath });
+
+    const configDir = path.join(projectPath, '.tangleclaw');
+    const configPath = path.join(configDir, 'project.json');
+    fs.mkdirSync(configDir, { recursive: true });
+    const originalRaw = '{\n  "engine": "antigravity",\n  "customField": "keep-me"\n}\n';
+    fs.writeFileSync(configPath, originalRaw);
+
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    await assert.rejects(
+      () => modelSwitch.switchSessionModel(project.name, {
+        engine: 'fake', model: 'claude-sonnet-5', mode: 'outage-takeover'
+      }, {
+        ...target(),
+        killSession: () => ({ error: null }),
+        launchSuccessor: () => ({ error: null }),
+        saveProjectConfig: (p) => {
+          fs.writeFileSync(path.join(p, '.tangleclaw', 'project.json'), '{\n  "engine": "f');
+          throw new Error('ENOSPC');
+        }
+      }),
+      /ENOSPC/
+    );
+    assert.equal(fs.readFileSync(configPath, 'utf8'), originalRaw, 'the exact ORIGINAL bytes are restored, not the truncated partial write');
+    assert.equal(store.projects.get(project.id).engineId, 'claude');
   });
 
   it('outage-takeover: a colliding branch name is disambiguated with a numeric suffix', async () => {
