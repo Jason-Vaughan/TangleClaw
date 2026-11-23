@@ -230,6 +230,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       onRefreshChat: () => pending.push(live.refresh()),
       onAttachFiles: (files) => pending.push(live.attachFiles(files)),
       onRemoveAttachment: (i) => pending.push(live.removeAttachment(i)),
+      onRenameProject: (oldName, newName, opts) => pending.push(live.renameProject(oldName, newName, opts)),
       storage: null
     });
     pending.push(live.handleRoute(shell.getRoute()));
@@ -767,6 +768,353 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.ok([401, 403].includes(anon.statusCode), anon.body);
       const cross = await send('GET', `/api/v6/projects/${b}/sessions/${sessionOfA}/conversation/events`);
       assert.ok(cross.statusCode >= 400, `a session must not be reachable through another project: ${cross.statusCode}`);
+    });
+  });
+
+  describe('Car V658-W1-C: chat stream scroll-pin behavior in the live mounted shell (#3200)', () => {
+    /**
+     * A LIVE (webui) session, so the shell's live controller actually polls
+     * conversation events — the same shape B2's own "live controller end to
+     * end" test above uses.
+     * @param {number} projectId
+     * @returns {number}
+     */
+    function seedLiveSession(projectId) {
+      return store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(projectId).lastInsertRowid;
+    }
+    const event = (seq, content, role = 'assistant') => ({ launchId: 'l1', seq, tier: 'A', adapter: 'claude', role, content });
+
+    /** Gives `#v6ChatStream` the scroll-geometry properties this mini-DOM has no real layout for. */
+    function withStreamGeometry(streamEl, { scrollTop, scrollHeight, clientHeight }) {
+      streamEl.scrollTop = scrollTop;
+      streamEl.scrollHeight = scrollHeight;
+      streamEl.clientHeight = clientHeight;
+    }
+
+    /**
+     * The exact `v6TreeRename-m<pi>-<fi>-<mi>` suffix for ONE project's own
+     * sidebar member row, found by its real DB id rather than assumed to be
+     * `p0`. This DB is shared across the whole test file (seeded once in
+     * `before()`), so a project's positional index among the sidebar tree's
+     * fleet/workspace groups depends on how many OTHER projects earlier
+     * tests have already seeded, and (`synthesizeTreeFromProjects`) on
+     * whether this project's name happens to share a dash-prefix with any
+     * of them — `p0` is neither stable in isolation nor guaranteed to be
+     * THIS project rather than a same-prefix group bulk-renaming unrelated
+     * projects together. The per-MEMBER button found here always renames
+     * exactly this one project via `options.onRenameProject` directly,
+     * never the bulk `renameFleetMembers` path a project-level button can
+     * trigger.
+     * @param {object} root
+     * @param {number} projectId
+     * @returns {string} e.g. `"m2-0-1"`
+     */
+    function findMemberRenameIdSuffix(root, projectId) {
+      const re = new RegExp(`id="v6TreeLink-(m[0-9]+-[0-9]+-[0-9]+)" data-rename-dblclick="m:${projectId}"`);
+      const found = re.exec(root.innerHTML);
+      assert.ok(found, `no sidebar member row found for project ${projectId} — is it even in the tree?`);
+      return found[1];
+    }
+
+    it('pins #v6ChatStream to the bottom on initial conversation open — #v6ChatJumpLatest starts hidden', async () => {
+      const projectId = seedProject('e2e-3200-initial-pin');
+      const sessionId = seedLiveSession(projectId);
+      const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
+      await send('POST', base, { body: event(1, 'hello', 'user') });
+      await send('POST', base, { body: event(2, 'hi there') });
+      const { root, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      assert.match(root.innerHTML, /id="v6ChatJumpLatest" class="v6-chat-jump-latest" hidden/, 'pinned by default, so the jump-to-latest pill starts hidden');
+    });
+
+    it('disengages the pin when the operator scrolls up more than 4px — #v6ChatJumpLatest becomes visible', async () => {
+      const projectId = seedProject('e2e-3200-unpin');
+      const sessionId = seedLiveSession(projectId);
+      const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
+      await send('POST', base, { body: event(1, 'hello', 'user') });
+      await send('POST', base, { body: event(2, 'hi there') });
+      const { root, doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      const streamEl = doc.getElementById('v6ChatStream');
+      assert.ok(streamEl, 'the stream must be mounted');
+      withStreamGeometry(streamEl, { scrollTop: 100, scrollHeight: 1000, clientHeight: 400 });
+      streamEl.dispatch('scroll'); // establishes lastStreamScrollTop = 100, still far from bottom
+      withStreamGeometry(streamEl, { scrollTop: 50, scrollHeight: 1000, clientHeight: 400 }); // scrolled UP by 50px
+      streamEl.dispatch('scroll');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'scrolling up by > 4px must reveal the jump-to-latest pill');
+    });
+
+    it('re-pins when #v6ChatJumpLatest is clicked', async () => {
+      const projectId = seedProject('e2e-3200-repin');
+      const sessionId = seedLiveSession(projectId);
+      const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
+      await send('POST', base, { body: event(1, 'hello', 'user') });
+      await send('POST', base, { body: event(2, 'hi there') });
+      const { doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      const streamEl = doc.getElementById('v6ChatStream');
+      withStreamGeometry(streamEl, { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
+      streamEl.dispatch('scroll');
+      withStreamGeometry(streamEl, { scrollTop: 50, scrollHeight: 1000, clientHeight: 400 });
+      streamEl.dispatch('scroll');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'unpinned first, so the click below has something to undo');
+      doc.getElementById('v6ChatJumpLatest').dispatch('click');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true, 'clicking the pill must re-pin and hide itself again');
+    });
+
+    it('re-pins on switching to a different session\'s conversation, even if the previous one was left unpinned', async () => {
+      const projectA = seedProject('e2e-3200-switch-a');
+      const projectB = seedProject('e2e-3200-switch-b');
+      const sessionA = seedLiveSession(projectA);
+      seedLiveSession(projectB);
+      const baseA = `/api/v6/projects/${projectA}/sessions/${sessionA}/conversation/events`;
+      await send('POST', baseA, { body: event(1, 'hello from a', 'user') });
+      await send('POST', baseA, { body: event(2, 'hi from a') });
+      const { win, doc, settle } = mountShell(`#/resources/${projectA}/conversation`);
+      await settle();
+      const streamElA = doc.getElementById('v6ChatStream');
+      withStreamGeometry(streamElA, { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
+      streamElA.dispatch('scroll');
+      withStreamGeometry(streamElA, { scrollTop: 50, scrollHeight: 1000, clientHeight: 400 });
+      streamElA.dispatch('scroll');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'project A left unpinned');
+      win.location.hash = `#/resources/${projectB}/conversation`;
+      await settle();
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true, 'a different conversation always opens pinned, regardless of how the previous one was left');
+    });
+
+    // R2 (PRRA-R1-V658-W1C-PR3220-4C2BB46F-REVISE BLOCKING 2b/2c): render()
+    // already wraps every redraw in captureViewState()/restoreViewState()
+    // (confirmed by reading public/v6-shell.js directly, lines ~9492/9611
+    // on this branch's base) -- opening/canceling the sidebar's inline
+    // rename form calls render() the same way any other state change does,
+    // so #v6ChatStream's pin state and exact scrollTop already survive it
+    // today, independent of sibling Car V658-W1-B's own new
+    // createChatScrollCoordinator work. These tests hold a real, already-
+    // true property, not a vacuous one.
+    it('preserves #v6ChatStream\'s bottom pin across opening and canceling the sidebar rename form', async () => {
+      const projectId = seedProject('e2e-3200-rename-pinned');
+      const sessionId = seedLiveSession(projectId);
+      const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
+      await send('POST', base, { body: event(1, 'hello', 'user') });
+      await send('POST', base, { body: event(2, 'hi there') });
+      const { root, doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      const idSuffix = findMemberRenameIdSuffix(root, projectId);
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true, 'starts pinned');
+      doc.getElementById(`v6TreeRename-${idSuffix}`).dispatch('click');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true, 'opening the rename form must not unpin the stream');
+      doc.getElementById(`v6TreeRenameCancel-${idSuffix}`).dispatch('click');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true, 'canceling it must not unpin the stream either');
+    });
+
+    it('preserves #v6ChatStream\'s exact unpinned scrollTop across opening and canceling the sidebar rename form', async () => {
+      const projectId = seedProject('e2e-3200-rename-unpinned');
+      const sessionId = seedLiveSession(projectId);
+      const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
+      await send('POST', base, { body: event(1, 'hello', 'user') });
+      await send('POST', base, { body: event(2, 'hi there') });
+      const { root, doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      const idSuffix = findMemberRenameIdSuffix(root, projectId);
+      withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
+      doc.getElementById('v6ChatStream').dispatch('scroll');
+      withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 77, scrollHeight: 1000, clientHeight: 400 });
+      doc.getElementById('v6ChatStream').dispatch('scroll');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'unpinned by the scroll above');
+      doc.getElementById(`v6TreeRename-${idSuffix}`).dispatch('click');
+      // render() replaces the stream element; re-query rather than reuse
+      // the reference captured before the click, the same discipline
+      // restoreViewState itself uses.
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'opening the rename form must not silently re-pin it');
+      assert.equal(doc.getElementById('v6ChatStream').scrollTop, 77, 'the exact reading position must survive the render, not snap back to 0 or to the bottom');
+      doc.getElementById(`v6TreeRenameCancel-${idSuffix}`).dispatch('click');
+      assert.equal(doc.getElementById('v6ChatStream').scrollTop, 77, 'canceling must not disturb it either');
+    });
+
+    // R3 (PRRA-R1-V658-W1C-PR3220-577120C7-REVISE item 1): the submit/save
+    // path, not just open/cancel -- a real PATCH /api/projects/:name
+    // against the real server (no stub: this file never mocks its API,
+    // and apiMutate has no seam to stub through anyway), through the
+    // per-MEMBER rename button -- options.onRenameProject ->
+    // live.renameProject -> shell.renameResult -> closeSidebarRename ->
+    // render(), the same render() cycle the open/cancel tests above
+    // already rely on. Deliberately NOT the project-level button: with
+    // this file's shared, cumulative test DB, many `e2e-*`-named projects
+    // from OTHER tests can end up sharing a dash-prefix group, and that
+    // button bulk-renames the whole group via renameFleetMembers --
+    // the per-member button always targets exactly this one project.
+    it('preserves #v6ChatStream\'s pin state and exact scrollTop across a real rename SUBMIT', async () => {
+      const projectId = seedProject('e2e-3200-rename-submit');
+      const sessionId = seedLiveSession(projectId);
+      const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
+      await send('POST', base, { body: event(1, 'hello', 'user') });
+      await send('POST', base, { body: event(2, 'hi there') });
+      const { root, doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      const idSuffix = findMemberRenameIdSuffix(root, projectId);
+      withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
+      doc.getElementById('v6ChatStream').dispatch('scroll');
+      withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 77, scrollHeight: 1000, clientHeight: 400 });
+      doc.getElementById('v6ChatStream').dispatch('scroll');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'unpinned by the scroll above');
+      // lib/projects.js refuses a rename outright ("Cannot rename while a
+      // session is active") whenever store.sessions.getActive(project.id)
+      // finds a row -- realistic: a real operator renames a project once
+      // its session has ended, not mid-conversation. The conversation view
+      // itself (and the pin/unpin exercised above) needs no ACTIVE session,
+      // only the recorded events already posted, so ending the session here
+      // -- after exercising the live view, before submitting the rename --
+      // models that real sequence rather than fighting the business rule.
+      store.getDb().prepare("UPDATE sessions SET status = 'ended' WHERE id = ?").run(sessionId);
+      doc.getElementById(`v6TreeRename-${idSuffix}`).dispatch('click');
+      const input = doc.getElementById(`v6TreeRenameInput-${idSuffix}`);
+      assert.ok(input, 'the rename input must be mounted once the form is open');
+      input.value = 'e2e-3200-rename-submit-NEW';
+      input.dispatch('input');
+      doc.getElementById(`v6TreeRenameForm-${idSuffix}`).dispatch('submit');
+      await settle();
+      // R4 (PRRA-R1-V658-W1C-PR3220-ADEC703B-REVISE): prove the rename
+      // actually succeeded before trusting the pin/scrollTop assertions
+      // below — the real id is `v6TreeRenameForm-${idSuffix}`, not the
+      // bare `v6TreeRenameForm` the dispatch suggested (that id is never
+      // rendered; every row's form is suffixed). The store, not just the
+      // DOM, is the authoritative check: `refresh()` re-renders from
+      // whatever the server now has, so a real PATCH success and a stale
+      // render that merely closed the form read identically in the DOM
+      // alone.
+      assert.equal(
+        store.getDb().prepare('SELECT name FROM projects WHERE id = ?').get(projectId).name,
+        'e2e-3200-rename-submit-NEW',
+        'the PATCH must have actually renamed the project in the store, not just closed the form'
+      );
+      // `root.innerHTML`, not `doc.getElementById` — this mini-DOM's
+      // `byId` map (test/_mini-dom.js's withIdParsingInnerHTML) only ever
+      // grows: an id once seen keeps answering with its (now stale) stub
+      // forever, even once a later render's HTML no longer contains it.
+      // Checking the live HTML text is the only way to prove "gone" here.
+      assert.doesNotMatch(root.innerHTML, new RegExp(`id="v6TreeRenameForm-${idSuffix}"`), 'the rename form closes on a successful submit');
+      assert.match(root.innerHTML, /e2e-3200-rename-submit-NEW/, 'the new name is visible in the re-rendered sidebar');
+      assert.doesNotMatch(root.innerHTML, /id="v6TreeLink-m[0-9-]+"[^>]*>[^<]*e2e-3200-rename-submit</, 'the OLD name is gone from the sidebar, not just appended alongside the new one');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'a successful rename submit must not silently re-pin the stream');
+      assert.equal(doc.getElementById('v6ChatStream').scrollTop, 77, 'and must not disturb the exact reading position either');
+    });
+
+    // R3 (PRRA-R1-V658-W1C-PR3220-577120C7-REVISE item 2): a REAL open<->
+    // close state transition (hood.open mutated before each dispatch, not
+    // a bare synthetic event with no state behind it), asserting the
+    // listener that IS wired (rearmPeekPin, firing on every toggle
+    // regardless of direction) actually re-arms #v6ChatPeek's own bottom
+    // pin on each transition, while #v6ChatStream's own pin state and
+    // exact scrollTop -- genuinely untouched by either of Under the
+    // Hood's two toggle listeners (confirmed by reading both directly) --
+    // survive both directions too. This exercises real, current, wired
+    // behavior; it still cannot produce the real-browser RESIZE sibling
+    // Car V658-W1-B's own ResizeObserver-driven re-pin reacts to (this
+    // mini-DOM harness has no layout engine), which needs that car's own
+    // test suite once merged.
+    it('Under the Hood open<->close re-arms #v6ChatPeek\'s bottom pin on each transition, without disturbing #v6ChatStream', async () => {
+      const projectId = seedProject('e2e-3200-uth-toggle');
+      const sessionId = seedLiveSession(projectId);
+      const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
+      await send('POST', base, { body: event(1, 'hello', 'user') });
+      await send('POST', base, { body: event(2, 'hi there') });
+      const { doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      const hood = doc.getElementById('v6ChatUnderHood');
+      assert.ok(hood, 'Under the Hood must be mounted');
+
+      // Unpin the stream with a specific reading position, so the toggle
+      // transitions below have something real to preserve or disturb.
+      withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
+      doc.getElementById('v6ChatStream').dispatch('scroll');
+      withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 77, scrollHeight: 1000, clientHeight: 400 });
+      doc.getElementById('v6ChatStream').dispatch('scroll');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'stream unpinned by the scroll above');
+
+      // Scroll the peek pane away from its own bottom too, so re-arming is
+      // a real, visible state change rather than a no-op.
+      const peek = doc.getElementById('v6ChatPeek');
+      peek.scrollHeight = 900;
+      peek.scrollTop = 200;
+
+      hood.open = true;
+      hood.dispatch('toggle'); // closed -> open
+      assert.equal(peek.scrollTop, 900, 'opening re-arms #v6ChatPeek to its own bottom (rearmPeekPin) -- a real, wired effect');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'the stream itself is untouched by the open transition');
+      assert.equal(doc.getElementById('v6ChatStream').scrollTop, 77, 'and its exact reading position survives it');
+
+      peek.scrollTop = 300; // scroll peek away again before the other direction
+      hood.open = false;
+      hood.dispatch('toggle'); // open -> closed
+      assert.equal(peek.scrollTop, 900, 'closing re-arms #v6ChatPeek to its own bottom too, the same listener firing either direction');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'the stream is still untouched by the close transition');
+      assert.equal(doc.getElementById('v6ChatStream').scrollTop, 77, 'and its reading position still survives it');
+    });
+  });
+
+  describe('Car V658-W1-C: stylesheet scroll-anchoring and overscroll containment contract (#3200)', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    /** @param {string} selector @returns {string} the selector's own `{ ... }` body, or '' if not found. */
+    const body = (selector) => {
+      const m = new RegExp(`(^|\\n)${selector.replace(/[.[\]>="-]/g, '\\$&')} \\{([^}]*)\\}`).exec(css);
+      return m ? m[2] : '';
+    };
+
+    it('declares overflow-anchor: auto and overscroll-behavior-y: contain on .v6-chat-stream, alongside its pre-existing flex/min-height invariants', () => {
+      const rule = body('.v6-chat-stream');
+      assert.match(rule, /overflow-anchor: auto;/);
+      assert.match(rule, /overscroll-behavior-y: contain;/);
+      assert.match(rule, /flex: 1 1 0%;/);
+      assert.match(rule, /min-height: 120px;/);
+      assert.match(rule, /max-height: none;/);
+    });
+
+    it('declares overscroll-behavior-y: contain on .v6-chat-peek, preserving its existing resize/overflow invariants', () => {
+      const rule = body('.v6-chat-peek');
+      assert.match(rule, /overscroll-behavior-y: contain;/);
+      assert.match(rule, /resize: vertical;/);
+      assert.match(rule, /overflow: auto;/);
+      assert.match(rule, /min-height: 120px;/);
+      assert.match(rule, /max-height: 70vh;/);
+    });
+
+    it('declares overscroll-behavior-y: contain on both .v6-chat-switchboard/.v6-chat-tucked and their own scrolling lists', () => {
+      assert.match(body('.v6-chat-switchboard'), /overscroll-behavior-y: contain;/);
+      assert.match(body('.v6-chat-switchboard-list'), /overscroll-behavior-y: contain;/);
+      assert.match(body('.v6-chat-tucked'), /overscroll-behavior-y: contain;/);
+      assert.match(body('.v6-chat-tucked-list'), /overscroll-behavior-y: contain;/);
+    });
+
+    it('gives each conversation turn (.v6-conversation-event) overflow-anchor: auto, supporting the stream\'s own scroll anchoring', () => {
+      assert.match(body('.v6-conversation-event'), /overflow-anchor: auto;/);
+    });
+
+    it('preserves the sticky Under the Hood summary bar and the prior sprint\'s pane-resizer/traffic-toggle rules this sprint must not disturb', () => {
+      assert.match(body('.v6-chat-under-hood > summary'), /position: sticky;\s*top: 0;/);
+      assert.notEqual(css.indexOf('.v6-chat-pane-resizer'), -1);
+      assert.notEqual(css.indexOf('.v6-chat-verbosity-option--traffic'), -1);
+    });
+
+    // R2 (PRRA-R1-V658-W1C-PR3220-4C2BB46F-REVISE BLOCKING 1): the drawer
+    // itself (and the peek pane inside it) opts OUT of scroll-anchoring —
+    // the opposite of .v6-chat-stream/.v6-conversation-event above, since
+    // the drawer's own reflow is what could make the browser pick an
+    // anchor inside it that then jumps the stream sibling.
+    it('opts .v6-chat-under-hood (and .v6-chat-peek inside it) OUT of scroll-anchoring, and contains their own overscroll', () => {
+      assert.match(body('.v6-chat-under-hood'), /overflow-anchor: none;/);
+      assert.match(body('.v6-chat-under-hood[open]'), /overscroll-behavior: contain;/);
+      assert.match(body('.v6-chat-peek'), /overflow-anchor: none;/);
+    });
+
+    it('.v6-chat-under-hood[open] still carries its pre-existing resize/floor/cap rules, unchanged by the new overscroll-behavior', () => {
+      const rule = body('.v6-chat-under-hood[open]');
+      assert.match(rule, /resize: vertical;/);
+      assert.match(rule, /overflow: auto;/);
+      assert.match(rule, /min-height: 80px;/);
+      assert.match(rule, /max-height: 45vh;/);
     });
   });
 

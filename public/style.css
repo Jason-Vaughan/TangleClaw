@@ -4300,11 +4300,16 @@ body::-webkit-scrollbar-thumb:active,
   flex-direction: column;
   gap: 6px;
 }
+/* #3200: each turn supports the stream's own scroll anchoring explicitly —
+   `.v6-chat-stream-item`/`.v6-conversation-turn` named in the dispatch
+   don't exist in the real markup; this is the actual per-turn element
+   (conversationViewMarkup's own <li class="v6-conversation-event">). */
 .v6-conversation-event {
   border: 1.5px solid var(--v6-outline, #3d444d);
   border-radius: 4px;
   padding: 6px 8px;
   background: var(--v6-surface, #0d0d0d);
+  overflow-anchor: auto;
 }
 .v6-conversation-role {
   display: block;
@@ -4786,6 +4791,14 @@ p.v6-history-secret {
   max-height: 70vh;
   resize: vertical;
   overflow: auto;
+  /* #3200: same scroll-containment reasoning as `.v6-chat-stream` — an
+     upward scroll inside the raw CLI pane must not chain into the page
+     body once the pane itself is at its own top. */
+  overscroll-behavior-y: contain;
+  /* #3200 (R2, BLOCKING 1): lives inside `.v6-chat-under-hood`, which opts
+     out of scroll-anchoring for the same cross-sibling-jump reason — the
+     peek pane itself is one of the things that reflows the drawer. */
+  overflow-anchor: none;
   padding: 8px;
   border: 1px solid var(--border-color, #2a2f36);
   border-radius: 4px;
@@ -4844,6 +4857,15 @@ p.v6-history-secret {
      nested flex scroll container — without it the stream can feel locked
      even though overflow-y: auto already makes it scrollable. */
   -webkit-overflow-scrolling: touch;
+  /* #3200: `overflow-anchor: auto` is already the browser default, stated
+     explicitly so it can't be silently lost to a future reset/override —
+     it keeps the operator's reading position stable when new turns append
+     below what they're reading, complementing (not replacing) the JS
+     `streamPinned`/#v6ChatJumpLatest follow-bottom logic. `overscroll-
+     behavior-y: contain` stops an upward scroll-chain from bubbling past
+     the stream into the page body once the pane itself hits its own top. */
+  overflow-anchor: auto;
+  overscroll-behavior-y: contain;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -4976,11 +4998,20 @@ p.v6-history-secret {
 /* The amber border marks uncommitted changes; the text keeps the theme's own
    colour, which reads in both themes (amber text fell to ~2:1 on light). */
 .v6-chat-git-badge.is-dirty { border-color: #d4a72c; }
+/* #3200 (R2, PRRA-R1-V658-W1C-PR3220-4C2BB46F-REVISE BLOCKING 1): the drawer
+   itself opts out of browser scroll-anchoring. Its own open/collapse
+   resizes `#v6ChatStream` (a flex sibling, both children of `.v6-chat`) —
+   with anchoring left on, the browser can pick an anchor node inside the
+   drawer's own reflowing content and visibly jump `.v6-chat-stream`'s
+   scroll position out from under the operator when the drawer's height
+   changes, independent of (and in addition to) the JS pin/preserve logic
+   `createChatScrollCoordinator` (sibling Car V658-W1-B) owns. */
 .v6-chat-under-hood {
   border: 1.5px solid var(--v6-outline, #3d444d);
   border-radius: 6px;
   padding: 4px 8px;
   background: var(--v6-surface, #0d0d0d);
+  overflow-anchor: none;
 }
 /* #3151: open, Under the Hood is operator-resizable like the stream and
    peek panes, instead of sizing to its content and forcing the chat
@@ -4993,6 +5024,11 @@ p.v6-history-secret {
      far open can be dragged before it (like the stream) pushes the
      composer off the footer-anchored viewport. */
   max-height: 45vh;
+  /* #3200 (R2, BLOCKING 1): once open, the drawer is itself a scroll
+     container (`overflow: auto` above) — contain its own overscroll so
+     scrolling past its top/bottom edge doesn't chain into the page or
+     `.v6-chat-stream` beyond it. */
+  overscroll-behavior: contain;
 }
 /* #3187: pinned to the top of `.v6-chat-under-hood[open]`'s own scroll
    container (its nearest scrolling ancestor is the `<details>` itself,
@@ -5616,8 +5652,13 @@ p.v6-history-secret {
   color: #000;
 }
 /* #3076: the switchboard's wakes and sends, Under the Hood. */
+/* #3200: `.v6-chat-switchboard` itself never scrolls (its list does) —
+   declared here too, as dispatched, alongside the list that actually
+   needs it, so the containment holds regardless of which element a
+   future change makes the real scroll container. */
 .v6-chat-switchboard {
   margin-bottom: 6px;
+  overscroll-behavior-y: contain;
 }
 .v6-chat-switchboard-title {
   margin: 0 0 4px;
@@ -5630,6 +5671,7 @@ p.v6-history-secret {
   padding: 0;
   max-height: 12em;
   overflow: auto;
+  overscroll-behavior-y: contain;
   font-family: monospace;
   font-size: 0.85em;
 }
@@ -5846,8 +5888,12 @@ p.v6-history-secret {
 .v6-chat-switchboard[hidden] {
   display: none !important;
 }
+/* #3200: same reasoning as `.v6-chat-switchboard` above — declared on both
+   the outer section (never scrolls itself) and its list (the real scroll
+   container). */
 .v6-chat-tucked {
   margin-bottom: 6px;
+  overscroll-behavior-y: contain;
 }
 .v6-chat-tucked-list {
   list-style: none;
@@ -5855,6 +5901,7 @@ p.v6-history-secret {
   padding: 0;
   max-height: 14em;
   overflow: auto;
+  overscroll-behavior-y: contain;
   font-size: 0.85em;
 }
 .v6-chat-tucked-item {
