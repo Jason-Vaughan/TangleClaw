@@ -4661,6 +4661,58 @@ p.v6-history-secret {
 .v6-member-ai-status.is-degraded { border-color: #d4a72c; color: #d4a72c; }
 .v6-member-ai-status.is-outage { border-color: #f85149; color: #f85149; }
 .v6-member-ai-status.is-unknown { opacity: 0.6; }
+/* #3205 (styling only — no Builder car owns this sidebar markup this
+   sprint per the v659 charter; CSS ahead of behavior, same pattern
+   #3187/#3192 used): a consistent Rename/Edit Properties/Start-Stop-
+   Restart action row on every session row regardless of lifecycle
+   state, and status pills for a session that is starting, failed, or
+   offline — reusing the sidebar's own existing state colors
+   (`.v6-shell-member-link.is-starting`'s amber, `.v6-member-ai-status.
+   is-outage`'s red) rather than inventing new ones. */
+.v6-tree-member-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.v6-tree-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  font-size: 0.9em;
+  line-height: 1;
+}
+.v6-tree-action-btn:hover,
+.v6-tree-action-btn:focus-visible {
+  opacity: 1;
+  background: rgba(156, 247, 50, 0.12);
+  outline: none;
+}
+.v6-status-pill--starting,
+.v6-status-pill--failed,
+.v6-status-pill--offline {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.75em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.v6-status-pill--starting { color: #d4a72c; }
+.v6-status-pill--failed { color: #f85149; }
+.v6-status-pill--offline { color: inherit; opacity: 0.6; }
 /* #3047: Project Delegate Chat. */
 .v6-chat {
   display: flex;
@@ -4869,6 +4921,102 @@ p.v6-history-secret {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+/* #3203 (styling only — the markup and Start/Starting/failure behavior are
+   a sibling car's own v6-shell.js change, Car V659-W1-B, #3201/#3203/
+   #3204): a centered card shown in place of the live stream whenever a
+   session is offline, replacing a bare "no session" line with clear
+   primary/secondary actions, an animated in-progress state, a structured
+   failure diagnostic, and a way to read the conversation history that
+   already happened without starting anything. */
+.v6-chat-offline-hero {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 0%;
+  min-height: 200px;
+  padding: 24px 16px;
+}
+.v6-chat-offline-hero-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 420px;
+  padding: 24px 20px;
+  border: 1.5px solid var(--v6-outline, #3d444d);
+  border-radius: 10px;
+  background: var(--v6-surface, #0d0d0d);
+  text-align: center;
+}
+.v6-chat-offline-hero-title {
+  margin: 0;
+  font-size: 1.1em;
+  font-weight: 600;
+}
+.v6-chat-offline-hero-subtitle {
+  margin: 0;
+  opacity: 0.8;
+  font-size: 0.9em;
+}
+.v6-chat-offline-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+/* The animated "Starting session..." transition — a spinner glyph beside
+   the title, in the same amber the sidebar already uses for a starting
+   session (`.v6-shell-member-link.is-starting`). */
+.v6-chat-offline-hero.is-starting .v6-chat-offline-hero-title {
+  color: #d4a72c;
+}
+.v6-chat-offline-hero.is-starting .v6-chat-offline-hero-title::after {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-left: 8px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  vertical-align: middle;
+  animation: v6-offline-hero-spin 0.8s linear infinite;
+}
+@keyframes v6-offline-hero-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .v6-chat-offline-hero.is-starting .v6-chat-offline-hero-title::after {
+    animation: none;
+  }
+}
+/* A failed launch's structured diagnostic — the same red the sidebar's
+   own outage state already uses (`.v6-member-ai-status.is-outage`). */
+.v6-chat-offline-hero-diagnostic {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #f85149;
+  border-radius: 6px;
+  background: rgba(248, 81, 73, 0.1);
+  color: #f85149;
+  font-size: 0.85em;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.v6-chat-offline-history-bar {
+  width: 100%;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--v6-outline, #3d444d);
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+[data-theme="light"] .v6-chat-offline-hero-diagnostic {
+  background: rgba(248, 81, 73, 0.08);
 }
 .v6-chat-live-turns:empty {
   display: none;

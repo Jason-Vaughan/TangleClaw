@@ -1127,6 +1127,44 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.equal((await send('GET', '/api/v6/logical-projects/lp-nonexistent/hierarchy')).statusCode, 404);
     });
   });
+
+  describe('Car V659-W1-C: offline Session Properties Save-Without-Starting (#3205)', () => {
+    // #3205's actual sidebar Actions-menu/Session-Properties-editor markup
+    // has no owning Builder car in the v659 sprint charter's Wave 1/2
+    // tables (checked directly, not assumed) -- this is API-level
+    // coverage of the Save-Without-Starting CONTRACT the issue describes
+    // ("the project row updates in SQLite while store.sessions.getActive
+    // remains null, and a subsequent launch uses the repaired
+    // configuration"), which the existing PATCH /api/projects/:name route
+    // already implements and needs no new sidebar UI to exercise.
+    it('PATCH /api/projects/:name updates the store while the session stays stopped, never starting it', async () => {
+      const projectId = seedProject('e2e-3205-save-without-starting');
+      store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'stopped', 'webui', datetime('now'))"
+      ).run(projectId);
+      assert.equal(store.sessions.getActive(projectId), null, 'no active session before the save, by construction');
+      const res = await send('PATCH', `/api/projects/${encodeURIComponent('e2e-3205-save-without-starting')}`, { body: { name: 'e2e-3205-save-without-starting-fixed' } });
+      assert.equal(res.statusCode, 200, res.body);
+      assert.equal(
+        store.getDb().prepare('SELECT name FROM projects WHERE id = ?').get(projectId).name,
+        'e2e-3205-save-without-starting-fixed',
+        'the repaired configuration must be persisted'
+      );
+      assert.equal(store.sessions.getActive(projectId), null, 'saving offline configuration must never itself start a session');
+    });
+
+    it('a subsequent launch resolves against the repaired configuration, not the one the session was stuck on', async () => {
+      const projectId = seedProject('e2e-3205-repair-then-launch');
+      store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'stopped', 'webui', datetime('now'))"
+      ).run(projectId);
+      await send('PATCH', `/api/projects/${encodeURIComponent('e2e-3205-repair-then-launch')}`, { body: { name: 'e2e-3205-repair-then-launch-fixed' } });
+      const res = await send('GET', '/api/projects');
+      const rows = json(res).projects || json(res);
+      const row = (Array.isArray(rows) ? rows : []).find((p) => p.name === 'e2e-3205-repair-then-launch-fixed');
+      assert.ok(row, 'the renamed/repaired project must be the one GET /api/projects now reports — nothing resolves the stale name anymore');
+    });
+  });
 });
 
 describe('Car V656-W1-B: sticky Under the Hood toggle bar and two-way pane resizer styling (#3187)', () => {
@@ -1234,5 +1272,65 @@ describe('Car V657-W1-B: "Hide Medusa & fleet chatter" toggle styling and hidden
 
   it('still carries the sticky Under the Hood summary toggle bar this sprint must not disturb (#3187)', () => {
     assert.match(body('.v6-chat-under-hood > summary'), /position: sticky;\s*top: 0;/);
+  });
+});
+
+describe('Car V659-W1-C: offline startup hero and sidebar session-actions/status-pill styling (#3203, #3205)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  /** @param {string} selector @returns {string} the selector's own `{ ... }` body, or '' if not found. */
+  const body = (selector) => {
+    const m = new RegExp(`(^|\\n)${selector.replace(/[.[\]>="-]/g, '\\$&')} \\{([^}]*)\\}`).exec(css);
+    return m ? m[2] : '';
+  };
+
+  it('centers the offline hero card inside the chat workspace with a clear visual hierarchy', () => {
+    assert.match(body('.v6-chat-offline-hero'), /display: flex;/);
+    assert.match(body('.v6-chat-offline-hero'), /align-items: center;/);
+    assert.match(body('.v6-chat-offline-hero'), /justify-content: center;/);
+    assert.match(body('.v6-chat-offline-hero-card'), /border: 1\.5px solid var\(--v6-outline, #3d444d\);/);
+    assert.match(body('.v6-chat-offline-hero-title'), /font-weight: 600;/);
+    assert.match(body('.v6-chat-offline-hero-subtitle'), /opacity: 0\.8;/);
+    assert.match(body('.v6-chat-offline-hero-actions'), /display: flex;/);
+  });
+
+  it('animates the "Starting session..." transition, with prefers-reduced-motion support', () => {
+    assert.match(css, /\.v6-chat-offline-hero\.is-starting \.v6-chat-offline-hero-title::after \{[^}]*animation: v6-offline-hero-spin 0\.8s linear infinite;/);
+    assert.match(css, /@keyframes v6-offline-hero-spin \{\s*to \{ transform: rotate\(360deg\); \}\s*\}/);
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.v6-chat-offline-hero\.is-starting \.v6-chat-offline-hero-title::after \{\s*animation: none;/);
+  });
+
+  it('gives a failed launch a structured, readable diagnostic box', () => {
+    const rule = body('.v6-chat-offline-hero-diagnostic');
+    assert.match(rule, /border: 1px solid #f85149;/);
+    assert.match(rule, /color: #f85149;/);
+    assert.match(rule, /overflow-wrap: anywhere;/, 'a long diagnostic message must wrap rather than overflow');
+  });
+
+  it('gives the offline conversation history viewer its own visually separated bar', () => {
+    assert.match(body('.v6-chat-offline-history-bar'), /border-top: 1px dashed var\(--v6-outline, #3d444d\);/);
+  });
+
+  it('gives every sidebar session row a consistent actions row with accessible hover/focus states', () => {
+    assert.match(body('.v6-tree-member-actions'), /display: inline-flex;/);
+    const btn = body('.v6-tree-action-btn');
+    assert.match(btn, /cursor: pointer;/);
+    assert.match(css, /\.v6-tree-action-btn:hover,\s*\.v6-tree-action-btn:focus-visible \{\s*opacity: 1;/, 'hover and focus-visible share the same highlighted state');
+  });
+
+  it('styles starting/failed/offline status pills with the sidebar\'s own existing state colors, not new ones', () => {
+    // Plain substring matches, not body() -- `.v6-status-pill--offline` is
+    // also the LAST selector in the shared base rule just above these three
+    // standalone ones (`...--starting,\n...--failed,\n...--offline {`), and
+    // body()'s own regex matches whichever occurrence is immediately
+    // followed by ` {` first; only the last item in that comma list looks
+    // like a standalone rule to it.
+    assert.match(css, /\.v6-status-pill--starting \{ color: #d4a72c; \}/, 'the same amber .v6-shell-member-link.is-starting already uses');
+    assert.match(css, /\.v6-status-pill--failed \{ color: #f85149; \}/, 'the same red .v6-member-ai-status.is-outage already uses');
+    assert.match(css, /\.v6-status-pill--offline \{ color: inherit; opacity: 0\.6; \}/, 'the same dimming .v6-shell-member-link.is-offline already uses');
+  });
+
+  it('preserves the pre-existing sidebar member/status rules this sprint must not disturb', () => {
+    assert.match(body('.v6-shell-member-link.is-starting,\n.v6-shell-member-link.is-wrapping'), /color: #d4a72c;/);
+    assert.match(body('.v6-member-ai-status.is-outage'), /border-color: #f85149;\s*color: #f85149;/);
   });
 });
