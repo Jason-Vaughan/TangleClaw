@@ -4795,6 +4795,10 @@ p.v6-history-secret {
      upward scroll inside the raw CLI pane must not chain into the page
      body once the pane itself is at its own top. */
   overscroll-behavior-y: contain;
+  /* #3200 (R2, BLOCKING 1): lives inside `.v6-chat-under-hood`, which opts
+     out of scroll-anchoring for the same cross-sibling-jump reason — the
+     peek pane itself is one of the things that reflows the drawer. */
+  overflow-anchor: none;
   padding: 8px;
   border: 1px solid var(--border-color, #2a2f36);
   border-radius: 4px;
@@ -4994,11 +4998,20 @@ p.v6-history-secret {
 /* The amber border marks uncommitted changes; the text keeps the theme's own
    colour, which reads in both themes (amber text fell to ~2:1 on light). */
 .v6-chat-git-badge.is-dirty { border-color: #d4a72c; }
+/* #3200 (R2, PRRA-R1-V658-W1C-PR3220-4C2BB46F-REVISE BLOCKING 1): the drawer
+   itself opts out of browser scroll-anchoring. Its own open/collapse
+   resizes `#v6ChatStream` (a flex sibling, both children of `.v6-chat`) —
+   with anchoring left on, the browser can pick an anchor node inside the
+   drawer's own reflowing content and visibly jump `.v6-chat-stream`'s
+   scroll position out from under the operator when the drawer's height
+   changes, independent of (and in addition to) the JS pin/preserve logic
+   `createChatScrollCoordinator` (sibling Car V658-W1-B) owns. */
 .v6-chat-under-hood {
   border: 1.5px solid var(--v6-outline, #3d444d);
   border-radius: 6px;
   padding: 4px 8px;
   background: var(--v6-surface, #0d0d0d);
+  overflow-anchor: none;
 }
 /* #3151: open, Under the Hood is operator-resizable like the stream and
    peek panes, instead of sizing to its content and forcing the chat
@@ -5011,6 +5024,11 @@ p.v6-history-secret {
      far open can be dragged before it (like the stream) pushes the
      composer off the footer-anchored viewport. */
   max-height: 45vh;
+  /* #3200 (R2, BLOCKING 1): once open, the drawer is itself a scroll
+     container (`overflow: auto` above) — contain its own overscroll so
+     scrolling past its top/bottom edge doesn't chain into the page or
+     `.v6-chat-stream` beyond it. */
+  overscroll-behavior: contain;
 }
 /* #3187: pinned to the top of `.v6-chat-under-hood[open]`'s own scroll
    container (its nearest scrolling ancestor is the `<details>` itself,
