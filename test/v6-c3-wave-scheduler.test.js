@@ -611,6 +611,44 @@ describe('validateParallelWavePlan', () => {
     const twoIssuesOneLane = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
     assert.equal(validateParallelWavePlan({ cars: twoIssuesOneLane, issueCount: 2, builderLanes: ['TC-Lane-A'] }).ok, true);
   });
+
+  // #3213 R-Gate R1 BLOCKING 1 — a Car's bundled issues live at
+  // `car.payload.issues` ({@link planParallelWaveShards}'s own shape),
+  // not just a top-level `car.issues`; omitting `issueCount` must still
+  // infer the real count from either, in that order.
+  it('infers issueCount from car.payload.issues when issueCount is omitted', () => {
+    const cars = [{ id: 'a', fileScope: ['lib/a.js'], payload: { issues: [3213, 3216] } }];
+    throwsCode(() => validateParallelWavePlan({ cars }), 'SINGLE_STREAM_MULTI_ISSUE_DRIFT');
+  });
+
+  it('prefers car.payload.issues over a top-level car.issues when both are present', () => {
+    const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1], payload: { issues: [3213, 3216] } }];
+    const result = validateParallelWavePlan({ cars, serialReason: 'attested' });
+    assert.equal(result.wave1ParallelCars, 1);
+    throwsCode(() => validateParallelWavePlan({ cars }), 'SINGLE_STREAM_MULTI_ISSUE_DRIFT',
+      'payload.issues (length 2) must win, not the top-level issues (length 1)');
+  });
+
+  it('rejects a non-array car.payload.issues or car.issues as malformed, rather than silently counting 1', () => {
+    throwsCode(() => validateParallelWavePlan({ cars: [{ id: 'a', fileScope: ['x'], payload: { issues: 'oops' } }] }),
+      'CAR_ISSUES_INVALID');
+    throwsCode(() => validateParallelWavePlan({ cars: [{ id: 'a', fileScope: ['x'], issues: 'oops' }] }),
+      'CAR_ISSUES_INVALID');
+  });
+
+  // #3213 R-Gate R1 BLOCKING 2 — builderLanes must get the same non-empty,
+  // distinct-entries validation planParallelWaveShards already enforces,
+  // not a bare ok:true the moment builderLanes.length < 2 short-circuits
+  // the drift check.
+  it('rejects an empty builderLanes array, rather than treating it as "nothing to parallelize"', () => {
+    const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
+    throwsCode(() => validateParallelWavePlan({ cars, builderLanes: [] }), 'BUILDER_LANES_REQUIRED');
+  });
+
+  it('rejects duplicate builderLanes entries', () => {
+    const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
+    throwsCode(() => validateParallelWavePlan({ cars, builderLanes: ['TC-Lane-A', 'TC-Lane-A'] }), 'BUILDER_LANES_DUPLICATE');
+  });
 });
 
 describe('WaveScheduler#createRun — optional parallel-sharding enforcement (metadata.enforceParallelSharding)', () => {
@@ -654,5 +692,31 @@ describe('WaveScheduler#createRun — optional parallel-sharding enforcement (me
       metadata: { enforceParallelSharding: true, issueCount: 2, serialReason: 'deliberate single-car release' }
     });
     assert.equal(run.status, 'active');
+  });
+
+  // #3213 R-Gate R1 BLOCKING 1 — the exact regression named in the
+  // dispatch: metadata.enforceParallelSharding: true with
+  // payload.issues: [3213, 3216], omitting metadata.issueCount entirely.
+  it('enforces the guard from payload.issues alone, with metadata.issueCount omitted, before persisting anything', () => {
+    const { scheduler, store } = setup();
+    throwsCode(() => scheduler.createRun({
+      id: 'r', fleetId: 'f',
+      cars: [{ id: 'a', fileScope: ['lib/a.js'], payload: { issues: [3213, 3216] } }],
+      metadata: { enforceParallelSharding: true }
+    }), 'SINGLE_STREAM_MULTI_ISSUE_DRIFT');
+    assert.deepEqual(store.read().runs, {}, 'a run that fails the guard must never be persisted');
+  });
+
+  // #3213 R-Gate R1 BLOCKING 2 — a malformed metadata.builderLanes must
+  // refuse through createRun's own enforcement, not just the standalone
+  // validateParallelWavePlan call already covered above.
+  it('rejects metadata.builderLanes: [] through createRun, rather than silently skipping enforcement', () => {
+    const { scheduler, store } = setup();
+    throwsCode(() => scheduler.createRun({
+      id: 'r', fleetId: 'f',
+      cars: [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }],
+      metadata: { enforceParallelSharding: true, builderLanes: [] }
+    }), 'BUILDER_LANES_REQUIRED');
+    assert.deepEqual(store.read().runs, {}, 'a run with malformed builderLanes must never be persisted');
   });
 });
