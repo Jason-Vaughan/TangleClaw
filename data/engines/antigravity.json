@@ -36,56 +36,6 @@
   },
   "defaultLaunchMode": "default",
   "persistent": null,
-  "models": {
-    "flag": "--model",
-    "offered": [
-      "gemini-4-neon-high", "gemini-4-neon-xhigh", "gemini-4-neon-medium", "gemini-4-neon-low",
-      "gemini-4-carbon-medium", "gemini-4-carbon-high", "gemini-4-carbon-low",
-      "gemini-4-argon-medium", "gemini-4-argon-high", "gemini-4-argon-low",
-      "gemini-4-hydrogen-high", "gemini-4-hydrogen-xhigh", "gemini-4-hydrogen-medium", "gemini-4-hydrogen-low",
-      "gemini-pro-orchestrator-neon", "gemini-pro-orchestrator", "gemini-pro-orchestrator-argon",
-      "gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low",
-      "claude-opus-5-5-low", "claude-opus-5-5-medium", "claude-opus-5-5-high",
-      "claude-sonnet-5-5-low", "claude-sonnet-5-5-medium", "claude-sonnet-5-5-high",
-      "gpt-oss-120b-medium"
-    ],
-    "roster": {
-      "source": "static-list",
-      "models": [
-        { "id": "gemini-4-neon-high", "label": "Gemini 4 Neon (High)" },
-        { "id": "gemini-4-neon-xhigh", "label": "Gemini 4 Neon (XHigh)" },
-        { "id": "gemini-4-neon-medium", "label": "Gemini 4 Neon (Medium)" },
-        { "id": "gemini-4-neon-low", "label": "Gemini 4 Neon (Low)" },
-        { "id": "gemini-4-carbon-medium", "label": "Gemini 4 Carbon (Medium)" },
-        { "id": "gemini-4-carbon-high", "label": "Gemini 4 Carbon (High)" },
-        { "id": "gemini-4-carbon-low", "label": "Gemini 4 Carbon (Low)" },
-        { "id": "gemini-4-argon-medium", "label": "Gemini 4 Argon (Medium)" },
-        { "id": "gemini-4-argon-high", "label": "Gemini 4 Argon (High)" },
-        { "id": "gemini-4-argon-low", "label": "Gemini 4 Argon (Low)" },
-        { "id": "gemini-4-hydrogen-high", "label": "Gemini 4 Hydrogen (High)" },
-        { "id": "gemini-4-hydrogen-xhigh", "label": "Gemini 4 Hydrogen (XHigh)" },
-        { "id": "gemini-4-hydrogen-medium", "label": "Gemini 4 Hydrogen (Medium)" },
-        { "id": "gemini-4-hydrogen-low", "label": "Gemini 4 Hydrogen (Low)" },
-        { "id": "gemini-pro-orchestrator-neon", "label": "Orchestrator (Neon)" },
-        { "id": "gemini-pro-orchestrator", "label": "Orchestrator (Carbon)" },
-        { "id": "gemini-pro-orchestrator-argon", "label": "Orchestrator (Argon)" },
-        { "id": "gemini-3.8-flash-high", "label": "Gemini 3.8 Flash (High)" },
-        { "id": "gemini-3.8-flash-medium", "label": "Gemini 3.8 Flash (Medium)" },
-        { "id": "gemini-3.8-flash-low", "label": "Gemini 3.8 Flash (Low)" },
-        { "id": "claude-opus-5-5-low", "label": "Claude Opus 5.5 (Low)" },
-        { "id": "claude-opus-5-5-medium", "label": "Claude Opus 5.5 (Medium)" },
-        { "id": "claude-opus-5-5-high", "label": "Claude Opus 5.5 (High)" },
-        { "id": "claude-sonnet-5-5-low", "label": "Claude Sonnet 5.5 (Low)" },
-        { "id": "claude-sonnet-5-5-medium", "label": "Claude Sonnet 5.5 (Medium)" },
-        { "id": "claude-sonnet-5-5-high", "label": "Claude Sonnet 5.5 (High)" },
-        { "id": "gpt-oss-120b-medium", "label": "GPT-OSS 120B (Medium)" }
-      ]
-    },
-    "evidence": {
-      "verifiedOn": "2026-11-23",
-      "source": "`agy models` (live, this machine): each entry above is ONE flat, concrete, launchable id — effort is already baked into most ids as a tier suffix (-low/-medium/-high/-xhigh), shown inconsistently per model family (orchestrator carries no tier at all; gpt-oss-120b offers only -medium). #3214 R-Gate R2: offering a Phase-2 model axis supersedes the prior 'no model selection' ruling in test/engine-models.test.js (no source ties a completed turn's model to its launch — still true, but overridden by explicit dispatch authority). No separate Phase-3 effort axis is offered for this engine: lib/engines.js's ENGINE_EFFORT comment already explains why a parallel effort block would double-apply what these ids already state, and that reasoning is unchanged by this car — each full id IS the one axis."
-    }
-  },
   "capabilities": {
     "launchSequence": { "supported": true },
     "supportsSlashCommands": false,

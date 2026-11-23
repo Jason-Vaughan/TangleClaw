@@ -34,24 +34,6 @@
   },
   "defaultLaunchMode": "default",
   "persistent": null,
-  "models": {
-    "flag": "--model",
-    "offered": ["gpt-5.6-sol", "gpt-6-luna", "claude-sonnet-5", "claude-opus-5-5", "claude-fable-5-1"],
-    "roster": {
-      "source": "static-list",
-      "models": [
-        { "id": "gpt-5.6-sol", "label": "GPT-5.6 Sol" },
-        { "id": "gpt-6-luna", "label": "GPT-6 Luna" },
-        { "id": "claude-sonnet-5", "label": "Claude Sonnet 5" },
-        { "id": "claude-opus-5-5", "label": "Claude Opus 5.5" },
-        { "id": "claude-fable-5-1", "label": "Claude Fable 5.1" }
-      ]
-    },
-    "evidence": {
-      "verifiedOn": "2026-11-23",
-      "source": "Aider's `--model` routes through LiteLLM to whatever provider the id names, not an account-gated enum — `aider --list-models <name> --no-gitignore --no-check-update --no-analytics` (live, this machine, version 0.86.2) confirms each bare id above resolves in its known-models catalog without a provider prefix (e.g. `gpt-5.6-sol`, `claude-opus-5-5`). Curated to the same model tiers Codex and Claude already offer elsewhere in this fleet, not aider's full catalog (which is effectively unbounded) — a deliberately small, sensible default list, same rationale as Claude's static-list."
-    }
-  },
   "capabilities": {
     "launchSequence": {
       "supported": false,

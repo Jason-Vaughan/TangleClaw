@@ -657,3 +657,93 @@ describe('#3214 Project Settings — Identity & Workspace card fields (R-Gate R1
     assert.match(styleAttr, /height:\s*100vh/);
   });
 });
+
+// #3214 R-Gate R2, Architect Ruling A921 — `claude-sonnet-reviewer` and
+// `claude-fable-sprint` are real, live operator profiles (`~/.tangleclaw/
+// engines/*.json`, 10 live projects on the host this ruling was issued
+// against), not a hypothetical. They keep running real sessions under their
+// own id (session launch, wake, quota bucketing are all unaffected — only
+// the Settings UI's picker is in scope here); they just don't get their own
+// row in the Engine dropdown, and the 3-phase picker shows/saves them as
+// plain `claude` with a sensible model/effort default.
+describe('#3214 Ruling A921 — Claude Code variant normalization in public/ui.js', () => {
+  const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+  require('../public/api-helper.js');
+  const esc = (str) => {
+    if (typeof str !== 'string') return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+
+  const { normalizeLegacyEngineSelection, buildEngineOptions } = (() => {
+    const { liftDeclaration } = require('./helpers/lift');
+    const fn = new Function('tcBuildEngineOptions', 'esc', `
+      ${liftDeclaration(uiSrc, 'const LEGACY_CLAUDE_VARIANT_DEFAULTS')}
+      ${liftDeclaration(uiSrc, 'function normalizeLegacyEngineSelection(')}
+      ${liftDeclaration(uiSrc, 'function buildEngineOptions(')}
+      return { normalizeLegacyEngineSelection, buildEngineOptions };
+    `);
+    return fn(globalThis.tcBuildEngineOptions, esc);
+  })();
+
+  const ENGINE_LIST = [
+    { id: 'claude', name: 'Claude Code', available: true },
+    { id: 'antigravity', name: 'Antigravity', available: true },
+    { id: 'codex', name: 'Codex', available: true },
+    { id: 'aider', name: 'Aider', available: true },
+    { id: 'claude-sonnet-reviewer', name: 'Claude (Reviewer)', available: true },
+    { id: 'claude-fable-sprint', name: 'Claude (Sprint)', available: true }
+  ];
+
+  describe('normalizeLegacyEngineSelection', () => {
+    it('maps claude-sonnet-reviewer to claude with its default model/effort when neither is already set', () => {
+      assert.deepEqual(normalizeLegacyEngineSelection('claude-sonnet-reviewer', null, null),
+        { engine: 'claude', model: 'claude-sonnet-5', effort: 'high' });
+    });
+
+    it('maps claude-fable-sprint to claude with its own default', () => {
+      assert.deepEqual(normalizeLegacyEngineSelection('claude-fable-sprint', null, null),
+        { engine: 'claude', model: 'claude-fable-5-1', effort: 'high' });
+    });
+
+    it('a project that already has its own model/effort keeps them, not the variant default', () => {
+      assert.deepEqual(normalizeLegacyEngineSelection('claude-sonnet-reviewer', 'claude-opus-5-5', 'max'),
+        { engine: 'claude', model: 'claude-opus-5-5', effort: 'max' });
+    });
+
+    it('passes through every non-variant engine id unchanged', () => {
+      for (const id of ['claude', 'antigravity', 'codex', 'aider', '', null]) {
+        assert.deepEqual(normalizeLegacyEngineSelection(id, 'm', 'e'), { engine: id, model: 'm', effort: 'e' });
+      }
+    });
+  });
+
+  describe('buildEngineOptions', () => {
+    it('never renders the two legacy variant ids as their own selectable option', () => {
+      const html = buildEngineOptions(ENGINE_LIST, 'claude');
+      assert.doesNotMatch(html, /value="claude-sonnet-reviewer"/);
+      assert.doesNotMatch(html, /value="claude-fable-sprint"/);
+      assert.equal((html.match(/<option/g) || []).length, 4, 'exactly the 4 canonical engines');
+    });
+
+    it('normalizes a project currently stored under a variant id to a selected claude option', () => {
+      const html = buildEngineOptions(ENGINE_LIST, 'claude-sonnet-reviewer');
+      const claudeOpt = html.match(/<option value="claude"[^>]*>/)[0];
+      assert.match(claudeOpt, /selected/);
+    });
+  });
+
+  describe('renderModelEffortPicker renders disabled placeholders for an engine with no model/effort axis', () => {
+    // Whole-file text search, not `liftBody` — `renderModelEffortPicker`'s
+    // own signature has an object-literal default parameter (`ids = {}`),
+    // whose `{}` is the FIRST brace after the declaration text, so the
+    // balanced-brace matcher closes on it immediately and returns `'{}'`
+    // instead of the real function body (a real gotcha, not a file-specific
+    // one — any default param shaped `= {}` trips the same matcher this way).
+    // The markup string is unique in the file either way.
+    it('both halves render as a visible, disabled "Engine default" select rather than a blank area', () => {
+      assert.match(uiSrc, /<select class="form-select" id="\$\{esc\(modelSelectId\)\}" disabled><option value="">Engine default \(CLI-managed\)<\/option><\/select>/);
+      assert.match(uiSrc, /<select class="form-select" id="\$\{esc\(effortSelectId\)\}" disabled><option value="">Engine default \(CLI-managed\)<\/option><\/select>/);
+    });
+  });
+});

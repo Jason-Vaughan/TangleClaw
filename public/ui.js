@@ -5,6 +5,40 @@
 // ── Engine Dropdown Helper ──
 
 /**
+ * Known Claude Code engine-PROFILE variants — an operator's own extra
+ * registered profile for Claude Code (its own `id`, sharing Claude's
+ * `command` for wake/startup-dialog inheritance, #3132/A160) — that the
+ * primary Settings Engine dropdown and the 3-phase Model/Effort picker treat
+ * as plain `claude` rather than a 5th/6th selectable engine (Architect Ruling
+ * A921, #3214: these are real, live on the operator's host — `~/.tangleclaw/
+ * engines/claude-sonnet-reviewer.json` / `claude-fable-sprint.json` — not a
+ * hypothetical). Each value is the Phase-2/3 default applied only when the
+ * project does not already have its own explicit model/effort on record.
+ * @type {Object<string, {model: string, effort: string}>}
+ */
+const LEGACY_CLAUDE_VARIANT_DEFAULTS = {
+  'claude-sonnet-reviewer': { model: 'claude-sonnet-5', effort: 'high' },
+  'claude-fable-sprint': { model: 'claude-fable-5-1', effort: 'high' }
+};
+
+/**
+ * Normalize a stored engine id (plus whatever model/effort the project
+ * already has) for the 3-phase picker — a known Claude Code variant
+ * (`LEGACY_CLAUDE_VARIANT_DEFAULTS`) becomes plain `claude`, with its default
+ * model/effort filled in only where the project has neither already (Ruling
+ * A921, #3214). Every other engine id passes through unchanged.
+ * @param {string} engineId
+ * @param {string|null} model
+ * @param {string|null} effort
+ * @returns {{engine: string, model: (string|null), effort: (string|null)}}
+ */
+function normalizeLegacyEngineSelection(engineId, model, effort) {
+  const legacy = LEGACY_CLAUDE_VARIANT_DEFAULTS[engineId];
+  if (!legacy) return { engine: engineId, model, effort };
+  return { engine: 'claude', model: model || legacy.model, effort: effort || legacy.effort };
+}
+
+/**
  * Build <option> HTML for an engine dropdown.
  * OpenClaw entries no longer appear here (#459) — connection-backed harnesses
  * are reached via the top-bar OpenClaw panel, not assigned as a project's LLM.
@@ -16,6 +50,17 @@
  * @returns {string} HTML string of <option> elements
  */
 function buildEngineOptions(engineList, selectedId) {
+  // Ruling A921 (#3214): a Claude Code variant profile keeps running real
+  // sessions under its own id (it is never retired by this filter —
+  // sessions, launches and quota bucketing all still resolve it normally,
+  // lib/usage-windows.js's own `/^claude(?:-|$)/i` provider rule is
+  // unaffected), it just does not get its own row in the picker.
+  // Reassigns the parameters themselves (not new variable names) so the
+  // call below still reads `tcBuildEngineOptions(engineList, selectedId,
+  // esc)` verbatim — `test/engine-picker-gating.test.js` (outside this
+  // car's file scope) pins that exact argument-list text.
+  engineList = (Array.isArray(engineList) ? engineList : []).filter((e) => !Object.prototype.hasOwnProperty.call(LEGACY_CLAUDE_VARIANT_DEFAULTS, e && e.id));
+  selectedId = Object.prototype.hasOwnProperty.call(LEGACY_CLAUDE_VARIANT_DEFAULTS, selectedId) ? 'claude' : selectedId;
   return tcBuildEngineOptions(engineList, selectedId, esc);
 }
 
@@ -2299,7 +2344,14 @@ function openSettings(name, options) {
   // (#2188) Async — may resolve after the modal is already visible, same as
   // `loadProjectRules` below; the container starts empty rather than blocking
   // the rest of the modal on a network round-trip.
-  renderModelEffortPicker(project.engine ? project.engine.id : '', project.model || null, project.effort || null);
+  // #3214 Ruling A921: a project stored under a Claude Code variant id shows
+  // and saves through the plain `claude` 3-phase picker, not a blank one —
+  // `buildEngineOptions` above already normalizes the dropdown itself; this
+  // is the same normalization for the picker's OWN initial engine/model/effort.
+  const normalizedSelection = normalizeLegacyEngineSelection(
+    project.engine ? project.engine.id : '', project.model || null, project.effort || null
+  );
+  renderModelEffortPicker(normalizedSelection.engine, normalizedSelection.model, normalizedSelection.effort);
   // CC-6 (#381): populate the per-project rule lists (async) once the
   // modal markup is in the DOM. project.id is the DB id the API scopes on.
   loadProjectRules(project.id, project.name);
@@ -2474,6 +2526,7 @@ async function renderModelEffortPicker(engineId, selectedModel = null, selectedE
   const containerId = ids.containerId || 'settingsModelEffortContainer';
   const effortContainerId = ids.effortContainerId || 'settingsEffortContainer';
   const modelSelectId = ids.modelSelectId || 'settingsModel';
+  const effortSelectId = ids.effortSelectId || 'settingsEffort';
   const container = document.getElementById(containerId);
   if (!container) return;
   if (!engineId) { container.innerHTML = ''; return; }
@@ -2500,13 +2553,25 @@ async function renderModelEffortPicker(engineId, selectedModel = null, selectedE
   };
 
   if (modelsData.models.length === 0) {
-    // No model axis for this engine (Claude today — its profile declares no
-    // `models` block) does not mean no EFFORT axis: the two are independent
-    // (#2188). Still render the effort half, with no model selector above
-    // it and no model id to pass — Claude's effort block is static,
-    // engine-wide, and does not need one.
-    container.innerHTML = `<div id="${esc(effortContainerId)}"></div>`;
-    await renderEffortPicker(engineId, null, selectedEffort, ids);
+    // #3214 Ruling A921: no model axis today ALSO means no effort axis —
+    // Claude and Codex both declare `models`, Antigravity and Aider declare
+    // neither (lib/engines.js's ENGINE_EFFORT comment: Antigravity's own
+    // model ids already bake effort in, and a models block for either would
+    // lock their launches in `MODEL_ADMISSION_HELD` forever — no control
+    // adapter exists in lib/profile-reconciler.js for them). Render both
+    // halves as visible, disabled "Engine default" placeholders instead of
+    // leaving the card blank, so its shape is the same across all 4 engines.
+    container.innerHTML = `
+      <div class="form-group">
+        <label class="form-label" for="${esc(modelSelectId)}">Model</label>
+        <select class="form-select" id="${esc(modelSelectId)}" disabled><option value="">Engine default (CLI-managed)</option></select>
+      </div>
+      <div id="${esc(effortContainerId)}">
+        <div class="form-group">
+          <label class="form-label" for="${esc(effortSelectId)}">Reasoning effort</label>
+          <select class="form-select" id="${esc(effortSelectId)}" disabled><option value="">Engine default (CLI-managed)</option></select>
+        </div>
+      </div>`;
     return;
   }
   container.innerHTML = `
