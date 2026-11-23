@@ -32,6 +32,7 @@ const { execFileSync } = require('node:child_process');
 const store = require('../lib/store');
 const { handleRequest } = require('../server');
 const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
+const loadApiHelperGlobals = require('./_api-helper-globals');
 const { initRepo } = require('./_temp-repo');
 
 /**
@@ -1185,6 +1186,243 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       assert.ok(resolved, 'launchSession\'s own first resolution step must find the project under its new name');
       assert.equal(resolved.engineId, 'codex', 'and it must read the repaired engine, not the broken one the session was stuck on');
       assert.equal(store.projects.getByName('e2e-3205-repair-then-launch'), null, 'the stale old name must resolve to nothing, so a launch can never silently target it');
+    });
+  });
+
+  /**
+   * Car V659-W2-C, Issue #3203 (Ruling A927's own deferred mounted E2E):
+   * the real public/v6-shell.js offline hero markup (PR #3227, merged) is
+   * now live, so the hand-built FIXTURES above (Car V659-W1-C,
+   * "mounted-DOM fixture coverage for the 4 offline/recovery states") are
+   * superseded for these 3 scenarios by mounting the production code
+   * itself — the whole point Ruling A927 deferred. The fixtures stay; they
+   * covered a CSS/wiring contract while #3203's own markup had no owning
+   * car yet, and that is still a true, useful statement about them.
+   *
+   * mountOfflineShell extends Car V659-W2-B's own mountShell() (this
+   * file's top-level describe) with the 4 options #3203 needs that the
+   * conversation/scroll-pin tests above never did — onStartSession,
+   * onOpenProjectSettings, onViewOfflineHistory, onReturnToStartCard —
+   * wired exactly as public/ui.js wires them (checked directly, not
+   * assumed): `onStartSession(projectName) { v6Live.startSession(...) }`,
+   * `onOpenProjectSettings(projectName) { openSettings(...) }`,
+   * `onViewOfflineHistory`/`onReturnToStartCard` likewise. Settings is a
+   * spy here, not a call into the real openSettings — see the #3214
+   * describe below for why.
+   */
+  describe('Car V659-W2-C: Issue #3203 mounted offline hero, starting/failed launch transitions, and offline history (Ruling A927 deferred mounted E2E)', () => {
+    /**
+     * @param {string} initialHash
+     * @returns {object}
+     */
+    function mountOfflineShell(initialHash) {
+      const G = loadV6Shell();
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const win = makeFakeWindow(initialHash);
+      const { api, apiMutate, calls } = liveApi();
+      const pending = [];
+      let shell = null;
+      const readFileAsBase64 = async (file) => Buffer.from(file.content).toString('base64');
+      const openedSettingsFor = [];
+      const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, operatorHeaders: async () => ({}), readFileAsBase64, storage: null });
+      shell = G.tcCreateV6Shell(doc, {
+        root, window: win,
+        onLaunchTemplate: (id) => pending.push(live.launchTemplate(id)),
+        onRender: (route) => pending.push(live.handleRoute(route)),
+        onSendChat: (text) => pending.push(live.sendChat(text)),
+        onChangeDelegate: (nodeId, projectId) => pending.push(live.changeDelegate(nodeId, projectId)),
+        onRefreshChat: () => pending.push(live.refresh()),
+        onAttachFiles: (files) => pending.push(live.attachFiles(files)),
+        onRemoveAttachment: (i) => pending.push(live.removeAttachment(i)),
+        onRenameProject: (oldName, newName, opts) => pending.push(live.renameProject(oldName, newName, opts)),
+        onStartSession: (name) => { pending.push(live.startSession(name)); },
+        onOpenProjectSettings: (name) => { openedSettingsFor.push(name); },
+        onViewOfflineHistory: (name) => { pending.push(live.viewOfflineHistory(name)); },
+        onReturnToStartCard: (name) => live.returnToStartCard(name),
+        storage: null
+      });
+      pending.push(live.handleRoute(shell.getRoute()));
+      const settle = async () => { while (pending.length) await pending.shift(); };
+      return { G, shell, root, win, live, calls, settle, doc, openedSettingsFor };
+    }
+
+    it('a project with no active session renders the real offline hero — Start, View History and Edit Properties, no diagnostic yet', async () => {
+      const projectId = seedProject('e2e-3203-hero');
+      const { root, settle } = mountOfflineShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      assert.match(root.innerHTML, /class="v6-chat-offline-hero" role="status"/);
+      assert.match(root.innerHTML, /id="v6ChatStartHero"/);
+      assert.match(root.innerHTML, /id="v6ChatViewHistoryHero"/);
+      assert.match(root.innerHTML, /id="v6ChatEditPropertiesHero"/);
+      assert.doesNotMatch(root.innerHTML, /v6-chat-offline-hero-diagnostic/, 'no failure yet, so no diagnostic box');
+    });
+
+    it('clicking Start transitions the hero through "starting" synchronously, then to "failed" with Retry once a real launch is refused', async () => {
+      const projectId = seedProject('e2e-3203-starting-failed');
+      // Deliberately unresolvable engine: launchSession's own engine-
+      // resolution check (lib/sessions.js) fails this FAST and
+      // synchronously (verified directly: ~2ms, no tmux/process spawn),
+      // before ever reaching the parts of the launch path this sandbox
+      // has no real engine binary or tmux session for — the same
+      // proportionality V659-W1-C's own test above already explains.
+      store.getDb().prepare('UPDATE projects SET engine_id = ? WHERE id = ?').run('does-not-exist-engine', projectId);
+      const { doc, root, settle } = mountOfflineShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      doc.getElementById('v6ChatStartHero').dispatch('click');
+      // startSession's own synchronous prefix — launchState.set('starting')
+      // then showChat()/render() — runs before its first `await
+      // apiMutate(...)` yields control, so "starting" must already be on
+      // screen here, before settle() lets the launch call resolve.
+      assert.match(root.innerHTML, /class="v6-chat-offline-hero is-starting"/, 'is-starting must be on the OUTER hero (the CSS spinner selector targets it there), synchronously');
+      assert.match(root.innerHTML, /id="v6ChatStartHero"[^>]*disabled/, 'Start must disable itself while already starting, not stay re-clickable');
+      await settle();
+      assert.match(root.innerHTML, /v6-chat-offline-hero-pill is-failed">Launch Failed/, 'the unresolvable engine must fail the REAL launch route, not silently succeed');
+      assert.match(root.innerHTML, /v6-chat-offline-hero-diagnostic-message">Not started: Engine &quot;does-not-exist-engine&quot; not found/, 'the server\'s real refusal reason must reach the diagnostic box');
+      assert.match(root.innerHTML, /id="v6ChatRetryLaunchHero"/, 'Retry Launch must be offered after a failed attempt');
+    });
+
+    it('View Previous Conversation loads the project\'s real persisted B2 events (history -> conversation/events), and Return to Start Card restores the hero', async () => {
+      const projectId = seedProject('e2e-3203-history');
+      // An ENDED session, not an active one — #3203's own viewOfflineHistory
+      // doc comment (public/v6-shell.js) is explicit that GET .../history
+      // names the most recent session row "regardless of status".
+      const sessionId = store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at, ended_at) VALUES (?, 'claude', 'ended', 'webui', datetime('now'), datetime('now'))"
+      ).run(projectId).lastInsertRowid;
+      await send('POST', `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`, {
+        body: { launchId: 'l1', seq: 1, tier: 'A', adapter: 'claude', role: 'user', content: 'what happened while I was away?' }
+      });
+      const { doc, root, settle } = mountOfflineShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+      await settle();
+      assert.match(root.innerHTML, /class="v6-chat-offline-history" aria-label/);
+      assert.match(root.innerHTML, /what happened while I was away\?/, 'the REAL persisted event, fetched via the real history + conversation/events routes, must actually render');
+      assert.ok(doc.getElementById('v6ChatOfflineHistoryReturnTop'), 'the Return to Start Card control must be present');
+      doc.getElementById('v6ChatOfflineHistoryReturnTop').dispatch('click');
+      await settle();
+      assert.match(root.innerHTML, /class="v6-chat-offline-hero" role="status"/, 'Return to Start Card must restore the hero, in place');
+    });
+  });
+
+  /**
+   * Car V659-W2-C, Issue #3214: `openSettings` (public/ui.js) has too many
+   * top-level dependencies (state, esc, apiMutate, DOM) to invoke directly
+   * — the SAME documented constraint test/settings-modal-silentprime.test.js
+   * and test/engine-model-picker.test.js already work around with
+   * source-level liftBody()/liftDeclaration() assertions, the latter
+   * already covering #settingsEngineCards' 4 engines, #settingsModelSelect
+   * and #settingsEffortSelect + #settingsPathHealthBadge in detail
+   * (#3214 R-Gate R1/R5/R6 describes in that file). Neither file is in
+   * this car's envelope to extend further, and re-deriving that coverage
+   * here would duplicate it, not add to it.
+   *
+   * What a MOUNTED shell genuinely can prove, and does here, is the half
+   * of the integration that belongs to it: that the real v6ChatSettings
+   * control calls options.onOpenProjectSettings with the correct project
+   * name — the exact call public/ui.js wires to `openSettings(projectName)`
+   * (`onOpenProjectSettings(projectName) { openSettings(projectName); }`,
+   * checked directly). This is the shell's own reachability contract, not
+   * a stand-in for testing openSettings' render.
+   */
+  describe('Car V659-W2-C: Issue #3214 mounted shell reaches Settings with the correct project name', () => {
+    it('the chat header\'s Settings control calls onOpenProjectSettings with THIS chat\'s own project name', async () => {
+      const projectId = seedProject('e2e-3214-settings-reachability');
+      const G = loadV6Shell();
+      const { doc } = makeDocument([]);
+      const root = doc.createElement('div');
+      withIdParsingInnerHTML(root, doc);
+      doc.body.appendChild(root);
+      const win = makeFakeWindow(`#/resources/${projectId}/conversation`);
+      const { api, apiMutate } = liveApi();
+      const pending = [];
+      let shell = null;
+      const openedSettingsFor = [];
+      const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, operatorHeaders: async () => ({}), readFileAsBase64: async () => '', storage: null });
+      shell = G.tcCreateV6Shell(doc, {
+        root, window: win,
+        onRender: (route) => pending.push(live.handleRoute(route)),
+        onOpenProjectSettings: (name) => { openedSettingsFor.push(name); },
+        storage: null
+      });
+      pending.push(live.handleRoute(shell.getRoute()));
+      while (pending.length) await pending.shift();
+      const settingsBtn = doc.getElementById('v6ChatSettings');
+      assert.ok(settingsBtn, 'the header\'s Settings control must be mounted, offline session or not');
+      settingsBtn.dispatch('click');
+      assert.deepEqual(openedSettingsFor, ['e2e-3214-settings-reachability'], 'must reach onOpenProjectSettings with exactly this chat\'s own project name');
+    });
+  });
+
+  /**
+   * Car V659-W2-C, Issue #3218: `tcBindMasterDropzone`/
+   * `tcSanitizeMasterAttachmentFilename` (public/api-helper.js, PR #3229,
+   * merged) are already exhaustively unit-tested in isolation
+   * (test/master-control-bar.test.js) against a SYNTHETIC panel/frame
+   * pair. What that suite cannot prove, and this does, is that the ids
+   * `tcBindMasterDropzone`'s own fallback resolution hardcodes
+   * (`"masterPanel"` -> `"masterFrame"`) and the nesting its positioning
+   * fix (#3218 R3) depends on both match the REAL public/index.html
+   * markup — read directly below, not assumed.
+   *
+   * Note (#3218 Wave 2 dependency, checked directly): `tcBindMasterDropzone`
+   * is not yet CALLED from any production page script — grepped
+   * public/ui.js, public/session.js and public/v6-shell.js, no call site
+   * exists. Wiring it up is Car V659-W2-D's own deliverable, once this
+   * car's sibling PRs land. So "mounted" here means against the real
+   * index.html markup and real api-helper.js globals, which is everything
+   * actually live right now — not a page that calls it yet, which does
+   * not exist to mount against.
+   */
+  describe('Car V659-W2-C: Issue #3218 tcBindMasterDropzone against the real index.html markup and nesting', () => {
+    it('public/index.html\'s #masterPanel/#masterFrame markup matches tcBindMasterDropzone\'s own fallback id resolution and nesting assumptions', () => {
+      const htmlSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+      assert.match(htmlSrc, /<div id="masterPanel" class="master-panel"/, '#masterPanel must exist with this exact id — tcBindMasterDropzone\'s default prefix is "masterPanel"');
+      assert.match(htmlSrc, /<iframe id="masterFrame"/, 'the fallback frame lookup for the "masterPanel" prefix is literally "masterFrame" (public/api-helper.js)');
+      const panelIdx = htmlSrc.indexOf('<div id="masterPanel"');
+      const frameIdx = htmlSrc.indexOf('id="masterFrame"', panelIdx);
+      const wrapIdx = htmlSrc.lastIndexOf('<div class="master-frame-wrap">', frameIdx);
+      assert.ok(wrapIdx > panelIdx && wrapIdx < frameIdx,
+        '#masterFrame must sit inside a .master-frame-wrap, nested one level below #masterPanel — this is exactly the "frame\'s real parent is not panelEl" shape the mounted test below exercises');
+    });
+
+    it('mounted against that real nesting, it positions both unpositioned ancestors (never #masterPanel\'s own position if it had one) and delivers a dropped file with its sanitized name', () => {
+      const G = loadApiHelperGlobals();
+      G.Blob = Blob;
+      G.File = File;
+      const { doc, ids } = makeDocument(['masterPanel', 'masterFrameWrap', 'masterFrame']);
+      ids.masterPanel.style = {};
+      ids.masterFrameWrap.style = {};
+      ids.masterFrame.style = {};
+      ids.masterPanel.appendChild(ids.masterFrameWrap);
+      ids.masterFrameWrap.appendChild(ids.masterFrame);
+      /** Captures every listener a target registers, by type. */
+      function captureAddEventListener(target) {
+        const handlers = {};
+        const real = typeof target.addEventListener === 'function' ? target.addEventListener.bind(target) : null;
+        target.addEventListener = (type, fn) => {
+          (handlers[type] = handlers[type] || []).push(fn);
+          if (real) real(type, fn);
+        };
+        return handlers;
+      }
+      const docHandlers = captureAddEventListener(doc);
+      const panelHandlers = captureAddEventListener(ids.masterPanel);
+      const delivered = [];
+      G.tcBindMasterDropzone({ doc, panelEl: ids.masterPanel, prefix: 'masterPanel', onUpload: (f, sanitized) => delivered.push(sanitized) });
+      assert.equal(ids.masterPanel.style.position, 'relative', '#masterPanel has no position rule in public/style.css — it must get one, as the overlay\'s own containing block');
+      assert.equal(ids.masterFrameWrap.style.position, 'relative', '.master-frame-wrap has no position rule either, and it — not #masterPanel — is #masterFrame\'s REAL parent');
+      const overlay = ids.masterPanel.childNodes.find((c) => c.id === 'masterPanelDropzoneOverlay');
+      assert.ok(overlay, 'the overlay must mount as a direct child of #masterPanel, matching where tcBindMasterDropzone appends it');
+      docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+      assert.equal(overlay.classList.contains('hidden'), false, 'revealed on a file drag over the real page');
+      assert.equal(ids.masterFrame.style.pointerEvents, 'none', 'the real #masterFrame iframe must stop intercepting pointer input while the drag is live');
+      const fileA = { name: 'Screenshot 2026-11-23 at 8.00.00 AM.png' };
+      panelHandlers.drop[0]({ preventDefault: () => {}, dataTransfer: { files: [fileA] } });
+      assert.deepEqual(delivered, ['Screenshot-2026-11-23-at-8.00.00-AM.png'], 'a file dropped on the real markup must be delivered with its sanitized name');
     });
   });
 });
