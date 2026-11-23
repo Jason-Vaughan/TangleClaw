@@ -547,17 +547,69 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
       before(() => {
         savedSettleMs = globalThis.TC_MASTER_TURN_SETTLE_MS;
         savedNoReplyMs = globalThis.TC_MASTER_TURN_NO_REPLY_MS;
-        globalThis.TC_MASTER_TURN_SETTLE_MS = 5;
-        globalThis.TC_MASTER_TURN_NO_REPLY_MS = 15;
+        // #3218 R-Gate R13: R10-R12's own 5ms/15ms pair left NO margin at
+        // all for CI jitter -- waitForSettle's fixed 20ms sleep was
+        // EXACTLY settleMs+noReplyMs (5+15), and waitForNoReply's fixed
+        // 30ms was EXACTLY noReplyMs*2 (15+15). Both are the real
+        // wall-clock windows a CHAINED retirement produces: turn 1 retires
+        // at its own timer, immediately dispatching turn 2, which arms ITS
+        // OWN fresh no-reply timer from that moment -- so a test waiting
+        // for turn 2's dispatch to become observable was racing turn 2's
+        // own timeout finishing FIRST on a loaded runner, with zero slack
+        // either way. Widened far enough apart that no fixed sleep anyone
+        // writes against these two constants can land on a knife-edge.
+        globalThis.TC_MASTER_TURN_SETTLE_MS = 10;
+        globalThis.TC_MASTER_TURN_NO_REPLY_MS = 200;
       });
       after(() => {
         globalThis.TC_MASTER_TURN_SETTLE_MS = savedSettleMs;
         globalThis.TC_MASTER_TURN_NO_REPLY_MS = savedNoReplyMs;
       });
-      /** Waits past the settle timeout, for a turn whose content has already stopped changing. */
-      const waitForSettle = () => new Promise((r) => setTimeout(r, 20));
-      /** Waits past the no-reply timeout, for a turn that never gets any content at all. */
-      const waitForNoReply = () => new Promise((r) => setTimeout(r, 30));
+      // A flat safety backstop for the polling loops below -- not tuned
+      // against settleMs/noReplyMs at all. Once a second turn's dispatch
+      // actually happens, term.pasted grows and the loop exits that same
+      // tick; this ceiling only bounds how long a GENUINE failure (growth
+      // that never happens) hangs the test, so it can be generous without
+      // needing to be computed relative to either timer.
+      const POLL_CEILING_MS = 2000;
+      /**
+       * Waits past the settle timeout, for a turn whose content has
+       * already stopped changing (#3218 R-Gate R13). Always sleeps at
+       * least settleMs+20ms first (comfortable margin to let the FIRST
+       * timer actually fire even under CI load), then — ONLY when
+       * `expectedPastedLen` is given, meaning a second turn is already
+       * queued and its dispatch is what retirement should trigger — polls
+       * `term.pasted.length` on a short interval instead of a further
+       * fixed sleep, so the wait ends the instant growth is observed
+       * rather than racing turn 2's OWN fresh no-reply timer to also fire
+       * first. A bare `await waitForSettle()` with no `term`/
+       * `expectedPastedLen` is for callers with no second turn queued
+       * yet, where there is nothing to poll for and the minimum sleep
+       * alone is the whole wait.
+       */
+      async function waitForSettle(term, expectedPastedLen) {
+        await new Promise((r) => setTimeout(r, globalThis.TC_MASTER_TURN_SETTLE_MS + 20));
+        if (term == null || expectedPastedLen == null) return;
+        const deadline = Date.now() + POLL_CEILING_MS;
+        while (term.pasted.length < expectedPastedLen && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 2));
+        }
+      }
+      /**
+       * Waits past the no-reply timeout, for a turn that never gets any
+       * content at all (#3218 R-Gate R13) — same shape as {@link
+       * waitForSettle}, but the window it waits past first is
+       * `noReplyMs` itself (the turn being waited on retires via
+       * no-reply, not settle).
+       */
+      async function waitForNoReply(term, expectedPastedLen) {
+        await new Promise((r) => setTimeout(r, globalThis.TC_MASTER_TURN_NO_REPLY_MS + 20));
+        if (term == null || expectedPastedLen == null) return;
+        const deadline = Date.now() + POLL_CEILING_MS;
+        while (term.pasted.length < expectedPastedLen && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 2));
+        }
+      }
 
       /** A minimal fake xterm.js Terminal: a mutable line buffer, paste()/input() recorders, and one onWriteParsed hook. */
       function makeFakeTerm(initialLines) {
@@ -748,7 +800,7 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
 
         term.setLines(['$ ', 'first', 'first-reply']);
         term.fireWrite();
-        await waitForSettle(); // turn 1 retires, turn 2 is dispatched for real
+        await waitForSettle(term, 2); // turn 1 retires, turn 2 is dispatched for real
         assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'turn 2 only reaches the terminal once turn 1 retires');
 
         term.setLines(['$ ', 'first', 'first-reply', 'second', 'second-reply']);
@@ -776,12 +828,12 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
 
         term.setLines(['$ ', 'one', 'one-reply']);
         term.fireWrite();
-        await waitForSettle(); // retires "one", dispatches "two"
+        await waitForSettle(term, 2); // retires "one", dispatches "two"
         assert.deepEqual(term.pasted, ['one\r', 'two\r']);
 
         term.setLines(['$ ', 'one', 'one-reply', 'two', 'two-reply']);
         term.fireWrite();
-        await waitForSettle(); // retires "two", dispatches "three"
+        await waitForSettle(term, 3); // retires "two", dispatches "three"
         assert.deepEqual(term.pasted, ['one\r', 'two\r', 'three\r']);
 
         term.setLines(['$ ', 'one', 'one-reply', 'two', 'two-reply', 'three', 'three-reply']);
@@ -920,7 +972,7 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
 
         term.setLines(['$ ', 'first', 'first-reply']);
         term.fireWrite(); // the ONLY write event — no second call anywhere in this test
-        await waitForSettle();
+        await waitForSettle(term, 2);
         assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'the settle timer alone retired turn 1 and dispatched turn 2');
 
         term.setLines(['$ ', 'first', 'first-reply', 'second', 'second-reply']);
@@ -960,7 +1012,7 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         term.fireWrite();
         assert.deepEqual(term.pasted, ['first\r'], 'still not retired -- the line changed content yet again');
 
-        await waitForSettle(); // NOW it goes quiet for real
+        await waitForSettle(term, 2); // NOW it goes quiet for real
         assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'retires only once the content genuinely stops changing');
 
         const stream = doc.getElementById('masterChatStream');
@@ -989,7 +1041,7 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         term.fireWrite();
         assert.deepEqual(term.pasted, ['quiet\r'], 'second is still queued');
 
-        await waitForNoReply();
+        await waitForNoReply(term, 2);
         assert.deepEqual(term.pasted, ['quiet\r', 'second\r'],
           'the no-reply timeout retired the echo-only turn and dispatched the next queued send, with no deadlock');
 
@@ -1348,6 +1400,27 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         describe('active permission/confirmation dialogs fail closed, immediately and via the fallback timers (#3218 R-Gate R10 BLOCKER B)', () => {
           const { DIALOG_PANE, AG_DIALOG_PANE, CX_DIALOG_PANE } = require('./_wake-fixtures');
 
+          // #3218 R-Gate R13: the outer before() hook widened settleMs/
+          // noReplyMs far apart (10ms/200ms) so no OTHER test's fixed
+          // sleep can land on the knife-edge R10-R12 left between them.
+          // This block's own fixed 30ms wait below needs the OPPOSITE
+          // property instead -- it must genuinely EXCEED noReplyMs to
+          // prove the fallback timers re-arm rather than retire once
+          // their own window has elapsed, which 200ms no longer does.
+          // Scoped back down locally, independent of the outer value.
+          let savedSettleMs;
+          let savedNoReplyMs;
+          before(() => {
+            savedSettleMs = globalThis.TC_MASTER_TURN_SETTLE_MS;
+            savedNoReplyMs = globalThis.TC_MASTER_TURN_NO_REPLY_MS;
+            globalThis.TC_MASTER_TURN_SETTLE_MS = 5;
+            globalThis.TC_MASTER_TURN_NO_REPLY_MS = 10;
+          });
+          after(() => {
+            globalThis.TC_MASTER_TURN_SETTLE_MS = savedSettleMs;
+            globalThis.TC_MASTER_TURN_NO_REPLY_MS = savedNoReplyMs;
+          });
+
           for (const [label, dialogPane] of [['Claude', DIALOG_PANE], ['antigravity/Gemini-CLI', AG_DIALOG_PANE], ['Codex', CX_DIALOG_PANE]]) {
             it(`${label}: an active dialog does not retire on the immediate sync, nor once the fallback timers elapse`, async () => {
               const term = makeFakeTerm(['$ ']);
@@ -1363,8 +1436,9 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
               assert.deepEqual(term.pasted, ['first\r'], 'the immediate sync must not retire while a dialog is showing');
 
               // The settle/no-reply fallback timers' own window elapses
-              // (the outer before() hook keeps both short) while the
-              // dialog is STILL showing -- must re-arm, never retire.
+              // (this block's own before() hook above keeps both short,
+              // independent of the outer suite's widened values) while
+              // the dialog is STILL showing -- must re-arm, never retire.
               await new Promise((r) => setTimeout(r, 30));
               assert.deepEqual(term.pasted, ['first\r'],
                 'the fallback timers must also fail closed, not just the immediate check');
