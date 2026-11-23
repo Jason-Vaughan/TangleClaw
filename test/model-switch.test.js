@@ -272,6 +272,47 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(store.projects.get(project.id).engineId, 'claude');
   });
 
+  // PRR-A R-Gate R3 finding (PR #3237): `loadProjectConfig`'s default
+  // implementation merges in every default field, so restoring THAT
+  // object would create a project.json where none existed, or inflate a
+  // sparse one with keys it never had — lossy. Rollback must restore the
+  // exact raw on-disk state instead.
+  it('rollback when .tangleclaw/project.json did not exist before this attempt: the file remains absent after rollback, not created with defaults', async () => {
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const configPath = path.join(projectPath, '.tangleclaw', 'project.json');
+    assert.equal(fs.existsSync(configPath), false, 'precondition: no project.json exists yet');
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      triggerWrap: () => ({ ok: false, error: 'test step failed' })
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'WRAP_FAILED');
+    assert.equal(fs.existsSync(configPath), false, 'rollback must not CREATE a default-expanded project.json where none existed before');
+    assert.equal(store.projects.get(project.id).engineId, 'claude');
+  });
+
+  it('rollback when .tangleclaw/project.json was initially SPARSE: the exact original sparse bytes are preserved, not expanded with defaults', async () => {
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const configDir = path.join(projectPath, '.tangleclaw');
+    const configPath = path.join(configDir, 'project.json');
+    fs.mkdirSync(configDir, { recursive: true });
+    // A deliberately sparse file — fewer keys than DEFAULT_PROJECT_CONFIG,
+    // and in a non-canonical key order/formatting a round-trip through
+    // JSON.stringify would not reproduce byte-for-byte.
+    const sparseRaw = '{\n  "engine": "claude",\n  "customField": "keep-me"\n}\n';
+    fs.writeFileSync(configPath, sparseRaw);
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      triggerWrap: () => ({ ok: false, error: 'test step failed' })
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'WRAP_FAILED');
+    assert.equal(fs.readFileSync(configPath, 'utf8'), sparseRaw, 'the exact original raw bytes are restored, not a default-expanded reconstruction');
+    assert.equal(store.projects.get(project.id).engineId, 'claude');
+  });
+
   it('cross-provider: refuses (WRAP_FAILED) when triggerWrap returns a falsy result entirely', async () => {
     store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
     const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
