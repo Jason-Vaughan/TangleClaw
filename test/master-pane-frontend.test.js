@@ -514,10 +514,13 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         const sandbox = new Function('document', `
           ${liftDeclaration(js, 'function appendMasterChatTurn(')}
           ${liftDeclaration(js, 'function readMasterTerminalSnapshot(')}
-          let _masterPendingTurn = null;
+          let _masterActiveTurns = [];
+          let _masterActiveBaseline = [];
+          let _masterActiveDispose = null;
           ${liftDeclaration(js, 'function _masterTerminalLineDelta(')}
           ${liftDeclaration(js, 'function isMasterTerminalEchoLine(')}
-          ${liftDeclaration(js, 'function syncMasterAssistantTurnFromTerminal(')}
+          ${liftDeclaration(js, 'function _partitionMasterTerminalDelta(')}
+          ${liftDeclaration(js, 'function syncMasterAssistantTurnsFromTerminal(')}
           ${liftDeclaration(js, 'async function sendMasterChatMessage(')}
           ${liftDeclaration(js, 'function addMasterChatWorkspace(')}
           return { addMasterChatWorkspace, sendMasterChatMessage };
@@ -616,6 +619,61 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         assert.equal(assistantTurns.length, 2, 'two separate assistant bubbles, one per send, never one shared bubble');
         assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply');
         assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'second-reply');
+      });
+
+      // #3218 R-Gate R5 BLOCKING 1 — the delayed-overlapping-sends repro:
+      // BOTH sends happen while the terminal buffer is still at its
+      // original baseline, before either turn's echo (let alone reply)
+      // has arrived. R4's model disposed turn 1's listener the moment turn
+      // 2 was sent, so when the buffer finally emitted everything in one
+      // batch, only turn 2's listener fired and turn 1's reply fell
+      // straight into turn 2's bubble, unstripped, with turn 1 getting no
+      // bubble of its own at all.
+      it('g) two sends before ANY output arrives still land in two separate bubbles once the buffer catches up', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'first';
+        await sandbox.sendMasterChatMessage();
+        // No term.setLines() call here — the buffer is still exactly ['$ ']
+        // when the second send happens, same as the repro.
+
+        input.value = 'second';
+        await sandbox.sendMasterChatMessage();
+
+        // Only now does the pty emit both turns' echoes and replies together.
+        term.setLines(['$ ', 'first', 'first-reply', 'second', 'second-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 2, 'two separate assistant bubbles, neither echo leaked into either');
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply');
+        assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'second-reply');
+      });
+
+      it('h) a third overlapping send is also correctly attributed, not just the first two', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'one';
+        await sandbox.sendMasterChatMessage();
+        input.value = 'two';
+        await sandbox.sendMasterChatMessage();
+        input.value = 'three';
+        await sandbox.sendMasterChatMessage();
+
+        term.setLines(['$ ', 'one', 'one-reply', 'two', 'two-reply', 'three', 'three-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 3);
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'one-reply');
+        assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'two-reply');
+        assert.equal(assistantTurns[2].querySelector('.v6-conversation-content').text, 'three-reply');
       });
     });
   });
