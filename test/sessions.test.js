@@ -5904,6 +5904,30 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
         }
       });
 
+      it('R3: ok:true with repairable:true when the TCC server is absent/anchor dead — launchSession\'s own bootstrap must get the chance, not a preflight denial', () => {
+        const origHealth = tmux.probeTccServerHealth;
+        const origReadable = tmux.probeTccReadable;
+        // readable: null -- never attempted, the server/anchor weren't up
+        // to attempt it against -- is NOT the same claim as readable:
+        // false (attempted and explicitly refused). Only the latter may
+        // refuse; createSessionWithTccBootstrap repairs/bootstraps the
+        // former itself (#3148, #3130).
+        tmux.probeTccServerHealth = () => ({ socket: 'x', running: false, anchorAlive: false, readable: null });
+        tmux.probeTccReadable = () => false; // default server can't read it either, right now
+        try {
+          const name = freshProtectedProject();
+          const result = sessions.preflightSessionLaunch(name);
+          assert.equal(result.ok, true, 'must never refuse on an unattempted/repairable state');
+          const check = result.checks.find((c) => c.id === 'workspace_readable_by_tmux_server');
+          assert.ok(check && check.ok === true);
+          assert.equal(check.repairable, true);
+          assert.equal(check.bootstrapRequired, true);
+        } finally {
+          tmux.probeTccServerHealth = origHealth;
+          tmux.probeTccReadable = origReadable;
+        }
+      });
+
       it('never runs the extra tmux-server check for a path outside every protected root', () => {
         const origHealth = tmux.probeTccServerHealth;
         let healthCalls = 0;
@@ -6114,6 +6138,40 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       assert.equal(res.status, 409);
       assert.equal(res.body.code, 'ENGINE_CONFIG_INVALID');
       assert.equal(res.body.diagnostic.category, 'engine_auth_or_config_invalid');
+    });
+
+    it('R3: a TCC-protected workspace with an absent/dead-anchor tmux server reaches launchSession, never a route-level 403 (PRR-A R2 BLOCKING)', async () => {
+      const sessionsLib = require('../lib/sessions');
+      const tmuxLib = require('../lib/tmux');
+      const origHomedir = os.homedir;
+      const origHealth = tmuxLib.probeTccServerHealth;
+      const origReadable = tmuxLib.probeTccReadable;
+      const origLaunch = sessionsLib.launchSession;
+      let launchSessionCalled = false;
+      os.homedir = () => projectsDir;
+      tmuxLib.probeTccServerHealth = () => ({ socket: 'x', running: false, anchorAlive: false, readable: null });
+      tmuxLib.probeTccReadable = () => false; // default server can't read it right now either
+      sessionsLib.launchSession = (name, opts) => {
+        launchSessionCalled = true;
+        // Stubbed: the real createSessionWithTccBootstrap/Terminal.app
+        // bootstrap path is exercised and tested elsewhere (lib/tmux.js's
+        // own suite) — this test's only claim is that the ROUTE reaches
+        // this function at all for this scenario, not what it then does.
+        return { session: null, primePrompt: null, ttydUrl: null, error: 'stubbed for this test' };
+      };
+      try {
+        const dir = path.join(projectsDir, 'Documents', 'protected-repairable-route');
+        fs.mkdirSync(dir, { recursive: true });
+        store.projects.create({ name: 'protected-repairable-route', path: dir, engine: 'claude' });
+        const res = await request('POST', '/api/sessions/protected-repairable-route');
+        assert.equal(launchSessionCalled, true, 'the route must reach launchSession — a bootstrap-repairable state must never be refused with a route-level 403');
+        assert.notEqual(res.status, 403);
+      } finally {
+        os.homedir = origHomedir;
+        tmuxLib.probeTccServerHealth = origHealth;
+        tmuxLib.probeTccReadable = origReadable;
+        sessionsLib.launchSession = origLaunch;
+      }
     });
   });
 });
