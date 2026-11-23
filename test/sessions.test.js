@@ -4301,6 +4301,100 @@ describe('sessions', () => {
     });
   });
 
+  describe('launchSessionAsync (#3216 Pillar 2)', () => {
+    const tmux = require('../lib/tmux');
+    const enginesModule = require('../lib/engines');
+    let sessions;
+    let originalHasSession;
+    let originalCreateSession;
+    let originalDetectEngine;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+    });
+
+    beforeEach(() => {
+      originalHasSession = tmux.hasSession;
+      originalCreateSession = tmux.createSession;
+      originalDetectEngine = enginesModule.detectEngine;
+      // Same stubbing `describe('silent prime delivery (#103)')` uses — no
+      // real tmux process, no real engine binary, so the DEFERRED launch
+      // this suite flushes actually completes fast and deterministically.
+      // `hasSession: () => false` matters here specifically — unlike that
+      // suite's own per-test `name === '<fixed project>'` stub, this one
+      // covers several different project names, and launchSession's own
+      // "is this tmux name already taken" check (lib/sessions.js:1375)
+      // hits the REAL tmux binary (a 5s timeout per call) for any name
+      // this stub does not already claim.
+      tmux.hasSession = () => false;
+      tmux.createSession = () => true;
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+    });
+
+    afterEach(() => {
+      tmux.hasSession = originalHasSession;
+      tmux.createSession = originalCreateSession;
+      enginesModule.detectEngine = originalDetectEngine;
+    });
+
+    it('returns {accepted: false} synchronously for an unknown project, same message as launchSession', () => {
+      const result = sessions.launchSessionAsync('nonexistent-async');
+      assert.equal(result.accepted, false);
+      assert.ok(result.error.includes('not found'));
+    });
+
+    it('returns {accepted: false} synchronously for an archived project', () => {
+      const projDir = path.join(projectsDir, 'archived-async-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'archived-async-proj', path: projDir, engine: 'claude' });
+      store.projects.archive(proj.id);
+      const result = sessions.launchSessionAsync('archived-async-proj');
+      assert.equal(result.accepted, false);
+      assert.ok(result.error.includes('archived'));
+    });
+
+    it('returns {accepted: false} synchronously when a session is already active, without running the deferred launch', async () => {
+      const projDir = path.join(projectsDir, 'already-active-async-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'already-active-async-proj', path: projDir, engine: 'claude' });
+      const launched = sessions.launchSession('already-active-async-proj');
+      assert.equal(launched.error, null, 'the synchronous launch that sets up this test must itself succeed');
+      try {
+        const result = sessions.launchSessionAsync('already-active-async-proj');
+        assert.equal(result.accepted, false);
+        assert.ok(result.error.includes('already active'));
+      } finally {
+        const active = store.sessions.getActive(proj.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    it('accepts immediately ({accepted: true, async: true, status: "starting"}) and the deferred launchSession actually runs once flushed', async () => {
+      const projDir = path.join(projectsDir, 'accepted-async-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'accepted-async-proj', path: projDir, engine: 'claude' });
+      try {
+        const before = store.sessions.getActive(proj.id);
+        assert.equal(before, null, 'nothing active yet');
+        const result = sessions.launchSessionAsync('accepted-async-proj');
+        assert.deepEqual(
+          { accepted: result.accepted, async: result.async, status: result.status, project: result.project },
+          { accepted: true, async: true, status: 'starting', project: 'accepted-async-proj' }
+        );
+        assert.ok(result.requestedAt, 'carries a requestedAt timestamp');
+        // Nothing has launched yet -- this call returned before the
+        // deferred setImmediate() has had a chance to run at all.
+        assert.equal(store.sessions.getActive(proj.id), null, 'still nothing active immediately after the call returns');
+        await new Promise((resolve) => setImmediate(resolve));
+        const after = store.sessions.getActive(proj.id);
+        assert.ok(after, 'the deferred launchSession call actually ran and created a real session');
+      } finally {
+        const active = store.sessions.getActive(proj.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+  });
+
   describe('launchSession adopts orphaned tmux session', () => {
     const tmux = require('../lib/tmux');
     const enginesModule = require('../lib/engines');
