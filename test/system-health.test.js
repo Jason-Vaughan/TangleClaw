@@ -23,6 +23,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { setLevel } = require('../lib/logger');
+const lift = require('./helpers/lift');
 
 setLevel('error');
 
@@ -1268,18 +1269,10 @@ describe('scripts/install-fda-anchor.sh (#3198)', () => {
   // Extracts one named function's body out of the script source, so a
   // source check can assert what a SPECIFIC subcommand does without a false
   // positive/negative from a sibling function elsewhere in the same file.
+  // Delegates the actual brace-balancing to the shared lift helper (#1903)
+  // rather than a private copy.
   function functionBody(src, name) {
-    const start = src.indexOf(`\n${name}() {`);
-    assert.ok(start >= 0, `function ${name}() not found in ${SCRIPT}`);
-    const bodyStart = src.indexOf('{', start) + 1;
-    let depth = 1;
-    let i = bodyStart;
-    while (depth > 0) {
-      if (src[i] === '{') depth++;
-      else if (src[i] === '}') depth--;
-      i++;
-    }
-    return src.slice(bodyStart, i - 1);
+    return lift.liftBody(src, `\n${name}() {`);
   }
 
   it('--stage and --status never write the plist (PRR-A R1 BLOCKING 3 — only --cutover may, source check)', () => {
