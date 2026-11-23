@@ -514,7 +514,9 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         const sandbox = new Function('document', `
           ${liftDeclaration(js, 'function appendMasterChatTurn(')}
           ${liftDeclaration(js, 'function readMasterTerminalSnapshot(')}
-          let _masterChatPendingSync = null;
+          let _masterPendingTurn = null;
+          ${liftDeclaration(js, 'function _masterTerminalLineDelta(')}
+          ${liftDeclaration(js, 'function isMasterTerminalEchoLine(')}
           ${liftDeclaration(js, 'function syncMasterAssistantTurnFromTerminal(')}
           ${liftDeclaration(js, 'async function sendMasterChatMessage(')}
           ${liftDeclaration(js, 'function addMasterChatWorkspace(')}
@@ -560,6 +562,60 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
         assert.equal(assistantTurns.length, 1);
         assert.match(assistantTurns[0].querySelector('.v6-conversation-content').text, /Could not deliver/);
+      });
+
+      // #3218 R-Gate R4 BLOCKING 3 — a Set-based diff drops a genuinely new
+      // reply line the moment an identical string had EVER appeared earlier
+      // in scrollback. The multiset delta must not have that blind spot.
+      it('d) a reply line identical to one already in scrollback is still rendered as new (multiset diff, not Set)', async () => {
+        const term = makeFakeTerm(['OK', '$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        doc.getElementById('masterChatInput').value = 'check';
+        await sandbox.sendMasterChatMessage();
+        term.setLines(['OK', '$ ', 'check', 'OK']);
+        term.fireWrite();
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 1);
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'OK',
+          'the new "OK" must render even though an older "OK" already sat in scrollback');
+      });
+
+      it('e) a prompt-prefixed echo of the sent text is stripped; a later line is not mistaken for one', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        doc.getElementById('masterChatInput').value = 'status?';
+        await sandbox.sendMasterChatMessage();
+        term.setLines(['$ ', 'Admin-PM > status?', 'All systems green']);
+        term.fireWrite();
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 1);
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'All systems green',
+          'the echoed "Admin-PM > status?" prompt line must be stripped, leaving only the real reply');
+      });
+
+      it('f) rapid/overlapping sends finalize turn 1 into its own bubble and attribute turn 2 to a separate one', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'first';
+        await sandbox.sendMasterChatMessage();
+        // turn 1's reply lands before the operator sends a second message.
+        term.setLines(['$ ', 'first', 'first-reply']);
+
+        input.value = 'second';
+        // Must finalize turn 1 (using turn 1's own beforeLines/sentText) before starting turn 2.
+        await sandbox.sendMasterChatMessage();
+        term.setLines(['$ ', 'first', 'first-reply', 'second', 'second-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 2, 'two separate assistant bubbles, one per send, never one shared bubble');
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply');
+        assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'second-reply');
       });
     });
   });

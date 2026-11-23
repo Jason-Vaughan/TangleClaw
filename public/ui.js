@@ -8376,44 +8376,92 @@ function readMasterTerminalSnapshot(term) {
 }
 
 /**
- * The listener disposable for the current send's assistant-output sync, so
- * a second send tears down the first's listener instead of letting it pile
- * up (#3218 R-Gate R2 BLOCKING 3).
- * @type {{dispose: Function}|null}
+ * The in-progress send's turn context — its sent text, the pre-send line
+ * snapshot, its OWN bound assistant bubble element, and its listener's
+ * dispose function — so starting a new send finalizes the previous one
+ * into ITS OWN bubble first, rather than letting two sends share one
+ * bubble or one listener pile up (#3218 R-Gate R4 BLOCKING 3).
+ * @type {{sentText: string, beforeLines: string[], assistantTurnEl: (object|null),
+ *   term: object, dispose: (Function|null)}|null}
  */
-let _masterChatPendingSync = null;
+let _masterPendingTurn = null;
 
 /**
- * Diff the terminal's current output against a snapshot taken right before
- * a send, and render (or update, as more output streams in) the assistant
- * bubble for whatever new, non-echoed lines appeared (#3218 R-Gate R2
- * BLOCKING 3). Diffing against the ORIGINAL pre-send snapshot each time
- * (not the previous call's) means a later call's full new-lines set simply
- * replaces the bubble's text, so streaming output never duplicates.
- * @param {object} term
+ * The new lines in `nowLines` that were not already in `beforeLines`, by
+ * multiset frequency rather than set membership (#3218 R-Gate R4 BLOCKING 3):
+ * a `Set`-based diff would make a genuinely new reply line invisible the
+ * moment an identical string had EVER appeared earlier in scrollback (e.g.
+ * a terse "OK" reply, after an earlier "OK" line already sits in the
+ * buffer) — set membership cannot tell "seen before" from "seen again,
+ * for real this time". Counting consumes one occurrence of a repeated
+ * `before` line per matching `now` line, in order, so only a count that
+ * actually grew is reported as new.
  * @param {string[]} beforeLines
- * @param {string} sentText - Excluded from the diff: the pty echoes what was typed.
+ * @param {string[]} nowLines
+ * @returns {string[]}
+ */
+function _masterTerminalLineDelta(beforeLines, nowLines) {
+  const remaining = new Map();
+  for (const line of beforeLines) remaining.set(line, (remaining.get(line) || 0) + 1);
+  const added = [];
+  for (const line of nowLines) {
+    const left = remaining.get(line) || 0;
+    if (left > 0) remaining.set(line, left - 1);
+    else added.push(line);
+  }
+  return added;
+}
+
+/**
+ * Whether `line` is the pty's own echo of what was just sent (#3218 R-Gate
+ * R4 BLOCKING 3) — either bare, or prefixed by a prompt the terminal
+ * printed alongside it (`"Admin-PM > status?"`, `"❯ status?"`, `"$
+ * status?"`, …). Stripping a leading prompt is deliberately generic (any
+ * run of prompt-ish characters, or a named-prompt-then-delimiter form)
+ * rather than a fixed list of exact prompts, since this project's own
+ * prompt text is not guaranteed stable across ttyd/engine versions.
+ * @param {string} line
+ * @param {string} sentText
+ * @returns {boolean}
+ */
+function isMasterTerminalEchoLine(line, sentText) {
+  if (line === sentText) return true;
+  const stripped = line.replace(/^(?:.*?(?:Admin-PM|tangleclaw-master)\s*[:>$❯#]|[\s>$❯#%]+)\s*/i, '').trim();
+  return stripped === sentText;
+}
+
+/**
+ * Diff the terminal's current output against the snapshot taken right
+ * before `turn`'s send, and render (or update, as more output streams in)
+ * `turn`'s OWN assistant bubble for whatever new, non-echoed lines
+ * appeared (#3218 R-Gate R2/R4 BLOCKING 3). Only the FIRST delta line that
+ * echoes `turn.sentText` is dropped — a real assistant reply that later
+ * quotes the same text back must not also be stripped.
+ * @param {object} term
+ * @param {{sentText: string, beforeLines: string[], assistantTurnEl: (object|null)}} turn
  * @returns {void}
  */
-function syncMasterAssistantTurnFromTerminal(term, beforeLines, sentText) {
+function syncMasterAssistantTurnFromTerminal(term, turn) {
   const now = readMasterTerminalSnapshot(term);
-  const before = new Set(beforeLines);
-  const sentTrim = String(sentText || '').trim();
-  const added = now.filter((line) => !before.has(line) && line !== sentTrim);
+  const delta = _masterTerminalLineDelta(turn.beforeLines, now);
+  let echoRemoved = false;
+  const added = delta.filter((line) => {
+    if (!echoRemoved && isMasterTerminalEchoLine(line, turn.sentText)) { echoRemoved = true; return false; }
+    return true;
+  });
   if (added.length === 0) return;
   const stream = document.getElementById('masterChatStream');
   if (!stream) return;
-  let bubble = stream.querySelector('[data-master-chat-pending="true"]');
-  if (!bubble) {
-    bubble = document.createElement('li');
+  if (!turn.assistantTurnEl) {
+    const bubble = document.createElement('li');
     bubble.className = 'v6-conversation-event is-assistant';
-    bubble.dataset.masterChatPending = 'true';
     const content = document.createElement('span');
     content.className = 'v6-conversation-content';
     bubble.appendChild(content);
     stream.appendChild(bubble);
+    turn.assistantTurnEl = bubble;
   }
-  bubble.querySelector('.v6-conversation-content').textContent = added.join('\n');
+  turn.assistantTurnEl.querySelector('.v6-conversation-content').textContent = added.join('\n');
   stream.scrollTop = stream.scrollHeight;
 }
 
@@ -8449,6 +8497,18 @@ async function sendMasterChatMessage() {
   const frame = document.getElementById('masterFrame');
   const win = frame && frame.contentWindow;
   const term = win && (win.term || win.terminal);
+
+  // #3218 R-Gate R4 BLOCKING 3: finalize the PREVIOUS send's turn into its
+  // own bubble (one last sync, using ITS OWN beforeLines/sentText/bubble)
+  // and dispose its listener before this send's snapshot is even taken —
+  // a rapid second send must not let the first's reply bleed into it, or
+  // vice versa.
+  if (_masterPendingTurn) {
+    if (_masterPendingTurn.term) syncMasterAssistantTurnFromTerminal(_masterPendingTurn.term, _masterPendingTurn);
+    if (typeof _masterPendingTurn.dispose === 'function') _masterPendingTurn.dispose();
+    _masterPendingTurn = null;
+  }
+
   const beforeLines = readMasterTerminalSnapshot(term);
   let delivered = false;
   if (term) {
@@ -8464,21 +8524,15 @@ async function sendMasterChatMessage() {
     return;
   }
 
-  // A fresh pending bubble per send: tear down the previous send's listener
-  // and un-mark its (now finished) bubble so this send's diff starts a new one.
-  if (_masterChatPendingSync && typeof _masterChatPendingSync.dispose === 'function') _masterChatPendingSync.dispose();
-  _masterChatPendingSync = null;
-  const stream = document.getElementById('masterChatStream');
-  const stale = stream && stream.querySelector('[data-master-chat-pending="true"]');
-  if (stale) delete stale.dataset.masterChatPending;
-
-  syncMasterAssistantTurnFromTerminal(term, beforeLines, text);
+  const turn = { sentText: text, beforeLines, assistantTurnEl: null, term, dispose: null };
+  syncMasterAssistantTurnFromTerminal(term, turn);
   const hook = term && typeof term.onWriteParsed === 'function' ? term.onWriteParsed.bind(term)
     : term && typeof term.onRender === 'function' ? term.onRender.bind(term) : null;
   if (hook) {
-    const disposable = hook(() => syncMasterAssistantTurnFromTerminal(term, beforeLines, text));
-    _masterChatPendingSync = disposable && typeof disposable.dispose === 'function' ? disposable : null;
+    const disposable = hook(() => syncMasterAssistantTurnFromTerminal(term, turn));
+    turn.dispose = disposable && typeof disposable.dispose === 'function' ? disposable.dispose.bind(disposable) : null;
   }
+  _masterPendingTurn = turn;
 }
 
 /**
