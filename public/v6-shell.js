@@ -1943,13 +1943,42 @@
         + `<label><span class="sr-only">${e.name} 5-hour % left</span><input type="number" min="0" max="100" step="1" id="v6UsageFiveHour-${e.key}" class="filter-input v6-usage-input" placeholder="5h %"></label>`
         + `<button type="button" id="v6UsageSave-${e.key}" class="btn btn-secondary btn-small" data-engine="${e.key}">Set</button></span></td></tr>`;
     };
+    // #3209 (UI-006): one card per engine — grouping the provider-probed
+    // reading (`usageProbeRowMarkup`, unchanged, still independently
+    // exported/tested as `tcV6UsageProbeRowMarkup`) together with that
+    // SAME engine's local transcript-estimate row (`row(e)`, unchanged)
+    // under one heading, each labelled by WHICH kind of number it is —
+    // rather than the two kinds of reading living in two entirely
+    // separate blocks (one table, one list) with no visual link between
+    // a card and its own probe row below. The probe's own refresh/
+    // interval controls (`usageProbeControlsMarkup`) are pinned once, at
+    // the top, above every card, same as the manual calibration inputs
+    // stay pinned inside each card rather than in a separate table.
+    //
+    // NOTE (#3209 scope limit): the issue's own acceptance criteria also
+    // ask for `#v6EngineUsagePopover { max-height: min(75vh, 580px);
+    // overflow-y: auto; }` — a `public/style.css` change outside this
+    // car's file scope (`public/v6-shell.js`/`test/v6-b1-ui-shell.test.js`
+    // only). Flagged in the PR rather than silently claimed as done.
+    const engineCards = USAGE_ENGINES.map((engineMeta) => {
+      const e = model.engines.find((m) => m.key === engineMeta.key);
+      const probeResult = probeFor(engineMeta.key);
+      return `<div class="v6-usage-engine-card" data-engine="${engineMeta.key}">`
+        + `<h4 class="v6-usage-engine-card-name">${escapeHtml(engineMeta.name)}</h4>`
+        + `<div class="v6-usage-engine-card-section" data-kind="provider-probed">`
+        + `<p class="v6-usage-engine-card-kind-label">Provider-reported</p>`
+        + `<ul class="v6-usage-probe-list">${usageProbeRowMarkup(engineMeta, probeResult)}</ul></div>`
+        + `<div class="v6-usage-engine-card-section" data-kind="local-estimate">`
+        + `<p class="v6-usage-engine-card-kind-label">Local estimate (from transcripts)</p>`
+        + `<table class="v6-usage-table"><thead><tr><th scope="col">Engine</th><th scope="col">5h</th><th scope="col">Week</th><th scope="col">Sprint</th><th scope="col">Sessions</th><th scope="col">Left</th><th scope="col">Set % left</th></tr></thead>`
+        + `<tbody>${e ? row(e) : ''}</tbody></table></div></div>`;
+    }).join('');
     return `<button type="button" id="v6EngineUsageMeter" class="v6-usage-meter" aria-expanded="${open ? 'true' : 'false'}" aria-controls="v6EngineUsagePopover"
         aria-label="${escapeHtml(`Engine usage: ${summary}. Open the breakdown.`)}">${model.engines.map(pill).join('<span class="v6-telemetry-divider" aria-hidden="true">|</span>')}</button>`
       + `<div id="v6EngineUsagePopover" class="v6-usage-popover" role="dialog" aria-label="Engine usage"${open ? '' : ' hidden'}>`
       + `<p class="v6-usage-reset">${escapeHtml(reset || 'Weekly reset time unknown')}</p>`
-      + `<table class="v6-usage-table"><thead><tr><th scope="col">Engine</th><th scope="col">5h</th><th scope="col">Week</th><th scope="col">Sprint</th><th scope="col">Sessions</th><th scope="col">Left</th><th scope="col">Set % left</th></tr></thead>`
-      + `<tbody>${model.engines.map(row).join('')}</tbody></table>`
-      + usageProbeMarkup(ui && ui.probe, ui && ui.probeInterval)
+      + usageProbeControlsMarkup(ui && ui.probeInterval)
+      + `<div class="v6-usage-engine-cards">${engineCards}</div>`
       + `<p id="v6EngineUsageStatus" class="v6-usage-status${status ? ` is-${escapeHtml(status.kind)}` : ''}" role="status">${
         status ? (status.kind === 'pending' ? v6EllipsisLoadingMarkup(status.message) : escapeHtml(status.message)) : ''
       }</p></div>`;
@@ -2063,15 +2092,27 @@
    * @param {string} [interval] - One of {@link USAGE_PROBE_INTERVAL_OPTIONS}'s own values; defaults to `'30m'`.
    * @returns {string} HTML.
    */
-  function usageProbeMarkup(probe, interval) {
-    const p = probe || {};
+  /**
+   * The probe's own refresh-cadence selector and "↻ Refresh now" button
+   * (#3132), split out from {@link usageProbeMarkup} (#3209, UI-006) so
+   * {@link usageMeterMarkup}'s per-engine cards can pin these at the top
+   * of the popover, above every card, rather than once per engine.
+   * @param {string} [interval]
+   * @returns {string} HTML.
+   */
+  function usageProbeControlsMarkup(interval) {
     const current = interval || '30m';
     const options = USAGE_PROBE_INTERVAL_OPTIONS.map(({ value, label }) => `<option value="${value}"${current === value ? ' selected' : ''}>${label}</option>`).join('');
-    return `<div class="v6-usage-probe" aria-label="Automated CLI usage probe">
-      <div class="v6-usage-probe-controls">
+    return `<div class="v6-usage-probe-controls">
         <label class="v6-usage-probe-interval">Auto-refresh<select id="v6UsageProbeInterval" class="filter-input">${options}</select></label>
         <button type="button" id="v6UsageProbeRefresh" class="btn btn-secondary btn-small">↻ Refresh now</button>
-      </div>
+      </div>`;
+  }
+
+  function usageProbeMarkup(probe, interval) {
+    const p = probe || {};
+    return `<div class="v6-usage-probe" aria-label="Automated CLI usage probe">
+      ${usageProbeControlsMarkup(interval)}
       <ul class="v6-usage-probe-list">${USAGE_ENGINES.map((e) => usageProbeRowMarkup(e, p[e.key])).join('')}</ul>
     </div>`;
   }
@@ -5633,9 +5674,6 @@
     // newer request was made is dropped, so a slow search never overwrites a
     // newer one and a late list never closes a snapshot just opened (#3066).
     let historyGen = 0;
-    // Set when a sidebar click leads to a different route (#3053), so that
-    // route reloads the project rows before it shows anything.
-    let freshNext = false;
     // #3053: files attached in each chat, by target project id, and the
     // means to read and upload them (injectable for tests).
     const attachments = new Map();
@@ -6173,7 +6211,29 @@
       stopPolling();
       const shell = getShell();
       const name = encodeURIComponent(project.name);
-      const status = await api(`/api/sessions/${name}/status`);
+      // #3206 (UI-003): peek and medusa/status are both keyed on `name`
+      // alone, never on `sessionId` — unlike conversation/events and
+      // attestations below (built from `base`, which DOES need the
+      // sessionId status resolves) — so there is no real reason to wait
+      // on status before firing them too, the same way the ongoing poll
+      // a few lines down already fires all three together. An offline
+      // session discards the peek/medusa read it never asked for; that
+      // one wasted round trip, once per navigation, buys every live
+      // session one fewer round trip on its own initial load.
+      //
+      // #3166: always the deep depth, whether or not Under the Hood is
+      // open — a closed drawer used to read only the shallow depth
+      // (#3135), which silently truncated #v6ChatStream itself since
+      // extractLiveTurns parses chat turns from this same read, not just
+      // what the drawer's own raw panel shows.
+      const peekUrl = () => `/api/sessions/${name}/peek?lines=${PEEK_LINES_DEEP}`;
+      // #3076: the listener's state and unread count. Unlike opening the
+      // inbox, this read marks nothing read and leaves the unread count
+      // alone; while listening, the route also asks the Bridge for loops.
+      const medusaUrl = `/api/sessions/${name}/medusa/status`;
+      const [status, peekEarly, medusaEarly] = await Promise.all([
+        api(`/api/sessions/${name}/status`), api(peekUrl()), api(medusaUrl)
+      ]);
       if (mine !== seq) return;
       const sessionId = status && status.active && status.sessionId != null ? status.sessionId : null;
       const chat = Object.assign({}, ctx, {
@@ -6233,29 +6293,20 @@
         return;
       }
       const base = `/api/v6/projects/${encodeURIComponent(project.id)}/sessions/${encodeURIComponent(sessionId)}`;
-      // #3166: always the deep depth, whether or not Under the Hood is open
-      // — a closed drawer used to read only the shallow depth (#3135), which
-      // silently truncated #v6ChatStream itself since extractLiveTurns parses
-      // chat turns from this same read, not just what the drawer's own raw
-      // panel shows.
-      const peekUrl = () => `/api/sessions/${name}/peek?lines=${PEEK_LINES_DEEP}`;
-      // #3076: the listener's state and unread count. Unlike opening the
-      // inbox, this read marks nothing read and leaves the unread count
-      // alone; while listening, the route also asks the Bridge for loops.
-      const medusaUrl = `/api/sessions/${name}/medusa/status`;
-      const [events, attestations, peek, medusaStatus] = await Promise.all([
+      // #3206: events/attestations need `base`, which needs `sessionId`,
+      // which only status (above) resolves — peek/medusa don't, so they
+      // already fired alongside status and aren't repeated here.
+      const [events, attestations] = await Promise.all([
         api(`${base}/conversation/events`),
-        api(`${base}/attestations`),
-        api(peekUrl()),
-        api(medusaUrl)
+        api(`${base}/attestations`)
       ]);
       if (mine !== seq) return;
-      chat.peek = peekView(peek);
-      chat.live = liveView(peek, project, events && events.events);
+      chat.peek = peekView(peekEarly);
+      chat.live = liveView(peekEarly, project, events && events.events);
       chat.lastSent = lastSentFor(project);
       releaseThumbs(String(project.id));
       chat.thumbs = thumbsFor(project, events && events.events, chat.live);
-      chat.medusa = medusaView(medusaStatus, chat.live, null);
+      chat.medusa = medusaView(medusaEarly, chat.live, null);
       current.view = events
         ? { project, sessionId, events: events.events, chat }
         : { project, sessionId, error: 'Could not load this session’s conversation events.', chat };
@@ -6793,37 +6844,63 @@
       stopSidebarPolling();
       current = null;
       if (!key) return;
-      if (entering || !projects || freshNext) {
-        freshNext = false;
-        await loadProjects();
-        if (mine !== seq) return;
+
+      // #3206 (UI-003): before this fix, a route reached via a sidebar
+      // click that led to a different route (the removed `freshNext`
+      // flag) ALWAYS re-ran a fresh, SEQUENTIAL loadProjects ->
+      // showProjects -> loadEngineHealth round trip before that route's
+      // own active highlight or loading state ever appeared — even though
+      // `projects` was usually already sitting there, seconds-fresh, from
+      // the previous click. Only a genuine cold start (`entering`, or
+      // `!projects` because nothing has loaded yet at all) has no cache to
+      // render from and must still block. Every other navigation is
+      // stale-while-revalidate: render the cached tree synchronously,
+      // right now, before any network call, and let loadProjects/
+      // loadEngineHealth refresh it in the BACKGROUND.
+      const mustBlockOnProjects = entering || !projects;
+      let freshLoad = Promise.resolve();
+      if (mustBlockOnProjects) {
+        freshLoad = (async () => {
+          await loadProjects();
+          if (mine !== seq) return;
+          showProjects(shell);
+          await loadEngineHealth(shell);
+        })();
+      } else {
         showProjects(shell);
-        await loadEngineHealth(shell);
-        if (mine !== seq) return;
+        loadProjects().then(() => { if (mine === seq) showProjects(shell); });
+        loadEngineHealth(shell);
       }
+
       if (entering) {
         const scopeId = encodeURIComponent(route.projectId || route.resourceId || 'global');
-        const bar = await api(`/api/v6/projects/${scopeId}/telemetry?scope=global`);
-        if (mine !== seq) return;
-        shell.setTelemetry(bar);
+        api(`/api/v6/projects/${scopeId}/telemetry?scope=global`).then((bar) => {
+          if (mine === seq) shell.setTelemetry(bar);
+        });
       }
       if (!templatesLoaded) {
-        const res = await api('/api/v6/fleet-templates');
-        if (mine !== seq) return;
-        if (res && Array.isArray(res.templates)) {
-          templatesLoaded = true;
-          shell.setTemplates(res.templates);
-        }
+        api('/api/v6/fleet-templates').then((res) => {
+          if (mine !== seq) return;
+          if (res && Array.isArray(res.templates)) {
+            templatesLoaded = true;
+            shell.setTemplates(res.templates);
+          }
+        });
       }
+
       if (route.view === 'settings') {
         shell.setAttestation(null);
         shell.setDetail({ kind: 'loading', label: 'Loading settings' });
+        await freshLoad;
+        if (mine !== seq) return;
         await loadSettings(route, mine);
         // #3201: Settings never resolves a chat, so it has no poll of its
         // own to piggyback the sidebar refresh on.
         startSidebarPolling(mine);
         return;
       }
+      await freshLoad;
+      if (mine !== seq) return;
       await loadRouteDetail(route, mine);
       // #3201: a route whose detail load did not end up starting a chat
       // poll (Overview, or "no project resolved") gets the standalone
@@ -7015,19 +7092,19 @@
     }
 
     /**
-     * A sidebar link was clicked (#3053): the same route refreshes now; any
-     * other reloads the project rows when its hashchange arrives.
+     * A sidebar link was clicked (#3053): the same route refreshes now. A
+     * DIFFERENT route needs nothing done here — its own hashchange already
+     * reaches `handleRoute` through the shell's normal routing, and (#3206)
+     * that no longer needs an advance signal to force a fresh `projects`
+     * load: it renders from whatever is already cached immediately and
+     * revalidates in the background regardless, on every route.
      * @param {string} hash
      * @returns {Promise<void>}
      */
     async function treeLinkClicked(hash) {
       const shell = getShell();
       if (!shell) return;
-      if (String(hash) === routeHash(shell.getRoute())) {
-        await refresh();
-        return;
-      }
-      freshNext = true;
+      if (String(hash) === routeHash(shell.getRoute())) await refresh();
     }
 
     /**

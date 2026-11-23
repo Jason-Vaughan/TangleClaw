@@ -1023,6 +1023,73 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     assert.doesNotMatch(root.innerHTML, /ship it/);
   });
 
+  // #3206 (UI-003): a navigation to any route OTHER than the session's
+  // very first renders from whatever `projects` is already cached —
+  // synchronously, before the background loadProjects/loadEngineHealth
+  // refresh gets a chance to resolve — rather than blocking on a fresh
+  // sequential fetch the way every navigation used to.
+  it('a second, different route renders its own detail before the background projects refetch resolves', async () => {
+    let releaseSecondProjects;
+    const secondProjects = new Promise((resolve) => { releaseSecondProjects = resolve; });
+    let projectsCalls = 0;
+    const map = baseMap();
+    map['/api/projects'] = () => {
+      projectsCalls += 1;
+      return projectsCalls === 1 ? { projects: PROJECTS } : secondProjects.then(() => ({ projects: PROJECTS }));
+    };
+    const { win, doc, root, settle, pending } = mountLive(map);
+    win.location.hash = '#/resources/11/conversation';
+    await settle();
+    assert.match(root.innerHTML, /ship it/, 'the first route loaded normally');
+    assert.equal(projectsCalls, 1);
+    // TC-Lane-A (route 10, offline) was never visited yet — its own
+    // offline-hero start button cannot exist in the DOM from leftover
+    // sidebar markup the way a plain text match could be fooled by.
+    assert.equal(doc.getElementById('v6ChatStartHero'), null);
+
+    win.location.hash = '#/resources/10/conversation';
+    // Let every microtask that CAN settle do so — the chat/status/peek/
+    // medusa chain for route 10 depends on none of them — while the
+    // background projects refetch stays stuck on `secondProjects`,
+    // deliberately unreleased, since nothing here awaits that chain.
+    await new Promise((r) => setImmediate(r));
+    assert.equal(projectsCalls, 2, 'the background refetch must still have been FIRED, just not resolved');
+    assert.ok(doc.getElementById('v6ChatStartHero'),
+      'the second route\'s own offline-hero detail already rendered from the cached tree, with the refetch still pending');
+
+    releaseSecondProjects();
+    await settle();
+    while (pending.length) await pending.shift();
+  });
+
+  // #3206: loadConversation's own peek/medusa reads don't depend on
+  // sessionId, so they fire alongside status rather than waiting for it.
+  // Proven with a deferred status that never resolves during this test —
+  // a status-THEN-the-rest implementation could never even ISSUE the
+  // peek/medusa calls in that world, since it would still be awaiting
+  // status when the test's own assertions run.
+  it('loadConversation fires status, peek and medusa concurrently, not status-then-the-rest', async () => {
+    let releaseStatus;
+    const status = new Promise((resolve) => { releaseStatus = resolve; });
+    const map = baseMap({
+      '/api/sessions/TC-Lane-B/status': () => status.then(() => ({ active: true, sessionId: 501 })),
+      '/api/sessions/TC-Lane-B/peek?lines=2000': { lines: [] },
+      '/api/sessions/TC-Lane-B/medusa/status': { listening: false, unread: 0 }
+    });
+    const { win, calls, settle, pending } = mountLive(map);
+    win.location.hash = '#/resources/11/conversation';
+    await new Promise((r) => setImmediate(r));
+    assert.ok(calls.includes('/api/sessions/TC-Lane-B/status'), JSON.stringify(calls));
+    // peek/medusa must already have been FIRED even though status is
+    // still stuck, deliberately unreleased — a sequential
+    // status-then-Promise.all implementation could not have reached them yet.
+    assert.ok(calls.includes('/api/sessions/TC-Lane-B/peek?lines=2000'), JSON.stringify(calls));
+    assert.ok(calls.includes('/api/sessions/TC-Lane-B/medusa/status'), JSON.stringify(calls));
+    releaseStatus();
+    await settle();
+    while (pending.length) await pending.shift();
+  });
+
   it('launching a template shows its plan preview', async () => {
     const plan = { templateId: 'small-4-seat', immediateSeats: [{ role: 'PM', seatId: 'pm' }], deferredSeats: [{ role: 'Builder', seatId: 'builder-a' }] };
     const { win, doc, root, mutateCalls, settle } = mountLive(baseMap(), { mutate: () => plan });
@@ -8978,6 +9045,63 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
     assert.match(html, /Setting auto-refresh to &lt;b&gt;15m&lt;\/b&gt;/);
   });
 
+  // #3209 (UI-006): structured per-engine cards — grouping a provider's
+  // probed reading with that SAME engine's local transcript estimate,
+  // under one heading, each labelled by which kind of number it is.
+  describe('per-engine usage cards (#3209)', () => {
+    const probe = {
+      claude: { status: 'configured', weeklyRemainingPct: 62, fiveHourRemainingPct: 80, observedAt: '2026-11-22T13:05:00Z' },
+      codex: { status: 'not-configured', error: 'no recognizable quota item' },
+      antigravity: null
+    };
+
+    it('renders exactly one card per engine, in order, each carrying its own data-engine', () => {
+      const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, probe });
+      const cards = html.match(/<div class="v6-usage-engine-card" data-engine="[a-z]+">/g) || [];
+      assert.deepEqual(cards, [
+        '<div class="v6-usage-engine-card" data-engine="claude">',
+        '<div class="v6-usage-engine-card" data-engine="codex">',
+        '<div class="v6-usage-engine-card" data-engine="antigravity">'
+      ]);
+    });
+
+    it('each card carries both a "Provider-reported" and a "Local estimate" labelled section', () => {
+      const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, probe });
+      for (const engine of ['claude', 'codex', 'antigravity']) {
+        const card = new RegExp(`<div class="v6-usage-engine-card" data-engine="${engine}">([\\s\\S]*?)</table></div></div>`).exec(html);
+        assert.ok(card, `no card found for ${engine}`);
+        assert.match(card[1], /data-kind="provider-probed">\s*<p class="v6-usage-engine-card-kind-label">Provider-reported<\/p>/);
+        assert.match(card[1], /data-kind="local-estimate">\s*<p class="v6-usage-engine-card-kind-label">Local estimate \(from transcripts\)<\/p>/);
+      }
+    });
+
+    it('claude\'s card carries its own probe bars, footnote and manual-calibration inputs together', () => {
+      const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, probe });
+      const card = /<div class="v6-usage-engine-card" data-engine="claude">([\s\S]*?)<\/table><\/div><\/div>/.exec(html)[1];
+      assert.match(card, /62% left/);
+      assert.match(card, /80% left/);
+      assert.match(card, /Last probed 2026-11-22 13:05 UTC/);
+      assert.match(card, /id="v6UsageWeekly-claude"/);
+      assert.match(card, /id="v6UsageSave-claude"/);
+    });
+
+    it('codex\'s card surfaces its own probe error inside its own card, not claude\'s or antigravity\'s', () => {
+      const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, probe });
+      const claudeCard = /<div class="v6-usage-engine-card" data-engine="claude">([\s\S]*?)<\/table><\/div><\/div>/.exec(html)[1];
+      const codexCard = /<div class="v6-usage-engine-card" data-engine="codex">([\s\S]*?)<\/table><\/div><\/div>/.exec(html)[1];
+      assert.doesNotMatch(claudeCard, /no recognizable quota item/);
+      assert.match(codexCard, /no recognizable quota item/);
+    });
+
+    it('the refresh/interval controls are pinned once, above every card, not once per engine', () => {
+      const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, probe, probeInterval: '1h' });
+      assert.equal((html.match(/id="v6UsageProbeRefresh"/g) || []).length, 1);
+      assert.equal((html.match(/id="v6UsageProbeInterval"/g) || []).length, 1);
+      assert.ok(html.indexOf('id="v6UsageProbeRefresh"') < html.indexOf('v6-usage-engine-card'),
+        'the controls sit above the first card');
+    });
+  });
+
   /** A shell with the meter, its calibrate action recorded. */
   function mountMeter(calibrate) {
     const { doc } = makeDocument([]);
@@ -9172,7 +9296,11 @@ describe('#3207 call sites — loadRouteDetail/handleRoute pass a context label 
   });
 
   it('the settings route sets { kind: "loading", label: "Loading settings" } before loadSettings', () => {
-    assert.match(SRC, /shell\.setDetail\(\{ kind: 'loading', label: 'Loading settings' \}\);\s*\n\s*await loadSettings\(/);
+    // #3206: setDetail still fires synchronously, immediately — loadSettings
+    // itself now waits on `freshLoad` (the background projects/health
+    // refresh) first, so the loading label is not literally the next line,
+    // but it is still set before anything else in the settings branch.
+    assert.match(SRC, /shell\.setDetail\(\{ kind: 'loading', label: 'Loading settings' \}\);\s*\n\s*await freshLoad;\s*\n\s*if \(mine !== seq\) return;\s*\n\s*await loadSettings\(/);
   });
 
   it('detailMarkup falls back to plain "Loading" when no label is given', () => {
@@ -9329,12 +9457,17 @@ describe('Car V651-W2-B: the automated CLI usage probe\'s own UI (#3132)', () =>
     assert.match(G.tcV6UsageProbeMarkup({}), /value="30m" selected/, 'defaults to 30m with no interval given');
   });
 
-  it('the probe section is appended inside the existing usage popover, below the manual calibration table', () => {
+  // #3209 (UI-006): the probe's reading and the manual calibration table
+  // live together inside ONE per-engine card now, not two separate
+  // top-level blocks — updated from the pre-#3209 "probe block follows
+  // the manual table" shape to the current per-engine grouping.
+  it('the probe reading and the manual calibration table live together inside claude\'s own engine card', () => {
     const windows = { resetSchedule: { nextWeeklyResetAt: 'x', hoursUntilWeeklyReset: 1 }, byProviderModel: {}, calibration: {} };
     const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows), {
       open: true, probe: { claude: { status: 'configured', weeklyRemainingPct: 50, fiveHourRemainingPct: 50 } }, probeInterval: '15m'
     });
-    assert.match(html, /<\/table>\s*<div class="v6-usage-probe"/, 'the probe block follows the manual table');
+    assert.match(html, /<div class="v6-usage-engine-card" data-engine="claude">[\s\S]*?v6-usage-probe-row" data-engine="claude"[\s\S]*?<\/table><\/div><\/div>/,
+      'claude\'s probe row and its manual table sit inside the SAME card');
     assert.match(html, /v6-usage-probe-row" data-engine="claude"/);
     assert.match(html, /<option value="15m" selected>15m<\/option>/);
   });
