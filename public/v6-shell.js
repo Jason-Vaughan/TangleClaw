@@ -371,13 +371,13 @@
         // Start only while there's no live session to disturb (offline,
         // starting already covers its own disabled state, and a failed
         // launch is exactly when Retry matters most).
-        const canStart = !info || info.state !== 'live';
+        const canStart = !info || !MEMBER_ALREADY_ACTIVE_STATES.includes(info.state);
         const actionsMarkup = `<div class="v6-tree-member-actions">
           ${sidebarRenameControlMarkup(memberKey, m.role, memberIdSuffix, rename)}
           <button type="button" id="v6TreeEditProps-${memberIdSuffix}" class="v6-tree-action-btn" data-open-settings="${escapeHtml(m.role)}"
             title="Edit Session Properties" aria-label="Edit Session Properties for ${escapeHtml(m.role)}"><span aria-hidden="true">⚙</span></button>
           ${canStart ? `<button type="button" id="v6TreeMemberStart-${memberIdSuffix}" class="v6-tree-action-btn" data-start-member="${escapeHtml(m.role)}"
-            title="Start" aria-label="Start ${escapeHtml(m.role)}"${info && info.state === 'starting' ? ' disabled' : ''}><span aria-hidden="true">▶</span></button>` : ''}
+            title="Start" aria-label="Start ${escapeHtml(m.role)}"><span aria-hidden="true">▶</span></button>` : ''}
         </div>`;
         return `<li class="v6-shell-member"><a class="v6-shell-member-link${stateClass}${memberActive ? ' is-active' : ''}"
           aria-current="${memberActive ? 'page' : 'false'}" id="v6TreeLink-m${pi}-${fi}-${mi}" data-rename-dblclick="${escapeHtml(memberKey)}"${title}
@@ -397,7 +397,7 @@
         if (!seated.length) return '';
         const offline = seated.filter((m) => {
           const info = typeof options.memberInfo === 'function' ? options.memberInfo(m.seatId) : null;
-          return !info || info.state !== 'live';
+          return !info || !MEMBER_ALREADY_ACTIVE_STATES.includes(info.state);
         });
         if (!offline.length) return '';
         const label = offline.length === seated.length ? `▶ Start Fleet (${seated.length})` : `▶ Start Offline (${offline.length})`;
@@ -4712,6 +4712,21 @@
     failed: { glyph: '✖', title: 'Launch failed' }
   });
 
+  /**
+   * #3205/#3215 R2: a member in any of these `memberIndicators` states
+   * already has (or very recently had) a session underneath it — `live`
+   * and `starting`/`wrapping` only ever occur while `session.active` is
+   * true, and `attention` can too (a launch blocker, a stuck wrap); its
+   * one other cause (the LAST session merely crashed, no current one at
+   * all) is deliberately left just as non-startable here, matching this
+   * ruling's own stated eligibility rather than re-deriving `live` from
+   * the raw row a second, narrower way. `offline` and this file's own
+   * `failed` (a launch THIS UI attempted and the server refused) are the
+   * only states Start/Start Fleet ever act on — `failed` stays startable
+   * so Retry keeps working.
+   */
+  const MEMBER_ALREADY_ACTIVE_STATES = Object.freeze(['live', 'attention', 'wrapping', 'starting']);
+
   /** @param {*} v - A reason the server gave as text or as `{message}`. @returns {string} */
   function reasonText(v) {
     if (!v) return '';
@@ -7306,13 +7321,45 @@
     }
 
     /**
-     * Start every offline member of the group on screen, one at a time, then
-     * reload and report how many started and why any did not.
+     * Start every offline member of a fleet, one at a time.
+     *
+     * Two real callers share this one entry point (both reach it through
+     * the same `public/ui.js` production wiring, `onStartFleet() {
+     * v6Live.startFleet(); }`, zero-arg — found pre-existing here at
+     * #3215 R2's own review, serving a DIFFERENT, already-shipped
+     * feature than the one this function was first written to add):
+     * - The chat header's own armed "▶ Start Fleet" confirm click
+     *   (#3053-era): zero-arg, no pending stash either, so this falls
+     *   through to its original behavior — the open chat's own
+     *   `chat.ctx.members`, reported with a send-outcome line.
+     * - The sidebar's/Overview's own per-fleet Start Fleet/Start Offline
+     *   buttons (#3215): an explicit `memberNames` array when a caller
+     *   has one directly (tests, future callers), or — since the real
+     *   zero-arg wiring above drops any argument the click handler
+     *   passed — whichever names that handler stashed on the shell via
+     *   `_consumePendingStartFleetMembers()` just before calling
+     *   `onStartFleet`. Reusing {@link startFleetMembers}'s own
+     *   sequential per-member launch, continuing past an individual
+     *   refusal, rather than this function's own simpler loop.
+     *
+     * The stash is read-and-cleared unconditionally up front, even when
+     * an explicit `memberNames` wins instead — so a stray earlier sidebar
+     * click can never be replayed by a later, unrelated chat-header
+     * confirm click.
+     * @param {Array<string>} [memberNames]
      * @returns {Promise<void>}
      */
-    async function startFleet() {
+    async function startFleet(memberNames) {
+      const shell = getShell();
+      const pendingNames = shell && typeof shell._consumePendingStartFleetMembers === 'function'
+        ? shell._consumePendingStartFleetMembers() : null;
+      const targets = Array.isArray(memberNames) ? memberNames : pendingNames;
+      if (Array.isArray(targets)) {
+        await startFleetMembers(targets);
+        return;
+      }
       const chat = current;
-      if (!chat || !getShell()) return;
+      if (!chat || !shell) return;
       const offline = (chat.ctx && Array.isArray(chat.ctx.members) ? chat.ctx.members : []).filter((m) => m.live === false);
       if (!offline.length) return;
       showSend({ kind: 'pending', message: `Starting ${offline.length} session${offline.length === 1 ? '' : 's'}…` });
@@ -7633,13 +7680,12 @@
    *   onRefreshChat?: () => void, onOpenProjectSettings?: (projectName: string) => void,
    *   onChangeEngine?: (projectName: string, engine: string) => void,
    *   onAttachFiles?: (files: Array<object>) => void, onRemoveAttachment?: (index: number) => void,
-   *   onStartSession?: (projectName?: string) => void, onStartFleet?: () => void, onTreeLinkClick?: (hash: string) => void,
+   *   onStartSession?: (projectName?: string) => void, onStartFleet?: (memberNames?: string[]) => void, onTreeLinkClick?: (hash: string) => void,
    *   onRenameProject?: (oldName: string, newName: string, opts?: {confirmOrphanRisk: boolean}) => void,
    *   onHistoryLoad?: (form: {scope: string, kind: string, q: string}) => void,
    *   onHistoryOpenSession?: (pick: {member: string, sid: string, q: string, kind: string}) => void,
    *   onViewOfflineHistory?: (projectName: string) => void,
    *   onReturnToStartCard?: (projectName: string) => void,
-   *   onStartFleet?: (memberNames: string[]) => void,
    *   onHoodCommand?: (name: string, body: {command: string, enter: true}|{rawKey: string}) => void,
    *   now?: () => number, setInterval?: (fn: Function, ms: number) => *, clearInterval?: (id: *) => void,
    *   requestAnimationFrame?: (fn: Function) => *, fetch?: Function}} opts - `onHoodCommand` is
@@ -8011,6 +8057,17 @@
     // `fleetRenameWait`, never rendered).
     let renameResultFor = 'header';
     let fleetRenameWait = null;
+    // #3215 R2: the real production wiring (public/ui.js's
+    // `onStartFleet() { v6Live.startFleet(); }`, zero-arg -- Car V659-W2-E
+    // owns that file, outside this car's envelope) never forwards the
+    // clicked fleet's member names through `options.onStartFleet` at all.
+    // Stashed here by the click handler just before calling
+    // `options.onStartFleet`, and drained by
+    // `_consumePendingStartFleetMembers()`, the controller's own escape
+    // hatch for recovering them across that dropped argument -- the same
+    // shape as `api.lastBody`'s "whole refusal body" side channel (#711),
+    // just carrying a request's own argument instead of a response's.
+    let pendingStartFleetMembers = null;
     // #3066: the history panel — open or not, its search form, and the last
     // results or snapshot the page handed back.
     let historyOpen = false;
@@ -8457,8 +8514,13 @@
                 if (!m.seatId) return false;
                 const row = projectRows.get(String(m.seatId));
                 const info = row ? memberIndicators(row, engineHealth) : null;
-                return !info || info.state !== 'live';
+                return !info || !MEMBER_ALREADY_ACTIVE_STATES.includes(info.state);
               }).map((m) => m.role);
+              // #3215 R2: stashed for `startFleet`'s own fallback — the
+              // real production wiring (`public/ui.js`'s
+              // `onStartFleet() { v6Live.startFleet(); }`) drops this
+              // argument entirely.
+              pendingStartFleetMembers = offlineNames;
               options.onStartFleet(offlineNames);
             });
           }
@@ -8789,6 +8851,9 @@
             const offlineNames = (lp.fleets || []).flatMap((f) => f.members || [])
               .filter((m) => m.seatId && !(byId(m.seatId) && byId(m.seatId).session && byId(m.seatId).session.active === true))
               .map((m) => (byId(m.seatId) && byId(m.seatId).name) || m.role);
+            // #3215 R2: see the sidebar's own identical comment — the real
+            // production wiring drops this argument entirely.
+            pendingStartFleetMembers = offlineNames;
             options.onStartFleet(offlineNames);
           });
         }
@@ -10633,6 +10698,19 @@
         projectRows = new Map((Array.isArray(rows) ? rows : [])
           .filter((r) => r && r.id != null).map((r) => [String(r.id), r]));
         render();
+      },
+      /**
+       * #3215 R2: reads and clears the member names the sidebar/Overview's
+       * own Start Fleet button most recently stashed, for a controller
+       * whose only argument the real zero-arg production wiring drops
+       * (`onStartFleet() { v6Live.startFleet(); }`, `public/ui.js`). Never
+       * rendered, never read by anything else in this file.
+       * @returns {string[]|null}
+       */
+      _consumePendingStartFleetMembers() {
+        const v = pendingStartFleetMembers;
+        pendingStartFleetMembers = null;
+        return v;
       },
       setTree(nextTree) { tree = buildHierarchyTree(nextTree || []); render(); },
       setTelemetry(bar) { telemetry = bar || null; render(); },

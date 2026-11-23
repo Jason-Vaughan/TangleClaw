@@ -5423,13 +5423,24 @@ describe('Car V659-W2-D: sidebar member row actions (#3205)', () => {
     assert.match(root.innerHTML, /id="v6TreeMemberStart-m0-0-0"/);
   });
 
-  it('a starting member disables its own Start button', () => {
+  it('a starting member has no Start action at all (already in progress), same as live/attention/wrapping (#3205 R2)', () => {
     const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
     shell.setProjects([
       { id: 11, name: 'TC-Lane-A', session: null, launchStatus: { status: 'starting' } },
       { id: 12, name: 'TC-Lane-PM', session: null }, { id: 21, name: 'Medusa-PM', session: null }
     ]);
-    assert.match(root.innerHTML, /id="v6TreeMemberStart-m0-0-0"[^>]* disabled/);
+    assert.doesNotMatch(root.innerHTML, /id="v6TreeMemberStart-m0-0-0"/);
+  });
+
+  it('a member in attention or wrapping (a live session, not just offline) also has no Start action (#3205 R2 BLOCKING 2)', () => {
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    shell.setProjects([
+      { id: 11, name: 'TC-Lane-A', session: { active: true, launchBlocker: 'needs an approval' } },
+      { id: 12, name: 'TC-Lane-PM', session: { active: true, wrapping: { stale: true, step: 'summarizing' } } },
+      { id: 21, name: 'Medusa-PM', session: null }
+    ]);
+    assert.doesNotMatch(root.innerHTML, /id="v6TreeMemberStart-m0-0-0"/, 'attention');
+    assert.doesNotMatch(root.innerHTML, /id="v6TreeMemberStart-m0-0-1"/, 'wrapping');
   });
 
   it('Edit Session Properties and Start call the same real onOpenProjectSettings/onStartSession callbacks the Overview screen uses', () => {
@@ -5556,6 +5567,38 @@ describe('Car V659-W2-D: one-click fleet start (#3215)', () => {
     const pmRow = /<li class="v6-shell-member"><a class="v6-shell-member-link is-offline"[\s\S]*?id="v6TreeLink-m0-0-1"[\s\S]*?<\/li>/.exec(root.innerHTML);
     assert.ok(pmRow, root.innerHTML);
     assert.doesNotMatch(pmRow[0], /v6-status-pill--failed/, 'TC-Lane-PM launched successfully, no failure recorded for it');
+  });
+
+  it('regression (#3215 R2 BLOCKING 1): works with the real zero-arg production wiring onStartFleet() { v6Live.startFleet(); } (public/ui.js), both from the sidebar and the Overview screen', async () => {
+    const rows = [{ id: 11, name: 'TC-Lane-A', engine: { id: 'claude' } }, { id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }];
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('#/overview');
+    const api = async (url) => (url === '/api/projects' ? { projects: rows } : null);
+    const mutateCalls = [];
+    const apiMutate = async (url) => { mutateCalls.push(url); return { ok: true }; };
+    let shell = null;
+    const pending = [];
+    const G = loadV6Shell();
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, {
+      root, window: win, storage: null,
+      onRender: (r) => pending.push(live.handleRoute(r)),
+      // The EXACT real wiring (public/ui.js:8756) -- no chat on screen,
+      // no argument forwarded at all.
+      onStartFleet() { pending.push(live.startFleet()); }
+    });
+    pending.push(live.handleRoute(shell.getRoute()));
+    await Promise.all(pending.splice(0));
+    doc.getElementById('v6TreeStartFleet-f0-0').dispatch('click');
+    await Promise.all(pending.splice(0));
+    assert.deepEqual(mutateCalls, ['/api/sessions/TC-Lane-A', '/api/sessions/TC-Lane-PM'], 'the sidebar button, via the zero-arg wiring');
+    mutateCalls.length = 0;
+    doc.getElementById('v6OverviewStartFleet-tc-lane').dispatch('click');
+    await Promise.all(pending.splice(0));
+    assert.deepEqual(mutateCalls, ['/api/sessions/TC-Lane-A', '/api/sessions/TC-Lane-PM'], 'the Overview button, via the SAME zero-arg wiring');
   });
 });
 
