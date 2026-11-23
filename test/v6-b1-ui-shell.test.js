@@ -8783,7 +8783,7 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     doc.getElementById('v6WorkspaceMode-sprint').dispatch('click');
     assert.deepEqual(asked, ['sprint']);
     // #3207: context-specific animated ellipsis indicator, not static "Loading…" text.
-    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<p class="v6-workspace-empty" role="status"><span class="v6-loading-indicator" data-ellipsis-loading="true"><span class="v6-chat-activity-label">Loading<\/span><span class="v6-chat-activity-dots" aria-hidden="true"><\/span><\/span><\/p>/);
+    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<p class="v6-workspace-empty" role="status" data-loading-text="Loading…"><span class="v6-loading-indicator" data-ellipsis-loading="true"><span class="v6-chat-activity-label">Loading<\/span><span class="v6-chat-activity-dots" aria-hidden="true"><\/span><\/span><\/p>/);
     shell.setWorkspacePanel('sprint', '<div>board</div>');
     assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<h2 class="v6-workspace-panel-title">Sprint &amp; Cars<\/h2>\s*<div>board<\/div>/);
     shell.setWorkspacePanel('kaizen', '<div>report</div>');

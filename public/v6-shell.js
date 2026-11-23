@@ -633,7 +633,7 @@
     const m = WORKSPACE_MODES.find((x) => x.key === mode);
     if (!m || mode === 'chat' || mode === 'wizard') return '';
     return `<h2 class="v6-workspace-panel-title">${escapeHtml(m.label)}</h2>
-      ${typeof content === 'string' && content ? content : `<p class="v6-workspace-empty" role="status">${v6EllipsisLoadingMarkup('Loading')}</p>`}${typeof extra === 'string' ? extra : ''}`;
+      ${typeof content === 'string' && content ? content : `<p class="v6-workspace-empty" role="status" data-loading-text="Loading…">${v6EllipsisLoadingMarkup('Loading')}</p>`}${typeof extra === 'string' ? extra : ''}`;
   }
 
   /** What a train launch status line can be (each is a CSS modifier). */
