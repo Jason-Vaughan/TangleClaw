@@ -8599,7 +8599,11 @@ const MASTER_ENGINE_BUSY_SUBSTRINGS = ['esc to interrupt', 'esc to cancel'];
  * own `CX_TRANSCRIPT_PROSE_PANE` documents exactly this risk for "Ready"
  * (ledger 5030: a resting pane was wrongly reported busy — sorry, idle —
  * because prose elsewhere on the pane merely MENTIONED the word); an
- * exact-line match is what that fixture exists to guard against.
+ * exact-line match is what that fixture exists to guard against. #3218
+ * R-Gate R10 narrows this further: even an EXACT match is only trusted
+ * within the CHROME region {@link _masterChromeStartIndex} finds — a
+ * reply whose own content happens to be exactly the word "Working" is a
+ * real risk an exact match alone cannot rule out on its own.
  */
 const MASTER_ENGINE_BUSY_EXACT_LINES = ['Working', 'Thinking'];
 
@@ -8611,7 +8615,8 @@ const MASTER_ENGINE_BUSY_EXACT_LINES = ['Working', 'Thinking'];
  * `"? for shortcuts                    Gemini 3.5 Flash (Medium)"`).
  * Exact/prefix-anchored for the same reason as {@link
  * MASTER_ENGINE_BUSY_EXACT_LINES} — "Ready" is a word a reply could
- * legitimately contain in running prose.
+ * legitimately contain in running prose; #3218 R-Gate R10 additionally
+ * confines WHERE this is ever checked to the chrome region.
  * @param {string} trimmed
  * @returns {boolean}
  */
@@ -8620,55 +8625,146 @@ function _isMasterEngineIdleMarkerLine(trimmed) {
 }
 
 /**
- * Whether ANY line of the CURRENT terminal snapshot signals the attached
- * engine's TUI is mid-turn (#3218 R-Gate R9) — checked before either the
- * prompt-return signal or the settle/no-reply fallback timers are ever
- * allowed to retire a turn. Claude and antigravity/Gemini-CLI both keep
- * rendering their own bare prompt glyph (`❯ ` / `>`) throughout
- * generation, not just at rest (`test/_wake-fixtures.js`'s own
- * `BUSY_PANE`/`AG_BUSY_PANE`) — {@link _isMasterPromptLine} alone cannot
- * tell those apart from the idle case.
+ * Whether `line` carries Codex's own animated composer shimmer (#3218
+ * R-Gate R10) — a run of Unicode Braille Patterns (U+2800–U+28FF) no
+ * natural-language reply would ever legitimately contain, making it a
+ * reliable anchor for "the composer row is HERE" regardless of whatever
+ * placeholder text or exact shimmer frame surrounds it.
+ * @param {string} line
+ * @returns {boolean}
+ */
+function _isMasterComposerLine(line) {
+  return /[⠀-⣿]/.test(String(line || ''));
+}
+
+/**
+ * The index of the LAST line in `nowLines` that anchors the terminal's
+ * own chrome — a bare idle/busy prompt glyph ({@link _isMasterPromptLine})
+ * or Codex's composer row ({@link _isMasterComposerLine}) — or
+ * `nowLines.length` (an EMPTY range) when no such anchor exists at all
+ * (#3218 R-Gate R10 BLOCKER A). This is what busy/idle marker detection
+ * is scoped to, from here to the end of the pane: a model's OWN reply
+ * streams out ABOVE this anchor, never below it, so a reply line that
+ * happens to read "Ready"/"Working"/"Thinking" sitting further up is
+ * never mistaken for the engine's real run-state row. No anchor found at
+ * all (a permission dialog replaces the normal prompt/composer with its
+ * own selector rows) deliberately scopes the range to NOTHING — neither
+ * busy nor idle can ever be detected there, which is exactly the
+ * fail-closed behavior a dialog needs (see {@link _isMasterEngineDialog}
+ * for the separate, deliberately UNscoped check that actually recognizes
+ * one).
+ * @param {string[]} nowLines
+ * @returns {number}
+ */
+function _masterChromeStartIndex(nowLines) {
+  for (let i = nowLines.length - 1; i >= 0; i--) {
+    if (_isMasterPromptLine(nowLines[i]) || _isMasterComposerLine(nowLines[i])) return i;
+  }
+  return nowLines.length;
+}
+
+/**
+ * Whether ANY line WITHIN the chrome region (see {@link
+ * _masterChromeStartIndex}) of the CURRENT terminal snapshot signals the
+ * attached engine's TUI is mid-turn (#3218 R-Gate R9, scoped in R10).
+ * Checked before either the positional idle signal or the settle/
+ * no-reply fallback timers are ever allowed to retire a turn — Claude and
+ * antigravity/Gemini-CLI both keep rendering their own bare prompt glyph
+ * (`❯ ` / `>`) throughout generation, not just at rest
+ * (`test/_wake-fixtures.js`'s own `BUSY_PANE`/`AG_BUSY_PANE`) —
+ * {@link _isMasterPromptLine} alone cannot tell those apart from idle.
  * @param {string[]} nowLines
  * @returns {boolean}
  */
 function _isMasterEngineBusy(nowLines) {
+  const chromeStart = _masterChromeStartIndex(nowLines);
+  for (let i = chromeStart; i < nowLines.length; i++) {
+    const trimmed = String(nowLines[i] || '').trim();
+    if (MASTER_ENGINE_BUSY_SUBSTRINGS.some((s) => trimmed.includes(s))) return true;
+    if (MASTER_ENGINE_BUSY_EXACT_LINES.includes(trimmed)) return true;
+  }
+  return false;
+}
+
+/**
+ * Dialog/selector substrings measured in `test/_wake-fixtures.js`'s
+ * `AG_DIALOG_PANE` (#3218 R-Gate R10) — its help row names the keys a
+ * selector dialog (not a free-text prompt) actually accepts, a phrasing
+ * no model reply would naturally produce.
+ */
+const MASTER_ENGINE_DIALOG_SUBSTRINGS = ['enter to confirm', '↑↓ to select'];
+
+/**
+ * A numbered OR bulleted selector option — `"❯ 1. Yes"` / `"› 1. Yes"` /
+ * `"  2. No, quit"` (Claude's/Codex's own permission dialogs), or a
+ * `●`/`○` radio marker (antigravity/Gemini-CLI's `"● Yes   ○ No"`) —
+ * measured in `test/_wake-fixtures.js`'s `DIALOG_PANE`/`CX_DIALOG_PANE`/
+ * `AG_DIALOG_PANE` (#3218 R-Gate R10). Deliberately structural rather
+ * than matching the loose words "Yes,"/"No,"/"Allow" a model's own reply
+ * could legitimately open a sentence with.
+ */
+const MASTER_ENGINE_DIALOG_OPTION_RE = /^(?:[❯›]\s*)?\d+\.\s|[●○]/;
+
+/**
+ * Whether ANY line of the CURRENT terminal snapshot shows an active
+ * permission/confirmation dialog (#3218 R-Gate R10 BLOCKER B) — checked
+ * UNSCOPED (not confined to {@link _masterChromeStartIndex}'s chrome
+ * region), since a dialog's own selector rows REPLACE the normal
+ * prompt/composer chrome entirely, leaving no anchor to scope against.
+ * Structural selector-option patterns and the one real dialog's own
+ * help-row phrasing, never the loose "Do you want"/"Yes,"/"No,"/"Allow"
+ * wording a model's own reply could legitimately contain.
+ * @param {string[]} nowLines
+ * @returns {boolean}
+ */
+function _isMasterEngineDialog(nowLines) {
   return nowLines.some((line) => {
     const trimmed = String(line || '').trim();
-    return MASTER_ENGINE_BUSY_SUBSTRINGS.some((s) => trimmed.includes(s)) || MASTER_ENGINE_BUSY_EXACT_LINES.includes(trimmed);
+    return MASTER_ENGINE_DIALOG_OPTION_RE.test(trimmed) || MASTER_ENGINE_DIALOG_SUBSTRINGS.some((s) => trimmed.includes(s));
   });
 }
 
 /**
+ * Whether the attached engine is in ANY state that must block retirement
+ * (#3218 R-Gate R10 BLOCKER B) — busy, or showing an active dialog. The
+ * one combined gate both the positional idle signal and the settle/
+ * no-reply fallback timers check, rather than `_isMasterEngineBusy`
+ * alone: against the measured dialog fixtures, busy is false AND idle is
+ * false, so a fallback timer gated on busy alone would still retire and
+ * paste the next queued send into an active permission prompt.
+ * @param {string[]} nowLines
+ * @returns {boolean}
+ */
+function _isMasterEngineBlocking(nowLines) {
+  return _isMasterEngineBusy(nowLines) || _isMasterEngineDialog(nowLines);
+}
+
+/**
  * Whether the terminal currently shows the attached engine genuinely at
- * rest (#3218 R-Gate R9) — an engine-specific positive idle marker
- * ANYWHERE in `nowLines` (Codex's "Ready" run-state row, or antigravity/
- * Gemini-CLI's "? for shortcuts" hint — unique enough strings that a
- * stale, unchanged-since-baseline occurrence is not a real risk), else a
- * bare prompt line ({@link _isMasterPromptLine}) checked POSITIONALLY
- * against `baselineLines`, not merely "present somewhere": Claude's own
- * TUI redraws its bare `❯ ` prompt glyph FIRST, with status chrome below
- * it (`test/_wake-fixtures.js`'s own `IDLE_PANE`/`BUSY_PANE`), not last —
- * so a plain "is `now`'s last line a prompt" check would never fire for
- * it at all, while scanning every line unconditionally would wrongly
- * re-trigger on the SAME baseline prompt row sitting there UNCHANGED,
- * before anything new has actually happened (#3218 R-Gate R6/R7's own
- * simple-shell tests build `now` by appending new rows after an
- * unchanged baseline row, rather than mutating it in place the way a
- * real xterm session does). A line only counts as a FRESH idle signal
- * when it sits beyond where `baselineLines` ended, or its content
- * actually differs from whatever baseline had at that exact position
- * (the real xterm row-mutation case {@link _masterTerminalLineDelta}'s
- * multiset diff can silently erase from the partitioned delta — #3218
- * R-Gate R9 BLOCKING 1 — which is exactly why this checks `nowLines`
- * directly rather than the delta/bucket).
+ * rest (#3218 R-Gate R9, scoped and corrected in R10) — an engine-specific
+ * positive idle marker, or a bare prompt line, found WITHIN the chrome
+ * region (see {@link _masterChromeStartIndex}) — never scanning reply
+ * content above it, which is what let a reply line that happened to read
+ * "Ready" retire the turn immediately in R9 regardless of position. EVERY
+ * signal found is still checked POSITIONALLY against `baselineLines`
+ * (R9's own fix, kept): fresh only when it sits beyond where baseline
+ * ended, or its content differs from whatever baseline had at that exact
+ * position — Claude's own TUI redraws its bare `❯ ` prompt glyph FIRST,
+ * with status chrome below it, not last, and R9's own marker check had NO
+ * positional gating at all, so a pre-existing "Ready" already sitting in
+ * `baselineLines` (Codex's own `CX_IDLE_PANE`, if that's what a turn
+ * started from) would otherwise retire on the very next unrelated delta,
+ * before the status row had even redrawn to "Working".
  * @param {string[]} nowLines
  * @param {string[]} baselineLines
  * @returns {boolean}
  */
 function _isMasterEngineIdle(nowLines, baselineLines) {
-  if (nowLines.some((line) => _isMasterEngineIdleMarkerLine(String(line || '').trim()))) return true;
-  for (let i = 0; i < nowLines.length; i++) {
-    if (!_isMasterPromptLine(nowLines[i])) continue;
+  const chromeStart = _masterChromeStartIndex(nowLines);
+  for (let i = chromeStart; i < nowLines.length; i++) {
+    const trimmed = String(nowLines[i] || '').trim();
+    const signal = _isMasterEngineIdleMarkerLine(trimmed) || _isMasterPromptLine(nowLines[i]);
+    if (!signal) continue;
     if (i >= baselineLines.length || nowLines[i] !== baselineLines[i]) return true;
   }
   return false;
@@ -8677,10 +8773,14 @@ function _isMasterEngineIdle(nowLines, baselineLines) {
 /**
  * Whether `line` is terminal UI chrome rather than real reply content
  * (#3218 R-Gate R9) — a bare idle prompt, or an engine's own positive
- * idle marker row — stripped from what actually renders into the
- * assistant bubble regardless of whether THIS sync is the one that
- * retires the turn, since this chrome can legitimately appear mid-stream
- * too (a status row redrawing) and is never part of the reply either way.
+ * idle marker row. Stripped from what actually renders into the
+ * assistant bubble, but ONLY from the TRAILING end of a retiring turn's
+ * own bucket (#3218 R-Gate R10 BLOCKER A: an EARLIER bucket line that
+ * merely happens to read "Ready" — genuine reply content, with more
+ * reply after it — must never be stripped just because it matches this
+ * predicate; only the chrome that actually trails the reply, the exact
+ * signal that triggered retirement, is this file's own idle state and
+ * never part of the reply).
  * @param {string} line
  * @returns {boolean}
  */
@@ -8748,12 +8848,27 @@ function _partitionMasterTerminalDelta(delta, turns) {
  * count silently consumes it as "the same `'$'` already in `before`" and
  * it never reaches the bucket at all — R8's check could never see it.
  *
- * #3218 R-Gate R9 BLOCKING 2: {@link _isMasterEngineBusy} gates BOTH this
- * positional signal and the settle/no-reply fallback timers, since
- * Claude/antigravity both keep rendering their own bare prompt glyph
- * throughout generation, not just at rest — without this gate, the
- * positional idle check above would retire on the FIRST sync after the
- * echo lands, mid-reply, every time.
+ * #3218 R-Gate R9 BLOCKING 2 (R10: widened to {@link _isMasterEngineBlocking}):
+ * busy OR an active dialog gates BOTH this positional signal and the
+ * settle/no-reply fallback timers, since Claude/antigravity both keep
+ * rendering their own bare prompt glyph throughout generation, not just
+ * at rest — without this gate, the positional idle check above would
+ * retire on the FIRST sync after the echo lands, mid-reply, every time;
+ * and against the measured dialog fixtures, busy alone is false, so a
+ * gate on busy alone would still retire and paste the next queued send
+ * into an active permission prompt.
+ *
+ * #3218 R-Gate R10 BLOCKER B: a turn that was genuinely OBSERVED busy at
+ * some point (`oldest._sawBusy`) and later returns to a snapshot
+ * BYTE-IDENTICAL to its own baseline (Claude's own `IDLE_PANE` ->
+ * `BUSY_PANE` -> the SAME `IDLE_PANE`) produces an EMPTY multiset delta —
+ * the bare prompt glyph sits at the exact same array position with the
+ * exact same content both times, so nothing about it ever looks "new".
+ * `delta.length > 0` alone would never let retirement fire for this
+ * round trip at all; once busy has genuinely been observed, an empty
+ * delta is re-checked against an EMPTY baseline instead (every line in
+ * the chrome region counts as fresh), which is what actually lets this
+ * round trip retire the moment the engine returns to rest.
  * @param {object} term
  * @returns {void}
  */
@@ -8763,8 +8878,27 @@ function syncMasterAssistantTurnsFromTerminal(term) {
   const delta = _masterTerminalLineDelta(_masterActiveBaseline, now);
   const buckets = _partitionMasterTerminalDelta(delta, _masterActiveTurns);
   const oldest = _masterActiveTurns[0];
-  const oldestIdle = Boolean(oldest) && delta.length > 0 && !_isMasterEngineBusy(now) && _isMasterEngineIdle(now, _masterActiveBaseline);
-  if (oldest && oldestIdle) buckets[0] = buckets[0].filter((line) => !_isMasterChromeLine(line));
+  const blocking = Boolean(oldest) && _isMasterEngineBlocking(now);
+  if (oldest && _isMasterEngineBusy(now)) oldest._sawBusy = true;
+
+  let oldestIdle = false;
+  if (oldest && !blocking) {
+    if (delta.length > 0) {
+      oldestIdle = _isMasterEngineIdle(now, _masterActiveBaseline);
+    } else if (oldest._sawBusy) {
+      oldestIdle = _isMasterEngineIdle(now, []);
+    }
+  }
+  if (oldest && oldestIdle) {
+    // #3218 R-Gate R10 BLOCKER A: strip chrome from the TRAILING end of
+    // the bucket only, stopping at the first non-chrome line found — a
+    // reply whose own EARLIER content happens to read "Ready", with more
+    // reply after it, is never touched; only the trailing chrome that
+    // actually triggered retirement is.
+    while (buckets[0].length > 0 && _isMasterChromeLine(buckets[0][buckets[0].length - 1])) {
+      buckets[0] = buckets[0].slice(0, -1);
+    }
+  }
 
   const stream = document.getElementById('masterChatStream');
   let renderedAny = false;
@@ -8816,7 +8950,7 @@ function _armMasterSettleTimer(term) {
   _masterSettleTimer = setTimeout(() => {
     _masterSettleTimer = null;
     const freshNow = readMasterTerminalSnapshot(term);
-    if (_isMasterEngineBusy(freshNow)) { _armMasterSettleTimer(term); return; }
+    if (_isMasterEngineBlocking(freshNow)) { _armMasterSettleTimer(term); return; }
     _retireOldestMasterTurn(term, freshNow);
   }, _masterTurnSettleMs());
 }
@@ -8834,7 +8968,7 @@ function _armMasterNoReplyTimer(term) {
   _masterNoReplyTimer = setTimeout(() => {
     _masterNoReplyTimer = null;
     const freshNow = readMasterTerminalSnapshot(term);
-    if (_isMasterEngineBusy(freshNow)) { _armMasterNoReplyTimer(term); return; }
+    if (_isMasterEngineBlocking(freshNow)) { _armMasterNoReplyTimer(term); return; }
     _retireOldestMasterTurn(term, freshNow);
   }, _masterTurnNoReplyMs());
 }
@@ -8875,7 +9009,7 @@ function _dispatchNextQueuedMasterSend(term) {
     _dispatchNextQueuedMasterSend(term);
     return;
   }
-  _masterActiveTurns.push({ sentText: text, assistantTurnEl: null, _lastContent: '' });
+  _masterActiveTurns.push({ sentText: text, assistantTurnEl: null, _lastContent: '', _sawBusy: false });
   _armMasterNoReplyTimer(term);
   syncMasterAssistantTurnsFromTerminal(term);
   if (!_masterActiveDispose) {

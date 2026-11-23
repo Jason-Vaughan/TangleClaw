@@ -607,8 +607,14 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
           ${liftDeclaration(js, 'function _isMasterPromptLine(')}
           const MASTER_ENGINE_BUSY_SUBSTRINGS = ['esc to interrupt', 'esc to cancel'];
           const MASTER_ENGINE_BUSY_EXACT_LINES = ['Working', 'Thinking'];
+          const MASTER_ENGINE_DIALOG_SUBSTRINGS = ['enter to confirm', '↑↓ to select'];
+          const MASTER_ENGINE_DIALOG_OPTION_RE = /^(?:[❯›]\\s*)?\\d+\\.\\s|[●○]/;
           ${liftDeclaration(js, 'function _isMasterEngineIdleMarkerLine(')}
+          ${liftDeclaration(js, 'function _isMasterComposerLine(')}
+          ${liftDeclaration(js, 'function _masterChromeStartIndex(')}
           ${liftDeclaration(js, 'function _isMasterEngineBusy(')}
+          ${liftDeclaration(js, 'function _isMasterEngineDialog(')}
+          ${liftDeclaration(js, 'function _isMasterEngineBlocking(')}
           ${liftDeclaration(js, 'function _isMasterEngineIdle(')}
           ${liftDeclaration(js, 'function _isMasterChromeLine(')}
           ${liftDeclaration(js, 'function _partitionMasterTerminalDelta(')}
@@ -1220,6 +1226,157 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
 
         it('transitioning a busy Claude pane to its idle pane retires exactly then, not before', async () => {
           assert.equal(await probeBusyIdle(BUSY_PANE, IDLE_PANE), true);
+        });
+
+        it('transitioning a busy antigravity/Gemini-CLI pane to its idle pane retires exactly then, not before', async () => {
+          assert.equal(await probeBusyIdle(AG_BUSY_PANE, AG_IDLE_PANE), true);
+        });
+
+        // #3218 R-Gate R10 BLOCKER B — the byte-IDENTICAL round trip: the
+        // SAME idle pane, before AND after the busy pane, at the exact
+        // same array position with the exact same content. The multiset
+        // delta between it and the turn's OWN baseline (the identical
+        // starting pane) is EMPTY -- oldest._sawBusy is what actually
+        // lets this retire once the engine returns to that exact state.
+        it('Claude: starting the session AT its own idle pane, going busy, then returning to the BYTE-IDENTICAL idle pane still retires', async () => {
+          const term = makeFakeTerm(IDLE_PANE.slice());
+          const { doc, sandbox } = mountChatWorkspace(term);
+          const input = doc.getElementById('masterChatInput');
+          input.value = 'first';
+          await sandbox.sendMasterChatMessage();
+          input.value = 'second';
+          await sandbox.sendMasterChatMessage();
+
+          term.setLines(BUSY_PANE.slice());
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r'], 'busy -- must not dispatch "second" yet');
+
+          term.setLines(IDLE_PANE.slice());
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r', 'second\r'],
+            'byte-identical return to the SAME idle pane the turn started from still retires, via sawBusy');
+        });
+
+        it('antigravity/Gemini-CLI: the same byte-identical idle round trip retires', async () => {
+          const term = makeFakeTerm(AG_IDLE_PANE.slice());
+          const { doc, sandbox } = mountChatWorkspace(term);
+          const input = doc.getElementById('masterChatInput');
+          input.value = 'first';
+          await sandbox.sendMasterChatMessage();
+          input.value = 'second';
+          await sandbox.sendMasterChatMessage();
+
+          term.setLines(AG_BUSY_PANE.slice());
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r']);
+
+          term.setLines(AG_IDLE_PANE.slice());
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r', 'second\r']);
+        });
+
+        it('Codex: the same byte-identical idle round trip retires', async () => {
+          const term = makeFakeTerm(CX_IDLE_PANE.slice());
+          const { doc, sandbox } = mountChatWorkspace(term);
+          const input = doc.getElementById('masterChatInput');
+          input.value = 'first';
+          await sandbox.sendMasterChatMessage();
+          input.value = 'second';
+          await sandbox.sendMasterChatMessage();
+
+          term.setLines(CX_BUSY_PANE.slice());
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r']);
+
+          term.setLines(CX_IDLE_PANE.slice());
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r', 'second\r']);
+        });
+
+        // #3218 R-Gate R10 BLOCKER A — a reply whose OWN content is
+        // exactly one of the engine run-state words must render intact
+        // and must not be mistaken for the real chrome: no bare-prompt-
+        // or-composer anchor exists anywhere in these snapshots at all
+        // (the "chrome region" _masterChromeStartIndex finds is EMPTY),
+        // so _isMasterEngineIdle/_isMasterEngineBusy have nothing to
+        // scan, and the line is never stripped from the bucket either.
+        describe('a reply whose own content is exactly a run-state word renders intact, scoped away from chrome (#3218 R-Gate R10 BLOCKER A)', () => {
+          for (const word of ['Ready', 'Working', 'Thinking']) {
+            it(`a reply of exactly "${word}" (no chrome anchor at all) renders intact and does not retire/lock up`, async () => {
+              const term = makeFakeTerm(['$ ']);
+              const { doc, sandbox } = mountChatWorkspace(term);
+              const input = doc.getElementById('masterChatInput');
+              input.value = 'first';
+              await sandbox.sendMasterChatMessage();
+              input.value = 'second';
+              await sandbox.sendMasterChatMessage();
+
+              // No bare prompt, no Codex composer shimmer anywhere here --
+              // deliberately nothing for _masterChromeStartIndex to anchor
+              // on, simulating a reply that IS exactly this one word with
+              // no chrome redrawn yet.
+              term.setLines(['$ first', word]);
+              term.fireWrite();
+              assert.deepEqual(term.pasted, ['first\r'],
+                `a reply of exactly "${word}" with no chrome anchor must not be mistaken for the engine's real run-state row`);
+
+              const stream = doc.getElementById('masterChatStream');
+              const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+              assert.equal(assistantTurns.length, 1);
+              assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, word,
+                'the reply renders INTACT -- never stripped as chrome');
+
+              // Drain: now show the REAL chrome, so nothing lingers.
+              term.setLines(['$ first', word, '$ ']);
+              term.fireWrite();
+              assert.deepEqual(term.pasted, ['first\r', 'second\r']);
+              term.setLines(['$ first', word, '$ second', 'second-reply', '$ ']);
+              term.fireWrite();
+            });
+          }
+        });
+
+        // #3218 R-Gate R10 BLOCKER B — permission/confirmation dialogs
+        // must fail closed: neither the immediate positional check NOR
+        // the settle/no-reply fallback timers (once their window elapses)
+        // may retire the turn or paste the next queued send while a
+        // dialog is showing. Against these fixtures, busy is false AND
+        // idle is false -- the dialog check is what actually protects
+        // this, independent of either.
+        describe('active permission/confirmation dialogs fail closed, immediately and via the fallback timers (#3218 R-Gate R10 BLOCKER B)', () => {
+          const { DIALOG_PANE, AG_DIALOG_PANE, CX_DIALOG_PANE } = require('./_wake-fixtures');
+
+          for (const [label, dialogPane] of [['Claude', DIALOG_PANE], ['antigravity/Gemini-CLI', AG_DIALOG_PANE], ['Codex', CX_DIALOG_PANE]]) {
+            it(`${label}: an active dialog does not retire on the immediate sync, nor once the fallback timers elapse`, async () => {
+              const term = makeFakeTerm(['$ ']);
+              const { doc, sandbox } = mountChatWorkspace(term);
+              const input = doc.getElementById('masterChatInput');
+              input.value = 'first';
+              await sandbox.sendMasterChatMessage();
+              input.value = 'second';
+              await sandbox.sendMasterChatMessage();
+
+              term.setLines(dialogPane.slice());
+              term.fireWrite();
+              assert.deepEqual(term.pasted, ['first\r'], 'the immediate sync must not retire while a dialog is showing');
+
+              // The settle/no-reply fallback timers' own window elapses
+              // (the outer before() hook keeps both short) while the
+              // dialog is STILL showing -- must re-arm, never retire.
+              await new Promise((r) => setTimeout(r, 30));
+              assert.deepEqual(term.pasted, ['first\r'],
+                'the fallback timers must also fail closed, not just the immediate check');
+
+              // Drain: resolve the dialog and give "first"/"second" a real
+              // completion, so nothing lingers into the next test.
+              term.setLines(['$ ', 'first', 'first-reply', '$ ']);
+              term.fireWrite();
+              term.setLines(['$ ', 'first', 'first-reply', '$ ', 'second', 'second-reply', '$ ', 'drain']);
+              term.fireWrite();
+              term.setLines(['$ ', 'first', 'first-reply', '$ ', 'second', 'second-reply', '$ ', 'drain', '$ ']);
+              term.fireWrite();
+            });
+          }
         });
       });
     });
