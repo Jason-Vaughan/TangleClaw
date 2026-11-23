@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.5.8 — Critical runtime reliability, chat correctness & macOS APFS disk telemetry](v6.5.8.md)
+- [v6.5.9 — Session launch preflight, offline session hero, sidebar actions & Start Fleet, full-page Settings model picker, and Admin Fleet V6 Chat & uploads](v6.5.9.md)
 
 ## Recent releases
+
+- [v6.5.8 — Critical runtime reliability, chat correctness & macOS APFS disk telemetry](v6.5.8.md)
 
 - [v6.5.7 — Under the Hood traffic filter, scroll pinning, and multi-tab fleet sync](v6.5.7.md)
 
