@@ -1746,6 +1746,88 @@ describe('lib/usage-windows — #3132 automated CLI usage probe', () => {
     });
   });
 
+  // #3208 (BUG-003): a probe that finds nothing must not overwrite a prior,
+  // genuinely-observed reading with nulls.
+  describe('refreshUsageProbe — partial-failure preservation (#3208)', () => {
+    it('a successful refresh sets lastSuccessObservedAt === observedAt, refreshDegraded: false, lastRefreshError: null', async () => {
+      const probeStore = fakeProbeStore();
+      const result = await uw.refreshUsageProbe('claude', {
+        probeStore, execFileAsync: () => Promise.resolve('Current week (all models): 70% used')
+      });
+      assert.equal(result.status, 'configured');
+      assert.equal(result.weeklyRemainingPct, 30);
+      assert.equal(result.lastSuccessObservedAt, result.observedAt);
+      assert.equal(result.refreshDegraded, false);
+      assert.equal(result.lastRefreshError, null);
+      assert.deepEqual(probeStore.get('claude'), result);
+    });
+
+    it('a partial failure on a previously-valid provider preserves its readings, with refreshDegraded/lastRefreshError/lastRefreshAttemptedAt set', async () => {
+      const probeStore = fakeProbeStore();
+      const good = await uw.refreshUsageProbe('claude', {
+        probeStore, execFileAsync: () => Promise.resolve('Current week (all models): 18% used')
+      });
+      assert.equal(good.weeklyRemainingPct, 82);
+
+      const err = Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' });
+      const degraded = await uw.refreshUsageProbe('claude', { probeStore, execFileAsync: () => Promise.reject(err) });
+
+      assert.equal(degraded.status, good.status, 'the PRIOR status is preserved, not the new failed probe\'s');
+      assert.equal(degraded.weeklyRemainingPct, 82);
+      assert.equal(degraded.fiveHourRemainingPct, good.fiveHourRemainingPct);
+      assert.equal(degraded.weeklyResetAt, good.weeklyResetAt);
+      assert.equal(degraded.fiveHourResetAt, good.fiveHourResetAt);
+      assert.deepEqual(degraded.subTiers, good.subTiers);
+      assert.equal(degraded.source, good.source);
+      assert.equal(degraded.observedAt, good.observedAt, 'the preserved reading\'s own observedAt is kept, not replaced by this attempt\'s time');
+      assert.equal(degraded.lastSuccessObservedAt, good.observedAt);
+      assert.equal(degraded.refreshDegraded, true);
+      assert.equal(degraded.lastRefreshError, err.message);
+      // Not asserted as strictly different from `good.observedAt`: two
+      // fast, consecutive calls can legitimately land in the same
+      // millisecond-precision ISO timestamp — that coincidence is not a
+      // bug. What matters is that it IS the second attempt's own reading,
+      // not a copy of the first's (confirmed by `assert.ok` plus the
+      // source: `result.observedAt` from the failed probe's own result).
+      assert.ok(degraded.lastRefreshAttemptedAt, 'records when THIS failed attempt happened');
+      assert.deepEqual(probeStore.get('claude'), degraded);
+    });
+
+    it('a SECOND consecutive partial failure keeps lastSuccessObservedAt pinned to the original success, not the first failure\'s own time', async () => {
+      const probeStore = fakeProbeStore();
+      const good = await uw.refreshUsageProbe('claude', {
+        probeStore, execFileAsync: () => Promise.resolve('Current week (all models): 5% used')
+      });
+      const err = Object.assign(new Error('e1'), { code: 'ENOENT' });
+      await uw.refreshUsageProbe('claude', { probeStore, execFileAsync: () => Promise.reject(err) });
+      const secondFailure = await uw.refreshUsageProbe('claude', { probeStore, execFileAsync: () => Promise.reject(err) });
+      assert.equal(secondFailure.weeklyRemainingPct, 95);
+      assert.equal(secondFailure.lastSuccessObservedAt, good.observedAt);
+    });
+
+    it('a first-time failure with no prior valid reading stores the raw unconfigured/failed result, never fabricating percentages', async () => {
+      const probeStore = fakeProbeStore();
+      const err = Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' });
+      const result = await uw.refreshUsageProbe('claude', { probeStore, execFileAsync: () => Promise.reject(err) });
+      assert.equal(result.status, 'not-present');
+      assert.equal(result.weeklyRemainingPct, null);
+      assert.equal(result.fiveHourRemainingPct, null);
+      assert.equal(result.refreshDegraded, undefined, 'the raw result is stored as-is, with no fabricated degraded bookkeeping');
+      assert.deepEqual(probeStore.get('claude'), result);
+    });
+
+    it('a configured-but-empty probe (CLI ran, output unrecognized) also preserves a prior valid reading, same as a hard failure', async () => {
+      const probeStore = fakeProbeStore();
+      const good = await uw.refreshUsageProbe('claude', {
+        probeStore, execFileAsync: () => Promise.resolve('Current week (all models): 12% used')
+      });
+      const degraded = await uw.refreshUsageProbe('claude', { probeStore, execFileAsync: () => Promise.resolve('unrecognized text') });
+      assert.equal(degraded.weeklyRemainingPct, good.weeklyRemainingPct);
+      assert.equal(degraded.refreshDegraded, true);
+      assert.match(degraded.lastRefreshError, /no recognizable output/);
+    });
+  });
+
   describe('refreshUsageProbe — codex (disposable utility-session prober)', () => {
     /**
      * A stubbed `tmux` this describe block's tests inject in place of the
@@ -1859,6 +1941,73 @@ describe('lib/usage-windows — #3132 automated CLI usage probe', () => {
       assert.equal(uw.getUsageProbeSnapshot('codex', { probeStore }), null); // never probed in this test
       const all = uw.getUsageProbeSnapshot(undefined, { probeStore });
       assert.deepEqual(Object.keys(all).sort(), ['antigravity', 'claude', 'codex']);
+    });
+
+    // #3208: one provider's probe failing (an ordinary not-configured/
+    // not-present RESULT) or outright REJECTING (an unexpected throw in the
+    // surrounding machinery — Promise.allSettled's whole reason for being
+    // here, since _runUsageProbe itself never throws) must never take the
+    // other, healthy providers' results down with it.
+    it('a plain failed/not-configured result from one provider never affects its healthy siblings', async () => {
+      const probeStore = fakeProbeStore();
+      const tmux = {
+        hasSession: () => false, createSession: () => {}, killSession: () => {}, sendRawKey: () => {},
+        readPaneAsync: () => Promise.resolve({ cap: { lines: ['Context 100% left · weekly 10% left'] }, cursor: null })
+      };
+      const execFileAsync = (cmd) => cmd === 'claude'
+        ? Promise.reject(Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' }))
+        : Promise.resolve('Gemini Models\tWeekly Limit Remaining\t20%\t2026-12-01T00:00:00Z');
+      const all = await uw.refreshAllUsageProbes({ probeStore, tmux, execFileAsync, startupDelayMs: 0, trustDelayMs: 0 });
+      assert.equal(all.claude.status, 'not-present');
+      assert.equal(all.antigravity.weeklyRemainingPct, 20);
+      assert.equal(all.codex.weeklyRemainingPct, 10);
+    });
+
+    it('a provider whose refresh REJECTS outright falls back to its last-persisted snapshot, degraded, without affecting healthy siblings', async () => {
+      const probeStore = fakeProbeStore();
+      probeStore.set('codex', { provider: 'codex', status: 'configured', weeklyRemainingPct: 44, fiveHourRemainingPct: null, weeklyResetAt: null, fiveHourResetAt: null, subTiers: {}, observedAt: '2026-01-01T00:00:00.000Z', source: 'cli-status-pane', error: null });
+      // Throws on .set, not .get: the rejection this test is about comes
+      // from a write failure mid-refresh (e.g. a disk I/O error persisting
+      // the new result) — reading back what's already on file is a
+      // separate, unrelated operation, and must still succeed for the
+      // fallback below to find it.
+      const writeFailingStore = {
+        get: (key) => probeStore.get(key),
+        set: (key, value) => { if (key === 'codex') throw new Error('store write exploded'); probeStore.set(key, value); }
+      };
+      const tmux = {
+        hasSession: () => false, createSession: () => {}, killSession: () => {}, sendRawKey: () => {},
+        readPaneAsync: () => Promise.resolve({ cap: { lines: ['Context 100% left · weekly 10% left'] }, cursor: null })
+      };
+      const execFileAsync = (cmd) => Promise.resolve(
+        cmd === 'claude' ? 'Current week (all models): 50% used' : 'Gemini Models\tWeekly Limit Remaining\t20%\t2026-12-01T00:00:00Z'
+      );
+      const all = await uw.refreshAllUsageProbes({ probeStore: writeFailingStore, tmux, execFileAsync, startupDelayMs: 0, trustDelayMs: 0 });
+      assert.equal(all.claude.weeklyRemainingPct, 50, 'unaffected by codex rejecting');
+      assert.equal(all.antigravity.weeklyRemainingPct, 20, 'unaffected by codex rejecting');
+      assert.equal(all.codex.weeklyRemainingPct, 44, 'falls back to the last-persisted snapshot');
+      assert.equal(all.codex.refreshDegraded, true);
+      assert.match(all.codex.lastRefreshError, /store write exploded/);
+    });
+
+    it('a provider that REJECTS with no prior snapshot at all still gets a degraded placeholder, never an absent key', async () => {
+      const probeStore = fakeProbeStore(); // genuinely empty — codex was never probed before
+      const writeFailingStore = {
+        get: (key) => probeStore.get(key),
+        set: (key, value) => { if (key === 'codex') throw new Error('store write exploded'); probeStore.set(key, value); }
+      };
+      const tmux = {
+        hasSession: () => false, createSession: () => {}, killSession: () => {}, sendRawKey: () => {},
+        readPaneAsync: () => Promise.resolve({ cap: { lines: ['Context 100% left · weekly 10% left'] }, cursor: null })
+      };
+      const execFileAsync = (cmd) => Promise.resolve(
+        cmd === 'claude' ? 'Current week (all models): 50% used' : 'Gemini Models\tWeekly Limit Remaining\t20%\t2026-12-01T00:00:00Z'
+      );
+      const all = await uw.refreshAllUsageProbes({ probeStore: writeFailingStore, tmux, execFileAsync, startupDelayMs: 0, trustDelayMs: 0 });
+      assert.deepEqual(Object.keys(all).sort(), ['antigravity', 'claude', 'codex']);
+      assert.equal(all.codex.weeklyRemainingPct, null);
+      assert.equal(all.codex.refreshDegraded, true);
+      assert.match(all.codex.lastRefreshError, /store write exploded/);
     });
   });
 
