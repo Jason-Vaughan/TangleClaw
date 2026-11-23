@@ -110,6 +110,123 @@ describe('learnings-coverage.evaluate', () => {
       '### 2026-09-05 — a sub-heading'
     ].join('\n')), ['2026-09-01', '2026-09-03']);
   });
+
+  // #3216 Pillar 4: a TCC-exempt managed workspace mirror of `learnings.md`
+  // (`~/.tangleclaw/workspaces/<project>/<rel>`) lets a wrap's
+  // `learnings-capture` step still find an entry a session's shell wrote
+  // there, when `<project.path>` itself hit macOS TCC EPERM/EACCES.
+  describe('managed workspace fallback (#3216 Pillar 4)', () => {
+    let managedRoot;
+
+    beforeEach(() => { managedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-learnings-managed-')); });
+    afterEach(() => { fs.rmSync(managedRoot, { recursive: true, force: true }); });
+
+    /**
+     * Where `_managedFallbackPath` resolves for this test's own `root`
+     * fixture, under a scratch `managedWorkspacesDir` rather than the real
+     * `~/.tangleclaw/workspaces`.
+     * @returns {string}
+     */
+    function fallbackDeps() {
+      return { managedWorkspacesDir: managedRoot };
+    }
+
+    function writeFallback(content, mtimeMs) {
+      const abs = coverage._managedFallbackPath(root, REL, fallbackDeps());
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, content);
+      fs.utimesSync(abs, mtimeMs / 1000, mtimeMs / 1000);
+    }
+
+    it('EPERM on the primary path: resolves and verifies coverage from the managed fallback instead, mirror write also fails', () => {
+      writeFallback(`# Learnings\n\n## ${today} — written to the managed fallback\nBody.\n`, startedAtMs + 1000);
+      const deps = {
+        ...fallbackDeps(),
+        stat: (p) => {
+          if (p === path.join(root, REL)) { const e = new Error('operation not permitted'); e.code = 'EPERM'; throw e; }
+          return fs.statSync(p);
+        },
+        read: (p) => {
+          if (p === path.join(root, REL)) { const e = new Error('operation not permitted'); e.code = 'EPERM'; throw e; }
+          return fs.readFileSync(p, 'utf8');
+        },
+        write: (p) => { const e = new Error('operation not permitted'); e.code = 'EPERM'; throw e; }
+      };
+      const r = coverage.evaluate(root, [REL], { startedAtMs }, deps);
+      assert.equal(r.verdict, 'covered');
+      assert.equal(r.source, 'managed-fallback');
+      assert.equal(r.entryDate, today);
+      assert.equal(r.mirroredBack, false);
+    });
+
+    it('EACCES on the primary path behaves the same as EPERM', () => {
+      writeFallback(`# Learnings\n\n## ${today} — written to the managed fallback\nBody.\n`, startedAtMs + 1000);
+      const deps = {
+        ...fallbackDeps(),
+        stat: (p) => {
+          if (p === path.join(root, REL)) { const e = new Error('permission denied'); e.code = 'EACCES'; throw e; }
+          return fs.statSync(p);
+        },
+        read: (p) => {
+          if (p === path.join(root, REL)) { const e = new Error('permission denied'); e.code = 'EACCES'; throw e; }
+          return fs.readFileSync(p, 'utf8');
+        },
+        write: (p) => { const e = new Error('permission denied'); e.code = 'EACCES'; throw e; }
+      };
+      const r = coverage.evaluate(root, [REL], { startedAtMs }, deps);
+      assert.equal(r.verdict, 'covered');
+      assert.equal(r.source, 'managed-fallback');
+      assert.equal(r.mirroredBack, false);
+    });
+
+    it('mirrors the managed-fallback content back to the primary path when the primary is writable', () => {
+      writeLearnings(root, `## ${today} — a previous session's entry\nBody.\n`, startedAtMs - 1000);
+      writeFallback(`# Learnings\n\n## ${today} — written to the managed fallback\nBody.\n`, startedAtMs + 1000);
+      const r = coverage.evaluate(root, [REL], { startedAtMs }, fallbackDeps());
+      assert.equal(r.verdict, 'covered');
+      assert.equal(r.source, 'managed-fallback');
+      assert.equal(r.mirroredBack, true);
+      assert.equal(fs.readFileSync(path.join(root, REL), 'utf8'), fs.readFileSync(coverage._managedFallbackPath(root, REL, fallbackDeps()), 'utf8'));
+    });
+
+    it('does not mirror back when the primary (not the fallback) is the chosen candidate', () => {
+      writeLearnings(root, `# Learnings\n\n## ${today} — written to the primary path\nBody.\n`, startedAtMs + 2000);
+      writeFallback(`## ${today} — a stale managed-fallback copy\nBody.\n`, startedAtMs - 1000);
+      const r = coverage.evaluate(root, [REL], { startedAtMs }, fallbackDeps());
+      assert.equal(r.source, 'primary');
+      assert.equal(r.mirroredBack, undefined);
+    });
+
+    it('both readable, managed fallback fresher: the fresher one is judged, even though the primary is stale', () => {
+      // Primary: written BEFORE the session started (would read uncovered alone).
+      writeLearnings(root, `## ${today} — a previous session's entry\nBody.\n`, startedAtMs - 1000);
+      // Managed fallback: written during THIS session, after the primary.
+      writeFallback(`# Learnings\n\n## ${today} — written to the managed fallback\nBody.\n`, startedAtMs + 1000);
+      const r = coverage.evaluate(root, [REL], { startedAtMs }, fallbackDeps());
+      assert.equal(r.verdict, 'covered');
+      assert.equal(r.source, 'managed-fallback');
+    });
+
+    it('both readable, primary fresher: the primary is judged, not the stale managed fallback', () => {
+      writeLearnings(root, `# Learnings\n\n## ${today} — written to the primary path\nBody.\n`, startedAtMs + 2000);
+      writeFallback(`## ${today} — a stale managed-fallback copy\nBody.\n`, startedAtMs - 1000);
+      const r = coverage.evaluate(root, [REL], { startedAtMs }, fallbackDeps());
+      assert.equal(r.verdict, 'covered');
+      assert.equal(r.source, 'primary');
+    });
+
+    it('both unreadable: uncovered, naming both failures', () => {
+      const r = coverage.evaluate(root, [REL], { startedAtMs }, fallbackDeps());
+      assert.equal(r.verdict, 'uncovered');
+      assert.match(r.reason, /could not be read from the project path/);
+      assert.match(r.reason, /managed workspace fallback/);
+    });
+
+    it('_managedFallbackPath derives the project name from the final path segment', () => {
+      const abs = coverage._managedFallbackPath('/Users/x/Documents/Projects/my-proj', REL, { managedWorkspacesDir: '/mw' });
+      assert.equal(abs, path.join('/mw', 'my-proj', REL));
+    });
+  });
 });
 
 describe('learnings-capture gate — an entry already on disk', () => {
@@ -187,3 +304,12 @@ describe('learnings-capture gate — an entry already on disk', () => {
     assert.equal(spec().verifySatisfiedBy, 'learnings-entry');
   });
 });
+
+// #3216 Pillar 4's `learnings-db-write` DB-mirroring-from-fallback tests
+// live in test/wrap-step-learnings-db-write.test.js instead of here: they
+// need a real SQLite store, which bumps this FILE's own required test
+// tier from small to medium (test/tiers.json) — the gate caught this
+// (`node scripts/test-stage.js 1`'s "tiers ledger" step) before push.
+// test/wrap-step-learnings-db-write.test.js is already tiered medium and
+// already owns the rest of this module's own test coverage, so the DB
+// tests belong there, not in this (declared-small) file.
