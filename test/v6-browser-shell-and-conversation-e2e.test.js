@@ -770,6 +770,140 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
     });
   });
 
+  describe('Car V658-W1-C: chat stream scroll-pin behavior in the live mounted shell (#3200)', () => {
+    /**
+     * A LIVE (webui) session, so the shell's live controller actually polls
+     * conversation events — the same shape B2's own "live controller end to
+     * end" test above uses.
+     * @param {number} projectId
+     * @returns {number}
+     */
+    function seedLiveSession(projectId) {
+      return store.getDb().prepare(
+        "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'active', 'webui', datetime('now'))"
+      ).run(projectId).lastInsertRowid;
+    }
+    const event = (seq, content, role = 'assistant') => ({ launchId: 'l1', seq, tier: 'A', adapter: 'claude', role, content });
+
+    /** Gives `#v6ChatStream` the scroll-geometry properties this mini-DOM has no real layout for. */
+    function withStreamGeometry(streamEl, { scrollTop, scrollHeight, clientHeight }) {
+      streamEl.scrollTop = scrollTop;
+      streamEl.scrollHeight = scrollHeight;
+      streamEl.clientHeight = clientHeight;
+    }
+
+    it('pins #v6ChatStream to the bottom on initial conversation open — #v6ChatJumpLatest starts hidden', async () => {
+      const projectId = seedProject('e2e-3200-initial-pin');
+      const sessionId = seedLiveSession(projectId);
+      const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
+      await send('POST', base, { body: event(1, 'hello', 'user') });
+      await send('POST', base, { body: event(2, 'hi there') });
+      const { root, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      assert.match(root.innerHTML, /id="v6ChatJumpLatest" class="v6-chat-jump-latest" hidden/, 'pinned by default, so the jump-to-latest pill starts hidden');
+    });
+
+    it('disengages the pin when the operator scrolls up more than 4px — #v6ChatJumpLatest becomes visible', async () => {
+      const projectId = seedProject('e2e-3200-unpin');
+      const sessionId = seedLiveSession(projectId);
+      const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
+      await send('POST', base, { body: event(1, 'hello', 'user') });
+      await send('POST', base, { body: event(2, 'hi there') });
+      const { root, doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      const streamEl = doc.getElementById('v6ChatStream');
+      assert.ok(streamEl, 'the stream must be mounted');
+      withStreamGeometry(streamEl, { scrollTop: 100, scrollHeight: 1000, clientHeight: 400 });
+      streamEl.dispatch('scroll'); // establishes lastStreamScrollTop = 100, still far from bottom
+      withStreamGeometry(streamEl, { scrollTop: 50, scrollHeight: 1000, clientHeight: 400 }); // scrolled UP by 50px
+      streamEl.dispatch('scroll');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'scrolling up by > 4px must reveal the jump-to-latest pill');
+    });
+
+    it('re-pins when #v6ChatJumpLatest is clicked', async () => {
+      const projectId = seedProject('e2e-3200-repin');
+      const sessionId = seedLiveSession(projectId);
+      const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
+      await send('POST', base, { body: event(1, 'hello', 'user') });
+      await send('POST', base, { body: event(2, 'hi there') });
+      const { doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      const streamEl = doc.getElementById('v6ChatStream');
+      withStreamGeometry(streamEl, { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
+      streamEl.dispatch('scroll');
+      withStreamGeometry(streamEl, { scrollTop: 50, scrollHeight: 1000, clientHeight: 400 });
+      streamEl.dispatch('scroll');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'unpinned first, so the click below has something to undo');
+      doc.getElementById('v6ChatJumpLatest').dispatch('click');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true, 'clicking the pill must re-pin and hide itself again');
+    });
+
+    it('re-pins on switching to a different session\'s conversation, even if the previous one was left unpinned', async () => {
+      const projectA = seedProject('e2e-3200-switch-a');
+      const projectB = seedProject('e2e-3200-switch-b');
+      const sessionA = seedLiveSession(projectA);
+      seedLiveSession(projectB);
+      const baseA = `/api/v6/projects/${projectA}/sessions/${sessionA}/conversation/events`;
+      await send('POST', baseA, { body: event(1, 'hello from a', 'user') });
+      await send('POST', baseA, { body: event(2, 'hi from a') });
+      const { win, doc, settle } = mountShell(`#/resources/${projectA}/conversation`);
+      await settle();
+      const streamElA = doc.getElementById('v6ChatStream');
+      withStreamGeometry(streamElA, { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
+      streamElA.dispatch('scroll');
+      withStreamGeometry(streamElA, { scrollTop: 50, scrollHeight: 1000, clientHeight: 400 });
+      streamElA.dispatch('scroll');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'project A left unpinned');
+      win.location.hash = `#/resources/${projectB}/conversation`;
+      await settle();
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true, 'a different conversation always opens pinned, regardless of how the previous one was left');
+    });
+  });
+
+  describe('Car V658-W1-C: stylesheet scroll-anchoring and overscroll containment contract (#3200)', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    /** @param {string} selector @returns {string} the selector's own `{ ... }` body, or '' if not found. */
+    const body = (selector) => {
+      const m = new RegExp(`(^|\\n)${selector.replace(/[.[\]>="-]/g, '\\$&')} \\{([^}]*)\\}`).exec(css);
+      return m ? m[2] : '';
+    };
+
+    it('declares overflow-anchor: auto and overscroll-behavior-y: contain on .v6-chat-stream, alongside its pre-existing flex/min-height invariants', () => {
+      const rule = body('.v6-chat-stream');
+      assert.match(rule, /overflow-anchor: auto;/);
+      assert.match(rule, /overscroll-behavior-y: contain;/);
+      assert.match(rule, /flex: 1 1 0%;/);
+      assert.match(rule, /min-height: 120px;/);
+      assert.match(rule, /max-height: none;/);
+    });
+
+    it('declares overscroll-behavior-y: contain on .v6-chat-peek, preserving its existing resize/overflow invariants', () => {
+      const rule = body('.v6-chat-peek');
+      assert.match(rule, /overscroll-behavior-y: contain;/);
+      assert.match(rule, /resize: vertical;/);
+      assert.match(rule, /overflow: auto;/);
+      assert.match(rule, /min-height: 120px;/);
+      assert.match(rule, /max-height: 70vh;/);
+    });
+
+    it('declares overscroll-behavior-y: contain on both .v6-chat-switchboard/.v6-chat-tucked and their own scrolling lists', () => {
+      assert.match(body('.v6-chat-switchboard'), /overscroll-behavior-y: contain;/);
+      assert.match(body('.v6-chat-switchboard-list'), /overscroll-behavior-y: contain;/);
+      assert.match(body('.v6-chat-tucked'), /overscroll-behavior-y: contain;/);
+      assert.match(body('.v6-chat-tucked-list'), /overscroll-behavior-y: contain;/);
+    });
+
+    it('gives each conversation turn (.v6-conversation-event) overflow-anchor: auto, supporting the stream\'s own scroll anchoring', () => {
+      assert.match(body('.v6-conversation-event'), /overflow-anchor: auto;/);
+    });
+
+    it('preserves the sticky Under the Hood summary bar and the prior sprint\'s pane-resizer/traffic-toggle rules this sprint must not disturb', () => {
+      assert.match(body('.v6-chat-under-hood > summary'), /position: sticky;\s*top: 0;/);
+      assert.notEqual(css.indexOf('.v6-chat-pane-resizer'), -1);
+      assert.notEqual(css.indexOf('.v6-chat-verbosity-option--traffic'), -1);
+    });
+  });
+
   describe('C1: logical-project hierarchy for a real project', () => {
     it('every attached project has a legacy logical project with its own harness resource', async () => {
       const projectId = seedProject('e2e-hierarchy');
