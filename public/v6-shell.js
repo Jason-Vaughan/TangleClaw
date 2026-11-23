@@ -2168,11 +2168,19 @@
   function offlineHistoryMarkup(chat) {
     const h = chat.offlineHistory || { status: 'loading', snapshot: null, error: null };
     const sections = h.snapshot && Array.isArray(h.snapshot.sections) ? h.snapshot.sections : [];
+    const name = String((chat.project && chat.project.name) || '');
     let body;
     if (h.status === 'loading') {
       body = '<p class="v6-chat-offline-history-empty">Loading previous conversation…</p>';
     } else if (h.status === 'error') {
       body = `<p class="v6-chat-offline-history-empty">${escapeHtml(h.error || 'Could not load the previous conversation.')}</p>`;
+    } else if (h.status === 'ready' && h.kind === 'events' && Array.isArray(h.events) && h.events.length) {
+      // #3203 R3: the project's own persisted B2 conversation events, via
+      // the same bubble formatter a live chat's recorded events use — no
+      // live attachment blobs or link unfurls are fetched for a closed
+      // session, so thumbs/unfurls are passed empty (messageMarkup already
+      // renders attachment references without one).
+      body = `<ul class="v6-conversation-events v6-chat-offline-history-events">${recordedEventsMarkup(h.events, name, {}, {})}</ul>`;
     } else if (h.status === 'ready' && sections.length) {
       body = `<ol class="v6-chat-offline-history-sections">${sections.map((s) => (
         `<li class="v6-chat-offline-history-section"><h4>${escapeHtml(s.name)}</h4><p>${escapeHtml(s.body)}</p></li>`
@@ -6881,11 +6889,28 @@
 
     /**
      * Switch the offline startup hero to its "View Previous Conversation"
-     * mode (#3203): loads the most recent persisted session for the chat
-     * on screen — the same continuity history source {@link loadHistory}/
-     * {@link openHistorySession} already read, picked without a search
-     * query — and shows it in place of the hero. A project with no
-     * persisted history at all reads `'empty'`, never `'error'`.
+     * mode (#3203): loads the chat's most recently persisted session and
+     * shows it in place of the hero.
+     *
+     * #3203 R3: tries the project's persisted B2 conversation events first
+     * — `GET /api/sessions/:name/history?limit=1` (`lib/routes/sessions.js`)
+     * names the most recent session row regardless of status, and
+     * `GET /api/v6/projects/:id/sessions/:sessionId/conversation/events`
+     * (the same route an open chat already reads above) serves that
+     * session's own events whether or not it is still live —
+     * `_v6RequireProjectSession` (server.js) only checks the row exists for
+     * this project, never that it is active. Rendered through
+     * {@link recordedEventsMarkup}, the same USER/ASSISTANT bubble
+     * formatter a live chat's own recorded events use, so message
+     * rendering (and redaction, attachments, Medusa bubbles) is identical
+     * whether the session is live or closed.
+     *
+     * Falls back to the continuity wrap-summary source
+     * {@link loadHistory}/{@link openHistorySession} already read only when
+     * no session row exists, or its own events come back empty — e.g. a
+     * session old enough to predate B2, or one that recorded nothing. A
+     * project with no persisted history by EITHER route reads `'empty'`,
+     * never `'error'`.
      * @param {string} [projectName] - Must name the chat on screen; a
      *   mismatch (stale click after the chat changed) is a no-op.
      * @returns {Promise<void>}
@@ -6900,6 +6925,20 @@
       viewingOfflineHistory.add(key);
       offlineHistoryCache.set(key, { status: 'loading', snapshot: null, error: null });
       showChat(shell);
+      const historyRes = await api(`/api/sessions/${encodeURIComponent(name)}/history?limit=1`);
+      if (chat !== current) return;
+      const latestId = historyRes && Array.isArray(historyRes.sessions) && historyRes.sessions[0]
+        && historyRes.sessions[0].id != null ? historyRes.sessions[0].id : null;
+      if (latestId != null) {
+        const eventsRes = await api(`/api/v6/projects/${encodeURIComponent(chat.project.id)}/sessions/${encodeURIComponent(latestId)}/conversation/events`);
+        if (chat !== current) return;
+        const events = eventsRes && Array.isArray(eventsRes.events) ? eventsRes.events : null;
+        if (events && events.length) {
+          offlineHistoryCache.set(key, { status: 'ready', kind: 'events', events, snapshot: null, error: null });
+          showChat(shell);
+          return;
+        }
+      }
       const listRes = await api(`/api/continuity/${encodeURIComponent(name)}/sessions`);
       if (chat !== current) return;
       const sessions = listRes && Array.isArray(listRes.sessions) ? listRes.sessions : null;

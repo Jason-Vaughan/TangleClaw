@@ -10259,6 +10259,11 @@ describe('Car V659-W1-B: centered offline startup hero (#3203)', () => {
       calls.push(url);
       if (url === '/api/projects') return { projects: rows };
       if (/\/status$/.test(url)) return { active: false };
+      // #3203 R3: the B2-events-first lookup viewOfflineHistory tries before
+      // ever reaching continuity. Default (no o.history) is "no session
+      // row", so every pre-existing continuity-only test is unaffected.
+      if (url === '/api/sessions/TC-Lane-PM/history?limit=1') return o.history === undefined ? { sessions: [] } : o.history;
+      if (/^\/api\/v6\/projects\/12\/sessions\/[^/]+\/conversation\/events$/.test(url)) return o.b2Events === undefined ? null : o.b2Events;
       if (url === '/api/continuity/TC-Lane-PM/sessions') return o.sessions === undefined ? { sessions: [] } : o.sessions;
       if (/\/api\/continuity\/TC-Lane-PM\/sessions\//.test(url)) return o.sessionDetail === undefined ? null : o.sessionDetail;
       return null;
@@ -10395,6 +10400,76 @@ describe('Car V659-W1-B: centered offline startup hero (#3203)', () => {
     assert.match(m.root.innerHTML, /v6-chat-offline-hero/);
     assert.doesNotMatch(m.root.innerHTML, /v6-chat-offline-history-body/);
     assert.equal(m.win.location.hash, '#/resources/12/conversation', 'the route itself never changed');
+  });
+
+  it('View Previous Conversation renders the persisted B2 conversation events when the project has a past session with recorded events (#3203 R3)', async () => {
+    const m = mountHero({
+      history: { sessions: [{ id: 47, status: 'ended' }], total: 1 },
+      b2Events: {
+        events: [
+          { seq: 1, role: 'user', content: 'What is the status of the migration?' },
+          { seq: 2, role: 'assistant', content: 'The migration finished at 09:14 UTC.' }
+        ]
+      }
+    });
+    await m.settle();
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-offline-history-events/);
+    assert.match(m.root.innerHTML, /is-user/);
+    assert.match(m.root.innerHTML, /is-assistant/);
+    assert.match(m.root.innerHTML, /What is the status of the migration\?/);
+    assert.match(m.root.innerHTML, /The migration finished at 09:14 UTC\./);
+    // Fidelity + non-duplication: each recorded message appears exactly once.
+    const userCount = (m.root.innerHTML.match(/What is the status of the migration\?/g) || []).length;
+    const assistantCount = (m.root.innerHTML.match(/The migration finished at 09:14 UTC\./g) || []).length;
+    assert.equal(userCount, 1);
+    assert.equal(assistantCount, 1);
+    // No continuity call needed once B2 events answer -- the CLI is never started.
+    assert.ok(!m.calls.includes('/api/continuity/TC-Lane-PM/sessions'));
+    assert.match(m.root.innerHTML, /id="v6ChatOfflineHistoryReturnTop"/);
+  });
+
+  it('falls back to the continuity summary when the project has a past session row but no recorded B2 events', async () => {
+    const m = mountHero({
+      history: { sessions: [{ id: 47, status: 'ended' }], total: 1 },
+      b2Events: { events: [] },
+      sessions: { sessions: [{ sid: '2026-11-20', date: '2026-11-20' }] },
+      sessionDetail: { session: { date: '2026-11-20' }, summary: { sections: { Decisions: 'Rolled out the new hero.' } } }
+    });
+    await m.settle();
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-offline-history-events/);
+    assert.match(m.root.innerHTML, /Rolled out the new hero\./);
+  });
+
+  it('falls back to the continuity summary when no past session row exists at all', async () => {
+    const m = mountHero({
+      history: { sessions: [] },
+      sessions: { sessions: [{ sid: '2026-11-20', date: '2026-11-20' }] },
+      sessionDetail: { session: { date: '2026-11-20' }, summary: { sections: { Decisions: 'Rolled out the new hero.' } } }
+    });
+    await m.settle();
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-offline-history-events/);
+    assert.match(m.root.innerHTML, /Rolled out the new hero\./);
+  });
+
+  it('Return to Start Card exits a B2-events history view back to the hero, same as the continuity view', async () => {
+    const m = mountHero({
+      history: { sessions: [{ id: 47, status: 'ended' }], total: 1 },
+      b2Events: { events: [{ seq: 1, role: 'user', content: 'Hello' }] }
+    });
+    await m.settle();
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-offline-history-events/);
+    m.doc.getElementById('v6ChatOfflineHistoryReturnTop').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-offline-hero/);
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-offline-history-events/);
   });
 
   it('says so, never "No previous conversation" as an error, when a project genuinely has no history', async () => {
