@@ -181,6 +181,53 @@ describe('#2188 engine-models', () => {
     });
   });
 
+  describe('the static-list roster reader (#3214)', () => {
+    /** A profile offering the given models through the static-list reader. */
+    function profileWithStaticRoster(offered, staticModels) {
+      return { id: 'claude', name: 'Claude Code', models: { flag: '--model', offered, roster: { source: 'static-list', models: staticModels } } };
+    }
+
+    it('lists exactly what the roster config names, with their labels', () => {
+      const p = profileWithStaticRoster(['claude-sonnet-5', 'claude-opus-5-5'], [
+        { id: 'claude-sonnet-5', label: 'Sonnet' },
+        { id: 'claude-opus-5-5', label: 'Opus' }
+      ]);
+      const read = models.roster(p, { now: () => NOW });
+      assert.deepEqual(read.models, [{ id: 'claude-sonnet-5', label: 'Sonnet' }, { id: 'claude-opus-5-5', label: 'Opus' }]);
+      assert.equal(read.source, 'static-list');
+      assert.equal(read.readAt, new Date(NOW).toISOString());
+    });
+
+    it('is never "unavailable" — a static list has nothing to go stale', () => {
+      const p = profileWithStaticRoster(['claude-sonnet-5'], [{ id: 'claude-sonnet-5', label: 'Sonnet' }]);
+      const read = models.roster(p, { now: () => NOW });
+      assert.equal(read.unavailable, undefined);
+    });
+
+    it('falls back to the id as its own label when none is given', () => {
+      const p = profileWithStaticRoster(['claude-sonnet-5'], [{ id: 'claude-sonnet-5' }]);
+      assert.deepEqual(models.roster(p, { now: () => NOW }).models, [{ id: 'claude-sonnet-5', label: 'claude-sonnet-5' }]);
+    });
+
+    it('drops an entry whose id is not a valid model id, or that is missing/null, instead of passing it on', () => {
+      const p = profileWithStaticRoster(['claude-sonnet-5'], [
+        { id: 'claude-sonnet-5', label: 'Sonnet' }, { id: 'bad id; rm' }, { label: 'no id' }, null
+      ]);
+      assert.deepEqual(models.roster(p, { now: () => NOW }).models, [{ id: 'claude-sonnet-5', label: 'Sonnet' }]);
+    });
+
+    it('a missing or non-array roster.models reads as an empty roster, not a crash', () => {
+      assert.deepEqual(models.roster(profileWithStaticRoster(['claude-sonnet-5'], undefined), { now: () => NOW }).models, []);
+      assert.deepEqual(models.roster(profileWithStaticRoster(['claude-sonnet-5'], 'not an array'), { now: () => NOW }).models, []);
+    });
+
+    it('checkSelection confirms an offered, listed model and refuses one that is not listed', () => {
+      const p = profileWithStaticRoster(['claude-sonnet-5', 'claude-fable-5-1'], [{ id: 'claude-sonnet-5', label: 'Sonnet' }]);
+      assert.deepEqual(models.checkSelection(p, 'claude-sonnet-5', { now: () => NOW }), { ok: true });
+      assert.equal(models.checkSelection(p, 'claude-fable-5-1', { now: () => NOW }).code, 'MODEL_UNAVAILABLE');
+    });
+  });
+
   describe('the display cache (#2220)', () => {
     afterEach(() => models._internals._clearDisplayCache());
 
@@ -439,12 +486,40 @@ describe('#2188 engine-models', () => {
       // No source has been measured that names the model of a completed turn
       // and ties it to one launch. Until one is, offering a model here would be
       // offering something TangleClaw cannot confirm it launched.
+      //
+      // #3214 R-Gate R2: this is NOT just an observability nicety — `getAdapter`
+      // (lib/profile-reconciler.js) has no control adapter registered for
+      // antigravity/aider either, so a project that selected a model for either
+      // would have `_scheduleModelReconciliation` (lib/sessions.js) run after
+      // every launch, resolve `UNSUPPORTED_ENGINE`, and set that session's
+      // admission state to 'held' PERMANENTLY — `_modelAdmissionBlock` then
+      // refuses ordinary `injectCommand` sends to it forever, since nothing
+      // ever flips an unsupported engine to 'verified'. Giving either engine a
+      // real `models` block (briefly done, then reverted, in this car) would
+      // have been a live admission-lock regression, not just a UI gap.
       assert.deepEqual(models.selectionState(bundled('antigravity')), { state: 'none' });
       assert.equal(models.checkSelection(bundled('antigravity'), 'gemini-3.1-pro-high', cache(LISTED)).code, 'ENGINE_HAS_NO_MODELS');
     });
 
+    // #3214: Claude now offers a static-list roster (its `--model` flag
+    // takes a fixed set of aliases/ids, not an account-queried one — see
+    // the dedicated describe block below), so it joins Codex as the second
+    // engine with an `ok` models block.
     it('every other engine offers none either', () => {
-      for (const id of ids.filter((i) => i !== 'codex')) assert.deepEqual(models.selectionState(bundled(id)), { state: 'none' }, id);
+      for (const id of ids.filter((i) => i !== 'codex' && i !== 'claude')) {
+        assert.deepEqual(models.selectionState(bundled(id)), { state: 'none' }, id);
+      }
+    });
+
+    it('Claude offers its 3 current model tiers via a static-list roster, never account-queried', () => {
+      const claude = bundled('claude');
+      assert.deepEqual(models.selectionState(claude), { state: 'ok' });
+      assert.deepEqual(claude.models.offered, ['claude-sonnet-5', 'claude-opus-5-5', 'claude-fable-5-1']);
+      assert.equal(claude.models.flag, '--model');
+      assert.equal(claude.models.roster.source, 'static-list');
+      const avail = models.offeredWithAvailability(claude);
+      assert.deepEqual(avail.models.map((m) => m.id), ['claude-sonnet-5', 'claude-opus-5-5', 'claude-fable-5-1']);
+      assert.ok(avail.models.every((m) => m.available === true), 'a static list never reports a model unavailable');
     });
 
     it('a profile with a bad models block fails validation', () => {

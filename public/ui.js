@@ -5,6 +5,40 @@
 // ── Engine Dropdown Helper ──
 
 /**
+ * Known Claude Code engine-PROFILE variants — an operator's own extra
+ * registered profile for Claude Code (its own `id`, sharing Claude's
+ * `command` for wake/startup-dialog inheritance, #3132/A160) — that the
+ * primary Settings Engine dropdown and the 3-phase Model/Effort picker treat
+ * as plain `claude` rather than a 5th/6th selectable engine (Architect Ruling
+ * A921, #3214: these are real, live on the operator's host — `~/.tangleclaw/
+ * engines/claude-sonnet-reviewer.json` / `claude-fable-sprint.json` — not a
+ * hypothetical). Each value is the Phase-2/3 default applied only when the
+ * project does not already have its own explicit model/effort on record.
+ * @type {Object<string, {model: string, effort: string}>}
+ */
+const LEGACY_CLAUDE_VARIANT_DEFAULTS = {
+  'claude-sonnet-reviewer': { model: 'claude-sonnet-5', effort: 'high' },
+  'claude-fable-sprint': { model: 'claude-fable-5-1', effort: 'high' }
+};
+
+/**
+ * Normalize a stored engine id (plus whatever model/effort the project
+ * already has) for the 3-phase picker — a known Claude Code variant
+ * (`LEGACY_CLAUDE_VARIANT_DEFAULTS`) becomes plain `claude`, with its default
+ * model/effort filled in only where the project has neither already (Ruling
+ * A921, #3214). Every other engine id passes through unchanged.
+ * @param {string} engineId
+ * @param {string|null} model
+ * @param {string|null} effort
+ * @returns {{engine: string, model: (string|null), effort: (string|null)}}
+ */
+function normalizeLegacyEngineSelection(engineId, model, effort) {
+  const legacy = LEGACY_CLAUDE_VARIANT_DEFAULTS[engineId];
+  if (!legacy) return { engine: engineId, model, effort };
+  return { engine: 'claude', model: model || legacy.model, effort: effort || legacy.effort };
+}
+
+/**
  * Build <option> HTML for an engine dropdown.
  * OpenClaw entries no longer appear here (#459) — connection-backed harnesses
  * are reached via the top-bar OpenClaw panel, not assigned as a project's LLM.
@@ -16,6 +50,17 @@
  * @returns {string} HTML string of <option> elements
  */
 function buildEngineOptions(engineList, selectedId) {
+  // Ruling A921 (#3214): a Claude Code variant profile keeps running real
+  // sessions under its own id (it is never retired by this filter —
+  // sessions, launches and quota bucketing all still resolve it normally,
+  // lib/usage-windows.js's own `/^claude(?:-|$)/i` provider rule is
+  // unaffected), it just does not get its own row in the picker.
+  // Reassigns the parameters themselves (not new variable names) so the
+  // call below still reads `tcBuildEngineOptions(engineList, selectedId,
+  // esc)` verbatim — `test/engine-picker-gating.test.js` (outside this
+  // car's file scope) pins that exact argument-list text.
+  engineList = (Array.isArray(engineList) ? engineList : []).filter((e) => !Object.prototype.hasOwnProperty.call(LEGACY_CLAUDE_VARIANT_DEFAULTS, e && e.id));
+  selectedId = Object.prototype.hasOwnProperty.call(LEGACY_CLAUDE_VARIANT_DEFAULTS, selectedId) ? 'claude' : selectedId;
   return tcBuildEngineOptions(engineList, selectedId, esc);
 }
 
@@ -2005,6 +2050,35 @@ let settingsTarget = null;
 let settingsOfferLaunch = false;
 
 /**
+ * The Identity & Workspace card's path-health badge (#3214 R-Gate R5
+ * BLOCKING 1): whether `project.path` is actually there and readable, and
+ * whether it is a git repository — both already computed by `enrichProject`
+ * (`lib/projects.js`: `exists`, `unreadable`, `unreadableHint`, `git`) but,
+ * per that file's own comment, rendered nowhere until this (`#885`).
+ * Semantic text, not color alone, carries each state for accessibility.
+ * @param {object} project - A project from `state.projects`/`enrichProject`.
+ * @returns {string} HTML for the two badges, separated by a middle dot.
+ */
+function pathHealthBadgeHtml(project) {
+  // `enrichProject` (lib/projects.js) sets `exists: false` BOTH for a
+  // genuinely absent directory AND for a scan that failed to read one that's
+  // still there (EACCES/FDA) — `unreadable` is what tells those two apart,
+  // so it must be checked FIRST (R-Gate R6 BLOCKING, PRR-A 5b19131d): a
+  // real FDA failure would otherwise render as "missing" and claim the
+  // directory isn't a git repo, when it was never actually inspected.
+  if (project.unreadable) {
+    return `<span style="color:var(--danger)">&#10007; Unreadable: ${esc(project.unreadable)}${project.unreadableHint ? ` — ${esc(project.unreadableHint)}` : ''}</span>`;
+  }
+  const pathBadge = project.exists === false
+    ? `<span style="color:var(--danger)">&#10007; Path missing</span>`
+    : `<span style="color:var(--primary)">&#10003; Path OK</span>`;
+  const gitBadge = project.git
+    ? `<span style="color:var(--primary)">&#10003; Git repository${project.git.branch ? ` (${esc(project.git.branch)})` : ''}</span>`
+    : `<span style="opacity:0.7">Not a git repository</span>`;
+  return `${pathBadge} &middot; ${gitBadge}`;
+}
+
+/**
  * Open the Settings modal for a project.
  *
  * `options` defaults inside the body, not `= {}` in the parameter list —
@@ -2028,9 +2102,31 @@ function openSettings(name, options) {
   const project = state.projects.find(p => p.name === name);
   if (!project) return;
   const modal = document.getElementById('settingsModal');
-  document.getElementById('settingsTitle').textContent = 'Project Settings';
+  document.getElementById('settingsTitleText').textContent = `Project Settings — ${name}`;
+  // #3214: a status badge beside the title, in the sticky header bar that
+  // stays on screen while #settingsBody scrolls underneath it (see this
+  // modal's own inline style and public/style.css's `.settings-modal`
+  // flex-column rule) — the same "Active since …" wording the project
+  // card already uses (line ~736), not a new phrasing to keep in sync.
+  const statusBadgeEl = document.getElementById('settingsStatusBadge');
+  if (statusBadgeEl) {
+    statusBadgeEl.textContent = project.session && project.session.active
+      ? `Active since ${project.session.startedAt || 'unknown'}` : 'No active session';
+  }
 
   const engineOpts = buildEngineOptions(state.engines, project.engine ? project.engine.id : '');
+
+  // #3214 Ruling A921: computed once, reused everywhere this modal compares
+  // "the dropdown's current value" against "the project's stored engine" —
+  // a project stored under a Claude Code variant id (`claude-sonnet-reviewer`,
+  // `claude-fable-sprint`) is EFFECTIVELY `claude` once normalized, so every
+  // such comparison must use `initialSelection.engine`, never the raw
+  // `project.engine.id`, or switching the dropdown away and back to
+  // (normalized) `claude` would misread as "leaving the stored engine" and
+  // wrongly blank out the model/effort selection just rendered.
+  const initialSelection = normalizeLegacyEngineSelection(
+    project.engine ? project.engine.id : '', project.model || null, project.effort || null
+  );
 
   const hasSession = project.session && project.session.active;
 
@@ -2116,83 +2212,115 @@ function openSettings(name, options) {
   // `enrichProject` always sends the default template, so it is never restated here.
   const provenanceSetting = project.provenanceWatermark
     || { enabled: false, template: null, defaultTemplate: '', warning: null };
+  // #3214: a full-page settings view groups its fields into 3 responsive
+  // cards (flex-wrap, so they reflow to one column on a narrow viewport
+  // with no media query — public/style.css is not touched by this car) —
+  // Identity & Workspace Paths, the 3-phase Engine/Model/Effort/Launch Mode
+  // configuration, and Switchboard/Wake/Governance controls. Every existing
+  // field keeps its exact id and inner markup; only the OUTER grouping
+  // changed, so every id a caller or a test already reaches for is still
+  // exactly where it was.
+  const settingsCard = (title, bodyHtml) => `
+    <section style="flex:1 1 340px; min-width:280px; border:1px solid var(--border, #333); border-radius:8px; padding:14px 16px; margin-bottom:14px;">
+      <h4 style="margin:0 0 10px; font-size:0.95em; text-transform:uppercase; letter-spacing:0.03em; opacity:0.75;">${esc(title)}</h4>
+      ${bodyHtml}
+    </section>`;
+
   document.getElementById('settingsBody').innerHTML = `
-    <div class="form-group">
-      <label class="form-label" for="settingsName">Name</label>
-      <input type="text" class="form-input" id="settingsName" value="${esc(name)}"
-             autocomplete="off" autocorrect="off" autocapitalize="off"
-             ${hasSession ? 'disabled' : ''}>
-      ${hasSession ? '<div class="form-hint" style="color:var(--danger)">Cannot rename while a session is active</div>' : ''}
-    </div>
-    <div class="form-group">
-      <label class="form-label" for="settingsEngine">Engine</label>
-      <select class="form-select" id="settingsEngine">${engineOpts}</select>
-      <div class="form-hint">Takes effect on next session launch</div>
-      <div id="settingsGeneratedConfigContainer"></div>
-    </div>
-    <div id="settingsModelEffortContainer"></div>
-    <div class="form-group">
-      <label class="form-label" for="settingsTags">Tags (comma-separated)</label>
-      <input type="text" class="form-input" id="settingsTags" value="${esc((project.tags || []).join(', '))}"
-             autocomplete="off" autocorrect="off" autocapitalize="off">
-    </div>
-    <div id="settingsLaunchModeContainer"></div>
-    <div class="settings-toggles-grid">
-      <div id="settingsSilentPrimeContainer"></div>
-      <div id="settingsFeatureIndexContainer"></div>
-      <div id="settingsProjectMapContainer"></div>
-      <div id="settingsEvalAuditContainer"></div>
-      <div class="form-group">
-        <label class="form-label" for="settingsReleaseMode">Release mode</label>
-        <select class="form-select" id="settingsReleaseMode">${releaseModeOpts}</select>
-        <div class="form-hint">Whether a wrap cuts a release: promote CHANGELOG <code>[Unreleased]</code> and bump the project's semver — from the Version file path setting if set, otherwise <code>version.json</code> then <code>package.json</code>. <strong>Agent</strong> cuts when the release checks pass (entries in <code>[Unreleased]</code>, the active build plan finished), holds mid-plan, and asks when it can't tell. <strong>Operator</strong> stops any wrap that has a release to cut at the version bump, for you to choose Cut or Hold. <strong>Off</strong> never cuts, for projects that manage their own versioning. The wrap dialog's Release choice overrides Agent and Operator for one wrap.</div>
-        ${releaseOwnerHint}
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="settingsVersionFilePath">Version file path</label>
-        <input type="text" class="form-input" id="settingsVersionFilePath" placeholder="version.json" value="${esc(project.versionFilePath || '')}">
-        <div class="form-hint">Leave blank to probe <code>version.json</code>, then <code>package.json</code>. Set this when the file has a different name or case (e.g. <code>VERSION.json</code>) — the probe only tests the lowercase name, so on a case-sensitive filesystem it would otherwise miss and bump <code>package.json</code> instead. Must be a relative path inside the project.</div>
-      </div>
-      <div class="form-group">
-        <label class="gs-toggle-label">
-          <span>Enable Medusa session comms</span>
-          <input type="checkbox" id="settingsMedusa" ${initialMedusaChecked ? 'checked' : ''}>
-          <span class="toggle-switch"></span>
-        </label>
-        <div class="form-hint">Auto-start this project's sessions on the Medusa switchboard so inbound messages badge in the banner without a manual toggle. Off by default; the banner control is always available as a per-session override.</div>
-      </div>
-      <div id="settingsMedusaWakeContainer"></div>
-      <div id="settingsSubagentParallelizationContainer"></div>
-      <div class="form-group">
-        <label class="gs-toggle-label">
-          <span>Keep the session running after a wrap</span>
-          <input type="checkbox" id="settingsWrapKeepRunning" ${initialKeepRunningChecked ? 'checked' : ''}>
-          <span class="toggle-switch"></span>
-        </label>
-        <div class="form-hint">What a wrap does to this project's session when it completes, if whoever started it did not choose: another session, the Project Manager or a script. On, the session keeps running; off, the wrap ends it. The wrap dialog starts from this setting and can override it for one wrap. A wrap that stops, fails or is cancelled always leaves the session running.</div>
-      </div>
-      <div class="form-group">
-        <label class="gs-toggle-label">
-          <span>Accept the folder-trust dialog at launch</span>
-          <input type="checkbox" id="settingsAcceptFolderTrust" ${initialAcceptFolderTrustChecked ? 'checked' : ''}>
-          <span class="toggle-switch"></span>
-        </label>
-        <div class="form-hint">For a directory TangleClaw itself created and manages, answer the engine's first-run "Do you trust this folder?" dialog automatically instead of waiting for you to click through it. Off by default — a global "always accept" is too broad for a repository you did not create. Only acts on a dialog the engine positively shows and declares an answer for; an engine with no such dialog, or a different one, is unaffected. Never types anything blind, and never writes the engine's own trust file directly.</div>
-      </div>
-      <div class="form-group">
-        <label class="gs-toggle-label">
-          <span>Mark generated files with this project's name</span>
-          <input type="checkbox" id="settingsProvenance" ${provenanceSetting.enabled ? 'checked' : ''}>
-          <span class="toggle-switch"></span>
-        </label>
-        <label class="form-label" for="settingsProvenanceTemplate">Provenance line</label>
-        <input type="text" class="form-input" id="settingsProvenanceTemplate" maxlength="120"
-               placeholder="${esc(provenanceSetting.defaultTemplate)}" value="${esc(provenanceSetting.template || '')}"
-               autocomplete="off" autocorrect="off" autocapitalize="off">
-        <div class="form-hint" id="settingsProvenancePreview"></div>
-        ${provenanceSetting.warning ? `<div class="form-hint" style="color:var(--danger)">${esc(provenanceSetting.warning)}</div>` : ''}
-        <div class="form-hint">Adds one comment line naming this project to the files TangleClaw writes whole and keeps private: the session prime and re-entry notes (while silent prime is on), the UI wrap advisory, and a <code>.codex.yaml</code> or <code>.aider.conf.yml</code> that git ignores. It never touches <code>CLAUDE.md</code>, <code>AGENTS.md</code>, a config file git does not ignore, or any other file you own, so on an engine with no config file (OpenClaw) only the files in <code>.tangleclaw/</code> carry it. Off by default. Leave the line blank for the default; <code>{project}</code> and <code>{engine}</code> are the only placeholders. A change reaches each file the next time TangleClaw regenerates it — usually the next session launch — not when you save.</div>
-      </div>
+    <div style="display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
+      ${settingsCard('Identity & Workspace Paths', `
+        <div class="form-group">
+          <label class="form-label" for="settingsName">Name</label>
+          <input type="text" class="form-input" id="settingsName" value="${esc(name)}"
+                 autocomplete="off" autocorrect="off" autocapitalize="off"
+                 ${hasSession ? 'disabled' : ''}>
+          ${hasSession ? '<div class="form-hint" style="color:var(--danger)">Cannot rename while a session is active</div>' : ''}
+        </div>
+        <div class="form-group">
+          <label class="form-label">Workspace path</label>
+          <div class="form-hint" id="settingsPathBadge" style="font-family:monospace; word-break:break-all;">${esc(project.path || 'unknown')}</div>
+          <div class="form-hint" id="settingsPathHealthBadge">${pathHealthBadgeHtml(project)}</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="settingsTags">Tags (comma-separated)</label>
+          <input type="text" class="form-input" id="settingsTags" value="${esc((project.tags || []).join(', '))}"
+                 autocomplete="off" autocorrect="off" autocapitalize="off">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="settingsVersionFilePath">Version file path</label>
+          <input type="text" class="form-input" id="settingsVersionFilePath" placeholder="version.json" value="${esc(project.versionFilePath || '')}">
+          <div class="form-hint">Leave blank to probe <code>version.json</code>, then <code>package.json</code>. Set this when the file has a different name or case (e.g. <code>VERSION.json</code>) — the probe only tests the lowercase name, so on a case-sensitive filesystem it would otherwise miss and bump <code>package.json</code> instead. Must be a relative path inside the project.</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Role &amp; authority</label>
+          <div class="form-hint" id="settingsRoleBadge">
+            ${project.fleetCoordinator ? 'Fleet Coordinator' : 'Standard project'}
+            ${project.decisionAuthorityPolicy ? ` &middot; decision authority: <code>${esc(project.decisionAuthorityPolicy)}</code>` : ''}
+            ${project.medusaEnabled ? ' &middot; Medusa comms enabled' : ''}
+          </div>
+        </div>`)}
+      ${settingsCard('AI Engine, Model & Effort — Launch Mode', `
+        <div class="form-group">
+          <label class="form-label" for="settingsEngine">Engine</label>
+          <select class="form-select" id="settingsEngine">${engineOpts}</select>
+          <div class="form-hint">Takes effect on next session launch</div>
+          <div id="settingsGeneratedConfigContainer"></div>
+        </div>
+        <div id="settingsModelEffortContainer"></div>
+        <div id="settingsLaunchModeContainer"></div>`)}
+      ${settingsCard('Switchboard, Wake & Governance Controls', `
+        <div class="settings-toggles-grid">
+          <div id="settingsSilentPrimeContainer"></div>
+          <div id="settingsFeatureIndexContainer"></div>
+          <div id="settingsProjectMapContainer"></div>
+          <div id="settingsEvalAuditContainer"></div>
+          <div class="form-group">
+            <label class="form-label" for="settingsReleaseMode">Release mode</label>
+            <select class="form-select" id="settingsReleaseMode">${releaseModeOpts}</select>
+            <div class="form-hint">Whether a wrap cuts a release: promote CHANGELOG <code>[Unreleased]</code> and bump the project's semver — from the Version file path setting if set, otherwise <code>version.json</code> then <code>package.json</code>. <strong>Agent</strong> cuts when the release checks pass (entries in <code>[Unreleased]</code>, the active build plan finished), holds mid-plan, and asks when it can't tell. <strong>Operator</strong> stops any wrap that has a release to cut at the version bump, for you to choose Cut or Hold. <strong>Off</strong> never cuts, for projects that manage their own versioning. The wrap dialog's Release choice overrides Agent and Operator for one wrap.</div>
+            ${releaseOwnerHint}
+          </div>
+          <div class="form-group">
+            <label class="gs-toggle-label">
+              <span>Enable Medusa session comms</span>
+              <input type="checkbox" id="settingsMedusa" ${initialMedusaChecked ? 'checked' : ''}>
+              <span class="toggle-switch"></span>
+            </label>
+            <div class="form-hint">Auto-start this project's sessions on the Medusa switchboard so inbound messages badge in the banner without a manual toggle. Off by default; the banner control is always available as a per-session override.</div>
+          </div>
+          <div id="settingsMedusaWakeContainer"></div>
+          <div id="settingsSubagentParallelizationContainer"></div>
+          <div class="form-group">
+            <label class="gs-toggle-label">
+              <span>Keep the session running after a wrap</span>
+              <input type="checkbox" id="settingsWrapKeepRunning" ${initialKeepRunningChecked ? 'checked' : ''}>
+              <span class="toggle-switch"></span>
+            </label>
+            <div class="form-hint">What a wrap does to this project's session when it completes, if whoever started it did not choose: another session, the Project Manager or a script. On, the session keeps running; off, the wrap ends it. The wrap dialog starts from this setting and can override it for one wrap. A wrap that stops, fails or is cancelled always leaves the session running.</div>
+          </div>
+          <div class="form-group">
+            <label class="gs-toggle-label">
+              <span>Accept the folder-trust dialog at launch</span>
+              <input type="checkbox" id="settingsAcceptFolderTrust" ${initialAcceptFolderTrustChecked ? 'checked' : ''}>
+              <span class="toggle-switch"></span>
+            </label>
+            <div class="form-hint">For a directory TangleClaw itself created and manages, answer the engine's first-run "Do you trust this folder?" dialog automatically instead of waiting for you to click through it. Off by default — a global "always accept" is too broad for a repository you did not create. Only acts on a dialog the engine positively shows and declares an answer for; an engine with no such dialog, or a different one, is unaffected. Never types anything blind, and never writes the engine's own trust file directly.</div>
+          </div>
+          <div class="form-group">
+            <label class="gs-toggle-label">
+              <span>Mark generated files with this project's name</span>
+              <input type="checkbox" id="settingsProvenance" ${provenanceSetting.enabled ? 'checked' : ''}>
+              <span class="toggle-switch"></span>
+            </label>
+            <label class="form-label" for="settingsProvenanceTemplate">Provenance line</label>
+            <input type="text" class="form-input" id="settingsProvenanceTemplate" maxlength="120"
+                   placeholder="${esc(provenanceSetting.defaultTemplate)}" value="${esc(provenanceSetting.template || '')}"
+                   autocomplete="off" autocorrect="off" autocapitalize="off">
+            <div class="form-hint" id="settingsProvenancePreview"></div>
+            ${provenanceSetting.warning ? `<div class="form-hint" style="color:var(--danger)">${esc(provenanceSetting.warning)}</div>` : ''}
+            <div class="form-hint">Adds one comment line naming this project to the files TangleClaw writes whole and keeps private: the session prime and re-entry notes (while silent prime is on), the UI wrap advisory, and a <code>.codex.yaml</code> or <code>.aider.conf.yml</code> that git ignores. It never touches <code>CLAUDE.md</code>, <code>AGENTS.md</code>, a config file git does not ignore, or any other file you own, so on an engine with no config file (OpenClaw) only the files in <code>.tangleclaw/</code> carry it. Off by default. Leave the line blank for the default; <code>{project}</code> and <code>{engine}</code> are the only placeholders. A change reaches each file the next time TangleClaw regenerates it — usually the next session launch — not when you save.</div>
+          </div>
+        </div>`)}
     </div>
     ${renderProjectRulesSection(project)}`;
 
@@ -2258,7 +2386,11 @@ function openSettings(name, options) {
   // (#2188) Async — may resolve after the modal is already visible, same as
   // `loadProjectRules` below; the container starts empty rather than blocking
   // the rest of the modal on a network round-trip.
-  renderModelEffortPicker(project.engine ? project.engine.id : '', project.model || null, project.effort || null);
+  // #3214 Ruling A921: a project stored under a Claude Code variant id shows
+  // and saves through the plain `claude` 3-phase picker, not a blank one —
+  // `initialSelection` (computed once, above) already carries the normalized
+  // engine/model/effort for exactly this.
+  renderModelEffortPicker(initialSelection.engine, initialSelection.model, initialSelection.effort);
   // CC-6 (#381): populate the per-project rule lists (async) once the
   // modal markup is in the DOM. project.id is the DB id the API scopes on.
   loadProjectRules(project.id, project.name);
@@ -2308,7 +2440,7 @@ function openSettings(name, options) {
     // this project launches whichever engine runs.
     const showEl = document.getElementById('settingsShowLaunchPicker');
     const storedMode = project.defaultLaunchMode || 'default';
-    const leavesStoredEngine = e.target.value !== (project.engine ? project.engine.id : '');
+    const leavesStoredEngine = e.target.value !== initialSelection.engine;
     renderLaunchModeSettings(
       e.target.value,
       tcLaunchModeForEngine(project, e.target.value),
@@ -2326,10 +2458,10 @@ function openSettings(name, options) {
     // `modelAfterUpdate`/`effortAfterUpdate`'s own `changesEngine` check
     // server-side exactly: switching back to the project's STORED engine
     // (never having saved) still shows what is actually stored for it.
-    const backToStoredEngine = e.target.value === (project.engine ? project.engine.id : '');
+    const backToStoredEngine = e.target.value === initialSelection.engine;
     renderModelEffortPicker(e.target.value,
-      backToStoredEngine ? (project.model || null) : null,
-      backToStoredEngine ? (project.effort || null) : null);
+      backToStoredEngine ? initialSelection.model : null,
+      backToStoredEngine ? initialSelection.effort : null);
   });
 
   // Turning silent prime off costs the operator the index pointers too — the
@@ -2433,6 +2565,7 @@ async function renderModelEffortPicker(engineId, selectedModel = null, selectedE
   const containerId = ids.containerId || 'settingsModelEffortContainer';
   const effortContainerId = ids.effortContainerId || 'settingsEffortContainer';
   const modelSelectId = ids.modelSelectId || 'settingsModel';
+  const effortSelectId = ids.effortSelectId || 'settingsEffort';
   const container = document.getElementById(containerId);
   if (!container) return;
   if (!engineId) { container.innerHTML = ''; return; }
@@ -2459,13 +2592,25 @@ async function renderModelEffortPicker(engineId, selectedModel = null, selectedE
   };
 
   if (modelsData.models.length === 0) {
-    // No model axis for this engine (Claude today — its profile declares no
-    // `models` block) does not mean no EFFORT axis: the two are independent
-    // (#2188). Still render the effort half, with no model selector above
-    // it and no model id to pass — Claude's effort block is static,
-    // engine-wide, and does not need one.
-    container.innerHTML = `<div id="${esc(effortContainerId)}"></div>`;
-    await renderEffortPicker(engineId, null, selectedEffort, ids);
+    // #3214 Ruling A921: no model axis today ALSO means no effort axis —
+    // Claude and Codex both declare `models`, Antigravity and Aider declare
+    // neither (lib/engines.js's ENGINE_EFFORT comment: Antigravity's own
+    // model ids already bake effort in, and a models block for either would
+    // lock their launches in `MODEL_ADMISSION_HELD` forever — no control
+    // adapter exists in lib/profile-reconciler.js for them). Render both
+    // halves as visible, disabled "Engine default" placeholders instead of
+    // leaving the card blank, so its shape is the same across all 4 engines.
+    container.innerHTML = `
+      <div class="form-group">
+        <label class="form-label" for="${esc(modelSelectId)}">Model</label>
+        <select class="form-select" id="${esc(modelSelectId)}" disabled><option value="">Engine default (CLI-managed)</option></select>
+      </div>
+      <div id="${esc(effortContainerId)}">
+        <div class="form-group">
+          <label class="form-label" for="${esc(effortSelectId)}">Reasoning effort</label>
+          <select class="form-select" id="${esc(effortSelectId)}" disabled><option value="">Engine default (CLI-managed)</option></select>
+        </div>
+      </div>`;
     return;
   }
   container.innerHTML = `

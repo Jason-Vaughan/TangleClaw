@@ -25,6 +25,7 @@ const sessions = require('../lib/sessions');
 const store = require('../lib/store');
 const profileReconciler = require('../lib/profile-reconciler');
 const { setLevel } = require('../lib/logger');
+const { loadEsc } = require('./helpers/lift');
 
 setLevel('error');
 
@@ -535,7 +536,7 @@ describe('#2188 engine-model-picker — lib/projects.js wiring (effort persisten
       assert.equal(cfg.model, 'gpt-5.6-sol', 'the refused update must not have changed the stored model either');
     });
 
-    it('a static (non-perModel) engine like Claude is unaffected — clearing its model (if it had one) never touches effort', async () => {
+    it('a static (non-perModel) engine like Claude is unaffected — clearing its model never touches effort', async () => {
       stubCheckEffortSelection(true);
       stubCheckSelection(true);
       projects.createProject({ name: 'effort-claude-unaffected', engine: 'claude' });
@@ -543,6 +544,286 @@ describe('#2188 engine-model-picker — lib/projects.js wiring (effort persisten
       const result = await projects.updateProject('effort-claude-unaffected', { model: null });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.effort, 'high');
+    });
+
+    // #3214: Claude's model axis (static-list roster, lib/engine-models.js)
+    // and effort axis (lib/engines.js's ENGINE_EFFORT) are two independent
+    // blocks (#2188's own design), attached from two different places —
+    // these 3 tests prove they actually compose for a real project, both
+    // axes at once, through the bundled profile rather than a hand-built
+    // fixture — unstubbed (`stubCheckSelection`/`stubCheckEffortSelection`
+    // not called), so the real `checkSelection`/`checkEffortSelection` run
+    // against Claude's real roster and effort block.
+    it('the bundled Claude profile offers both a model and an effort selection', () => {
+      const claude = engines.resolveProfile('claude');
+      assert.equal(models.selectionState(claude).state, 'ok');
+      assert.equal(models.effortSelectionState(claude).state, 'ok');
+      assert.equal(models.checkSelection(claude, 'claude-opus-5-5').ok, true);
+      assert.equal(models.checkEffortSelection(claude, null, 'high').ok, true, 'Claude\'s effort is engine-wide, not perModel — no model id required');
+    });
+
+    it('a project can store both a Claude model and an effort level together', async () => {
+      projects.createProject({ name: 'claude-model-and-effort', engine: 'claude' });
+      const result = await projects.updateProject('claude-model-and-effort', { model: 'claude-fable-5-1', effort: 'max' });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.model, 'claude-fable-5-1');
+      assert.equal(result.project.effort, 'max');
+    });
+
+    it('refuses a model Claude does not offer, independent of effort', async () => {
+      projects.createProject({ name: 'claude-bad-model', engine: 'claude' });
+      const result = await projects.updateProject('claude-bad-model', { model: 'gpt-6-luna', effort: 'high' });
+      assert.equal(result.project, null);
+      assert.ok(result.errors.some((e) => e.includes('not a model offered')));
+    });
+  });
+});
+
+// #3214 R-Gate R1 BLOCKING 3 — `settingsCard`'s title is escaped once, by
+// `settingsCard` itself; a call site must pass plain text, never a
+// pre-encoded entity, or the real `esc()` double-escapes it into visible
+// `&amp;amp;` / `&amp;mdash;`. These run the SAME `esc()` the page ships
+// (lifted from its source, not re-implemented) against the exact title
+// strings `public/ui.js` passes to `settingsCard`, so a future call site
+// that creeps back to a pre-encoded title fails here.
+describe('#3214 Project Settings — settingsCard title escaping (R-Gate R1 BLOCKING 3)', () => {
+  const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+  const esc = loadEsc();
+
+  /** Every title string literal passed as settingsCard's first argument. */
+  function settingsCardTitles() {
+    const titles = [];
+    const re = /settingsCard\('((?:[^'\\]|\\.)*)'/g;
+    let m;
+    while ((m = re.exec(uiSrc))) titles.push(m[1]);
+    return titles;
+  }
+
+  it('public/ui.js calls settingsCard exactly 3 times, one per card', () => {
+    assert.equal(settingsCardTitles().length, 3);
+  });
+
+  it('no title call site carries a pre-encoded HTML entity', () => {
+    for (const title of settingsCardTitles()) {
+      assert.doesNotMatch(title, /&(amp|lt|gt|quot|#39|mdash|middot);/,
+        `"${title}" must be plain text — settingsCard already escapes it`);
+    }
+  });
+
+  it('escaping each real title once produces no double-escaped entity', () => {
+    for (const title of settingsCardTitles()) {
+      const rendered = esc(title);
+      assert.doesNotMatch(rendered, /&amp;(amp|lt|gt|quot|#39|mdash|middot);/,
+        `rendering "${title}" must not double-escape`);
+    }
+  });
+
+  it('the AI Engine card title renders its & and em dash correctly, once', () => {
+    const title = settingsCardTitles().find((t) => t.includes('AI Engine'));
+    assert.equal(esc(title), 'AI Engine, Model &amp; Effort — Launch Mode');
+  });
+});
+
+// #3214 R-Gate R1 BLOCKING 1 — the Identity & Workspace Paths card must
+// surface project.path, fleetCoordinator and decisionAuthorityPolicy
+// alongside name/tags/version-file-path, not just the fields that existed
+// before this car. Source-level: `openSettings` has too many top-level
+// dependencies (state, esc, apiMutate, DOM) to invoke directly, the same
+// constraint documented in test/settings-modal-silentprime.test.js.
+describe('#3214 Project Settings — Identity & Workspace card fields (R-Gate R1 BLOCKING 1)', () => {
+  const { liftBody } = require('./helpers/lift');
+  const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+  const openSettingsBody = liftBody(uiSrc, 'function openSettings(');
+
+  it('renders the project workspace path', () => {
+    assert.match(openSettingsBody, /project\.path/);
+  });
+
+  it('renders the Fleet Coordinator / decision authority role', () => {
+    assert.match(openSettingsBody, /project\.fleetCoordinator/);
+    assert.match(openSettingsBody, /project\.decisionAuthorityPolicy/);
+  });
+
+  it('the settings modal backdrop is a true full-viewport page, not a floating box', () => {
+    const htmlSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const modalIdx = htmlSrc.indexOf('id="settingsModal"');
+    assert.notEqual(modalIdx, -1, '#settingsModal must exist');
+    const contentIdx = htmlSrc.indexOf('modal-content settings-modal', modalIdx);
+    const styleEnd = htmlSrc.indexOf('>', contentIdx);
+    const styleAttr = htmlSrc.slice(contentIdx, styleEnd);
+    assert.match(styleAttr, /position:\s*fixed/);
+    assert.match(styleAttr, /inset:\s*0/);
+    assert.match(styleAttr, /width:\s*100vw/);
+    assert.match(styleAttr, /height:\s*100vh/);
+  });
+});
+
+// #3214 R-Gate R5 BLOCKING 1 — the Identity & Workspace card renders a path
+// existence/readability badge and a git-repository badge alongside
+// `#settingsPathBadge`, using fields `enrichProject` (lib/projects.js)
+// already returns (`exists`, `unreadable`, `unreadableHint`, `git`) but that
+// comment's own header says nothing renders yet (#885) — this is that.
+describe('#3214 Project Settings — path-health badge (R-Gate R5 BLOCKING 1)', () => {
+  const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+  const { liftDeclaration } = require('./helpers/lift');
+  const esc = loadEsc();
+  const pathHealthBadgeHtml = new Function('esc', `
+    ${liftDeclaration(uiSrc, 'function pathHealthBadgeHtml(')}
+    return pathHealthBadgeHtml;
+  `)(esc);
+
+  it('a valid, readable, git-backed path renders both badges as healthy', () => {
+    const html = pathHealthBadgeHtml({ path: '/x', exists: true, unreadable: null, git: { branch: 'main' } });
+    assert.match(html, /Path OK/);
+    assert.doesNotMatch(html, /missing|Unreadable/i);
+    assert.match(html, /Git repository/);
+    assert.match(html, /main/);
+  });
+
+  it('a missing path is called out distinctly from an unreadable one', () => {
+    const missing = pathHealthBadgeHtml({ path: '/gone', exists: false, unreadable: null, git: null });
+    assert.match(missing, /Path missing/);
+    // #3214 R-Gate R6 BLOCKING (PRR-A 5b19131d): `enrichProject` sets
+    // `exists: false` for BOTH a genuinely absent path AND a scan that
+    // failed to read one that's still there (EACCES/FDA) — `unreadable` is
+    // what tells them apart, so this fixture uses the REAL shape
+    // `enrichProject` emits for a scan failure, not an invented one.
+    const unreadable = pathHealthBadgeHtml({ path: '/locked', exists: false, unreadable: 'EACCES', unreadableHint: 'Grant Full Disk Access', git: null });
+    assert.match(unreadable, /Unreadable: EACCES/);
+    assert.match(unreadable, /Grant Full Disk Access/);
+    assert.doesNotMatch(unreadable, /Path missing/, 'a real FDA failure must not render as if the directory were absent');
+    assert.doesNotMatch(unreadable, /Not a git repository/, 'the directory was never actually inspected, so nothing can be said about it being a git repo');
+  });
+
+  it('a non-git-repo path renders a distinct, non-error badge', () => {
+    const html = pathHealthBadgeHtml({ path: '/plain', exists: true, unreadable: null, git: null });
+    assert.match(html, /Not a git repository/);
+    assert.doesNotMatch(html, /color:var\(--danger\)">\s*Not a git repository/);
+  });
+
+  it('escapes an unreadable reason/hint and a git branch name', () => {
+    const html = pathHealthBadgeHtml({
+      path: '/x', exists: true, unreadable: '<script>', unreadableHint: '<b>hint</b>', git: null
+    });
+    assert.doesNotMatch(html, /<script>/);
+    assert.match(html, /&lt;script&gt;/);
+  });
+
+  it('is wired into openSettings\' Identity & Workspace card, next to #settingsPathBadge', () => {
+    const { liftBody } = require('./helpers/lift');
+    const openSettingsBody = liftBody(uiSrc, 'function openSettings(');
+    assert.match(openSettingsBody, /id="settingsPathHealthBadge"[^<]*>\$\{pathHealthBadgeHtml\(project\)\}/);
+  });
+});
+
+// #3214 R-Gate R2, Architect Ruling A921 — `claude-sonnet-reviewer` and
+// `claude-fable-sprint` are real, live operator profiles (`~/.tangleclaw/
+// engines/*.json`, 10 live projects on the host this ruling was issued
+// against), not a hypothetical. They keep running real sessions under their
+// own id (session launch, wake, quota bucketing are all unaffected — only
+// the Settings UI's picker is in scope here); they just don't get their own
+// row in the Engine dropdown, and the 3-phase picker shows/saves them as
+// plain `claude` with a sensible model/effort default.
+describe('#3214 Ruling A921 — Claude Code variant normalization in public/ui.js', () => {
+  const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+  require('../public/api-helper.js');
+  const esc = (str) => {
+    if (typeof str !== 'string') return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+
+  const { normalizeLegacyEngineSelection, buildEngineOptions } = (() => {
+    const { liftDeclaration } = require('./helpers/lift');
+    const fn = new Function('tcBuildEngineOptions', 'esc', `
+      ${liftDeclaration(uiSrc, 'const LEGACY_CLAUDE_VARIANT_DEFAULTS')}
+      ${liftDeclaration(uiSrc, 'function normalizeLegacyEngineSelection(')}
+      ${liftDeclaration(uiSrc, 'function buildEngineOptions(')}
+      return { normalizeLegacyEngineSelection, buildEngineOptions };
+    `);
+    return fn(globalThis.tcBuildEngineOptions, esc);
+  })();
+
+  const ENGINE_LIST = [
+    { id: 'claude', name: 'Claude Code', available: true },
+    { id: 'antigravity', name: 'Antigravity', available: true },
+    { id: 'codex', name: 'Codex', available: true },
+    { id: 'aider', name: 'Aider', available: true },
+    { id: 'claude-sonnet-reviewer', name: 'Claude (Reviewer)', available: true },
+    { id: 'claude-fable-sprint', name: 'Claude (Sprint)', available: true }
+  ];
+
+  describe('normalizeLegacyEngineSelection', () => {
+    it('maps claude-sonnet-reviewer to claude with its default model/effort when neither is already set', () => {
+      assert.deepEqual(normalizeLegacyEngineSelection('claude-sonnet-reviewer', null, null),
+        { engine: 'claude', model: 'claude-sonnet-5', effort: 'high' });
+    });
+
+    it('maps claude-fable-sprint to claude with its own default', () => {
+      assert.deepEqual(normalizeLegacyEngineSelection('claude-fable-sprint', null, null),
+        { engine: 'claude', model: 'claude-fable-5-1', effort: 'high' });
+    });
+
+    it('a project that already has its own model/effort keeps them, not the variant default', () => {
+      assert.deepEqual(normalizeLegacyEngineSelection('claude-sonnet-reviewer', 'claude-opus-5-5', 'max'),
+        { engine: 'claude', model: 'claude-opus-5-5', effort: 'max' });
+    });
+
+    it('passes through every non-variant engine id unchanged', () => {
+      for (const id of ['claude', 'antigravity', 'codex', 'aider', '', null]) {
+        assert.deepEqual(normalizeLegacyEngineSelection(id, 'm', 'e'), { engine: id, model: 'm', effort: 'e' });
+      }
+    });
+  });
+
+  describe('buildEngineOptions', () => {
+    it('never renders the two legacy variant ids as their own selectable option', () => {
+      const html = buildEngineOptions(ENGINE_LIST, 'claude');
+      assert.doesNotMatch(html, /value="claude-sonnet-reviewer"/);
+      assert.doesNotMatch(html, /value="claude-fable-sprint"/);
+      assert.equal((html.match(/<option/g) || []).length, 4, 'exactly the 4 canonical engines');
+    });
+
+    it('normalizes a project currently stored under a variant id to a selected claude option', () => {
+      const html = buildEngineOptions(ENGINE_LIST, 'claude-sonnet-reviewer');
+      const claudeOpt = html.match(/<option value="claude"[^>]*>/)[0];
+      assert.match(claudeOpt, /selected/);
+    });
+  });
+
+  describe('renderModelEffortPicker renders disabled placeholders for an engine with no model/effort axis', () => {
+    // Whole-file text search, not `liftBody` — `renderModelEffortPicker`'s
+    // own signature has an object-literal default parameter (`ids = {}`),
+    // whose `{}` is the FIRST brace after the declaration text, so the
+    // balanced-brace matcher closes on it immediately and returns `'{}'`
+    // instead of the real function body (a real gotcha, not a file-specific
+    // one — any default param shaped `= {}` trips the same matcher this way).
+    // The markup string is unique in the file either way.
+    it('both halves render as a visible, disabled "Engine default" select rather than a blank area', () => {
+      assert.match(uiSrc, /<select class="form-select" id="\$\{esc\(modelSelectId\)\}" disabled><option value="">Engine default \(CLI-managed\)<\/option><\/select>/);
+      assert.match(uiSrc, /<select class="form-select" id="\$\{esc\(effortSelectId\)\}" disabled><option value="">Engine default \(CLI-managed\)<\/option><\/select>/);
+    });
+  });
+
+  describe('openSettings\' #settingsEngine change listener compares against the normalized stored engine', () => {
+    const openSettingsBody = require('./helpers/lift').liftBody(uiSrc, 'function openSettings(');
+
+    it('leavesStoredEngine/backToStoredEngine read initialSelection.engine, never the raw project.engine.id', () => {
+      // A project stored under a variant id (`claude-sonnet-reviewer`) renders
+      // the dropdown normalized to `claude` on open — if these comparisons
+      // still read the raw, un-normalized `project.engine.id`, switching the
+      // dropdown away and back to (normalized) `claude` would misread as
+      // "leaving the stored engine" and wrongly blank the model/effort
+      // selection `initialSelection` already carries.
+      assert.match(openSettingsBody, /leavesStoredEngine = e\.target\.value !== initialSelection\.engine/);
+      assert.match(openSettingsBody, /backToStoredEngine = e\.target\.value === initialSelection\.engine/);
+      assert.doesNotMatch(openSettingsBody, /leavesStoredEngine = e\.target\.value !== \(project\.engine/);
+      assert.doesNotMatch(openSettingsBody, /backToStoredEngine = e\.target\.value === \(project\.engine/);
+    });
+
+    it('backToStoredEngine restores initialSelection\'s (normalized) model/effort, not the raw project fields', () => {
+      assert.match(openSettingsBody, /backToStoredEngine \? initialSelection\.model : null/);
+      assert.match(openSettingsBody, /backToStoredEngine \? initialSelection\.effort : null/);
     });
   });
 });

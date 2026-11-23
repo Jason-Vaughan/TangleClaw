@@ -77,14 +77,17 @@ describe('POST /api/sessions/:project/switch-model — Fleet Coordinator admissi
     // seam (unlike switchSessionModel() called directly, which
     // test/model-switch.test.js already exercises end to end with fakes for
     // the reconcile/relaunch pipeline), so this real call runs against this
-    // fresh store's real engine registry and deterministically reaches
-    // ENGINE_HAS_NO_MODELS — a downstream validation detail, not this
-    // route's own admission gate. The one thing under test here is that the
-    // admission gate itself lets the coordinator through to that downstream
-    // code at all, rather than turning it back with the 403 it got before
-    // #2598.
-    assert.equal(res.status, 400, JSON.stringify(res.data));
-    assert.equal(res.data.code, 'ENGINE_HAS_NO_MODELS', 'must reach switchSessionModel, not be turned back at the 403 admission gate');
+    // fresh store's real engine registry. #3214 gave data/engines/claude.json
+    // a real `models` block, so `claude-sonnet-5` now passes
+    // validateModelSelection and the call deterministically reaches the next
+    // downstream check instead — there is no active session for this target,
+    // so it is NO_ACTIVE_SESSION (409), a downstream validation detail, not
+    // this route's own admission gate. The one thing under test here is that
+    // the admission gate itself lets the coordinator through to that
+    // downstream code at all, rather than turning it back with the 403 it
+    // got before #2598.
+    assert.equal(res.status, 409, JSON.stringify(res.data));
+    assert.equal(res.data.code, 'NO_ACTIVE_SESSION', 'must reach switchSessionModel, not be turned back at the 403 admission gate');
   });
 
   it('refuses the same verified Fleet Coordinator for outage-takeover mode (self, Operator or Master only)', async () => {
@@ -134,11 +137,16 @@ describe('POST /api/sessions/:project/switch-model — Fleet Coordinator admissi
       { engine: 'claude', model: 'claude-sonnet-5' }, selfBind.headers);
 
     // Same reasoning as the coordinator case above: switchSessionModel()
-    // validates engine/model before it ever reaches the boundary check, so
-    // this reaches the same deterministic ENGINE_HAS_NO_MODELS a downstream
-    // validation detail, not this test's concern. The one thing under test
-    // is that self-service is still admitted past the 403 gate at all.
-    assert.equal(res.status, 400, JSON.stringify(res.data));
-    assert.equal(res.data.code, 'ENGINE_HAS_NO_MODELS');
+    // validates engine/model before it ever reaches the boundary check, and
+    // #3214's real claude.json `models` block now lets `claude-sonnet-5`
+    // pass that validation. Self-service additionally requires a current
+    // explicit complete/safe workload receipt before it will touch a live
+    // model switch (a "clean chunk boundary" gate) — this fixture has none,
+    // so it deterministically reaches SESSION_NOT_AT_BOUNDARY (409), a
+    // downstream validation detail unrelated to this test's concern. The
+    // one thing under test is that self-service is still admitted past the
+    // 403 gate at all.
+    assert.equal(res.status, 409, JSON.stringify(res.data));
+    assert.equal(res.data.code, 'SESSION_NOT_AT_BOUNDARY');
   });
 });

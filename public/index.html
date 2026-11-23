@@ -730,15 +730,27 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
   </div>
 
 
-  <!-- Settings Modal -->
+  <!-- Settings Modal. #3214: a true full-viewport page, not a floating box
+       cropped at a vw/vh cap — `position:fixed; inset:0` pulls it out of
+       `.modal-backdrop`'s own centering flexbox entirely (public/style.css),
+       so it fills the screen instead of being centered within it. An inline
+       style always wins over a stylesheet rule regardless of selector
+       specificity, so the settings-modal class's own flex-column/scroll-body
+       plumbing (title and actions pinned, #settingsBody the only scrolling
+       region) still applies unchanged underneath it; only the box's own
+       size and position changed. -->
   <div class="modal-backdrop" id="settingsModal">
-    <div class="modal-content settings-modal" role="dialog" aria-label="Project settings" aria-modal="true">
-      <h3 class="modal-title" id="settingsTitle">Settings</h3>
+    <div class="modal-content settings-modal" role="dialog" aria-label="Project settings" aria-modal="true"
+         style="position:fixed; inset:0; width:100vw; height:100vh; max-width:100vw; max-height:100vh; margin:0; border-radius:0;">
+      <h3 class="modal-title" id="settingsTitle" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <span id="settingsTitleText">Settings</span>
+        <span id="settingsStatusBadge" class="form-hint" style="font-weight:normal;"></span>
+      </h3>
       <div id="settingsBody"></div>
       <div class="modal-actions">
         <button class="btn" id="settingsCancelBtn">Cancel</button>
-        <button class="btn btn-primary" id="settingsSaveBtn">Save</button>
-        <button class="btn btn-primary hidden" id="settingsSaveLaunchBtn">Save &amp; Launch</button>
+        <button class="btn btn-primary" id="settingsSaveBtn">Save Properties</button>
+        <button class="btn btn-primary hidden" id="settingsSaveLaunchBtn">Save &amp; Launch / Restart Session</button>
       </div>
     </div>
   </div>
