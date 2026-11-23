@@ -891,40 +891,42 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     assert.match(root.innerHTML, /ship it/);
   });
 
-  // R-Gate R1 BLOCKING 2 (PRRA-RGATE-V658-W1B-PR3222-3064F473-REVISE):
-  // `liveView`'s own optimistic-send feed, exercised through the REAL
-  // `createLiveController` + mounted-shell pipeline (#3199) — `beginSend`,
-  // `pendingSends`, `getShell().getPendingSends()`, `extractLiveTurns`'s
-  // own `recordedAs` matching, all actually running end to end, not
-  // stubbed. (`arrangeRecorded`'s own direct test below is what proves the
-  // `recorded` flag this produces actually matters — it is the ONE place
-  // in this file that flag changes anything observable; a single-poll
-  // snapshot of this scenario alone cannot show that on its own, since
-  // nothing here gives `arrangeRecorded` a matching recorded EVENT to
-  // dedupe against yet.)
-  it('an optimistic in-flight send (pendingSends) runs the whole liveView pipeline end to end without misreading the pane echo as a fresh assistant turn', async () => {
-    const longPrompt = 'please walk through the deploy checklist end to end and confirm every step before you ship it to production';
+  // R-Gate R2 BLOCKING 2 (PRRA-RGATE-V658-W1B-PR3222-35762E41-REVISE): the
+  // peek fixture now WRAPS the sent prompt across two pane lines, the
+  // second one carrying no prompt glyph at all — `extractLiveTurns`
+  // classifies that second line as USER only via `isOperatorEcho` finding
+  // it in `knownUserTexts`, which is exactly what `pendingSends`/
+  // `sent.full` feed into `liveView`. Without that feed this second line
+  // would fall straight through to become a bogus `assistant` turn; this
+  // is what actually isolates the feed's effect (R-Gate R1's version of
+  // this test used a single-line peek, which `extractLiveTurns` already
+  // classified as USER on its own, independent of `knownUserTexts`).
+  const WRAPPED_SENT_FIRST = 'First line of in-flight prompt';
+  const WRAPPED_SENT_SECOND = 'Second wrapped line without prompt glyph';
+  const WRAPPED_SENT_FULL = `${WRAPPED_SENT_FIRST}\n${WRAPPED_SENT_SECOND}`;
+
+  it('an optimistic in-flight send (pendingSends) runs the whole liveView pipeline end to end without misreading its own wrapped second line as a fresh assistant turn', async () => {
     const map = baseMap({
       '/api/v6/projects/11/sessions/501/conversation/events': { events: [] },
-      '/api/sessions/TC-Lane-B/peek?lines=2000': { lines: [`❯ ${longPrompt}`] }
+      '/api/sessions/TC-Lane-B/peek?lines=2000': { lines: [`❯ ${WRAPPED_SENT_FIRST}`, WRAPPED_SENT_SECOND] }
     });
     const { win, root, shell, settle } = mountLive(map);
     // The send is in flight — drawn at the bottom of the chat, not yet a
     // recorded B2 event — exactly the window the peek poll can land in.
-    shell.beginSend(11, longPrompt, 'send-1');
+    shell.beginSend(11, WRAPPED_SENT_FULL, 'send-1');
     win.location.hash = '#/resources/11/conversation';
     await settle();
-    assert.doesNotMatch(root.innerHTML, /is-assistant/, 'the pane merely echoing what was just typed must never render as an assistant turn');
-    assert.match(root.innerHTML, new RegExp(longPrompt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'the in-flight send itself still shows, via the pending-send UI');
+    assert.doesNotMatch(root.innerHTML, /is-assistant/, 'the wrapped second line, with no prompt glyph of its own, must never render as a fresh assistant turn');
+    assert.match(root.innerHTML, new RegExp(WRAPPED_SENT_FIRST.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'the in-flight send itself still shows, via the pending-send UI');
   });
 
   // The most recently RECORDED send (`lastSentByProject`, set once
   // `sendChat` -> `deliverChat` records the B2 event) is the other half of
   // the same `liveView` feed (`sent.full`) — exercised the same way,
   // through the real send flow (`sendChat`, the mocked `command` and
-  // `conversation/events` POSTs), not stubbed.
-  it('the full send flow (sendChat -> deliverChat -> lastSentByProject) also runs through liveView end to end without misreading the pane echo', async () => {
-    const longPrompt = 'please walk through the deploy checklist end to end and confirm every step before you ship it to production';
+  // `conversation/events` POSTs), not stubbed, with the same wrapped,
+  // marker-less second line.
+  it('the full send flow (sendChat -> deliverChat -> lastSentByProject) also runs through liveView end to end without misreading its wrapped second line', async () => {
     const G = loadV6Shell();
     const { doc } = makeDocument([]);
     const root = doc.createElement('div');
@@ -934,7 +936,7 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     const map = baseMap({
       '/api/v6/projects/11/sessions/501/conversation/events': { events: [] },
       '/api/v6/projects/11/sessions/501/conversation/events?includeDeleted=1': { events: [] },
-      '/api/sessions/TC-Lane-B/peek?lines=2000': { lines: [`❯ ${longPrompt}`] }
+      '/api/sessions/TC-Lane-B/peek?lines=2000': { lines: [`❯ ${WRAPPED_SENT_FIRST}`, WRAPPED_SENT_SECOND] }
     });
     const { api } = makeApi(map);
     const mutateCalls = [];
@@ -950,7 +952,7 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     const settle = async () => { while (pending.length) await pending.shift(); };
     win.location.hash = '#/resources/11/conversation';
     await settle();
-    await liveCtl.sendChat(longPrompt);
+    await liveCtl.sendChat(WRAPPED_SENT_FULL);
     await settle();
     // Nothing re-fetches the peek/events on its own in this harness (the
     // real poll timer isn't armed) — re-entering the same route is what a
@@ -958,7 +960,7 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     pending.push(liveCtl.handleRoute(shell.getRoute()));
     await settle();
     assert.ok(mutateCalls.includes('/api/sessions/TC-Lane-B/command'), 'the send actually went through the mocked route');
-    assert.doesNotMatch(root.innerHTML, /is-assistant/, 'the pane echoing the just-recorded send must never render as an assistant turn');
+    assert.doesNotMatch(root.innerHTML, /is-assistant/, 'the wrapped second line, with no prompt glyph of its own, must never render as a fresh assistant turn');
   });
 
   it('#3154: the toggle\'s own landing route is the generic Overview, not any one member\'s conversation', async () => {
@@ -2802,9 +2804,16 @@ describe('tcV6ExtractLiveTurns: terminal-echoed/wrapped prompts never duplicate 
     ]);
   });
 
-  it('the same long-prompt-then-plain-reply shape holds for every engine (claude, codex, antigravity, aider)', () => {
+  // R-Gate R2 BLOCKING 1 (PRRA-RGATE-V658-W1B-PR3222-35762E41-REVISE):
+  // Antigravity's OWN normal reply prose is itself indented by two spaces
+  // (`LIVE_ENGINE_NOISE`'s own #3057 comment elsewhere in this file), so
+  // its fixture uses that real shape rather than the other 3 engines'
+  // plain, column-0 reply — the one case the indent signal cannot tell
+  // apart from a genuine continuation, which is exactly why `engine !==
+  // 'antigravity'` is required alongside `indented` in the source.
+  it('the same long-prompt-then-plain-reply shape holds for every engine (claude, codex, aider plain; antigravity\'s own 2-space-indented reply)', () => {
     const longPrompt = 'please walk through the deploy checklist end to end and confirm every step before you ship it to production';
-    for (const engine of ['claude', 'codex', 'antigravity', 'aider']) {
+    for (const engine of ['claude', 'codex', 'aider']) {
       const lines = [`❯ ${longPrompt}`, 'Here is the fix for that issue.'];
       const out = plain(G.tcV6ExtractLiveTurns(lines, engine, []));
       assert.deepEqual(out.turns, [
@@ -2812,6 +2821,12 @@ describe('tcV6ExtractLiveTurns: terminal-echoed/wrapped prompts never duplicate 
         { role: 'assistant', text: 'Here is the fix for that issue.' }
       ], engine);
     }
+    const antigravityLines = [`❯ ${longPrompt}`, '  Plain unbulleted assistant reply that must not be swallowed.'];
+    const antigravityOut = plain(G.tcV6ExtractLiveTurns(antigravityLines, 'antigravity', []));
+    assert.deepEqual(antigravityOut.turns, [
+      { role: 'user', text: longPrompt },
+      { role: 'assistant', text: 'Plain unbulleted assistant reply that must not be swallowed.' }
+    ]);
   });
 
   it('a long RECORDED prompt followed by plain UNINDENTED assistant prose also starts a real assistant turn (isOperatorEcho governs the recorded case, unaffected by this car)', () => {

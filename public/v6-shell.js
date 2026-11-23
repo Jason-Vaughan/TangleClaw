@@ -2836,8 +2836,12 @@
       // checks above both gate on it) — reused here: only an INDENTED line
       // extends the prompt; a plain, column-0 line — bulleted or not —
       // never does, and falls through to start its own `assistant` turn
-      // instead of ever being merged into the user's.
-      if (block === 'prompt' && promptTurn && indented) {
+      // instead of ever being merged into the user's. #3057/R-Gate R2
+      // BLOCKING 1: NEVER on Antigravity, whose own normal reply prose is
+      // ITSELF indented by two spaces (the one engine this signal cannot
+      // tell apart from a genuine continuation) — excluded outright rather
+      // than risked.
+      if (block === 'prompt' && promptTurn && indented && engine !== 'antigravity') {
         promptTurn.text += `\n${text}`;
         const squashedLine = squash(text);
         if (squashedLine) {
