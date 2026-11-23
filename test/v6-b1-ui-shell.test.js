@@ -10266,7 +10266,14 @@ describe('Car V659-W1-B: centered offline startup hero (#3203)', () => {
     const mutateCalls = [];
     const apiMutate = async (url, method, body) => {
       mutateCalls.push({ url, method, body: plain(body) });
-      if (o.refuse) { api.lastError = o.refuse; return null; }
+      if (o.refuse) {
+        api.lastError = o.refuse;
+        // #3203 R2: the real api()'s own documented side channel for "the
+        // whole refusal body" (public/api-helper.js, #711) -- a diagnostic
+        // object here is #3202's own shape.
+        api.lastBody = o.refuseDiagnostic ? { error: o.refuse, diagnostic: o.refuseDiagnostic } : { error: o.refuse };
+        return null;
+      }
       return { ok: true };
     };
     let shell = null;
@@ -10277,7 +10284,8 @@ describe('Car V659-W1-B: centered offline startup hero (#3203)', () => {
       onRender: (r) => pending.push(live.handleRoute(r)),
       onStartSession: () => pending.push(live.startSession()),
       onOpenProjectSettings: (name) => { o.settingsOpened = name; },
-      onViewOfflineHistory: (name) => pending.push(live.viewOfflineHistory(name))
+      onViewOfflineHistory: (name) => pending.push(live.viewOfflineHistory(name)),
+      onReturnToStartCard: (name) => live.returnToStartCard(name)
     });
     pending.push(live.handleRoute(shell.getRoute()));
     const settle = async () => { while (pending.length) await pending.shift(); };
@@ -10303,16 +10311,50 @@ describe('Car V659-W1-B: centered offline startup hero (#3203)', () => {
     assert.deepEqual(m.mutateCalls[0], { url: '/api/sessions/TC-Lane-PM', method: 'POST', body: {} });
   });
 
-  it('a refused launch shows Launch Failed with the server\'s reason, Retry Launch and Edit Session Properties', async () => {
+  it('a refused launch shows Launch Failed with the server\'s plain reason, Retry Launch and Edit Session Properties (no #3202 diagnostic sent)', async () => {
     const m = mountHero({ refuse: 'Stranded wraps need acknowledging (STRANDED_WRAPS)' });
     await m.settle();
     m.doc.getElementById('v6ChatStartHero').dispatch('click');
     await m.settle();
     assert.match(m.root.innerHTML, /Launch Failed/);
     assert.match(m.root.innerHTML, /Not started: Stranded wraps need acknowledging \(STRANDED_WRAPS\)/);
+    assert.match(m.root.innerHTML, /v6-chat-offline-hero-diagnostic/);
     assert.match(m.root.innerHTML, /id="v6ChatRetryLaunchHero"/);
     assert.match(m.root.innerHTML, /id="v6ChatEditPropertiesHero"/);
     assert.doesNotMatch(m.root.innerHTML, /id="v6ChatStartHero"/, 'the resting Start action is replaced by the failure panel');
+  });
+
+  it('a refused launch with a #3202 structured diagnostic shows its title, message and remediation steps (#3203 R2)', async () => {
+    const m = mountHero({
+      refuse: 'preflight check failed',
+      refuseDiagnostic: {
+        code: 'ENGINE_NOT_INSTALLED', category: 'preflight', title: 'Claude Code is not installed',
+        message: 'The claude CLI could not be found on this machine.',
+        remediation: ['Install Claude Code', 'Re-run Start Session'], retryable: true, canEditProperties: true
+      }
+    });
+    await m.settle();
+    m.doc.getElementById('v6ChatStartHero').dispatch('click');
+    await m.settle();
+    const diag = /<div class="v6-chat-offline-hero-diagnostic" data-diagnostic-code="ENGINE_NOT_INSTALLED">[\s\S]*?<\/div>/.exec(m.root.innerHTML);
+    assert.ok(diag, m.root.innerHTML);
+    assert.match(diag[0], /Claude Code is not installed/);
+    assert.match(diag[0], /The claude CLI could not be found on this machine\./);
+    assert.match(diag[0], /<li>Install Claude Code<\/li>/);
+    assert.match(diag[0], /<li>Re-run Start Session<\/li>/);
+    assert.match(m.root.innerHTML, /id="v6ChatRetryLaunchHero"/);
+  });
+
+  it('falls back to the plain error string when the diagnostic has no remediation list', async () => {
+    const m = mountHero({
+      refuse: 'preflight check failed',
+      refuseDiagnostic: { code: 'UNKNOWN', title: 'Launch Failed', message: 'preflight check failed' }
+    });
+    await m.settle();
+    m.doc.getElementById('v6ChatStartHero').dispatch('click');
+    await m.settle();
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-offline-hero-diagnostic-remediation/);
+    assert.match(m.root.innerHTML, /preflight check failed/);
   });
 
   it('Edit Session Properties from the hero opens Settings for this project', async () => {
@@ -10335,9 +10377,24 @@ describe('Car V659-W1-B: centered offline startup hero (#3203)', () => {
     assert.match(m.root.innerHTML, /Shipped the thing\./);
     assert.doesNotMatch(m.root.innerHTML, /v6-chat-offline-hero-heading/, 'the hero itself is gone while viewing history');
     assert.match(m.root.innerHTML, /id="v6ChatOfflineHistoryStartTop"/);
+    assert.match(m.root.innerHTML, /id="v6ChatOfflineHistoryReturnTop"/);
     assert.match(m.root.innerHTML, /id="v6ChatOfflineHistoryEditTop"/);
     assert.match(m.root.innerHTML, /id="v6ChatOfflineHistoryStartBottom"/);
+    assert.match(m.root.innerHTML, /id="v6ChatOfflineHistoryReturnBottom"/);
     assert.match(m.root.innerHTML, /id="v6ChatOfflineHistoryEditBottom"/);
+  });
+
+  it('Return to Start Card exits history mode and restores the hero, in place -- no route change (#3203 R2)', async () => {
+    const m = mountHero({ sessions: { sessions: [] } });
+    await m.settle();
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-offline-history/);
+    m.doc.getElementById('v6ChatOfflineHistoryReturnTop').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-offline-hero/);
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-offline-history-body/);
+    assert.equal(m.win.location.hash, '#/resources/12/conversation', 'the route itself never changed');
   });
 
   it('says so, never "No previous conversation" as an error, when a project genuinely has no history', async () => {

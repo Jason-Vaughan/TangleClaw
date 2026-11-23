@@ -2101,10 +2101,20 @@
     const pillClass = failed ? 'is-failed' : (starting ? 'is-starting' : 'is-offline');
     const editButton = `<button type="button" id="v6ChatEditPropertiesHero" class="btn btn-secondary v6-chat-offline-hero-edit"
       data-action="open-chat-settings">⚙ Edit Session Properties</button>`;
+    // #3203 R2: #3202's structured diagnostic (when the server sent one on
+    // this failure) names its own title/remediation; otherwise fall back
+    // to the plain message startSession already derived from api.lastError.
+    const diagnostic = launch && launch.diagnostic;
+    const diagnosticMarkup = failed ? `<div class="v6-chat-offline-hero-diagnostic"${diagnostic && diagnostic.code ? ` data-diagnostic-code="${escapeHtml(diagnostic.code)}"` : ''}>
+          <h3 class="v6-chat-offline-hero-diagnostic-title">${escapeHtml((diagnostic && diagnostic.title) || 'Launch Failed')}</h3>
+          <p class="v6-chat-offline-hero-diagnostic-message">${escapeHtml((diagnostic && diagnostic.message) || launch.message || 'The server refused to start this session.')}</p>
+          ${diagnostic && Array.isArray(diagnostic.remediation) && diagnostic.remediation.length
+    ? `<ul class="v6-chat-offline-hero-diagnostic-remediation">${diagnostic.remediation.map((step) => `<li>${escapeHtml(String(step))}</li>`).join('')}</ul>`
+    : ''}
+        </div>` : '';
     const actions = failed
       ? `<div class="v6-chat-offline-hero-failure" role="alert">
-          <h3 class="v6-chat-offline-hero-failure-title">Launch Failed</h3>
-          <p class="v6-chat-offline-hero-failure-message">${escapeHtml(launch.message || 'The server refused to start this session.')}</p>
+          ${diagnosticMarkup}
           <div class="v6-chat-offline-hero-actions">
             <button type="button" id="v6ChatRetryLaunchHero" class="btn btn-primary v6-chat-offline-hero-retry"
               data-action="start-chat-session">↻ Retry Launch</button>
@@ -2138,6 +2148,8 @@
     return `<div class="v6-chat-offline-history-bar">
       <button type="button" id="v6ChatOfflineHistoryStart${idSuffix}" class="btn btn-primary btn-small v6-chat-offline-hero-start"
         data-action="start-chat-session">▶ Start Session</button>
+      <button type="button" id="v6ChatOfflineHistoryReturn${idSuffix}" class="btn btn-secondary btn-small v6-chat-offline-hero-return"
+        data-action="return-to-start-card">↩ Return to Start Card</button>
       <button type="button" id="v6ChatOfflineHistoryEdit${idSuffix}" class="btn btn-secondary btn-small v6-chat-offline-hero-edit"
         data-action="open-chat-settings">⚙ Edit Session Properties</button>
     </div>`;
@@ -6829,11 +6841,16 @@
      * #3203: also drives the offline startup hero's own `launchState`
      * (`starting` while this call is in flight, `failed` with the server's
      * reason if it is refused, cleared on success) — the same call this
-     * chat's own `[▶ Start Session]`/`[↻ Retry Launch]` hero buttons use,
-     * and the server's response contract `apiMutate` resolves `null` on
-     * any failure (the page's own `tcCreateApi` contract), so a richer
-     * structured diagnostic (#3202) is not yet available here beyond
-     * `api.lastError`'s string.
+     * chat's own `[▶ Start Session]`/`[↻ Retry Launch]` hero buttons use.
+     * #3203 R2: a failure's structured `diagnostic` (#3202's own
+     * `{code, category, title, message, remediation, retryable,
+     * canEditProperties}` shape, when the server sends one) is read from
+     * `api.lastBody` — `apiMutate`/`api()`'s own documented side channel
+     * for "the whole refusal body" (`public/api-helper.js`, #711), set
+     * alongside `api.lastError` on every failure and cleared on every
+     * success; never a new contract this file invents. A server not yet
+     * sending `diagnostic` (or sending a non-object one) simply reads as
+     * `null` here, falling back to the plain `api.lastError` string.
      * @param {string} [projectName] - Defaults to the chat on screen.
      * @returns {Promise<void>}
      */
@@ -6845,14 +6862,16 @@
       if (!name) return;
       const onThisChat = Boolean(chat) && String(chat.project.name || '') === name;
       if (onThisChat) showSend({ kind: 'pending', message: `Starting ${name}…` });
-      launchState.set(name, { status: 'starting', message: null });
+      launchState.set(name, { status: 'starting', message: null, diagnostic: null });
       if (onThisChat) showChat(shell);
       const ok = await apiMutate(`/api/sessions/${encodeURIComponent(name)}`, 'POST', {});
       if (onThisChat && chat !== current) return;
       if (!ok) {
         const message = `Not started: ${api.lastError || 'the server refused it'}`;
+        const diagnostic = api.lastBody && typeof api.lastBody === 'object' && api.lastBody.diagnostic
+          && typeof api.lastBody.diagnostic === 'object' ? api.lastBody.diagnostic : null;
         if (onThisChat) showSend({ kind: 'error', message });
-        launchState.set(name, { status: 'failed', message });
+        launchState.set(name, { status: 'failed', message, diagnostic });
         if (onThisChat) showChat(shell);
         return;
       }
@@ -6912,6 +6931,24 @@
         },
         error: null
       });
+      showChat(shell);
+    }
+
+    /**
+     * Return the offline chat from "View Previous Conversation" mode back
+     * to the centered startup hero (#3203 R2's "Return to Start Card"),
+     * in place — no route change, no reload, matching how
+     * {@link viewOfflineHistory} entered it in the first place.
+     * @param {string} [projectName] - Must name the chat on screen; a
+     *   mismatch (stale click after the chat changed) is a no-op.
+     */
+    function returnToStartCard(projectName) {
+      const shell = getShell();
+      const chat = current;
+      if (!chat || !shell) return;
+      const name = String(projectName || chat.project.name || '');
+      if (!name || String(chat.project.name || '') !== name) return;
+      viewingOfflineHistory.delete(String(chat.project.id));
       showChat(shell);
     }
 
@@ -7395,7 +7432,7 @@
     return {
       handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, attachFiles, removeAttachment,
       startSession, startFleet, treeLinkClicked, renameProject, changeEngine, loadHistory, openHistorySession,
-      viewOfflineHistory,
+      viewOfflineHistory, returnToStartCard,
       createWorkspaceProject, convertToFleet, provisionFleet, requestUnfurl,
       loadBundledFleetSpecs, requestValidateFleetSpec, applyFleetSpec, exportFleetSpec,
       getProjects() { return projects; }
@@ -7424,6 +7461,7 @@
    *   onHistoryLoad?: (form: {scope: string, kind: string, q: string}) => void,
    *   onHistoryOpenSession?: (pick: {member: string, sid: string, q: string, kind: string}) => void,
    *   onViewOfflineHistory?: (projectName: string) => void,
+   *   onReturnToStartCard?: (projectName: string) => void,
    *   onHoodCommand?: (name: string, body: {command: string, enter: true}|{rawKey: string}) => void,
    *   now?: () => number, setInterval?: (fn: Function, ms: number) => *, clearInterval?: (id: *) => void,
    *   requestAnimationFrame?: (fn: Function) => *, fetch?: Function}} opts - `onHoodCommand` is
@@ -7440,9 +7478,11 @@
    *   callbacks are the chat view's controls (#3047). `now` and the interval pair
    *   drive the busy line's elapsed time (#3057); they default to the page's.
    *   `onViewOfflineHistory` is the offline startup hero's own "View Previous
-   *   Conversation" button (#3203) — until the page wires it, that one button
-   *   has no effect (every other hero/history-bar action reuses the already-wired
-   *   `onStartSession`/`onOpenProjectSettings`, so they work unchanged).
+   *   Conversation" button (#3203), and `onReturnToStartCard` its history view's
+   *   own "Return to Start Card" button (#3203 R2) — until the page wires
+   *   each, that one button has no effect (every other hero/history-bar
+   *   action reuses the already-wired `onStartSession`/`onOpenProjectSettings`,
+   *   so they work unchanged).
    * @returns {{getRoute: () => object, navigate: (hash: string) => void,
    *   toggleDrawer: (force?: boolean) => void, isDrawerOpen: () => boolean,
    *   toggleSidebar: (force?: boolean) => void, isSidebarCollapsed: () => boolean,
@@ -8933,6 +8973,14 @@
       if (viewHistory && project && typeof options.onViewOfflineHistory === 'function') {
         viewHistory.addEventListener('click', () => options.onViewOfflineHistory(String(project.name || '')));
       }
+      // #3203 R2: "Return to Start Card" -- top and bottom copies of the
+      // compact history bar, same callback either way.
+      ['v6ChatOfflineHistoryReturnTop', 'v6ChatOfflineHistoryReturnBottom'].forEach((id) => {
+        const returnBtn = doc.getElementById(id);
+        if (returnBtn && project && typeof options.onReturnToStartCard === 'function') {
+          returnBtn.addEventListener('click', () => options.onReturnToStartCard(String(project.name || '')));
+        }
+      });
       // #3153: the inline engine picker — direct, no Settings modal needed.
       const engineSelect = doc.getElementById('v6ChatEngineSelect');
       if (engineSelect && project && typeof options.onChangeEngine === 'function') {
