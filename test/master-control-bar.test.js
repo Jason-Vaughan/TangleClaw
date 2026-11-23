@@ -1955,6 +1955,44 @@ describe('#3218 tcBindMasterDropzone', () => {
     assert.equal(overlay.classList.contains('hidden'), true, 'hidden again after destroy');
   });
 
+  // #3218 R5 BLOCKING: a real drag fires `dragenter` once, then `dragover`
+  // repeatedly for as long as it continues — `show()` must capture the
+  // frame's pre-existing pointerEvents ONLY on the hidden-to-visible
+  // transition, not re-capture it (from its OWN already-'none' value) on
+  // every subsequent dragover, or the restore on drop/destroy restores
+  // 'none' instead of what was really there before the drag started.
+  it('dragenter -> repeated dragover -> drop restores the frame\'s PRE-DRAG pointer-events, not "none" re-captured mid-drag', () => {
+    const { doc, ids } = makeDocument(['masterPanel', 'masterFrame']);
+    ids.masterFrame.style = { pointerEvents: 'auto' };
+    const docHandlers = captureAddEventListener(doc);
+    const panelHandlers = captureAddEventListener(ids.masterPanel);
+    G.tcBindMasterDropzone({ doc, panelEl: ids.masterPanel, prefix: 'masterPanel', onUpload: () => {} });
+    docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+    assert.equal(ids.masterFrame.style.pointerEvents, 'none', 'disabled after dragenter');
+    // Several dragover events, as a real drag would keep firing while it
+    // continues over the panel — each must be a no-op on the capture.
+    panelHandlers.dragover[0]({ preventDefault: () => {}, dataTransfer: { types: ['Files'] } });
+    panelHandlers.dragover[0]({ preventDefault: () => {}, dataTransfer: { types: ['Files'] } });
+    panelHandlers.dragover[0]({ preventDefault: () => {}, dataTransfer: { types: ['Files'] } });
+    assert.equal(ids.masterFrame.style.pointerEvents, 'none', 'still disabled mid-drag');
+    panelHandlers.drop[0]({ preventDefault: () => {}, dataTransfer: { files: [] } });
+    assert.equal(ids.masterFrame.style.pointerEvents, 'auto', 'restored to the PRE-DRAG value, not "none"');
+  });
+
+  it('dragenter -> repeated dragover -> destroy() restores the frame\'s PRE-DRAG pointer-events, not "none" re-captured mid-drag', () => {
+    const { doc, ids } = makeDocument(['masterPanel', 'masterFrame']);
+    ids.masterFrame.style = { pointerEvents: 'auto' };
+    const docHandlers = captureAddEventListener(doc);
+    const panelHandlers = captureAddEventListener(ids.masterPanel);
+    const bind = G.tcBindMasterDropzone({ doc, panelEl: ids.masterPanel, prefix: 'masterPanel', onUpload: () => {} });
+    docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+    panelHandlers.dragover[0]({ preventDefault: () => {}, dataTransfer: { types: ['Files'] } });
+    panelHandlers.dragover[0]({ preventDefault: () => {}, dataTransfer: { types: ['Files'] } });
+    assert.equal(ids.masterFrame.style.pointerEvents, 'none');
+    assert.doesNotThrow(() => bind.destroy());
+    assert.equal(ids.masterFrame.style.pointerEvents, 'auto', 'restored to the PRE-DRAG value, not "none"');
+  });
+
   it('does nothing and never throws when doc/panelEl/onUpload are missing', () => {
     assert.doesNotThrow(() => G.tcBindMasterDropzone({}));
     assert.doesNotThrow(() => G.tcBindMasterDropzone({ doc: makeDocument([]).doc }));

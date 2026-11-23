@@ -4771,9 +4771,22 @@
     // (almost always `''`, but not assumed) is captured before `show()`
     // overwrites it, so `hide()` restores exactly what was there rather
     // than blindly clobbering it back to `''`.
+    //
+    // #3218 R5 BLOCKING: captured/applied ONLY on the hidden-to-visible
+    // transition, guarded by `active` — a real drag fires `dragenter`
+    // once, then `dragover` repeatedly for as long as it continues, and
+    // `dragover` also calls `show()`. Capturing on every call meant the
+    // SECOND `show()` (from the first `dragover`) re-captured
+    // `prevFramePointerEvents` from the frame's CURRENT state, which
+    // `show()` had already set to `'none'` moments earlier — so
+    // `hide()` would restore `'none'`, leaving the iframe permanently
+    // non-interactive after the drag ended.
+    let active = false;
     let prevFramePointerEvents = '';
     const show = () => {
       overlay.classList.remove('hidden');
+      if (active) return;
+      active = true;
       // #3218 R2 BLOCKING (R-Gate R2): the iframe itself ignores pointer
       // input for as long as a file drag is in flight, so it cannot
       // swallow the drag/drop even if the overlay's own stacking ever
@@ -4785,6 +4798,8 @@
     };
     const hide = () => {
       overlay.classList.add('hidden');
+      if (!active) return;
+      active = false;
       if (resolvedFrame && resolvedFrame.style) resolvedFrame.style.pointerEvents = prevFramePointerEvents;
     };
 
