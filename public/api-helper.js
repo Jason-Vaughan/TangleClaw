@@ -4609,50 +4609,55 @@
   }
 
   /**
-   * Normalizes `file.name` to its sanitized form IN PLACE (#3218 R2
-   * BLOCKING 2) — a real `File`'s `name` is a read-only accessor, so a
-   * plain assignment would silently no-op; `Object.defineProperty` is
-   * what actually overrides it. This exists so an EXISTING 1-argument
-   * `onUpload(file)` caller that reads `file.name` directly (e.g.
-   * `public/ui.js`'s `uploadMasterAttachment`) gets the
+   * Normalizes `file.name` to its sanitized form (#3218 R2 BLOCKING 2) —
+   * a real `File`'s `name` is a read-only accessor, so a plain
+   * assignment would silently no-op. This exists so an EXISTING
+   * 1-argument `onUpload(file)` caller that reads `file.name` directly
+   * (e.g. `public/ui.js`'s `uploadMasterAttachment`) gets the
    * `SAFE_FILENAME_RE`-compliant name automatically, with no call-site
-   * change of its own. Never throws: a frozen/non-extensible File-like
-   * object (a real `File` never is one, only a test double can be) that
-   * refuses the in-place override is wrapped in a read-through proxy
-   * instead, so a 1-argument caller's `f.name` still resolves to the
-   * sanitized value — returns that wrapper rather than mutating further,
-   * since `Object.freeze`'s own-property invariants forbid a proxy from
-   * reporting a different value for an own, non-configurable property
-   * (never an issue for a real `File`, whose `name` is an accessor
-   * inherited from `File.prototype`, not an own property).
+   * change of its own.
+   *
+   * A real `File`/`Blob` is reconstructed fresh via the Blob-copy
+   * constructor (#3218 R4 BLOCKING) rather than mutated in place or
+   * wrapped in a `Proxy`: WebIDL's native binding checks an internal
+   * `[[BlobData]]` slot, not JS-visible properties, so
+   * `FileReader.readAsDataURL` (or anything else that touches the
+   * file's bytes) rejects a `Proxy` around a `File` with `TypeError:
+   * parameter 1 is not of type 'Blob'` even though every property read
+   * through it looks correct. A freshly constructed `File` has a
+   * genuine slot, copies the exact bytes/type/`lastModified`, and works
+   * identically whether `file` was frozen or not — nothing about
+   * constructing a NEW object touches `file`'s own mutability.
+   *
+   * A non-`Blob` object (a plain `{ name: "..." }` test mock) never
+   * faces that native-binding check, so it keeps the simpler in-place
+   * `Object.defineProperty` override instead.
    * @param {File} file
    * @param {string} sanitizedName
-   * @returns {File} `file` itself, normalized in place, or a read-through
-   *   proxy of it when the in-place override could not be applied.
+   * @returns {File} A freshly constructed `File` carrying the sanitized
+   *   name when `file` is a real `File`/`Blob`; otherwise `file` itself,
+   *   normalized in place where the override could be applied.
    */
   function _tcNormalizeAttachmentFilename(file, sanitizedName) {
     if (!file) return file;
     const rawName = file.name;
-    try { file.rawName = rawName; file.sanitizedName = sanitizedName; } catch (_) { /* frozen; the proxy below covers reads either way */ }
+    if (typeof Blob === 'function' && typeof File === 'function' && file instanceof Blob) {
+      try {
+        const normalized = new File([file], sanitizedName, {
+          type: file.type || '',
+          lastModified: typeof file.lastModified === 'number' ? file.lastModified : Date.now()
+        });
+        try { normalized.rawName = rawName; normalized.sanitizedName = sanitizedName; } catch (_) { /* a freshly constructed File is never frozen; this never actually throws */ }
+        return normalized;
+      } catch (_) { /* no working File constructor in this environment — fall through to the mock path below */ }
+    }
+    try { file.rawName = rawName; file.sanitizedName = sanitizedName; } catch (_) { /* a frozen mock keeps its raw name */ }
     if (rawName !== sanitizedName) {
       try {
         Object.defineProperty(file, 'name', { value: sanitizedName, configurable: true, enumerable: true });
-      } catch (_) { /* a frozen/non-extensible File falls through to the proxy below */ }
+      } catch (_) { /* a frozen/non-extensible mock keeps its raw name; sanitizedName above still carries the safe value */ }
     }
-    if (file.name === sanitizedName) return file;
-    // #3218 R2 BLOCKING (R-Gate R2 WARNING): `file` refused the
-    // redefine — frozen or non-extensible, which a real `File` never is,
-    // but a test's File-like stand-in can be. A 1-argument `onUpload(f)`
-    // reading `f.name` still needs the sanitized value, so wrap it in a
-    // read-through proxy rather than give up on the normalization.
-    return new Proxy(file, {
-      get(target, prop) {
-        if (prop === 'name' || prop === 'sanitizedName') return sanitizedName;
-        if (prop === 'rawName') return rawName;
-        const val = Reflect.get(target, prop, target);
-        return typeof val === 'function' ? val.bind(target) : val;
-      }
-    });
+    return file;
   }
 
   /**
@@ -4762,17 +4767,25 @@
       const types = evt && evt.dataTransfer && evt.dataTransfer.types;
       return Boolean(types) && Array.prototype.includes.call(types, 'Files');
     };
+    // #3218 R4 WARNING: the frame's PRE-EXISTING inline `pointerEvents`
+    // (almost always `''`, but not assumed) is captured before `show()`
+    // overwrites it, so `hide()` restores exactly what was there rather
+    // than blindly clobbering it back to `''`.
+    let prevFramePointerEvents = '';
     const show = () => {
       overlay.classList.remove('hidden');
       // #3218 R2 BLOCKING (R-Gate R2): the iframe itself ignores pointer
       // input for as long as a file drag is in flight, so it cannot
       // swallow the drag/drop even if the overlay's own stacking ever
       // fails to cover it.
-      if (resolvedFrame && resolvedFrame.style) resolvedFrame.style.pointerEvents = 'none';
+      if (resolvedFrame && resolvedFrame.style) {
+        prevFramePointerEvents = resolvedFrame.style.pointerEvents || '';
+        resolvedFrame.style.pointerEvents = 'none';
+      }
     };
     const hide = () => {
       overlay.classList.add('hidden');
-      if (resolvedFrame && resolvedFrame.style) resolvedFrame.style.pointerEvents = '';
+      if (resolvedFrame && resolvedFrame.style) resolvedFrame.style.pointerEvents = prevFramePointerEvents;
     };
 
     const onDragEnter = (evt) => { if (carriesFiles(evt)) show(); };
@@ -4830,6 +4843,10 @@
 
     return {
       destroy() {
+        // #3218 R4 WARNING: destroying mid-drag (e.g. the surface
+        // unmounting while a file is still hovering) must not leave the
+        // terminal iframe stuck at `pointer-events: none` forever.
+        hide();
         if (docListens && typeof doc.removeEventListener === 'function') doc.removeEventListener('dragenter', onDragEnter);
         if (typeof panelEl.removeEventListener === 'function') {
           panelEl.removeEventListener('dragover', onDragOver);

@@ -36,6 +36,14 @@ const SESSION_JS = read('session.js');
 const SW = read('sw.js');
 
 const G = loadApiHelperGlobals();
+// `vm.createContext`'s sandbox has no `Blob`/`File` of its own (they're not
+// among the handful `_api-helper-globals.js` copies in) — added here, in
+// THIS file only, rather than to that shared helper every other test using
+// it also loads, so `_tcNormalizeAttachmentFilename`'s real-File-vs-mock
+// branch (#3218 R4) is actually exercised rather than silently always
+// falling through to the mock path.
+G.Blob = Blob;
+G.File = File;
 // The server's own emitted degradation codes, read as TEXT. Requiring
 // `lib/master.js` here would pull the store and its SQLite handle into a
 // frontend test file; the codes are string literals, so reading them is honest
@@ -263,17 +271,22 @@ describe('#768 the bar behaves', () => {
     assert.equal(file.rawName, 'Screenshot 2026-11-22 at 9.15.00 PM.png', 'the original name is still recoverable from .rawName');
   });
 
-  // #3218 R2 WARNING (R-Gate R2): a real File is always extensible, so the
-  // in-place Object.defineProperty above always succeeds against one — but
-  // a frozen File-LIKE object (which a real File never is, only a test
-  // double can be) must still never throw, and a 1-argument onUpload(f)
-  // must still see the sanitized name, via a read-through proxy.
-  it('normalizes a real File in place, and never throws against a frozen File-like object — falling back to a proxy for the latter (#3218)', () => {
+  // #3218 R4 BLOCKING (R-Gate R2 WARNING, then R-Gate R3): a real File/Blob
+  // is reconstructed fresh via the Blob-copy File constructor, never
+  // mutated in place and never wrapped in a Proxy — WebIDL's native
+  // binding checks an internal [[BlobData]] slot, not JS-visible
+  // properties, so a Proxy around a File fails that check (`FileReader.
+  // readAsDataURL` throws "parameter 1 is not of type 'Blob'") even
+  // though every property read through it looks correct. The delivered
+  // file must be a genuine File — instanceof File true, bytes intact via
+  // .text() — whether or not the ORIGINAL was frozen, since reconstruction
+  // never touches the original's own mutability.
+  it('reconstructs a real File (frozen or not) fresh, with a genuine [[BlobData]] slot and the sanitized name', async () => {
     const { doc, ids } = makeDocument(['masterPanelBar']);
     withIdParsingInnerHTML(ids.masterPanelBar, doc);
-    const names = [];
+    const delivered = [];
     const bar = G.tcCreateMasterControlBar({
-      doc, rootId: 'masterPanelBar', prefix: 'masterPanel', onUpload: (f) => names.push(f.name)
+      doc, rootId: 'masterPanelBar', prefix: 'masterPanel', onUpload: (f) => delivered.push(f)
     });
     bar.mount();
     const input = doc.getElementById('masterPanelUploadInput');
@@ -281,21 +294,19 @@ describe('#768 the bar behaves', () => {
     const realFile = new File(['hello'], 'Screenshot 2026-11-22.png', { type: 'image/png' });
     input.files = [realFile];
     assert.doesNotThrow(() => input.dispatch('change'));
-    assert.equal(names[0], 'Screenshot-2026-11-22.png');
-    assert.equal(realFile.name, 'Screenshot-2026-11-22.png', 'a real File is always extensible, so it normalizes in place');
+    assert.equal(delivered[0].name, 'Screenshot-2026-11-22.png');
+    assert.equal(delivered[0] instanceof File, true, 'must be a genuine File, not a mutated original or a proxy');
+    assert.equal(await delivered[0].text(), 'hello', 'bytes must survive the reconstruction');
+    assert.equal(realFile.name, 'Screenshot 2026-11-22.png', 'the ORIGINAL is untouched — reconstruction never mutates it');
 
-    // A real File's `name` is an ACCESSOR inherited from `File.prototype`,
-    // not an own property of the instance — freezing the instance (which
-    // `Object.freeze` does to OWN properties only) leaves that accessor
-    // alone, which is exactly why the proxy below is even legal: a Proxy
-    // may not report a value for an own, non-configurable, non-writable
-    // data property that disagrees with the target's actual one (a plain
-    // frozen `{ name: '...' }` object literal would hit that invariant and
-    // throw), but an inherited accessor carries no such constraint.
-    const frozen = Object.freeze(new File(['x'], 'frozen (1).txt'));
+    // A frozen File behaves identically: reconstruction builds a NEW
+    // object, so the original's own mutability never matters.
+    const frozen = Object.freeze(new File(['world'], 'frozen (1).txt', { type: 'text/plain' }));
     input.files = [frozen];
     assert.doesNotThrow(() => input.dispatch('change'));
-    assert.equal(names[1], 'frozen-1.txt', 'a 1-arg onUpload(f) reading f.name still gets the sanitized value via the proxy');
+    assert.equal(delivered[1].name, 'frozen-1.txt');
+    assert.equal(delivered[1] instanceof File, true);
+    assert.equal(await delivered[1].text(), 'world', 'the frozen original\'s bytes still survive the reconstruction');
     assert.equal(frozen.name, 'frozen (1).txt', 'the frozen File itself is untouched — it could not have been, by definition');
   });
 
@@ -1918,6 +1929,30 @@ describe('#3218 tcBindMasterDropzone', () => {
   it('returns a destroy() that does not throw even against a DOM with no removeEventListener', () => {
     const { bind } = mountDropzone();
     assert.doesNotThrow(() => bind.destroy());
+  });
+
+  // #3218 R4 WARNING: destroying the dropzone mid-drag (the surface it's
+  // bound to unmounting while a file is still hovering over it) must not
+  // leave the terminal iframe stuck at pointer-events: none forever, and
+  // must leave the overlay hidden too.
+  it('destroy() called mid-drag restores the frame\'s pointer-events and hides the overlay', () => {
+    const { doc, ids } = makeDocument(['masterPanel', 'masterFrame']);
+    ids.masterFrame.style = {};
+    const docHandlers = captureAddEventListener(doc);
+    let overlay = null;
+    const realCreateElement = doc.createElement.bind(doc);
+    doc.createElement = (tag) => {
+      const el = realCreateElement(tag);
+      if (!overlay) overlay = el;
+      return el;
+    };
+    const bind = G.tcBindMasterDropzone({ doc, panelEl: ids.masterPanel, prefix: 'masterPanel', onUpload: () => {} });
+    docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+    assert.equal(overlay.classList.contains('hidden'), false, 'revealed mid-drag, before destroy');
+    assert.equal(ids.masterFrame.style.pointerEvents, 'none');
+    assert.doesNotThrow(() => bind.destroy());
+    assert.equal(ids.masterFrame.style.pointerEvents, '', 'restored, not left stuck at none');
+    assert.equal(overlay.classList.contains('hidden'), true, 'hidden again after destroy');
   });
 
   it('does nothing and never throws when doc/panelEl/onUpload are missing', () => {
