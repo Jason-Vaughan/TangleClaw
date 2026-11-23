@@ -21,6 +21,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -604,6 +605,100 @@ describe('lib/system-health (#345)', () => {
       assert.equal(c.state, 'unknown');
       assert.match(c.detail, /child crashed/);
     });
+
+    // #3198: the resolved node identity and TCC-socket reading, on every
+    // state — a Homebrew-upgrade-induced FDA loss and a stopped-session TCC
+    // anchor problem must be visible even on an otherwise-clear read.
+    describe('the #3198 node-identity and TCC-socket reading', () => {
+      const MANAGED = '/Users/op/.tangleclaw/bin/node';
+      const CLEAR_PROBES = { ...DARWIN, probeDir: async () => ({ entries: 1 }) };
+
+      it('reports usingManagedNode true when the resolved execPath is the owned stable path', async () => {
+        systemHealth._setProbes({
+          ...CLEAR_PROBES, execPath: () => MANAGED, realpath: (p) => p, managedNodePath: () => MANAGED,
+          tccSocketHealth: () => ({ socket: 'tangleclaw-tcc-authorized', running: true, anchorAlive: true, readable: null })
+        });
+        const c = await systemHealth.detectFullDiskAccess();
+        assert.equal(c.reading.usingManagedNode, true);
+        assert.equal(c.reading.resolvedExecPath, MANAGED);
+        assert.match(c.detail, /the owned, stable-path runtime/);
+      });
+
+      it('reports usingManagedNode false and flags the drift when node resolves through a Homebrew Cellar symlink', async () => {
+        const cellar = '/opt/homebrew/Cellar/node@22/22.22.3/bin/node';
+        systemHealth._setProbes({
+          ...CLEAR_PROBES, execPath: () => '/opt/homebrew/bin/node', realpath: () => cellar, managedNodePath: () => MANAGED,
+          tccSocketHealth: () => ({ socket: 'tangleclaw-tcc-authorized', running: false, anchorAlive: false, readable: null })
+        });
+        const c = await systemHealth.detectFullDiskAccess();
+        assert.equal(c.reading.usingManagedNode, false);
+        assert.equal(c.reading.resolvedExecPath, cellar);
+        assert.equal(c.reading.execPath, '/opt/homebrew/bin/node');
+        assert.match(c.detail, /NOT the owned stable-path runtime/);
+        assert.match(c.detail, new RegExp(cellar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      });
+
+      it('reports the TCC-authorized socket as not running, distinct from running-without-its-anchor', async () => {
+        systemHealth._setProbes({
+          ...CLEAR_PROBES, execPath: () => MANAGED, realpath: (p) => p, managedNodePath: () => MANAGED,
+          tccSocketHealth: () => ({ socket: 'tangleclaw-tcc-authorized', running: false, anchorAlive: false, readable: null })
+        });
+        const notRunning = await systemHealth.detectFullDiskAccess();
+        assert.deepEqual(notRunning.reading.tccSocket, { name: 'tangleclaw-tcc-authorized', running: false, anchorAlive: false, readable: null });
+        assert.match(notRunning.detail, /tangleclaw-tcc-authorized tmux server is not running/);
+
+        systemHealth._setProbes({
+          ...CLEAR_PROBES, execPath: () => MANAGED, realpath: (p) => p, managedNodePath: () => MANAGED,
+          tccSocketHealth: () => ({ socket: 'tangleclaw-tcc-authorized', running: true, anchorAlive: false, readable: null })
+        });
+        const noAnchor = await systemHealth.detectFullDiskAccess();
+        assert.equal(noAnchor.reading.tccSocket.anchorAlive, false);
+        assert.match(noAnchor.detail, /running but its anchor session is gone/);
+      });
+
+      it('reports readable when the socket probe carries it (a caller-supplied cwd reached probeTccServerHealth)', async () => {
+        systemHealth._setProbes({
+          ...CLEAR_PROBES, execPath: () => MANAGED, realpath: (p) => p, managedNodePath: () => MANAGED,
+          tccSocketHealth: () => ({ socket: 'tangleclaw-tcc-authorized', running: true, anchorAlive: true, readable: true })
+        });
+        const c = await systemHealth.detectFullDiskAccess();
+        assert.equal(c.reading.tccSocket.readable, true);
+      });
+
+      it('degrades resolvedExecPath to execPath, rather than failing the whole condition, when realpath throws', async () => {
+        systemHealth._setProbes({
+          ...CLEAR_PROBES, execPath: () => '/opt/homebrew/bin/node',
+          realpath: () => { throw new Error('ENOENT: no such file'); },
+          managedNodePath: () => MANAGED, tccSocketHealth: () => ({ socket: 'tangleclaw-tcc-authorized', running: false, anchorAlive: false, readable: null })
+        });
+        const c = await systemHealth.detectFullDiskAccess();
+        assert.equal(c.state, 'clear', 'an unreadable symlink is not itself an FDA failure');
+        assert.equal(c.reading.resolvedExecPath, '/opt/homebrew/bin/node');
+        assert.equal(c.reading.usingManagedNode, false);
+      });
+
+      it('degrades tccSocket to its own "nothing learned" shape, rather than failing the whole condition, when the socket probe throws', async () => {
+        systemHealth._setProbes({
+          ...CLEAR_PROBES, execPath: () => MANAGED, realpath: (p) => p, managedNodePath: () => MANAGED,
+          tccSocketHealth: () => { throw new Error('tmux not on PATH'); }
+        });
+        const c = await systemHealth.detectFullDiskAccess();
+        assert.equal(c.state, 'clear', 'a socket-probe failure is not itself an FDA failure');
+        assert.deepEqual(c.reading.tccSocket, { name: null, running: false, anchorAlive: false, readable: null });
+        assert.match(c.detail, /the TCC-authorized tmux server is not running/);
+      });
+
+      it('carries reading on a fired state too, not only clear', async () => {
+        systemHealth._setProbes({
+          ...DARWIN, probeDir: async () => { const e = new Error('refused'); e.code = 'EPERM'; throw e; },
+          execPath: () => MANAGED, realpath: (p) => p, managedNodePath: () => MANAGED,
+          tccSocketHealth: () => ({ socket: 'tangleclaw-tcc-authorized', running: true, anchorAlive: true, readable: null })
+        });
+        const c = await systemHealth.detectFullDiskAccess();
+        assert.equal(c.state, 'fired');
+        assert.equal(c.reading.usingManagedNode, true);
+      });
+    });
   });
 
   describe('getHealth', () => {
@@ -1044,5 +1139,124 @@ describe('POST /api/server/restart — non-blocking exec (#2140)', () => {
     assert.doesNotMatch(body, /execSync\(/, 'the restart exec must not block the event loop');
     assert.match(body, /require\('node:child_process'\)\.exec\(command, \{ timeout: 5000 \}/);
     assert.match(body, /if \(err\.signal === 'SIGTERM' && !err\.killed\) return;/);
+  });
+});
+
+/*
+ * #3198 — scripts/install-fda-anchor.sh, run for real against a scratch
+ * --base-dir (never the operator's own ~/.tangleclaw): the staged binary
+ * must actually RUN, not just exist, since that is the whole point — a
+ * copy that cannot execute would be caught by its own run-verification and
+ * never promoted, but these tests prove that promise from the outside.
+ */
+describe('scripts/install-fda-anchor.sh (#3198)', () => {
+  const SCRIPT = path.join(__dirname, '..', 'scripts', 'install-fda-anchor.sh');
+  let baseDir;
+
+  beforeEach(() => {
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fda-anchor-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(baseDir, { recursive: true, force: true });
+  });
+
+  function run(args) {
+    return execFileSync(SCRIPT, args, { encoding: 'utf8' });
+  }
+
+  it('is executable', () => {
+    assert.ok(fs.statSync(SCRIPT).mode & 0o111, 'scripts/install-fda-anchor.sh must be chmod +x');
+  });
+
+  it('--status on an unstaged base-dir reports staged:false and the current process node, without creating anything', () => {
+    const out = run(['--status', '--base-dir', baseDir, '--json']);
+    const status = JSON.parse(out);
+    assert.equal(status.staged, false);
+    assert.equal(status.managedNodePath, path.join(baseDir, 'bin', 'node'));
+    assert.equal(status.currentProcessVersion, process.version, 'reads the same node this test itself is running on');
+    assert.equal(fs.existsSync(path.join(baseDir, 'bin')), false, '--status must never create the staging directory');
+  });
+
+  it('--stage copies a binary that actually runs and reports the right version', () => {
+    run(['--stage', '--base-dir', baseDir]);
+    const managedNode = path.join(baseDir, 'bin', 'node');
+    assert.ok(fs.existsSync(managedNode));
+    assert.ok(fs.statSync(managedNode).mode & 0o111, 'the staged binary must be executable');
+    const version = execFileSync(managedNode, ['--version'], { encoding: 'utf8' }).trim();
+    assert.equal(version, process.version, 'the staged copy runs and reports the same version as the source it was staged from');
+  });
+
+  it('--stage writes a manifest in the exact schema #3198 asks for', () => {
+    run(['--stage', '--base-dir', baseDir]);
+    const manifest = JSON.parse(fs.readFileSync(path.join(baseDir, 'bin', 'node.manifest.json'), 'utf8'));
+    assert.equal(manifest.schema, 1);
+    assert.equal(manifest.binary.path, path.join(baseDir, 'bin', 'node'));
+    assert.match(manifest.binary.sourcePath, /node$/);
+    assert.match(manifest.binary.sourceRealpath, /node$/);
+    assert.equal(manifest.binary.version, process.version);
+    assert.match(manifest.binary.sha256, /^[0-9a-f]{64}$/);
+    assert.match(manifest.stagedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+
+  it('--status on a staged base-dir reports staged:true with the matching version and sha256', () => {
+    run(['--stage', '--base-dir', baseDir]);
+    const manifest = JSON.parse(fs.readFileSync(path.join(baseDir, 'bin', 'node.manifest.json'), 'utf8'));
+    const status = JSON.parse(run(['--status', '--base-dir', baseDir, '--json']));
+    assert.equal(status.staged, true);
+    assert.equal(status.stagedVersion, process.version);
+    assert.equal(status.stagedSha256, manifest.binary.sha256);
+  });
+
+  it('a second --stage is idempotent: same sha256, says "nothing to do", never fails', () => {
+    run(['--stage', '--base-dir', baseDir]);
+    const first = JSON.parse(fs.readFileSync(path.join(baseDir, 'bin', 'node.manifest.json'), 'utf8'));
+    const secondOut = run(['--stage', '--base-dir', baseDir]);
+    const second = JSON.parse(fs.readFileSync(path.join(baseDir, 'bin', 'node.manifest.json'), 'utf8'));
+    assert.match(secondOut, /Already staged/);
+    assert.equal(second.binary.sha256, first.binary.sha256);
+    assert.equal(second.stagedAt, first.stagedAt, 'a true no-op never rewrites the manifest');
+  });
+
+  it('re-stages (does not just report "nothing to do") when the staged binary cannot currently run', () => {
+    run(['--stage', '--base-dir', baseDir]);
+    // Simulate the staged copy having been broken independently of this
+    // script (its dylib sibling deleted, disk corruption, …) without
+    // touching the manifest, whose sha256 would otherwise still match.
+    fs.writeFileSync(path.join(baseDir, 'bin', 'node'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    const out = run(['--stage', '--base-dir', baseDir]);
+    assert.doesNotMatch(out, /Already staged/, 'a staged binary that cannot run must never be reported as fine');
+    const version = execFileSync(path.join(baseDir, 'bin', 'node'), ['--version'], { encoding: 'utf8' }).trim();
+    assert.equal(version, process.version, 'the broken copy was actually replaced, not left in place');
+  });
+
+  it('prints the one-time Operator FDA-grant instruction naming the staged path, never claiming to grant it itself', () => {
+    const out = run(['--stage', '--base-dir', baseDir]);
+    assert.match(out, /ONE-TIME OPERATOR STEP/);
+    assert.match(out, /this script never does it for you/);
+    assert.match(out, new RegExp(path.join(baseDir, 'bin', 'node').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.doesNotMatch(out, /granted|authorized Full Disk Access/i, 'never claims to have performed the grant itself');
+  });
+
+  it('--status never touches macOS TCC.db or any plist — read-only reporting only (source check)', () => {
+    const src = fs.readFileSync(SCRIPT, 'utf8');
+    // The doc header names TCC.db once, as the thing never to touch — this
+    // checks for an actual OPERATION against it (sqlite3/any command whose
+    // arguments reach it), not the mere word, which the prose above (and
+    // this very assertion) must be free to say.
+    assert.doesNotMatch(src, /\bTCC\.db\b[^\n]*(sqlite3|INSERT|UPDATE|DELETE)/i);
+    assert.doesNotMatch(src, /sqlite3[^\n]*TCC\.db/i);
+    assert.doesNotMatch(src, /PlistBuddy -c ['"]?Set/, 'PlistBuddy is used only to Print, never to Set');
+    assert.doesNotMatch(src, /Set :ProgramArguments/, 'never writes the plist it only ever reads for --status');
+  });
+
+  it('rejects an unknown flag with a non-zero exit and the usage text, mutating nothing', () => {
+    assert.throws(() => execFileSync(SCRIPT, ['--nonsense', '--base-dir', baseDir], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+    assert.equal(fs.readdirSync(baseDir).length, 0, 'an unknown flag must not stage anything');
+  });
+
+  it('--help prints usage and exits 0', () => {
+    const out = run(['--help']);
+    assert.match(out, /Usage: install-fda-anchor\.sh/);
   });
 });
