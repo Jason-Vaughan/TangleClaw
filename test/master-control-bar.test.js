@@ -36,6 +36,14 @@ const SESSION_JS = read('session.js');
 const SW = read('sw.js');
 
 const G = loadApiHelperGlobals();
+// `vm.createContext`'s sandbox has no `Blob`/`File` of its own (they're not
+// among the handful `_api-helper-globals.js` copies in) — added here, in
+// THIS file only, rather than to that shared helper every other test using
+// it also loads, so `_tcNormalizeAttachmentFilename`'s real-File-vs-mock
+// branch (#3218 R4) is actually exercised rather than silently always
+// falling through to the mock path.
+G.Blob = Blob;
+G.File = File;
 // The server's own emitted degradation codes, read as TEXT. Requiring
 // `lib/master.js` here would pull the store and its SQLite handle into a
 // frontend test file; the codes are string literals, so reading them is honest
@@ -213,6 +221,93 @@ describe('#768 the bar behaves', () => {
     input.files = [fakeFile];
     input.dispatch('change');
     assert.deepEqual(uploaded, [fakeFile], 'the chosen file must reach the handler the page supplied');
+  });
+
+  it('Upload no longer restricts the file picker to accept="image/*" (#3218)', () => {
+    const { doc, ids } = makeDocument(['masterPanelBar']);
+    withIdParsingInnerHTML(ids.masterPanelBar, doc);
+    const bar = G.tcCreateMasterControlBar({ doc, rootId: 'masterPanelBar', prefix: 'masterPanel' });
+    bar.mount();
+    const html = ids.masterPanelBar.innerHTML;
+    assert.doesNotMatch(html, /accept="image\/\*"/);
+    assert.match(html, /aria-label="Attach a file, photo, or screenshot"/);
+    assert.match(html, /title="Attach a file, photo, or screenshot for Admin-PM"/);
+  });
+
+  it('Upload hands the picked file off with its sanitized name too (#3218)', () => {
+    const { doc, ids } = makeDocument(['masterPanelBar']);
+    withIdParsingInnerHTML(ids.masterPanelBar, doc);
+    const uploaded = [];
+    const bar = G.tcCreateMasterControlBar({
+      doc, rootId: 'masterPanelBar', prefix: 'masterPanel', onUpload: (file, sanitized) => uploaded.push([file, sanitized])
+    });
+    bar.mount();
+    const input = doc.getElementById('masterPanelUploadInput');
+    input.files = [{ name: 'Screenshot 2026-11-22 at 9.15.00 PM.png' }];
+    input.dispatch('change');
+    assert.equal(uploaded.length, 1);
+    assert.equal(uploaded[0][1], 'Screenshot-2026-11-22-at-9.15.00-PM.png');
+  });
+
+  // #3218 R2 BLOCKING 2: an EXISTING 1-argument onUpload(file) caller —
+  // public/ui.js's uploadMasterAttachment(file) reads file.name directly,
+  // never the 2nd sanitizedName argument this change added — must receive
+  // the SAFE_FILENAME_RE-compliant name through that same file.name read,
+  // with no call-site change of its own.
+  it('a 1-argument onUpload(file) caller reading file.name gets the sanitized name, not the raw one (#3218)', () => {
+    const { doc, ids } = makeDocument(['masterPanelBar']);
+    withIdParsingInnerHTML(ids.masterPanelBar, doc);
+    const names = [];
+    const bar = G.tcCreateMasterControlBar({
+      doc, rootId: 'masterPanelBar', prefix: 'masterPanel', onUpload: (f) => names.push(f.name)
+    });
+    bar.mount();
+    const input = doc.getElementById('masterPanelUploadInput');
+    const file = { name: 'Screenshot 2026-11-22 at 9.15.00 PM.png' };
+    input.files = [file];
+    input.dispatch('change');
+    assert.deepEqual(names, ['Screenshot-2026-11-22-at-9.15.00-PM.png']);
+    assert.equal(file.name, 'Screenshot-2026-11-22-at-9.15.00-PM.png', 'the file object itself is normalized in place');
+    assert.equal(file.rawName, 'Screenshot 2026-11-22 at 9.15.00 PM.png', 'the original name is still recoverable from .rawName');
+  });
+
+  // #3218 R4 BLOCKING (R-Gate R2 WARNING, then R-Gate R3): a real File/Blob
+  // is reconstructed fresh via the Blob-copy File constructor, never
+  // mutated in place and never wrapped in a Proxy — WebIDL's native
+  // binding checks an internal [[BlobData]] slot, not JS-visible
+  // properties, so a Proxy around a File fails that check (`FileReader.
+  // readAsDataURL` throws "parameter 1 is not of type 'Blob'") even
+  // though every property read through it looks correct. The delivered
+  // file must be a genuine File — instanceof File true, bytes intact via
+  // .text() — whether or not the ORIGINAL was frozen, since reconstruction
+  // never touches the original's own mutability.
+  it('reconstructs a real File (frozen or not) fresh, with a genuine [[BlobData]] slot and the sanitized name', async () => {
+    const { doc, ids } = makeDocument(['masterPanelBar']);
+    withIdParsingInnerHTML(ids.masterPanelBar, doc);
+    const delivered = [];
+    const bar = G.tcCreateMasterControlBar({
+      doc, rootId: 'masterPanelBar', prefix: 'masterPanel', onUpload: (f) => delivered.push(f)
+    });
+    bar.mount();
+    const input = doc.getElementById('masterPanelUploadInput');
+
+    const realFile = new File(['hello'], 'Screenshot 2026-11-22.png', { type: 'image/png' });
+    input.files = [realFile];
+    assert.doesNotThrow(() => input.dispatch('change'));
+    assert.equal(delivered[0].name, 'Screenshot-2026-11-22.png');
+    assert.equal(delivered[0] instanceof File, true, 'must be a genuine File, not a mutated original or a proxy');
+    assert.equal(await delivered[0].text(), 'hello', 'bytes must survive the reconstruction');
+    assert.equal(realFile.name, 'Screenshot 2026-11-22.png', 'the ORIGINAL is untouched — reconstruction never mutates it');
+
+    // A frozen File behaves identically: reconstruction builds a NEW
+    // object, so the original's own mutability never matters.
+    const frozen = Object.freeze(new File(['world'], 'frozen (1).txt', { type: 'text/plain' }));
+    input.files = [frozen];
+    assert.doesNotThrow(() => input.dispatch('change'));
+    assert.equal(delivered[1].name, 'frozen-1.txt');
+    assert.equal(delivered[1] instanceof File, true);
+    assert.equal(await delivered[1].text(), 'world', 'the frozen original\'s bytes still survive the reconstruction');
+    assert.equal(frozen.name, 'frozen (1).txt', 'the frozen File itself is untouched — it could not have been, by definition');
   });
 
   it('paints the model pill from a real fetch', async () => {
@@ -1645,5 +1740,302 @@ describe('#768 the shared stylesheet is wired on both pages', () => {
     assert.deepEqual(bad, [],
       'a class the shared bar emits must be shared, in parity across both page '
       + 'sheets, or styled nowhere — never declared on exactly one page');
+  });
+});
+
+describe('#3218 tcSanitizeMasterAttachmentFilename', () => {
+  it('passes an already-safe name through unchanged', () => {
+    assert.equal(G.tcSanitizeMasterAttachmentFilename('notes.md'), 'notes.md');
+  });
+
+  it('turns a macOS screenshot name (spaces, internal dots) into a safe one', () => {
+    assert.equal(
+      G.tcSanitizeMasterAttachmentFilename('Screenshot 2026-11-22 at 9.15.00 PM.png'),
+      'Screenshot-2026-11-22-at-9.15.00-PM.png'
+    );
+  });
+
+  it('strips unicode and parentheses, collapsing the dashes they leave behind', () => {
+    assert.equal(G.tcSanitizeMasterAttachmentFilename('my notes (draft) ☕.md'), 'my-notes-draft.md');
+  });
+
+  it('caps a long name at 128 chars, preserving the extension rather than truncating it away', () => {
+    const long = `${'a'.repeat(200)}.png`;
+    const result = G.tcSanitizeMasterAttachmentFilename(long);
+    assert.equal(result.length, 128);
+    assert.ok(result.endsWith('.png'), 'the extension must survive the truncation');
+  });
+
+  it('treats an extension longer than 16 chars as not being one, sanitizing the whole name as a bare stem', () => {
+    const result = G.tcSanitizeMasterAttachmentFilename('report.notarealextension');
+    assert.equal(result, 'report.notarealextension', 'short enough as a whole name to need no truncation, and the stray dot is a safe character either way');
+  });
+
+  it('a dot-only name (rejected outright by SAFE_FILENAME_RE) becomes "attachment"', () => {
+    assert.equal(G.tcSanitizeMasterAttachmentFilename('.'), 'attachment');
+    assert.equal(G.tcSanitizeMasterAttachmentFilename('..'), 'attachment');
+    assert.equal(G.tcSanitizeMasterAttachmentFilename('...'), 'attachment');
+  });
+
+  it('an empty or missing name becomes "attachment" too', () => {
+    assert.equal(G.tcSanitizeMasterAttachmentFilename(''), 'attachment');
+    assert.equal(G.tcSanitizeMasterAttachmentFilename(undefined), 'attachment');
+  });
+
+  it('dedupes against a taken set with -2, -3, ... before the extension', () => {
+    const taken = new Set(['notes.md']);
+    const first = G.tcSanitizeMasterAttachmentFilename('notes.md', taken);
+    assert.equal(first, 'notes-2.md');
+    taken.add(first);
+    const second = G.tcSanitizeMasterAttachmentFilename('notes.md', taken);
+    assert.equal(second, 'notes-3.md');
+  });
+
+  it('never renames a name that is not actually in the taken set', () => {
+    const taken = new Set(['other.md']);
+    assert.equal(G.tcSanitizeMasterAttachmentFilename('notes.md', taken), 'notes.md');
+  });
+
+  it('every produced name clears the real SAFE_FILENAME_RE from lib/secure-clipboard.js', () => {
+    const SAFE_FILENAME_RE = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,128}$/;
+    const names = [
+      'Screenshot 2026-11-22 at 9.15.00 PM.png', 'my notes (draft) ☕.md', '.', '..', '...',
+      '', undefined, `${'a'.repeat(200)}.png`, 'report.notarealextension', '日本語ファイル.txt'
+    ];
+    for (const n of names) {
+      const result = G.tcSanitizeMasterAttachmentFilename(n);
+      assert.match(result, SAFE_FILENAME_RE, `"${n}" -> "${result}"`);
+    }
+  });
+});
+
+describe('#3218 tcBindMasterDropzone', () => {
+  /** Captures every listener a target registers, by type, without needing a real removeEventListener. */
+  function captureAddEventListener(target) {
+    const handlers = {};
+    const real = typeof target.addEventListener === 'function' ? target.addEventListener.bind(target) : null;
+    target.addEventListener = (type, fn) => {
+      (handlers[type] = handlers[type] || []).push(fn);
+      if (real) real(type, fn);
+    };
+    return handlers;
+  }
+
+  /**
+   * Mounts `tcBindMasterDropzone` with capture already installed on every
+   * target it will touch, including the overlay it creates internally —
+   * `doc.createElement` is wrapped FIRST, so the very div the bind call
+   * creates for the overlay is captured as it's made, not retroactively
+   * (which would miss listeners already attached before the wrap ran).
+   */
+  function mountDropzone(onUpload) {
+    const { doc, ids } = makeDocument(['masterPanel']);
+    const docHandlers = captureAddEventListener(doc);
+    const panelHandlers = captureAddEventListener(ids.masterPanel);
+    let overlayHandlers = null;
+    let overlay = null;
+    const realCreateElement = doc.createElement.bind(doc);
+    doc.createElement = (tag) => {
+      const el = realCreateElement(tag);
+      if (!overlayHandlers) { overlay = el; overlayHandlers = captureAddEventListener(el); }
+      return el;
+    };
+    const bind = G.tcBindMasterDropzone({ doc, panelEl: ids.masterPanel, prefix: 'masterPanel', onUpload: onUpload || (() => {}) });
+    return { doc, panel: ids.masterPanel, overlay, docHandlers, panelHandlers, overlayHandlers, bind };
+  }
+
+  it('creates a hidden overlay above the panel, mounted inside it', () => {
+    const { panel, overlay } = mountDropzone();
+    assert.ok(overlay, 'the overlay must be created');
+    assert.equal(overlay.classList.contains('hidden'), true, 'hidden until a file drag is in flight');
+    assert.ok(panel.childNodes.includes(overlay), 'the overlay mounts inside the panel');
+  });
+
+  it('dragenter carrying files on the document reveals the overlay; a non-file drag does not', () => {
+    const { overlay, docHandlers } = mountDropzone();
+    assert.ok(docHandlers.dragenter && docHandlers.dragenter.length, 'a dragenter listener must be registered on doc');
+    docHandlers.dragenter[0]({ dataTransfer: { types: ['text/plain'] } });
+    assert.equal(overlay.classList.contains('hidden'), true, 'a text-only drag must not reveal it');
+    docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+    assert.equal(overlay.classList.contains('hidden'), false, 'a file drag must reveal it');
+  });
+
+  it('drop on the overlay delivers both non-image and image files, with sanitized names, and hides the overlay', () => {
+    const uploaded = [];
+    // `file.rawName` (set by #3218 R2's own in-place normalization), not
+    // `file.name` — by the time `onUpload` runs, `file.name` has ALREADY
+    // been overwritten to the sanitized value (BLOCKING 2), so reading it
+    // here would just compare the sanitized name to itself.
+    const { docHandlers, overlayHandlers, overlay } = mountDropzone((file, sanitized) => uploaded.push([file.rawName, sanitized]));
+    docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+    assert.equal(overlay.classList.contains('hidden'), false, 'revealed before the drop');
+    let prevented = false;
+    const fileA = { name: 'notes (draft).log' };
+    const fileB = { name: 'Screenshot 2026-11-22 at 9.15.00 PM.png' };
+    overlayHandlers.drop[0]({ preventDefault: () => { prevented = true; }, dataTransfer: { files: [fileA, fileB] } });
+    assert.equal(prevented, true, 'drop must prevent the browser\'s own navigate-to-file default');
+    assert.equal(overlay.classList.contains('hidden'), true, 'hidden again once the drop is handled');
+    assert.deepEqual(uploaded, [
+      ['notes (draft).log', 'notes-draft.log'],
+      ['Screenshot 2026-11-22 at 9.15.00 PM.png', 'Screenshot-2026-11-22-at-9.15.00-PM.png']
+    ], 'both the non-image and the image file must be delivered, sanitized, never restricted to image/*');
+    assert.equal(fileA.name, 'notes-draft.log', 'file.name itself must be normalized in place, for a 1-argument onUpload(file) caller');
+    assert.equal(fileB.name, 'Screenshot-2026-11-22-at-9.15.00-PM.png');
+  });
+
+  // #3218 R2 BLOCKING 1: the same physical drop, bubbling from overlay to
+  // panelEl exactly as a real DOM drop event would (both listeners
+  // registered, overlay nested inside panelEl) — must upload each file
+  // only ONCE, not twice.
+  it('a drop on the overlay that then bubbles to panelEl (both listeners firing on the SAME event) uploads each file only once', () => {
+    const uploaded = [];
+    const { overlayHandlers, panelHandlers } = mountDropzone((file, sanitized) => uploaded.push(sanitized));
+    const evt = { preventDefault: () => {}, dataTransfer: { files: [{ name: 'once.png' }] } };
+    // A real bubble invokes the TARGET's listener first, then the
+    // ancestor's, with the identical Event object throughout.
+    overlayHandlers.drop[0](evt);
+    panelHandlers.drop[0](evt);
+    assert.deepEqual(uploaded, ['once.png'], 'exactly one upload, not two, for the one file in the one drop');
+  });
+
+  it('paste on the panel delivers both image and non-image clipboard files (clipboardData.files form)', () => {
+    const uploaded = [];
+    const { panelHandlers } = mountDropzone((file, sanitized) => uploaded.push([file.rawName, sanitized]));
+    const fileA = { name: 'log (1).txt' };
+    const fileB = { name: 'clip.png' };
+    panelHandlers.paste[0]({ clipboardData: { files: [fileA, fileB] } });
+    assert.deepEqual(uploaded, [['log (1).txt', 'log-1.txt'], ['clip.png', 'clip.png']]);
+  });
+
+  it('paste also reads clipboardData.items when .files is empty (the items.kind === "file" form)', () => {
+    const uploaded = [];
+    const { panelHandlers } = mountDropzone((file, sanitized) => uploaded.push([file.rawName, sanitized]));
+    const fileItem = { kind: 'file', getAsFile: () => ({ name: 'pasted.png' }) };
+    const textItem = { kind: 'string', getAsFile: () => null };
+    panelHandlers.paste[0]({ clipboardData: { files: [], items: [textItem, fileItem] } });
+    assert.deepEqual(uploaded, [['pasted.png', 'pasted.png']], 'only the file-kind item is delivered, the string item is not');
+  });
+
+  it('a drag leaving the panel/overlay itself hides the overlay; crossing a child inside it does not', () => {
+    const { overlay, docHandlers, panelHandlers } = mountDropzone();
+    docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+    assert.equal(overlay.classList.contains('hidden'), false);
+    panelHandlers.dragleave[0]({ target: { id: 'some-unrelated-child' } });
+    assert.equal(overlay.classList.contains('hidden'), false, 'leaving a child the drag merely crosses must not hide it');
+    panelHandlers.dragleave[0]({ target: overlay });
+    assert.equal(overlay.classList.contains('hidden'), true, 'leaving the overlay itself hides it');
+  });
+
+  it('returns a destroy() that does not throw even against a DOM with no removeEventListener', () => {
+    const { bind } = mountDropzone();
+    assert.doesNotThrow(() => bind.destroy());
+  });
+
+  // #3218 R4 WARNING: destroying the dropzone mid-drag (the surface it's
+  // bound to unmounting while a file is still hovering over it) must not
+  // leave the terminal iframe stuck at pointer-events: none forever, and
+  // must leave the overlay hidden too.
+  it('destroy() called mid-drag restores the frame\'s pointer-events and hides the overlay', () => {
+    const { doc, ids } = makeDocument(['masterPanel', 'masterFrame']);
+    ids.masterFrame.style = {};
+    const docHandlers = captureAddEventListener(doc);
+    let overlay = null;
+    const realCreateElement = doc.createElement.bind(doc);
+    doc.createElement = (tag) => {
+      const el = realCreateElement(tag);
+      if (!overlay) overlay = el;
+      return el;
+    };
+    const bind = G.tcBindMasterDropzone({ doc, panelEl: ids.masterPanel, prefix: 'masterPanel', onUpload: () => {} });
+    docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+    assert.equal(overlay.classList.contains('hidden'), false, 'revealed mid-drag, before destroy');
+    assert.equal(ids.masterFrame.style.pointerEvents, 'none');
+    assert.doesNotThrow(() => bind.destroy());
+    assert.equal(ids.masterFrame.style.pointerEvents, '', 'restored, not left stuck at none');
+    assert.equal(overlay.classList.contains('hidden'), true, 'hidden again after destroy');
+  });
+
+  // #3218 R5 BLOCKING: a real drag fires `dragenter` once, then `dragover`
+  // repeatedly for as long as it continues — `show()` must capture the
+  // frame's pre-existing pointerEvents ONLY on the hidden-to-visible
+  // transition, not re-capture it (from its OWN already-'none' value) on
+  // every subsequent dragover, or the restore on drop/destroy restores
+  // 'none' instead of what was really there before the drag started.
+  it('dragenter -> repeated dragover -> drop restores the frame\'s PRE-DRAG pointer-events, not "none" re-captured mid-drag', () => {
+    const { doc, ids } = makeDocument(['masterPanel', 'masterFrame']);
+    ids.masterFrame.style = { pointerEvents: 'auto' };
+    const docHandlers = captureAddEventListener(doc);
+    const panelHandlers = captureAddEventListener(ids.masterPanel);
+    G.tcBindMasterDropzone({ doc, panelEl: ids.masterPanel, prefix: 'masterPanel', onUpload: () => {} });
+    docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+    assert.equal(ids.masterFrame.style.pointerEvents, 'none', 'disabled after dragenter');
+    // Several dragover events, as a real drag would keep firing while it
+    // continues over the panel — each must be a no-op on the capture.
+    panelHandlers.dragover[0]({ preventDefault: () => {}, dataTransfer: { types: ['Files'] } });
+    panelHandlers.dragover[0]({ preventDefault: () => {}, dataTransfer: { types: ['Files'] } });
+    panelHandlers.dragover[0]({ preventDefault: () => {}, dataTransfer: { types: ['Files'] } });
+    assert.equal(ids.masterFrame.style.pointerEvents, 'none', 'still disabled mid-drag');
+    panelHandlers.drop[0]({ preventDefault: () => {}, dataTransfer: { files: [] } });
+    assert.equal(ids.masterFrame.style.pointerEvents, 'auto', 'restored to the PRE-DRAG value, not "none"');
+  });
+
+  it('dragenter -> repeated dragover -> destroy() restores the frame\'s PRE-DRAG pointer-events, not "none" re-captured mid-drag', () => {
+    const { doc, ids } = makeDocument(['masterPanel', 'masterFrame']);
+    ids.masterFrame.style = { pointerEvents: 'auto' };
+    const docHandlers = captureAddEventListener(doc);
+    const panelHandlers = captureAddEventListener(ids.masterPanel);
+    const bind = G.tcBindMasterDropzone({ doc, panelEl: ids.masterPanel, prefix: 'masterPanel', onUpload: () => {} });
+    docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+    panelHandlers.dragover[0]({ preventDefault: () => {}, dataTransfer: { types: ['Files'] } });
+    panelHandlers.dragover[0]({ preventDefault: () => {}, dataTransfer: { types: ['Files'] } });
+    assert.equal(ids.masterFrame.style.pointerEvents, 'none');
+    assert.doesNotThrow(() => bind.destroy());
+    assert.equal(ids.masterFrame.style.pointerEvents, 'auto', 'restored to the PRE-DRAG value, not "none"');
+  });
+
+  it('does nothing and never throws when doc/panelEl/onUpload are missing', () => {
+    assert.doesNotThrow(() => G.tcBindMasterDropzone({}));
+    assert.doesNotThrow(() => G.tcBindMasterDropzone({ doc: makeDocument([]).doc }));
+  });
+
+  // #3218 R2 BLOCKING (R-Gate R2): the dashboard surface (#masterPanel +
+  // #masterFrame) — neither has its own `position` rule in production, so
+  // the overlay's `position: absolute; inset: 0` must get one from here,
+  // and the iframe itself must go pointer-events: none while a drag is
+  // live, not just rely on the overlay's z-index.
+  it('dashboard surface: positions the unpositioned panel, and disables/restores the frame\'s pointer-events across show/hide', () => {
+    const { doc, ids } = makeDocument(['masterPanel', 'masterFrame']);
+    ids.masterPanel.style = {};
+    ids.masterFrame.style = {};
+    const docHandlers = captureAddEventListener(doc);
+    const panelHandlers = captureAddEventListener(ids.masterPanel);
+    G.tcBindMasterDropzone({ doc, panelEl: ids.masterPanel, prefix: 'masterPanel', onUpload: () => {} });
+    assert.equal(ids.masterPanel.style.position, 'relative', 'the panel must become a positioned containing block');
+    docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+    assert.equal(ids.masterFrame.style.pointerEvents, 'none', 'the iframe must stop intercepting pointer input while a drag is live');
+    panelHandlers.drop[0]({ preventDefault: () => {}, dataTransfer: { files: [] } });
+    assert.equal(ids.masterFrame.style.pointerEvents, '', 'restored once the drop is handled (even an empty one)');
+  });
+
+  // The drawer surface (#masterDrawer + its #masterDrawerFrameWrap +
+  // #masterDrawerFrame) is the OTHER shape: #masterDrawer is already
+  // `position: fixed` via its own stylesheet rule and must be left alone,
+  // while the frame's actual parent (the wrap, not the drawer itself) is
+  // the one that needs the fix.
+  it('drawer surface: leaves an already-positioned panel alone, positions the frame\'s real (non-panel) parent, and still toggles pointer-events', () => {
+    const { doc, ids } = makeDocument(['masterDrawer', 'masterDrawerFrameWrap', 'masterDrawerFrame']);
+    ids.masterDrawer.style = { position: 'fixed' };
+    ids.masterDrawerFrameWrap.style = {};
+    ids.masterDrawerFrame.style = {};
+    ids.masterDrawerFrameWrap.appendChild(ids.masterDrawerFrame);
+    const docHandlers = captureAddEventListener(doc);
+    const panelHandlers = captureAddEventListener(ids.masterDrawer);
+    G.tcBindMasterDropzone({ doc, panelEl: ids.masterDrawer, prefix: 'masterDrawer', onUpload: () => {} });
+    assert.equal(ids.masterDrawer.style.position, 'fixed', 'already positioned via its own stylesheet rule — must not be downgraded to relative');
+    assert.equal(ids.masterDrawerFrameWrap.style.position, 'relative', 'the frame\'s REAL parent (not the panel) is what needed the fix');
+    docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+    assert.equal(ids.masterDrawerFrame.style.pointerEvents, 'none');
+    panelHandlers.drop[0]({ preventDefault: () => {}, dataTransfer: { files: [] } });
+    assert.equal(ids.masterDrawerFrame.style.pointerEvents, '');
   });
 });
