@@ -599,10 +599,18 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
           ${liftDeclaration(js, 'function _masterTurnNoReplyMs(')}
           ${liftDeclaration(js, 'function _clearMasterTurnTimers(')}
           ${liftDeclaration(js, 'function _retireOldestMasterTurn(')}
+          ${liftDeclaration(js, 'function _armMasterSettleTimer(')}
+          ${liftDeclaration(js, 'function _armMasterNoReplyTimer(')}
           ${liftDeclaration(js, 'function _masterTerminalLineDelta(')}
-          const MASTER_TERMINAL_PROMPT_PREFIX = /^(?:.*?(?:Admin-PM|tangleclaw-master)\\s*[:>$❯#]|[\\s>$❯#%]+)\\s*/i;
+          const MASTER_TERMINAL_PROMPT_PREFIX = /^(?:.*?(?:Admin-PM|tangleclaw-master)\\s*[:>$❯›#]|[\\s>$❯›#%]+)\\s*/i;
           ${liftDeclaration(js, 'function isMasterTerminalEchoLine(')}
           ${liftDeclaration(js, 'function _isMasterPromptLine(')}
+          const MASTER_ENGINE_BUSY_SUBSTRINGS = ['esc to interrupt', 'esc to cancel'];
+          const MASTER_ENGINE_BUSY_EXACT_LINES = ['Working', 'Thinking'];
+          ${liftDeclaration(js, 'function _isMasterEngineIdleMarkerLine(')}
+          ${liftDeclaration(js, 'function _isMasterEngineBusy(')}
+          ${liftDeclaration(js, 'function _isMasterEngineIdle(')}
+          ${liftDeclaration(js, 'function _isMasterChromeLine(')}
           ${liftDeclaration(js, 'function _partitionMasterTerminalDelta(')}
           ${liftDeclaration(js, 'function syncMasterAssistantTurnsFromTerminal(')}
           ${liftDeclaration(js, 'function _dispatchNextQueuedMasterSend(')}
@@ -1027,6 +1035,13 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
           const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
           assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply-starting',
             'the trailing prompt line itself is never rendered as part of the reply');
+
+          // Resolve "second" too, so nothing is left dangling: its own
+          // no-reply timer was armed at this test's (deliberately long)
+          // override and would otherwise sit pending for the rest of the
+          // suite's run.
+          term.setLines(['$ ', 'first', 'first-reply-starting', '$ ', 'second', 'second-reply', '$ ']);
+          term.fireWrite();
         } finally {
           globalThis.TC_MASTER_TURN_SETTLE_MS = savedSettle;
           globalThis.TC_MASTER_TURN_NO_REPLY_MS = savedNoReply;
@@ -1048,13 +1063,19 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
           input.value = 'second';
           await sandbox.sendMasterChatMessage();
 
-          term.setLines(['$ ', 'first', 'Thinking']);
+          // Streamed chunk text deliberately avoids the bare words
+          // "Working"/"Thinking" -- those are Codex's OWN exact busy
+          // markers now (#3218 R-Gate R9), and a reply chunk that happened
+          // to BE one of those words alone would make _isMasterEngineBusy
+          // see it as busy forever, as real as that edge case is for an
+          // actual reply.
+          term.setLines(['$ ', 'first', 'Pondering']);
           term.fireWrite();
           assert.deepEqual(term.pasted, ['first\r']);
 
           // A pause between streamed chunks -- still generating.
           await new Promise((r) => setTimeout(r, 20));
-          term.setLines(['$ ', 'first', 'Thinking', 'still working']);
+          term.setLines(['$ ', 'first', 'Pondering', 'still working on it']);
           term.fireWrite();
           assert.deepEqual(term.pasted, ['first\r'], 'a second chunk after a pause must not have retired the turn');
 
@@ -1063,17 +1084,143 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
           assert.deepEqual(term.pasted, ['first\r'], 'quiet time passing alone must never retire mid-stream');
 
           // It finally completes and returns to the prompt.
-          term.setLines(['$ ', 'first', 'Thinking', 'still working', '$ ']);
+          term.setLines(['$ ', 'first', 'Pondering', 'still working on it', '$ ']);
           term.fireWrite();
           assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'the prompt returning retires the turn for real');
 
           const stream = doc.getElementById('masterChatStream');
           const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
-          assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'Thinking\nstill working');
+          assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'Pondering\nstill working on it');
+
+          // Resolve "second" too, so nothing is left dangling: its own
+          // no-reply timer was armed at this test's (deliberately long)
+          // override and would otherwise sit pending for the rest of the
+          // suite's run.
+          term.setLines(['$ ', 'first', 'Pondering', 'still working on it', '$ ', 'second', 'second-reply', '$ ']);
+          term.fireWrite();
         } finally {
           globalThis.TC_MASTER_TURN_SETTLE_MS = savedSettle;
           globalThis.TC_MASTER_TURN_NO_REPLY_MS = savedNoReply;
         }
+      });
+
+      // #3218 R-Gate R9 BLOCKING 1 — PRR-A's exact named repro: real
+      // xterm usage MUTATES the SAME row the idle prompt occupied when
+      // input is pasted into it (before = ['$'] becomes part of
+      // now = ['$ first', …], never a separate new row), so once the
+      // reply finishes and a FRESH trailing '$' row appears,
+      // _masterTerminalLineDelta's multiset count silently consumes it as
+      // "the same '$' already in before" — R8's bucket-based check could
+      // never see a prompt line that never reached the bucket at all.
+      // Checking the CURRENT SNAPSHOT's own tail directly (not the
+      // partitioned delta) is what actually fixes it.
+      it('q) positional idle return: before=["$"] -> now=["$ first","first-reply","$"] retires immediately, not via the fallback timer', async () => {
+        const term = makeFakeTerm(['$']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'first';
+        await sandbox.sendMasterChatMessage();
+        input.value = 'second';
+        await sandbox.sendMasterChatMessage();
+        assert.deepEqual(term.pasted, ['first\r'], 'second is still queued');
+
+        // The SAME row "$" occupied gets overwritten with the echo, and a
+        // NEW trailing "$" appears once the reply finishes -- not a second
+        // copy of the ORIGINAL row.
+        term.setLines(['$ first', 'first-reply', '$']);
+        term.fireWrite();
+        assert.deepEqual(term.pasted, ['first\r', 'second\r'],
+          'retires on this VERY sync call -- the multiset delta consuming the trailing "$" must not hide it from the positional check');
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply');
+
+        term.setLines(['$ first', 'first-reply', '$ second', 'second-reply', '$']);
+        term.fireWrite();
+        const laterTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(laterTurns.length, 2);
+        assert.equal(laterTurns[1].querySelector('.v6-conversation-content').text, 'second-reply');
+      });
+
+      // #3218 R-Gate R9 BLOCKING 2 — real engine-TUI busy/idle pane
+      // shapes, measured in test/_wake-fixtures.js (shared with the wake
+      // gates — the exact bytes are the point, per that file's own doc
+      // comment). Claude and antigravity/Gemini-CLI both keep rendering
+      // their own bare prompt glyph throughout generation, so a busy pane
+      // must NOT retire just because SOMETHING looks like an idle prompt.
+      describe('real engine-TUI busy/idle pane shapes (#3218 R-Gate R9 BLOCKING 2)', () => {
+        const {
+          IDLE_PANE, BUSY_PANE, AG_IDLE_PANE, AG_BUSY_PANE, CX_IDLE_PANE, CX_BUSY_PANE, CX_THINKING_PANE
+        } = require('./_wake-fixtures');
+
+        /** Sends "first"+"second", fires `pane` as the FIRST (and only, unless `pane2` given) write, and reports whether "second" was ever dispatched. */
+        async function probeBusyIdle(pane, pane2) {
+          const term = makeFakeTerm(['$ ']);
+          const { doc, sandbox } = mountChatWorkspace(term);
+          const input = doc.getElementById('masterChatInput');
+          input.value = 'first';
+          await sandbox.sendMasterChatMessage();
+          input.value = 'second';
+          await sandbox.sendMasterChatMessage();
+          term.setLines(pane.slice());
+          term.fireWrite();
+          if (pane2) { term.setLines(pane2.slice()); term.fireWrite(); }
+          const dispatchedSecond = term.pasted.length > 1;
+
+          // A "does not retire" probe deliberately leaves the busy fixture
+          // showing forever -- without this drain, the no-reply/settle
+          // timer armed for it would recurse (busy -> re-arm) indefinitely,
+          // hanging the suite rather than merely slowing it down. Feeds a
+          // few genuinely-new, unambiguously idle snapshots so whichever
+          // turn(s) are still pending (one or both of "first"/"second")
+          // resolve before this probe returns.
+          term.setLines(['$ ', 'first', 'first-reply', '$ ']);
+          term.fireWrite();
+          term.setLines(['$ ', 'first', 'first-reply', '$ ', 'second', 'second-reply', '$ ', 'drain']);
+          term.fireWrite();
+          term.setLines(['$ ', 'first', 'first-reply', '$ ', 'second', 'second-reply', '$ ', 'drain', '$ ']);
+          term.fireWrite();
+
+          return dispatchedSecond;
+        }
+
+        it('a busy Claude pane does not retire', async () => {
+          assert.equal(await probeBusyIdle(BUSY_PANE), false, 'esc to interrupt is present -- must not dispatch "second" yet');
+        });
+
+        it('an idle Claude pane (bare prompt, no busy marker) retires', async () => {
+          assert.equal(await probeBusyIdle(IDLE_PANE), true);
+        });
+
+        it('a busy antigravity/Gemini-CLI pane does not retire', async () => {
+          assert.equal(await probeBusyIdle(AG_BUSY_PANE), false, 'esc to cancel is present -- must not dispatch "second" yet');
+        });
+
+        it('an idle antigravity/Gemini-CLI pane ("? for shortcuts") retires', async () => {
+          assert.equal(await probeBusyIdle(AG_IDLE_PANE), true);
+        });
+
+        it('a busy Codex pane ("Working" run-state) does not retire', async () => {
+          assert.equal(await probeBusyIdle(CX_BUSY_PANE), false, '"Working" is present -- must not dispatch "second" yet');
+        });
+
+        it('a Codex "Thinking" run-state does not retire either', async () => {
+          assert.equal(await probeBusyIdle(CX_THINKING_PANE), false);
+        });
+
+        it('an idle Codex pane ("Ready" run-state) retires', async () => {
+          assert.equal(await probeBusyIdle(CX_IDLE_PANE), true);
+        });
+
+        it('transitioning a busy Codex pane to its idle pane retires exactly then, not before', async () => {
+          assert.equal(await probeBusyIdle(CX_BUSY_PANE, CX_IDLE_PANE), true);
+        });
+
+        it('transitioning a busy Claude pane to its idle pane retires exactly then, not before', async () => {
+          assert.equal(await probeBusyIdle(BUSY_PANE, IDLE_PANE), true);
+        });
       });
     });
   });
