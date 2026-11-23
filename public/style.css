@@ -5017,6 +5017,12 @@ p.v6-history-secret {
 }
 [data-theme="light"] .v6-chat-offline-hero-diagnostic {
   background: rgba(248, 81, 73, 0.08);
+  /* R2 (PRRB-R1-V659-W1C-PR3226-7E4624B5-REVISE BLOCKING 2): the dark
+     theme's #f85149 text composites to ~3.04:1 against this light
+     background (rgba(248,81,73,0.08) over #FFFFFF card-bg ≈ #fef1f0),
+     below the 4.5:1 WCAG AA floor for normal text. #b42318 clears it at
+     ~5.97:1 against that same composited background. */
+  color: #b42318;
 }
 .v6-chat-live-turns:empty {
   display: none;

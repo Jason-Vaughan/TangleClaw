@@ -1158,11 +1158,33 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       store.getDb().prepare(
         "INSERT INTO sessions (project_id, engine_id, status, session_mode, started_at) VALUES (?, 'claude', 'stopped', 'webui', datetime('now'))"
       ).run(projectId);
-      await send('PATCH', `/api/projects/${encodeURIComponent('e2e-3205-repair-then-launch')}`, { body: { name: 'e2e-3205-repair-then-launch-fixed' } });
+      // Repair BOTH the name and the engine in one save, so this proves more
+      // than a rename survived — a broken engine choice is exactly the kind
+      // of "misconfigured session" #3205 exists to let the operator fix
+      // offline.
+      const patchRes = await send('PATCH', `/api/projects/${encodeURIComponent('e2e-3205-repair-then-launch')}`, { body: { name: 'e2e-3205-repair-then-launch-fixed', engine: 'codex' } });
+      assert.equal(patchRes.statusCode, 200, patchRes.body);
       const res = await send('GET', '/api/projects');
       const rows = json(res).projects || json(res);
       const row = (Array.isArray(rows) ? rows : []).find((p) => p.name === 'e2e-3205-repair-then-launch-fixed');
       assert.ok(row, 'the renamed/repaired project must be the one GET /api/projects now reports — nothing resolves the stale name anymore');
+      assert.equal(row.engine.id, 'codex', 'the repaired engine must be the one GET /api/projects now reports too');
+      // R2 (PRRB-R1-V659-W1C-PR3226-7E4624B5-REVISE BLOCKING 1): prove a
+      // SUBSEQUENT LAUNCH would use the repaired config, not just that a
+      // read API reports it. `lib/sessions.js#launchSession`'s own first
+      // line is `store.projects.getByName(projectName)` -- calling that
+      // exact resolution step directly (rather than the full POST
+      // /api/sessions/:project route, which would go on to actually spawn
+      // a real tmux/engine process this sandbox has neither configured nor
+      // meant to exercise from a CSS/E2E car) is the proportionate way to
+      // prove the launch path's own config resolution, without dragging in
+      // the launch-stubbing harness (fake engine detection, a fake tmux
+      // binary on PATH) that belongs to lib/sessions.js's own test
+      // coverage, not this file's.
+      const resolved = store.projects.getByName('e2e-3205-repair-then-launch-fixed');
+      assert.ok(resolved, 'launchSession\'s own first resolution step must find the project under its new name');
+      assert.equal(resolved.engineId, 'codex', 'and it must read the repaired engine, not the broken one the session was stuck on');
+      assert.equal(store.projects.getByName('e2e-3205-repair-then-launch'), null, 'the stale old name must resolve to nothing, so a launch can never silently target it');
     });
   });
 });
@@ -1306,6 +1328,50 @@ describe('Car V659-W1-C: offline startup hero and sidebar session-actions/status
     assert.match(rule, /overflow-wrap: anywhere;/, 'a long diagnostic message must wrap rather than overflow');
   });
 
+  /**
+   * WCAG relative luminance of an `#rrggbb` colour — the same algorithm
+   * test/theme-contrast.test.js's own `luminance()` uses, duplicated here
+   * rather than imported since that file exports nothing.
+   * @param {string} hex
+   * @returns {number}
+   */
+  function luminance(hex) {
+    const h = hex.replace('#', '');
+    const channels = (h.match(/../g) || []).map((pair) => {
+      const v = parseInt(pair, 16) / 255;
+      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  }
+
+  /** WCAG contrast ratio between two `#rrggbb` colours. */
+  function contrastRatio(a, b) {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  }
+
+  it('R2 (BLOCKING 2): the light-theme diagnostic text clears WCAG AA 4.5:1 against its own composited background', () => {
+    // [data-theme="light"] .v6-chat-offline-hero-diagnostic sits on
+    // .v6-chat-offline-hero-card's background (--v6-surface, #FFFFFF in
+    // the light theme) tinted by its own `background: rgba(248, 81, 73,
+    // 0.08)` -- composited by hand here (alpha-blend over the card's
+    // white) since this mini-DOM has no real rendering to read a computed
+    // background from. #fef1f0 is that composite, confirmed against the
+    // exact rgba() this file's own light-theme rule declares.
+    const lightRule = css.slice(css.indexOf('[data-theme="light"] .v6-chat-offline-hero-diagnostic'));
+    const bgMatch = /background: rgba\((\d+), (\d+), (\d+), ([\d.]+)\)/.exec(lightRule);
+    const colorMatch = /\n\s*color: (#[0-9a-fA-F]{6});/.exec(lightRule);
+    assert.ok(bgMatch && colorMatch, 'both the tinted background and the overriding text color must be declared together');
+    const [, r, g, b, alpha] = bgMatch;
+    const a = Number(alpha);
+    const composite = (fg, bgChannel) => Math.round(bgChannel * (1 - a) + fg * a);
+    const compositedBg = [composite(Number(r), 255), composite(Number(g), 255), composite(Number(b), 255)]
+      .map((n) => n.toString(16).padStart(2, '0')).join('');
+    assert.equal(`#${compositedBg}`, '#fef1f0', 'sanity check: the composite must match the ratio this fix was computed against');
+    const ratio = contrastRatio(colorMatch[1], `#${compositedBg}`);
+    assert.ok(ratio >= 4.5, `expected >= 4.5:1, got ${ratio.toFixed(2)}:1 for ${colorMatch[1]} on #${compositedBg}`);
+  });
+
   it('gives the offline conversation history viewer its own visually separated bar', () => {
     assert.match(body('.v6-chat-offline-history-bar'), /border-top: 1px dashed var\(--v6-outline, #3d444d\);/);
   });
@@ -1332,5 +1398,106 @@ describe('Car V659-W1-C: offline startup hero and sidebar session-actions/status
   it('preserves the pre-existing sidebar member/status rules this sprint must not disturb', () => {
     assert.match(body('.v6-shell-member-link.is-starting,\n.v6-shell-member-link.is-wrapping'), /color: #d4a72c;/);
     assert.match(body('.v6-member-ai-status.is-outage'), /border-color: #f85149;\s*color: #f85149;/);
+  });
+});
+
+/**
+ * R2 (PRRB-R1-V659-W1C-PR3226-7E4624B5-REVISE BLOCKING 1): mounted-DOM
+ * fixture coverage for the 4 required states. These are NOT public/v6-
+ * shell.js's own markup — no Builder car owns that this sprint (Car
+ * V659-W2-B lands #3205's real sidebar markup once Car V659-W1-B
+ * merges, per the PM's own R1 reply) — they are hand-built fixtures
+ * using the exact class vocabulary #3203/#3205 specify, so this file
+ * can verify the CSS classes apply correctly, each state's own
+ * structure is distinct, and the interaction wiring the real markup
+ * will need (click -> callback) is at least coherent against that
+ * vocabulary. This is a contract/fixture test, not a test of real
+ * production code; it is marked as such throughout rather than implied
+ * to be more.
+ */
+describe('Car V659-W1-C: mounted-DOM fixture coverage for the 4 offline/recovery states (#3203, #3205)', () => {
+  /** A minimal mounted `doc`/`root` this file's other describes already use, with no live server involved — pure DOM fixture mounting. */
+  function mountFixture(html) {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    root.innerHTML = html;
+    return { doc, root };
+  }
+
+  it('fixture: stopped — the hero card shows Start/View History/Edit Properties, no spinner or diagnostic', () => {
+    const { doc, root } = mountFixture(`
+      <div id="v6ChatOfflineHero" class="v6-chat-offline-hero">
+        <div class="v6-chat-offline-hero-card">
+          <h3 id="v6OfflineHeroTitle" class="v6-chat-offline-hero-title">Session offline</h3>
+          <p class="v6-chat-offline-hero-subtitle">Start it to resume the conversation.</p>
+          <div class="v6-chat-offline-hero-actions">
+            <button type="button" id="v6OfflineStart" class="btn btn-primary">▶ Start Session</button>
+            <button type="button" id="v6OfflineHistory" class="btn btn-secondary">🕓 View Previous Conversation</button>
+            <button type="button" id="v6OfflineEditProps" class="btn btn-secondary">⚙ Edit Session Properties</button>
+          </div>
+        </div>
+      </div>`);
+    assert.doesNotMatch(root.innerHTML, /is-starting/, 'stopped is not starting');
+    assert.doesNotMatch(root.innerHTML, /v6-chat-offline-hero-diagnostic/, 'stopped has no failure diagnostic');
+    let started = false;
+    doc.getElementById('v6OfflineStart').addEventListener('click', () => { started = true; });
+    doc.getElementById('v6OfflineStart').dispatch('click');
+    assert.equal(started, true, 'the Start Session action must be wireable to a click');
+  });
+
+  it('fixture: starting — the hero card carries is-starting on the title for the animated spinner, actions disabled', () => {
+    const { doc, root } = mountFixture(`
+      <div id="v6ChatOfflineHero" class="v6-chat-offline-hero is-starting">
+        <div class="v6-chat-offline-hero-card">
+          <h3 id="v6OfflineHeroTitle" class="v6-chat-offline-hero-title">Starting session…</h3>
+          <div class="v6-chat-offline-hero-actions">
+            <button type="button" id="v6OfflineStart" class="btn btn-primary" disabled>▶ Start Session</button>
+          </div>
+        </div>
+      </div>`);
+    assert.match(root.innerHTML, /class="v6-chat-offline-hero is-starting"/, 'is-starting must be on the outer hero, where the CSS spinner selector targets it');
+    assert.match(root.innerHTML, /id="v6OfflineStart"[^>]*disabled/, 'Start must be disabled while already starting, not re-clickable');
+  });
+
+  it('fixture: failed — the diagnostic box shows with Retry & Edit Properties actions', () => {
+    const { doc, root } = mountFixture(`
+      <div id="v6ChatOfflineHero" class="v6-chat-offline-hero">
+        <div class="v6-chat-offline-hero-card">
+          <h3 class="v6-chat-offline-hero-title">Launch failed</h3>
+          <div class="v6-chat-offline-hero-diagnostic" role="alert">ENGINE_BINARY_MISSING: codex is not installed.</div>
+          <div class="v6-chat-offline-hero-actions">
+            <button type="button" id="v6OfflineRetry" class="btn btn-primary">↻ Retry</button>
+            <button type="button" id="v6OfflineEditProps" class="btn btn-secondary">⚙ Edit Session Properties</button>
+          </div>
+        </div>
+      </div>`);
+    assert.match(root.innerHTML, /v6-chat-offline-hero-diagnostic" role="alert">ENGINE_BINARY_MISSING/, 'the diagnostic must actually name the failure category, not a generic message');
+    let retried = false;
+    doc.getElementById('v6OfflineRetry').addEventListener('click', () => { retried = true; });
+    doc.getElementById('v6OfflineRetry').dispatch('click');
+    assert.equal(retried, true, 'Retry must be wireable to a click');
+  });
+
+  it('fixture: offline history + sidebar actions — the history bar and per-row Rename/Edit/Start controls with an offline status pill', () => {
+    const { doc, root } = mountFixture(`
+      <div class="v6-chat-offline-history-bar">Showing 4 earlier turns while the session is offline.</div>
+      <li class="v6-shell-member">
+        <span class="v6-status-pill--offline">offline</span>
+        <div class="v6-tree-member-actions">
+          <button type="button" id="v6ActRename" class="v6-tree-action-btn" title="Rename">✎</button>
+          <button type="button" id="v6ActEditProps" class="v6-tree-action-btn" title="Edit Session Properties">⚙</button>
+          <button type="button" id="v6ActStart" class="v6-tree-action-btn" title="Start">▶</button>
+        </div>
+      </li>`);
+    assert.match(root.innerHTML, /class="v6-status-pill--offline">offline</);
+    const wired = ['v6ActRename', 'v6ActEditProps', 'v6ActStart'].map((id) => {
+      let fired = false;
+      doc.getElementById(id).addEventListener('click', () => { fired = true; });
+      doc.getElementById(id).dispatch('click');
+      return fired;
+    });
+    assert.deepEqual(wired, [true, true, true], 'all three per-row actions must be independently wireable');
   });
 });
