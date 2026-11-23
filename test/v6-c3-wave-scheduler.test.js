@@ -489,6 +489,10 @@ describe('planParallelWaveShards', () => {
     throwsCode(() => planParallelWaveShards({}), 'ISSUES_REQUIRED');
     throwsCode(() => planParallelWaveShards({ issues: [{ id: 'a', fileScope: ['x.js'] }], builderLanes: [] }), 'BUILDER_LANES_REQUIRED');
     throwsCode(() => planParallelWaveShards({ issues: [{ id: 'a', fileScope: ['x.js'] }], builderLanes: ['TC-Lane-A', 'TC-Lane-A'] }), 'BUILDER_LANES_DUPLICATE');
+    // #3213 R-Gate R3 BLOCKING 1 — a single malformed entry.
+    for (const malformed of [[''], [null], [{}]]) {
+      throwsCode(() => planParallelWaveShards({ issues: [{ id: 'a', fileScope: ['x.js'] }], builderLanes: malformed }), 'BUILDER_LANES_INVALID');
+    }
     throwsCode(() => planParallelWaveShards({ issues: [{ fileScope: ['x.js'] }] }), 'ISSUE_ID_REQUIRED');
     throwsCode(() => planParallelWaveShards({ issues: [{ id: 'a', fileScope: [] }] }), 'ISSUE_FILE_SCOPE_REQUIRED');
     throwsCode(() => planParallelWaveShards({ issues: [{ id: 'a' }] }), 'ISSUE_FILE_SCOPE_REQUIRED');
@@ -649,6 +653,17 @@ describe('validateParallelWavePlan', () => {
     const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
     throwsCode(() => validateParallelWavePlan({ cars, builderLanes: ['TC-Lane-A', 'TC-Lane-A'] }), 'BUILDER_LANES_DUPLICATE');
   });
+
+  // #3213 R-Gate R3 BLOCKING 1 — a single malformed entry passes both
+  // BUILDER_LANES_REQUIRED (a 1-element array is non-empty) and
+  // BUILDER_LANES_DUPLICATE (a 1-element array has no duplicates by
+  // construction) — only a per-entry type/shape check can catch it.
+  for (const malformed of [[''], [null], [{}]]) {
+    it(`rejects builderLanes: ${JSON.stringify(malformed)} as malformed, not a valid single lane`, () => {
+      const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
+      throwsCode(() => validateParallelWavePlan({ cars, builderLanes: malformed }), 'BUILDER_LANES_INVALID');
+    });
+  }
 });
 
 describe('WaveScheduler#createRun — optional parallel-sharding enforcement (metadata.enforceParallelSharding)', () => {
@@ -719,4 +734,18 @@ describe('WaveScheduler#createRun — optional parallel-sharding enforcement (me
     }), 'BUILDER_LANES_REQUIRED');
     assert.deepEqual(store.read().runs, {}, 'a run with malformed builderLanes must never be persisted');
   });
+
+  // #3213 R-Gate R3 BLOCKING 1 — a single malformed metadata.builderLanes
+  // entry, through createRun's own enforcement path.
+  for (const malformed of [[''], [null], [{}]]) {
+    it(`rejects metadata.builderLanes: ${JSON.stringify(malformed)} through createRun, not just a bare-array shape check`, () => {
+      const { scheduler, store } = setup();
+      throwsCode(() => scheduler.createRun({
+        id: 'r', fleetId: 'f',
+        cars: [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }],
+        metadata: { enforceParallelSharding: true, builderLanes: malformed }
+      }), 'BUILDER_LANES_INVALID');
+      assert.deepEqual(store.read().runs, {}, 'a run with a malformed builderLanes entry must never be persisted');
+    });
+  }
 });
