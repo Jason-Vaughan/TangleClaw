@@ -5181,7 +5181,12 @@ p.v6-history-secret {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #f85149;
+  /* #3207 R2 BLOCKING 1: #f85149 measures 3.35:1 on the light theme's
+     white card, below the 4.5:1 WCAG AA floor — var(--danger) is
+     already theme-aware (dark: #EF5350, 5.57:1 on --card-bg; light:
+     #8f3230, 7.87:1 on white), the same token .v6-usage-status.is-error
+     already uses for an identical error-text case. */
+  color: var(--danger);
 }
 .v6-loading-retry-btn {
   padding: 2px 8px;
@@ -6346,8 +6351,21 @@ p.v6-history-secret {
   border: 1px solid var(--border-color, #2a2f36);
 }
 .v6-usage-source-badge--probed {
+  /* #3209 R2 BLOCKING 1: #56d364 is fine on a dark card (10.09:1 on
+     --card-bg) but measures only 1.93:1 on the light theme's white
+     card — nowhere near the 4.5:1 floor. No existing theme-aware
+     "success green" token exists in :root/[data-theme="light"] (unlike
+     var(--danger)), so this is a dedicated light-theme override rather
+     than a new global variable — scoped no wider than this one badge,
+     which is all #3209 asked for. */
   color: #56d364;
   border-color: #56d364;
+}
+[data-theme="light"] .v6-usage-source-badge--probed {
+  /* #1a7f37: 5.08:1 on white, clears the floor; the dark value above is
+     untouched since this selector only applies under the light theme. */
+  color: #1a7f37;
+  border-color: #1a7f37;
 }
 .v6-usage-last-probed {
   margin-left: auto;
@@ -6422,7 +6440,10 @@ p.v6-history-secret {
 }
 .v6-usage-degraded-note {
   margin: 4px 0 0;
-  color: #f85149;
+  /* #3209 R2 BLOCKING 1: same WCAG fix as .v6-loading-error above —
+     #f85149 fails 4.5:1 on the light theme's white card (3.35:1);
+     var(--danger) is theme-aware and clears it in both themes. */
+  color: var(--danger);
   font-size: 0.85em;
 }
 
