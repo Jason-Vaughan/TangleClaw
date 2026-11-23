@@ -960,6 +960,15 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 77, scrollHeight: 1000, clientHeight: 400 });
       doc.getElementById('v6ChatStream').dispatch('scroll');
       assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'unpinned by the scroll above');
+      // lib/projects.js refuses a rename outright ("Cannot rename while a
+      // session is active") whenever store.sessions.getActive(project.id)
+      // finds a row -- realistic: a real operator renames a project once
+      // its session has ended, not mid-conversation. The conversation view
+      // itself (and the pin/unpin exercised above) needs no ACTIVE session,
+      // only the recorded events already posted, so ending the session here
+      // -- after exercising the live view, before submitting the rename --
+      // models that real sequence rather than fighting the business rule.
+      store.getDb().prepare("UPDATE sessions SET status = 'ended' WHERE id = ?").run(sessionId);
       doc.getElementById(`v6TreeRename-${idSuffix}`).dispatch('click');
       const input = doc.getElementById(`v6TreeRenameInput-${idSuffix}`);
       assert.ok(input, 'the rename input must be mounted once the form is open');
@@ -967,6 +976,28 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       input.dispatch('input');
       doc.getElementById(`v6TreeRenameForm-${idSuffix}`).dispatch('submit');
       await settle();
+      // R4 (PRRA-R1-V658-W1C-PR3220-ADEC703B-REVISE): prove the rename
+      // actually succeeded before trusting the pin/scrollTop assertions
+      // below — the real id is `v6TreeRenameForm-${idSuffix}`, not the
+      // bare `v6TreeRenameForm` the dispatch suggested (that id is never
+      // rendered; every row's form is suffixed). The store, not just the
+      // DOM, is the authoritative check: `refresh()` re-renders from
+      // whatever the server now has, so a real PATCH success and a stale
+      // render that merely closed the form read identically in the DOM
+      // alone.
+      assert.equal(
+        store.getDb().prepare('SELECT name FROM projects WHERE id = ?').get(projectId).name,
+        'e2e-3200-rename-submit-NEW',
+        'the PATCH must have actually renamed the project in the store, not just closed the form'
+      );
+      // `root.innerHTML`, not `doc.getElementById` — this mini-DOM's
+      // `byId` map (test/_mini-dom.js's withIdParsingInnerHTML) only ever
+      // grows: an id once seen keeps answering with its (now stale) stub
+      // forever, even once a later render's HTML no longer contains it.
+      // Checking the live HTML text is the only way to prove "gone" here.
+      assert.doesNotMatch(root.innerHTML, new RegExp(`id="v6TreeRenameForm-${idSuffix}"`), 'the rename form closes on a successful submit');
+      assert.match(root.innerHTML, /e2e-3200-rename-submit-NEW/, 'the new name is visible in the re-rendered sidebar');
+      assert.doesNotMatch(root.innerHTML, /id="v6TreeLink-m[0-9-]+"[^>]*>[^<]*e2e-3200-rename-submit</, 'the OLD name is gone from the sidebar, not just appended alongside the new one');
       assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'a successful rename submit must not silently re-pin the stream');
       assert.equal(doc.getElementById('v6ChatStream').scrollTop, 77, 'and must not disturb the exact reading position either');
     });
