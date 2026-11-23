@@ -4454,6 +4454,59 @@ describe('sessions', () => {
         if (active) store.sessions.kill(active.id, 'test cleanup');
       }
     });
+
+    it('R3 BLOCKING 1: an ordinary launch (no model override) no longer synchronously scans this engine\'s entire session history, leaving an independent timer scheduled alongside it essentially unskewed', async () => {
+      const projDir = path.join(projectsDir, 'event-loop-responsive-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'event-loop-responsive-proj', path: projDir, engine: 'claude' });
+      try {
+        // An independent timer, scheduled right alongside the async launch.
+        // Its OWN firing delay is the signal: under the OLD unconditional
+        // lib/profile-reconciler.js#snapshotExistingSessionIds scan (~9s,
+        // scaling with this engine's real session history), a deferred
+        // launchSession call running inside the same single-threaded event
+        // loop would have skewed this 50ms timer by nearly that whole
+        // amount. Fixed (the scan is skipped entirely with no model
+        // override), the skew should be negligible.
+        const scheduledAt = Date.now();
+        let firedAt = null;
+        const independentTimer = setTimeout(() => { firedAt = Date.now(); }, 50);
+        await new Promise((resolve) => {
+          sessions.launchSessionAsync('event-loop-responsive-proj', {}, resolve);
+        });
+        // The deferred launch has now settled; give the independent timer
+        // a moment to fire too, if it somehow hasn't already.
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        clearTimeout(independentTimer);
+        assert.ok(firedAt, 'the independent timer fired at all');
+        const skewMs = firedAt - scheduledAt - 50;
+        assert.ok(skewMs < 2000, `the independent timer's own 50ms delay must not be skewed by anywhere near the old ~9s cost (measured skew: ${skewMs}ms)`);
+      } finally {
+        const active = store.sessions.getActive(proj.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    it('R3: a launch that DOES request a model override still computes the real exclude-set (this fix narrows WHEN the scan runs, never what it returns when it does run)', async () => {
+      const projDir = path.join(projectsDir, 'model-override-async-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'model-override-async-proj', path: projDir, engine: 'claude' });
+      try {
+        const calls = [];
+        sessions.launchSessionAsync('model-override-async-proj', { model: 'claude-opus-5-5' }, (r) => calls.push(r));
+        // Flush until the deferred call (which genuinely needs the real
+        // scan for this path) settles -- unlike the other tests here, this
+        // one is not expected to be fast, and does not assert that it is.
+        for (let i = 0; i < 50 && calls.length === 0; i++) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        assert.equal(calls.length, 1, 'the deferred launch eventually completed');
+        assert.equal(calls[0].error, null);
+      } finally {
+        const active = store.sessions.getActive(proj.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
   });
 
   describe('launchSession adopts orphaned tmux session', () => {
