@@ -6996,6 +6996,285 @@
   global.tcAdvisorControlBarMarkup = tcAdvisorControlBarMarkup;
   global.tcCreateAdvisorControlBar = tcCreateAdvisorControlBar;
 
+  // ── Subtle Animated Ellipsis Loading Indicator (#3207, UI-004) ──
+  // One shared "Loading…"/"Connecting…" chrome for any page/component that
+  // currently rolls its own static or differently-worded wait state. The
+  // ellipsis cycles ./..  /... so a long wait still visibly ticks, without
+  // the motion `prefers-reduced-motion: reduce` asks every page to avoid.
+
+  /**
+   * The stem of a loading label with any trailing dots/ellipsis stripped —
+   * `"Loading chat..."`, `"Loading chat…"` and `"Loading chat"` all
+   * normalize to `"Loading chat"`, so a caller can pass either spelling (or
+   * none) without producing a doubled `"Loading chat....."`.
+   * @param {string} label
+   * @returns {string}
+   */
+  function _tcV6LoadingStem(label) {
+    return String(label == null ? '' : label).replace(/(?:\.{2,}|…|\.)\s*$/, '').trim();
+  }
+
+  /**
+   * The static markup for one animated ellipsis loading indicator (#3207).
+   * Context-specific labels ("Loading chat...", "Connecting...", "Starting
+   * session...", "Retrieving history...", "Refreshing usage...") or any
+   * custom string all work the same way — only the stem is ever rendered;
+   * the three dots are {@link tcV6CreateAnimatedEllipsisController}'s own
+   * `.v6-loading-ellipsis` to animate, not part of the label text itself.
+   * @param {string} label
+   * @param {{id?: string}} [opts] - `id` on the outer `<span>`, for a
+   *   caller that wants to look it up directly.
+   * @returns {string} HTML.
+   */
+  function tcV6AnimatedEllipsisMarkup(label, opts) {
+    const stem = _tcV6LoadingStem(label);
+    const escStem = tcEscapeHtml(stem);
+    const idAttr = opts && opts.id ? ` id="${tcEscapeHtml(opts.id)}"` : '';
+    return `<span${idAttr} class="v6-loading-indicator" role="status" aria-live="polite" data-v6-loading-stem="${escStem}" data-v6-loading-state="loading"><span class="v6-loading-label">${escStem}</span><span class="v6-loading-ellipsis" aria-hidden="true">...</span></span>`;
+  }
+
+  /**
+   * Mounts an animated ellipsis loading indicator into `containerEl` and
+   * returns a handle to drive it (#3207). `prefers-reduced-motion: reduce`
+   * (explicit `opts.prefersReducedMotion`, or `opts.win`'s own
+   * `matchMedia`) skips the timer entirely and renders a static `...` —
+   * the motion is decorative, so turning it off never removes the
+   * indicator itself, only its ticking.
+   * @param {{doc: Document, containerEl: Element, label: string,
+   *   intervalMs?: number, prefersReducedMotion?: boolean, win?: Window,
+   *   setInterval?: Function, clearInterval?: Function}} opts
+   * @returns {{setLabel: (label: string) => void, stop: () => void,
+   *   fail: (errorMessage: string, retryOpts?: {onRetry?: Function}) => void}}
+   */
+  function tcV6CreateAnimatedEllipsisController(opts) {
+    const o = opts || {};
+    const doc = o.doc;
+    const containerEl = o.containerEl;
+    const win = o.win || (doc && doc.defaultView) || global;
+    const setIntervalFn = typeof o.setInterval === 'function' ? o.setInterval : (win.setInterval ? win.setInterval.bind(win) : global.setInterval);
+    const clearIntervalFn = typeof o.clearInterval === 'function' ? o.clearInterval : (win.clearInterval ? win.clearInterval.bind(win) : global.clearInterval);
+    const reduced = o.prefersReducedMotion === true
+      || Boolean(win && typeof win.matchMedia === 'function' && win.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    const intervalMs = Number.isFinite(o.intervalMs) && o.intervalMs > 0 ? o.intervalMs : 350;
+    let stem = _tcV6LoadingStem(o.label);
+    let dots = 3;
+    let timer = null;
+    let stopped = false;
+    let outerEl = null;
+    let labelEl = null;
+    let ellipsisEl = null;
+    const canBuild = Boolean(containerEl && doc && typeof doc.createElement === 'function');
+
+    // Built imperatively (createElement/appendChild), never via
+    // `containerEl.innerHTML = tcV6AnimatedEllipsisMarkup(...)` — ticking
+    // needs to mutate `.v6-loading-ellipsis`'s own `textContent` directly
+    // afterward, and a round-trip through `innerHTML` only guarantees a
+    // fresh, queryable tree in a REAL browser. This codebase's own test
+    // harness (`withIdParsingInnerHTML`) deliberately fakes `innerHTML` as
+    // a plain stored string plus id-only placeholder nodes for
+    // `getElementById` — it never builds a real, class-queryable tree —
+    // so a markup-string round-trip would leave `containerEl.querySelector`
+    // finding nothing, in tests only, while still working in production.
+    // Rendered markup is otherwise identical to {@link tcV6AnimatedEllipsisMarkup}'s own.
+    function mount() {
+      if (!canBuild) return;
+      containerEl.innerHTML = '';
+      outerEl = doc.createElement('span');
+      outerEl.className = 'v6-loading-indicator';
+      outerEl.setAttribute('role', 'status');
+      outerEl.setAttribute('aria-live', 'polite');
+      outerEl.setAttribute('data-v6-loading-stem', stem);
+      outerEl.setAttribute('data-v6-loading-state', 'loading');
+      labelEl = doc.createElement('span');
+      labelEl.className = 'v6-loading-label';
+      labelEl.textContent = stem;
+      ellipsisEl = doc.createElement('span');
+      ellipsisEl.className = 'v6-loading-ellipsis';
+      ellipsisEl.setAttribute('aria-hidden', 'true');
+      ellipsisEl.textContent = reduced ? '...' : '.'.repeat(dots);
+      outerEl.appendChild(labelEl);
+      outerEl.appendChild(ellipsisEl);
+      containerEl.appendChild(outerEl);
+    }
+
+    function tick() {
+      dots = dots >= 3 ? 1 : dots + 1;
+      if (ellipsisEl) ellipsisEl.textContent = '.'.repeat(dots);
+    }
+
+    mount();
+    if (!reduced && canBuild) {
+      timer = setIntervalFn(tick, intervalMs);
+    }
+
+    function stop() {
+      if (stopped) return;
+      stopped = true;
+      if (timer != null) { clearIntervalFn(timer); timer = null; }
+    }
+
+    return {
+      setLabel(newLabel) {
+        stem = _tcV6LoadingStem(newLabel);
+        if (labelEl) labelEl.textContent = stem;
+        if (outerEl && outerEl.setAttribute) outerEl.setAttribute('data-v6-loading-stem', stem);
+      },
+      stop,
+      fail(errorMessage, retryOpts) {
+        stop();
+        if (!canBuild) return;
+        containerEl.innerHTML = '';
+        outerEl = null; labelEl = null; ellipsisEl = null;
+        const errEl = doc.createElement('span');
+        errEl.className = 'v6-loading-error';
+        errEl.setAttribute('role', 'alert');
+        errEl.textContent = String(errorMessage || 'Failed.');
+        containerEl.appendChild(errEl);
+        const canRetry = Boolean(retryOpts && typeof retryOpts.onRetry === 'function');
+        if (canRetry) {
+          const btn = doc.createElement('button');
+          btn.setAttribute('type', 'button');
+          btn.className = 'v6-loading-retry-btn';
+          btn.textContent = 'Retry';
+          btn.addEventListener('click', retryOpts.onRetry);
+          errEl.appendChild(btn);
+        }
+      }
+    };
+  }
+
+  global.tcV6AnimatedEllipsisMarkup = tcV6AnimatedEllipsisMarkup;
+  global.tcV6CreateAnimatedEllipsisController = tcV6CreateAnimatedEllipsisController;
+
+  // ── Structured Per-Engine Usage Popover Cards (#3209, UI-006) ──
+  // One shared card renderer for claude/codex/antigravity, replacing however
+  // many bespoke popover layouts currently exist per-engine — each card
+  // separates what the provider itself reported (probed quota %, reset
+  // countdowns, Fable/Claude-&-GPT sub-tiers) from this host's own derived
+  // numbers (local transcript token/session aggregates), and surfaces a
+  // degraded-refresh note without hiding the last-known-good bars.
+
+  /** @type {Object<string, string>} */
+  const TC_V6_USAGE_PROVIDER_TITLES = Object.freeze({ claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' });
+
+  /**
+   * A human-readable countdown to a quota window's reset (#3209).
+   * @param {string|number|null|undefined} resetIsoOrMs - An ISO timestamp
+   *   string, or epoch milliseconds.
+   * @param {number} [nowMs] - Defaults to `Date.now()`.
+   * @returns {string} `"resets in 4h 48m"` / `"resets in 3d 12h"` /
+   *   `"resets in 42m"` / `"resetting soon"` (at or past reset) / `''`
+   *   (nothing to parse).
+   */
+  function tcV6FormatResetCountdown(resetIsoOrMs, nowMs) {
+    const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+    let resetMs = null;
+    if (typeof resetIsoOrMs === 'number' && Number.isFinite(resetIsoOrMs)) {
+      resetMs = resetIsoOrMs;
+    } else if (typeof resetIsoOrMs === 'string' && resetIsoOrMs) {
+      const parsed = Date.parse(resetIsoOrMs);
+      if (Number.isFinite(parsed)) resetMs = parsed;
+    }
+    if (resetMs === null) return '';
+    const diff = resetMs - now;
+    if (diff <= 0) return 'resetting soon';
+    const days = Math.floor(diff / 86400000);
+    const hours = Math.floor((diff % 86400000) / 3600000);
+    const minutes = Math.max(1, Math.floor((diff % 3600000) / 60000));
+    if (days >= 1) return `resets in ${days}d ${hours}h`;
+    if (hours >= 1) return `resets in ${hours}h ${minutes}m`;
+    return `resets in ${minutes}m`;
+  }
+
+  /**
+   * One quota window's row (#3209 item b) — a progress bar, a "% left"
+   * badge (or `"—"` when the percentage is unknown), and a reset countdown.
+   * @param {string} windowKey - `'five-hour'` or `'weekly'`.
+   * @param {string} label
+   * @param {number|null|undefined} pct
+   * @param {string|number|null|undefined} resetAt
+   * @param {number} [nowMs]
+   * @returns {string} HTML.
+   */
+  function _tcV6UsageWindowRowMarkup(windowKey, label, pct, resetAt, nowMs) {
+    const known = typeof pct === 'number' && Number.isFinite(pct);
+    const clamped = known ? Math.max(0, Math.min(100, pct)) : 0;
+    const badge = known ? `${Math.round(clamped)}% left` : '—';
+    const countdown = tcV6FormatResetCountdown(resetAt, nowMs);
+    return `<div class="v6-usage-window-row" data-usage-window="${tcEscapeHtml(windowKey)}">
+      <span class="v6-usage-window-label">${tcEscapeHtml(label)}</span>
+      <div class="v6-usage-progress-bar" style="width: ${clamped}%"></div>
+      <span class="v6-usage-pct-left">${tcEscapeHtml(badge)}</span>
+      ${countdown ? `<span class="v6-usage-reset">${tcEscapeHtml(countdown)}</span>` : ''}
+    </div>`;
+  }
+
+  /**
+   * One engine's structured usage card (#3209).
+   * @param {'claude'|'codex'|'antigravity'} providerKey
+   * @param {{weeklyRemainingPct?: number|null, fiveHourRemainingPct?: number|null,
+   *   weeklyResetAt?: string|number|null, fiveHourResetAt?: string|number|null,
+   *   subTiers?: Object<string, {weeklyRemainingPct?: number|null, fiveHourRemainingPct?: number|null,
+   *   weeklyResetAt?: string|number|null, fiveHourResetAt?: string|number|null}>,
+   *   source?: 'probed'|'estimated', lastSuccessObservedAt?: string|number|null,
+   *   refreshDegraded?: boolean, lastRefreshError?: string|null}|null} probeReading -
+   *   `weekly/fiveHourRemainingPct`, `weekly/fiveHourResetAt` and `subTiers` match the
+   *   shape `public/v6-shell.js`'s own `loadUsageProbe` already reads from the real
+   *   probe response; `source`/`lastSuccessObservedAt`/`refreshDegraded`/
+   *   `lastRefreshError` are this card's own (#3209 is ahead of whatever wires them).
+   * @param {{fiveHour?: number, weekly?: number, activeSessions?: number}|null} tokenEstimate -
+   *   This host's own locally-derived aggregates, kept visually separate from the
+   *   provider-probed percentages above (#3209 item d).
+   * @param {{nowMs?: number}} [opts]
+   * @returns {string} HTML.
+   */
+  function tcV6RenderEngineUsageCardMarkup(providerKey, probeReading, tokenEstimate, opts) {
+    const key = String(providerKey || '');
+    const title = TC_V6_USAGE_PROVIDER_TITLES[key] || key || 'Unknown';
+    const r = probeReading || {};
+    const t = tokenEstimate || {};
+    const nowMs = opts && Number.isFinite(opts.nowMs) ? opts.nowMs : undefined;
+    const probed = r.source === 'probed';
+    const badgeClass = probed ? 'v6-usage-source-badge--probed' : 'v6-usage-source-badge--estimated';
+    const badgeLabel = probed ? 'Provider Probed' : 'Local Estimate';
+    const lastProbed = r.lastSuccessObservedAt
+      ? `<span class="v6-usage-last-probed">Last probed: ${tcEscapeHtml(String(r.lastSuccessObservedAt))}</span>` : '';
+    const subTierKeys = r.subTiers && typeof r.subTiers === 'object' ? Object.keys(r.subTiers) : [];
+    const subTiersMarkup = subTierKeys.length
+      ? `<ul class="v6-usage-subtiers">${subTierKeys.map((tierKey) => {
+        const sub = r.subTiers[tierKey] || {};
+        return `<li data-usage-subtier="${tcEscapeHtml(tierKey)}">
+          ${_tcV6UsageWindowRowMarkup('five-hour', `${tcEscapeHtml(tierKey)} · 5h`, sub.fiveHourRemainingPct, sub.fiveHourResetAt, nowMs)}
+          ${_tcV6UsageWindowRowMarkup('weekly', `${tcEscapeHtml(tierKey)} · Weekly`, sub.weeklyRemainingPct, sub.weeklyResetAt, nowMs)}
+        </li>`;
+      }).join('')}</ul>`
+      : '';
+    const degraded = Boolean(r.refreshDegraded || r.lastRefreshError);
+    const degradedNote = degraded
+      ? `<p class="v6-usage-degraded-note" role="alert">${tcEscapeHtml(String(r.lastRefreshError || 'Usage refresh degraded — showing the last known reading.'))}</p>`
+      : '';
+    return `<section class="v6-usage-engine-card" data-usage-provider="${tcEscapeHtml(key)}">
+      <header class="v6-usage-card-header">
+        <h4 class="v6-usage-card-title">${tcEscapeHtml(title)}</h4>
+        <span class="${badgeClass}">${badgeLabel}</span>
+        ${lastProbed}
+      </header>
+      ${_tcV6UsageWindowRowMarkup('five-hour', '5-Hour Quota Window', r.fiveHourRemainingPct, r.fiveHourResetAt, nowMs)}
+      ${_tcV6UsageWindowRowMarkup('weekly', 'Weekly Quota Window', r.weeklyRemainingPct, r.weeklyResetAt, nowMs)}
+      ${subTiersMarkup}
+      <div class="v6-usage-local-estimates">
+        <h5>Local Transcript Token &amp; Session Aggregates</h5>
+        <p>5h tokens: ${tcEscapeHtml(String(t.fiveHour != null ? t.fiveHour : 0))}</p>
+        <p>Weekly tokens: ${tcEscapeHtml(String(t.weekly != null ? t.weekly : 0))}</p>
+        <p>Active sessions: ${tcEscapeHtml(String(t.activeSessions != null ? t.activeSessions : 0))}</p>
+      </div>
+      ${degradedNote}
+    </section>`;
+  }
+
+  global.tcV6FormatResetCountdown = tcV6FormatResetCountdown;
+  global.tcV6RenderEngineUsageCardMarkup = tcV6RenderEngineUsageCardMarkup;
+
   // ── System-Wide Watermark Opacity Easter Egg (#2930) ──
   // Ctrl+Shift+Up / Ctrl+Alt+Up (or Ctrl+Shift+] ) -> increase opacity (+2%, max 60%)
   // Ctrl+Shift+Down / Ctrl+Alt+Down (or Ctrl+Shift+[ ) -> decrease opacity (-2%, min 0% off)
