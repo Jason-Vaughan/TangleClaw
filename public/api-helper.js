@@ -4527,8 +4527,8 @@
       <button type="button" class="banner-btn" id="${p}PopoutBtn"
               aria-label="Open in separate window" title="Open the Master terminal in its own window">&#x2197;</button>
       <button type="button" class="banner-btn" id="${p}UploadBtn"
-              aria-label="Attach a photo or screenshot" title="Attach a photo or screenshot for Admin-PM">Upload</button>
-      <input type="file" accept="image/*" class="hidden" id="${p}UploadInput" aria-hidden="true">
+              aria-label="Attach a file, photo, or screenshot" title="Attach a file, photo, or screenshot for Admin-PM">Upload</button>
+      <input type="file" class="hidden" id="${p}UploadInput" aria-hidden="true">
       <button class="banner-btn" id="${p}SettingsBtn"
               aria-label="Master settings" title="Master settings">&#9881;</button>
       <button type="button" class="banner-btn btn-wrap" id="${p}WrapBtn"
@@ -4539,6 +4539,188 @@
               title="Stop the Master session. Its memory/ files survive; the conversation does not.">Kill</button>
       <span class="master-bar-error" id="${p}Error" role="status" hidden></span>
       <span class="master-bar-warn" id="${p}Warn" role="status" hidden></span>`;
+  }
+
+  /** The safe-filename grammar `lib/secure-clipboard.js#SAFE_FILENAME_RE` admits — mirrored here so a name this helper produces is guaranteed to clear it. */
+  const TC_MASTER_SAFE_FILENAME_CHARS_RE = /[^A-Za-z0-9._-]+/g;
+  const TC_MASTER_FILENAME_CAP = 128;
+  const TC_MASTER_EXTENSION_CAP = 16;
+
+  /**
+   * One name, run through the sanitizer below with no `taken` set — the
+   * shared core {@link tcSanitizeMasterAttachmentFilename} and
+   * {@link tcBindMasterDropzone} both build on.
+   * @param {string} raw
+   * @returns {string}
+   */
+  function _tcCleanFilenamePart(raw) {
+    return String(raw || '')
+      .replace(/[\s/\\]+/g, '-')
+      .replace(TC_MASTER_SAFE_FILENAME_CHARS_RE, '')
+      .replace(/-+/g, '-')
+      .replace(/^[.-]+/, '')
+      .replace(/-+$/, '');
+  }
+
+  /**
+   * A filename safe for `lib/secure-clipboard.js`'s own `SAFE_FILENAME_RE`
+   * (`/^(?!\.{1,2}$)[A-Za-z0-9._-]{1,128}$/`), which otherwise rejects a
+   * macOS screenshot ("Screenshot 2026-11-22 at 9.15.00 PM.png") or any
+   * name carrying spaces or parentheses outright (#3218 — broadening the
+   * Admin Fleet file picker beyond `image/*` surfaces names a browser's
+   * native picker never sanitized before).
+   *
+   * Whitespace and slashes become `-`; every other character outside
+   * `[A-Za-z0-9._-]` is dropped; repeated `-` collapse to one; a leading
+   * `.`/`-` or trailing `-` is trimmed (a name of only dots, which the
+   * real regex singles out, reduces to the empty-stem case below). An
+   * extension longer than 16 chars (including its dot) is treated as not
+   * being one — the whole name is sanitized as a bare stem instead, so a
+   * name with no real extension never has an arbitrary suffix carved off
+   * it. An empty stem (after all of the above) becomes `"attachment"`.
+   * The whole result is capped at 128 chars, shortening the STEM first so
+   * the extension always survives.
+   * @param {string} rawName
+   * @param {Set<string>} [taken] - Names already used in this batch/
+   *   conversation; a collision gets a `-2`, `-3`, ... suffix inserted
+   *   before the extension until the name is unique.
+   * @returns {string}
+   */
+  function tcSanitizeMasterAttachmentFilename(rawName, taken) {
+    const name = String(rawName || '');
+    const lastDot = name.lastIndexOf('.');
+    const hasExt = lastDot > 0 && (name.length - lastDot) <= TC_MASTER_EXTENSION_CAP;
+    let stem = _tcCleanFilenamePart(hasExt ? name.slice(0, lastDot) : name);
+    let ext = hasExt ? _tcCleanFilenamePart(name.slice(lastDot + 1)) : '';
+    ext = ext ? `.${ext}` : '';
+    if (!stem) stem = 'attachment';
+
+    const fit = (s, extLen, suffixLen) => s.slice(0, Math.max(1, TC_MASTER_FILENAME_CAP - extLen - suffixLen));
+    stem = fit(stem, ext.length, 0);
+
+    let candidate = `${stem}${ext}`;
+    if (taken && taken.size) {
+      for (let n = 2; taken.has(candidate); n += 1) {
+        const suffix = `-${n}`;
+        candidate = `${fit(stem, ext.length, suffix.length)}${suffix}${ext}`;
+      }
+    }
+    return candidate;
+  }
+
+  /**
+   * One dropped/pasted file, sanitized and handed to `onUpload` the same
+   * way the file-picker `change` handler below does — the one place both
+   * paths share so a filename never reaches `onUpload` two different ways.
+   * @param {FileList|DataTransferItemList|File[]} files
+   * @param {(file: File, sanitizedName: string) => void} onUpload
+   */
+  function _tcDeliverMasterAttachmentFiles(files, onUpload) {
+    const taken = new Set();
+    Array.from(files || []).forEach((file) => {
+      if (!file) return;
+      const sanitized = tcSanitizeMasterAttachmentFilename(file.name, taken);
+      taken.add(sanitized);
+      onUpload(file, sanitized);
+    });
+  }
+
+  /**
+   * An iframe-safe drag-over dropzone and clipboard-paste file intake for
+   * the Master panel (#3218): the `ttyd` `<iframe>` (`frameEl`) swallows
+   * `dragover`/`drop` on itself, so a transparent overlay — raised above
+   * it only while a file drag is in flight — is what actually catches the
+   * drop; without it, dragging a file over the terminal view just drops
+   * into the iframe's own page and nothing happens.
+   * @param {object} deps
+   * @param {Document} deps.doc - The page document.
+   * @param {HTMLElement} deps.panelEl - The panel the overlay mounts inside and listens on.
+   * @param {HTMLElement} [deps.frameEl] - The terminal iframe the overlay sits above; only used to confirm the overlay is appended after it in DOM order.
+   * @param {string} [deps.prefix] - Id prefix for the overlay element; defaults to `"masterPanel"`.
+   * @param {(file: File, sanitizedName: string) => void} deps.onUpload - Called once per file, with its sanitized name.
+   * @returns {{destroy: () => void}} Removes every listener this installed.
+   */
+  function tcBindMasterDropzone(deps) {
+    const { doc, panelEl } = deps;
+    const prefix = deps.prefix || 'masterPanel';
+    const onUpload = deps.onUpload;
+    if (!doc || !panelEl || typeof onUpload !== 'function') {
+      return { destroy() {} };
+    }
+
+    let overlay = doc.getElementById(`${prefix}DropzoneOverlay`);
+    if (!overlay) {
+      overlay = doc.createElement('div');
+      overlay.id = `${prefix}DropzoneOverlay`;
+      overlay.className = 'master-dropzone-overlay hidden';
+      overlay.setAttribute('aria-hidden', 'true');
+      panelEl.appendChild(overlay);
+    }
+
+    /** @param {DragEvent} evt @returns {boolean} Whether this drag carries at least one file. */
+    const carriesFiles = (evt) => {
+      const types = evt && evt.dataTransfer && evt.dataTransfer.types;
+      return Boolean(types) && Array.prototype.includes.call(types, 'Files');
+    };
+    const show = () => overlay.classList.remove('hidden');
+    const hide = () => overlay.classList.add('hidden');
+
+    const onDragEnter = (evt) => { if (carriesFiles(evt)) show(); };
+    const onDragOver = (evt) => {
+      if (!carriesFiles(evt)) return;
+      if (evt.preventDefault) evt.preventDefault();
+      show();
+    };
+    const onDragLeave = (evt) => {
+      // Only a leave of the panel/overlay itself re-hides it — a leave of
+      // some child element the drag is merely crossing over must not flash
+      // the overlay off mid-drag.
+      if (evt && evt.target !== panelEl && evt.target !== overlay) return;
+      hide();
+    };
+    const onDrop = (evt) => {
+      if (evt.preventDefault) evt.preventDefault();
+      hide();
+      const files = evt && evt.dataTransfer && evt.dataTransfer.files;
+      if (files && files.length) _tcDeliverMasterAttachmentFiles(files, onUpload);
+    };
+    const onPaste = (evt) => {
+      const cd = evt && evt.clipboardData;
+      if (!cd) return;
+      const files = cd.files && cd.files.length
+        ? cd.files
+        : Array.from(cd.items || []).filter((item) => item && item.kind === 'file').map((item) => item.getAsFile());
+      if (files && files.length) _tcDeliverMasterAttachmentFiles(files, onUpload);
+    };
+
+    // `doc.addEventListener` is guarded, not assumed — same discipline the
+    // Medusa inbox's own document-level Escape/click listeners above use:
+    // a test's minimal DOM stand-in need not carry one for code paths it
+    // never drives through `doc` itself.
+    const docListens = doc && typeof doc.addEventListener === 'function';
+    if (docListens) doc.addEventListener('dragenter', onDragEnter);
+    panelEl.addEventListener('dragover', onDragOver);
+    panelEl.addEventListener('dragleave', onDragLeave);
+    overlay.addEventListener('dragleave', onDragLeave);
+    panelEl.addEventListener('drop', onDrop);
+    overlay.addEventListener('drop', onDrop);
+    panelEl.addEventListener('paste', onPaste);
+
+    return {
+      destroy() {
+        if (docListens && typeof doc.removeEventListener === 'function') doc.removeEventListener('dragenter', onDragEnter);
+        if (typeof panelEl.removeEventListener === 'function') {
+          panelEl.removeEventListener('dragover', onDragOver);
+          panelEl.removeEventListener('dragleave', onDragLeave);
+          panelEl.removeEventListener('drop', onDrop);
+          panelEl.removeEventListener('paste', onPaste);
+        }
+        if (typeof overlay.removeEventListener === 'function') {
+          overlay.removeEventListener('dragleave', onDragLeave);
+          overlay.removeEventListener('drop', onDrop);
+        }
+      }
+    };
   }
 
   /**
@@ -4718,15 +4900,20 @@
       // Upload (#3137): this component owns the file PICKER (the control's
       // look and the one thing every caller needs identically); the actual
       // upload — the API call, the thumbnail strip, paste/drop — is delegated
-      // to `deps.onUpload(file)`, for the same "shared look, delegated
-      // behaviour" reason as Wrap above.
+      // to `deps.onUpload(file, sanitizedName)`, for the same "shared look,
+      // delegated behaviour" reason as Wrap above. #3218: the picker no
+      // longer restricts to `image/*` (broadened in the markup above), and
+      // every file this control hands off is named through the same
+      // {@link tcSanitizeMasterAttachmentFilename} drag/paste use, so a
+      // caller never has to sanitize twice depending on how the file
+      // arrived.
       const uploadBtn = el('UploadBtn');
       const uploadInput = el('UploadInput');
       if (uploadBtn && uploadInput) {
         uploadBtn.addEventListener('click', () => uploadInput.click());
         uploadInput.addEventListener('change', () => {
           const file = uploadInput.files && uploadInput.files[0];
-          if (file && deps.onUpload) deps.onUpload(file);
+          if (file && deps.onUpload) deps.onUpload(file, tcSanitizeMasterAttachmentFilename(file.name));
           uploadInput.value = '';
         });
       }
@@ -6647,6 +6834,8 @@
   global.tcMasterGuardDegradedLabels = TC_MASTER_GUARD_DEGRADED;
   global.tcMasterControlBarMarkup = tcMasterControlBarMarkup;
   global.tcCreateMasterControlBar = tcCreateMasterControlBar;
+  global.tcSanitizeMasterAttachmentFilename = tcSanitizeMasterAttachmentFilename;
+  global.tcBindMasterDropzone = tcBindMasterDropzone;
   global.tcAdvisorControlBarMarkup = tcAdvisorControlBarMarkup;
   global.tcCreateAdvisorControlBar = tcCreateAdvisorControlBar;
 
