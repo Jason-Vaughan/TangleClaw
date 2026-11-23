@@ -4393,6 +4393,67 @@ describe('sessions', () => {
         if (active) store.sessions.kill(active.id, 'test cleanup');
       }
     });
+
+    it('R2 BLOCKING 2: two back-to-back calls for the SAME project in the same tick -- the first is accepted, the second is refused 409-shaped before the first\'s deferred launch ever runs', async () => {
+      const projDir = path.join(projectsDir, 'single-flight-async-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'single-flight-async-proj', path: projDir, engine: 'claude' });
+      try {
+        const first = sessions.launchSessionAsync('single-flight-async-proj');
+        // Still in the SAME tick: launchSession's own `setImmediate` has
+        // not run yet, so store.sessions.getActive would still read null
+        // here too -- the ONLY thing that can tell these two calls apart
+        // is the in-flight claim, not the session row.
+        const second = sessions.launchSessionAsync('single-flight-async-proj');
+        assert.equal(first.accepted, true, 'the first caller wins the claim');
+        assert.equal(second.accepted, false, 'the second caller, same tick, is refused');
+        assert.equal(second.code, 'ALREADY_STARTING');
+        assert.equal(second.error, 'Session is already starting for this project');
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.ok(store.sessions.getActive(proj.id), 'exactly one deferred launch actually ran');
+      } finally {
+        const active = store.sessions.getActive(proj.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    it('R2 BLOCKING 2: the in-flight claim is released once the deferred launch settles, so a LATER call (not same-tick) succeeds normally', async () => {
+      const projDir = path.join(projectsDir, 'single-flight-later-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'single-flight-later-proj', path: projDir, engine: 'claude' });
+      try {
+        const first = sessions.launchSessionAsync('single-flight-later-proj');
+        assert.equal(first.accepted, true);
+        await new Promise((resolve) => setImmediate(resolve));
+        const active = store.sessions.getActive(proj.id);
+        assert.ok(active, 'the first deferred launch completed');
+        store.sessions.kill(active.id, 'test cleanup, mid-test');
+        const second = sessions.launchSessionAsync('single-flight-later-proj');
+        assert.equal(second.accepted, true, 'the claim was released once the first deferred launch settled');
+      } finally {
+        const active = store.sessions.getActive(proj.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    it('R2 WebUI continuation gap: onDeferredResult is called with the deferred launchSession call\'s own return value once it settles', async () => {
+      const projDir = path.join(projectsDir, 'deferred-callback-async-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'deferred-callback-async-proj', path: projDir, engine: 'claude' });
+      try {
+        const calls = [];
+        const result = sessions.launchSessionAsync('deferred-callback-async-proj', {}, (deferredResult) => calls.push(deferredResult));
+        assert.equal(result.accepted, true);
+        assert.deepEqual(calls, [], 'not called yet -- the deferred launch has not run');
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(calls.length, 1, 'called exactly once, with the deferred launchSession call\'s own result');
+        assert.equal(calls[0].error, null);
+        assert.ok(calls[0].session, 'the real launchSession return value, not a placeholder');
+      } finally {
+        const active = store.sessions.getActive(proj.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
   });
 
   describe('launchSession adopts orphaned tmux session', () => {
