@@ -74,6 +74,88 @@ describe('system', () => {
       assert.equal(result.free, 0);
       assert.equal(result.percent, 0);
     });
+
+    // #3217: real issue numbers -- df -k / on a machine whose actual data
+    // lives on the shared APFS container reports only the Sealed System
+    // Volume's own ~16 GiB "Used" against the container's ~926 GiB total.
+    it('corrects used to total-free on darwin when the shared-APFS-container gap is present (#3217)', () => {
+      const line = '/dev/disk3s1s1  971350180 16112208 243131488     7%  2000000 9000000    0%   /';
+      const result = system._parseDfOutput(line, { platform: 'darwin' });
+      assert.equal(result.total, 971350180 * 1024);
+      assert.equal(result.used, (971350180 - 243131488) * 1024);
+      assert.equal(result.total, result.used + result.free);
+      assert.equal(result.percent, 75);
+    });
+
+    it('leaves the one-volume used figure alone on non-darwin, even with the same gap', () => {
+      const line = '/dev/disk3s1s1  971350180 16112208 243131488     7%  2000000 9000000    0%   /';
+      const result = system._parseDfOutput(line, { platform: 'linux' });
+      assert.equal(result.used, 16112208 * 1024);
+      assert.equal(result.percent, 1.7);
+    });
+
+    it('leaves the one-volume used figure alone with no options at all -- 100% backward compatible', () => {
+      const line = '/dev/disk3s1s1  971350180 16112208 243131488     7%  2000000 9000000    0%   /';
+      const result = system._parseDfOutput(line);
+      assert.equal(result.used, 16112208 * 1024);
+      assert.equal(result.percent, 1.7);
+    });
+
+    it('does not apply the correction on darwin when used already accounts for the total-free gap', () => {
+      // total - free == rawUsed exactly: no other volume's share is hiding
+      // in the gap, so the one-volume figure already IS the real used figure.
+      const line = '/dev/disk3s1s1  1000000 400000 600000     40%  1 1    0%   /';
+      const result = system._parseDfOutput(line, { platform: 'darwin' });
+      assert.equal(result.used, 400000 * 1024);
+    });
+  });
+
+  describe('MACOS_DATA_VOLUME', () => {
+    it('names the shared APFS Data volume path', () => {
+      assert.equal(system.MACOS_DATA_VOLUME, '/System/Volumes/Data');
+    });
+  });
+
+  describe('getDiskInfo mount selection (#3217)', () => {
+    it('queries the APFS Data volume on darwin when it exists', () => {
+      let queried = null;
+      const result = system.getDiskInfo({
+        platform: 'darwin',
+        existsSync: (p) => p === system.MACOS_DATA_VOLUME,
+        execFn: (cmd) => { queried = cmd; return '/dev/disk3s5  971350180 16112208 243131488     7%  1 1    0%   /System/Volumes/Data'; }
+      });
+      assert.match(queried, /df -k \/System\/Volumes\/Data/);
+      assert.equal(result.percent, 75);
+    });
+
+    it('falls back to / on darwin when the Data volume does not exist', () => {
+      let queried = null;
+      system.getDiskInfo({
+        platform: 'darwin',
+        existsSync: () => false,
+        execFn: (cmd) => { queried = cmd; return '/dev/disk1  100 50 50     50%  1 1    0%   /'; }
+      });
+      assert.match(queried, /df -k \/ \|/);
+    });
+
+    it('never queries the Data volume on non-darwin, even if existsSync would say yes', () => {
+      let queried = null;
+      system.getDiskInfo({
+        platform: 'linux',
+        existsSync: () => true,
+        execFn: (cmd) => { queried = cmd; return '/dev/sda1  100 50 50     50%  1 1    0%   /'; }
+      });
+      assert.match(queried, /df -k \/ \|/);
+    });
+
+    it('falls back to zeroes when the shell command throws', () => {
+      const result = system.getDiskInfo({
+        platform: 'darwin',
+        existsSync: () => true,
+        execFn: () => { throw new Error('df: command not found'); }
+      });
+      assert.deepEqual(result, { total: 0, used: 0, free: 0, percent: 0 });
+    });
   });
 
   describe('formatUptime', () => {
