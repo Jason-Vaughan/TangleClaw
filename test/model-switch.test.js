@@ -477,6 +477,65 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(reconcileArgs.rdeps.requireClear, true);
   });
 
+  // #3216 (Pillar 3): projects.engine_id (SQLite) can drift from the LIVE
+  // session's own engine — a prior switch's relaunch succeeding but a later
+  // write racing or failing, or a session started with an engineOverride
+  // never persisted back. sameProvider must be decided from the live
+  // session, not the drifted row.
+  describe('engine SSOT convergence — projects.engine_id drifted from the live session (#3216)', () => {
+    it('project row drifted to "codex" while the live session is still on "antigravity": switching to "codex" is a CROSS-PROVIDER relaunch, not a same-provider reconcile', async () => {
+      store.projects.update(project.id, { engine_id: 'codex' }); // SQLite: stale, says codex
+      const session = store.sessions.start({ projectId: project.id, engineId: 'antigravity', tmuxSession: 'x', primePrompt: null }); // live: actually antigravity
+      let killed = false;
+      let launched = false;
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'codex', model: 'claude-sonnet-5' }, {
+        ...target(),
+        checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+        triggerWrap: () => ({ ok: true, lifecycleCompleted: true, sessionId: session.id }),
+        killSession: () => { killed = true; return { error: null }; },
+        launchSession: () => { launched = true; return { error: null }; }
+      });
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.sameProvider, false, 'the LIVE session is on antigravity, not codex — this must relaunch, not reconcile in place');
+      assert.equal(killed, true, 'a cross-provider switch kills the old session');
+      assert.equal(launched, true, 'and launches a codex successor');
+      assert.equal(store.projects.get(project.id).engineId, 'codex');
+    });
+
+    it('project row drifted to "antigravity" while the live session is still on "claude": switching to "claude" is a SAME-PROVIDER reconcile, and heals projects.engine_id back to "claude"', async () => {
+      store.projects.update(project.id, { engine_id: 'antigravity' }); // SQLite: stale, says antigravity
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'the-tmux-name', primePrompt: null }); // live: actually claude
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, {
+        ...target(),
+        checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+        setDesiredProfile: () => {},
+        recordCheckpoint: () => {},
+        reconcile: () => ({ ok: true, state: 'verified' })
+      });
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.sameProvider, true, 'the LIVE session is already on claude, same as the target — this must reconcile in place, not relaunch');
+      assert.equal(store.projects.get(project.id).engineId, 'claude', 'projects.engine_id is healed back to what the live session actually runs');
+    });
+
+    it('project.json already names a stale "engine" field: a switch updates it to the target engine alongside model, never leaving it behind', async () => {
+      fs.mkdirSync(path.join(projectPath, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(projectPath, '.tangleclaw', 'project.json'), JSON.stringify({ engine: 'antigravity', model: 'old-model' }));
+      store.projects.update(project.id, { engine_id: 'antigravity' });
+      const session = store.sessions.start({ projectId: project.id, engineId: 'antigravity', tmuxSession: 'x', primePrompt: null });
+      const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, {
+        ...target(),
+        checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+        triggerWrap: () => ({ ok: true, lifecycleCompleted: true, sessionId: session.id }),
+        killSession: () => ({ error: null }),
+        launchSession: () => ({ error: null })
+      });
+      assert.equal(result.ok, true, result.error);
+      const savedConfig = store.projectConfig.load(projectPath);
+      assert.equal(savedConfig.engine, 'claude', 'project.json#engine must track the target, never stay on the stale value');
+      assert.equal(savedConfig.model, 'claude-sonnet-5');
+    });
+  });
+
   it('same-provider: refuses (EFFORT_UNSUPPORTED_BY_ENGINE) before mutating project.json or sending any tmux keys, when the engine adapter does not support effortMode (PRR-A Round 5 BLOCKING 3, #2598)', async () => {
     store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
     const sentKeys = [];
