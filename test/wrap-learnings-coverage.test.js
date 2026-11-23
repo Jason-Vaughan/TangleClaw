@@ -7,7 +7,7 @@
 // step's own prompt forbids. The `learnings-entry` predicate asks whether the
 // file already carries this session's entry.
 
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -19,6 +19,7 @@ setLevel('error');
 const coverage = require('../lib/wrap-steps/learnings-coverage');
 const aic = require('../lib/wrap-steps/ai-content');
 const defaultPipeline = require('../lib/wrap-default-pipeline');
+const store = require('../lib/store');
 const { isoLocalDate } = require('../lib/wrap-steps/_date');
 
 const REL = '.tangleclaw/memories/learnings.md';
@@ -249,18 +250,36 @@ describe('learnings-coverage.evaluate', () => {
       });
 
       it('_resolveProjectName: null when neither projectName nor a store lookup resolves anything — caller falls back to basename', () => {
-        assert.equal(coverage._resolveProjectName('/Users/x/Documents/Projects/checkout-dir', {}), null);
+        // `store: null` is the EXPLICIT opt-out — distinct from omitting
+        // `store` entirely (R2 BLOCKING 1, below), which now defaults to
+        // the REAL store.
+        assert.equal(coverage._resolveProjectName('/Users/x/Documents/Projects/checkout-dir', { store: null }), null);
         assert.equal(coverage._resolveProjectName('/Users/x/Documents/Projects/checkout-dir', { store: { projects: { getByPath: () => null } } }), null);
       });
 
-      it('_managedFallbackCandidatePaths: checks the canonical name FIRST, then path.basename too, when they differ', () => {
+      // PRR-A R-Gate R2 BLOCKING 1 (PR #3239): production's own call site
+      // (`lib/wrap-steps/ai-content.js`'s `learningsCoverage` seam) invokes
+      // `evaluate(projectPath, paths, scope)` with NO 4th argument at all —
+      // `deps.store` is always `undefined` there, so `_resolveProjectName`
+      // must default to the REAL `../store` in that case, not stay inert.
+      it('_resolveProjectName: deps.store omitted entirely (undefined, not null) defaults to the REAL store', () => {
+        const unregisteredPath = `/tmp/tc-learnings-coverage-never-registered-${Date.now()}`;
+        // No `store` key at all — distinct from `{ store: null }` above.
+        assert.equal(coverage._resolveProjectName(unregisteredPath, {}), null, 'the real store has no project at this path, so this still falls through to null');
+      });
+
+      it('_managedFallbackCandidatePaths: the canonical name is the ONLY candidate once resolved — basename is never also checked', () => {
         const paths = coverage._managedFallbackCandidatePaths('/Users/x/Documents/Projects/TangleClaw-PR-Reviewer', REL, {
           managedWorkspacesDir: '/mw', projectName: 'TC-Lane-PRR-A'
         });
-        assert.deepEqual(paths, [
-          path.join('/mw', 'TC-Lane-PRR-A', REL),
-          path.join('/mw', 'TangleClaw-PR-Reviewer', REL)
-        ]);
+        assert.deepEqual(paths, [path.join('/mw', 'TC-Lane-PRR-A', REL)]);
+      });
+
+      it('_managedFallbackCandidatePaths: falls back to the basename ONLY when no canonical name resolves at all', () => {
+        const paths = coverage._managedFallbackCandidatePaths('/Users/x/Documents/Projects/checkout-dir', REL, {
+          managedWorkspacesDir: '/mw', store: null
+        });
+        assert.deepEqual(paths, [path.join('/mw', 'checkout-dir', REL)]);
       });
 
       it('_managedFallbackCandidatePaths: a single candidate when the canonical name and the basename agree', () => {
@@ -285,6 +304,69 @@ describe('learnings-coverage.evaluate', () => {
         const r = coverage.evaluate(root, [REL], { startedAtMs }, canonicalDeps);
         assert.equal(r.verdict, 'covered');
         assert.equal(r.source, 'managed-fallback');
+      });
+
+      // PRR-A R-Gate R2 (PR #3239): the production call shape itself —
+      // `evaluate(projectPath, paths, scope)` with NO 4th argument,
+      // exactly how `lib/wrap-steps/ai-content.js`'s own seam calls it —
+      // against a REAL registered project whose name disagrees with its
+      // checkout's basename, and a DIFFERENT, unrelated directory that
+      // happens to share that basename under the managed workspaces root.
+      describe('production call shape — evaluate() with no deps argument, against the real store', () => {
+        let tmpDir;
+        let registeredProjectPath;
+        let registeredProject;
+        let fakeHome;
+        let managedWorkspacesRoot;
+        let realHomedir;
+
+        before(() => {
+          tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-learnings-cov-realstore-'));
+          store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+          store.init();
+          const projectsDir = path.join(tmpDir, 'projects');
+          fs.mkdirSync(projectsDir, { recursive: true });
+          // The checkout's own directory name ("checkout-dir") deliberately
+          // does NOT match the project's registered name.
+          registeredProjectPath = path.join(projectsDir, 'checkout-dir');
+          fs.mkdirSync(registeredProjectPath, { recursive: true });
+          registeredProject = store.projects.create({ name: 'Registered-Name', path: registeredProjectPath, engine: 'claude' });
+
+          fakeHome = path.join(tmpDir, 'home');
+          managedWorkspacesRoot = path.join(fakeHome, '.tangleclaw', 'workspaces');
+          realHomedir = os.homedir;
+          // `evaluate()`'s own default `homedir` seam is `os.homedir` —
+          // stubbed at the MODULE level (not passed through `deps`, since
+          // this test calls `evaluate()` with none) so the production
+          // default path (`homedir() + '.tangleclaw/workspaces'`) resolves
+          // under this test's own scratch root instead of the real `~`.
+          os.homedir = () => fakeHome;
+        });
+
+        after(() => {
+          os.homedir = realHomedir;
+          store.close();
+          fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('resolves the canonical registered name automatically, and ignores an unrelated directory matching the checkout basename', () => {
+          const canonicalAbs = path.join(managedWorkspacesRoot, registeredProject.name, REL);
+          fs.mkdirSync(path.dirname(canonicalAbs), { recursive: true });
+          fs.writeFileSync(canonicalAbs, `# Learnings\n\n## ${today} — written under the canonical registered name\nBody.\n`);
+
+          // An UNRELATED directory that happens to share the checkout's
+          // own basename — a DIFFERENT project's managed workspace, by
+          // coincidence of naming, that must never be read for this one.
+          const unrelatedAbs = path.join(managedWorkspacesRoot, path.basename(registeredProjectPath), REL);
+          fs.mkdirSync(path.dirname(unrelatedAbs), { recursive: true });
+          fs.writeFileSync(unrelatedAbs, `# Learnings\n\n## ${today} — belongs to a DIFFERENT project entirely\nBody.\n`);
+
+          // The exact production call shape — 3 arguments, no `deps` at all.
+          const r = coverage.evaluate(registeredProjectPath, [REL], { startedAtMs });
+          assert.equal(r.verdict, 'covered');
+          assert.equal(r.source, 'managed-fallback');
+          assert.equal(r.entryDate, today);
+        });
       });
     });
 
