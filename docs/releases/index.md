@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.5.7 — Under the Hood traffic filter, scroll pinning, and multi-tab fleet sync](v6.5.7.md)
+- [v6.5.8 — Critical runtime reliability, chat correctness & macOS APFS disk telemetry](v6.5.8.md)
 
 ## Recent releases
+
+- [v6.5.7 — Under the Hood traffic filter, scroll pinning, and multi-tab fleet sync](v6.5.7.md)
 
 - [v6.5.6 — Two-way Gobble & Fill chat pane resizers and a sticky Under the Hood toggle](v6.5.6.md)
 

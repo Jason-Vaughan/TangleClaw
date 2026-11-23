@@ -4,6 +4,19 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.5.8] - 2026-11-22
+
+### Fixed
+- macOS Full Disk Access could be lost across a Homebrew `node@22` upgrade, since the grant is keyed to the resolved Cellar binary path rather than the `which node` symlink `com.tangleclaw.server.plist` has always run — causing stopped sessions under `~/Documents` to fail on launch. Added `scripts/install-fda-anchor.sh --stage`, which stages the active, verified node binary (and its `libnode` dylib) at a stable path (`~/.tangleclaw/bin/node`) that survives every future patch upgrade, so a one-time Full Disk Access grant to that path keeps working; `--status` reports it non-destructively. Added an Operator-run `--cutover` subcommand that refuses to proceed unless the staged binary exists, runs, and actually passes a real Full Disk Access read of `~/Documents` first, then backs up and points `com.tangleclaw.server.plist`'s `ProgramArguments[0]` at the staged binary — the one place in the script that ever writes the plist, and only as this explicit, hand-run step; `--stage` now prints the exact `--cutover` command to run once the grant is made. `GET /api/system/health`'s Full Disk Access check now also reports the resolved node identity and the TCC-authorized tmux server's own health, including real socket readability in production (`lib/system-health.js`, `lib/tmux.js`'s new `probeTccServerHealth`). `scripts/install-fda-anchor.sh`'s `--status`/`--cutover` now work on any host without `/usr/libexec/PlistBuddy` too (Linux CI included), via a Node XML read/write fallback. Fixed (#3198).
+- Fixed a terminal-echoed or wrapped user prompt duplicating as a green ASSISTANT response in V6 Chat: a queued-prompt preview row and its "send immediately" footer hint are no longer parsed as a reply, a multi-line or terminal-soft-wrapped prompt long enough to have been cut off by the terminal's own column width now stays part of the same user turn, and an optimistic send still in flight (or just recorded and still waiting to be echoed) is no longer misread as a fresh assistant turn when a peek poll lands before the send settles (#3199).
+- Added a centralized scroll-position coordinator for V6 Chat and Under the Hood: toggling the Under the Hood drawer open or closed no longer jumps the chat stream or hides its newest message, and a ResizeObserver on the chat stream now re-pins it to the bottom on any other container height change — a Gobble & Fill pane resizer drag, a window resize, or the docked header's own height changing — without misreading a shrink as the operator having scrolled away (#3200).
+- `GET /api/system`'s disk usage now reports the real APFS container fullness
+  on macOS (#3217): `getDiskInfo` reads `/System/Volumes/Data` (where
+  user/application data actually lives) instead of the read-only Sealed
+  System Volume at `/`, and `_parseDfOutput` corrects `used` to `total - free`
+  when one volume's own `df` figure understates a shared APFS container's
+  real usage. Previously a machine using ~75% of its disk read as ~2% full.
+
 ## [6.5.7] - 2026-11-22
 
 ### Fixed
