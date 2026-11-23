@@ -465,6 +465,23 @@
   }
 
   /**
+   * The page's own `sessionStorage` (#3204), or null where reading it
+   * throws (the same `SecurityError` a blocked store raises for
+   * `localStorage`) or it is unavailable. Unlike `localStorage`, this is
+   * scoped to ONE browser tab — exactly what navigation filter state that
+   * must never cross-contaminate multiple tabs on different fleets needs.
+   * @param {object|null} win
+   * @returns {object|null}
+   */
+  function defaultSessionStorage(win) {
+    try {
+      return (win && win.sessionStorage) || null;
+    } catch { // prawduct:allow prawduct/broad-except -- reading window.sessionStorage throws SecurityError when storage is blocked
+      return null;
+    }
+  }
+
+  /**
    * The sidebar tree as the operator's filters leave it (#3046). Text
    * matching a project or fleet name keeps all of its members; otherwise it
    * keeps the members whose name matches. An engine keeps the members whose
@@ -1343,6 +1360,24 @@
   /** Chat reads between refreshes of the usage meter (#3085): about a minute at the chat's read rate. */
   const USAGE_EVERY_POLLS = 15;
 
+  /**
+   * Chat reads between consolidated Fleet Sidebar refreshes (#3201): every
+   * 3rd read at {@link CHAT_POLL_MS}, ~12 seconds. `loadProjects()` +
+   * `loadEngineHealth()` were previously only re-read on initial route
+   * entry, so a sibling session starting or stopping elsewhere left the
+   * sidebar's indicator for it stale (still green/red) until the operator
+   * navigated away and back.
+   */
+  const SIDEBAR_EVERY_POLLS = 3;
+
+  /**
+   * How often the Fleet Sidebar refreshes on its own, standalone timer
+   * (#3201) when no chat poll is already running to piggyback on — Overview,
+   * Settings, and "no project resolved". {@link SIDEBAR_EVERY_POLLS} *
+   * {@link CHAT_POLL_MS}, so both paths land on the same ~12s cadence.
+   */
+  const SIDEBAR_POLL_MS = CHAT_POLL_MS * SIDEBAR_EVERY_POLLS;
+
   /** Reads of a just-sent chat that may show no engine activity before it stops reading as Working (#3057). */
   const AWAIT_REPLY_POLLS = 3;
   const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
@@ -2047,16 +2082,141 @@
   }
 
   /**
+   * The centered offline startup hero (#3203): what a selected chat shows
+   * in place of the stream and composer while its session is offline and
+   * the operator has not switched to "View Previous Conversation". Three
+   * sub-states, keyed by `chat.launchState` (set by `startSession`):
+   * resting (no launch in flight), `'starting'` (an animated ellipsis, via
+   * CSS on `.v6-chat-offline-hero-pill.is-starting`), and `'failed'`
+   * (diagnostics + Retry/Edit in place of the normal action row).
+   * @param {string} name - The project's own name.
+   * @param {object} chat - `conversationViewMarkup`'s own `chat`.
+   * @returns {string} HTML.
+   */
+  function offlineHeroMarkup(name, chat) {
+    const launch = chat.launchState || null;
+    const starting = Boolean(launch && launch.status === 'starting');
+    const failed = Boolean(launch && launch.status === 'failed');
+    const pillLabel = failed ? 'Launch Failed' : (starting ? 'Starting…' : 'Offline');
+    const pillClass = failed ? 'is-failed' : (starting ? 'is-starting' : 'is-offline');
+    const editButton = `<button type="button" id="v6ChatEditPropertiesHero" class="btn btn-secondary v6-chat-offline-hero-edit"
+      data-action="open-chat-settings">⚙ Edit Session Properties</button>`;
+    // #3203 R2: #3202's structured diagnostic (when the server sent one on
+    // this failure) names its own title/remediation; otherwise fall back
+    // to the plain message startSession already derived from api.lastError.
+    const diagnostic = launch && launch.diagnostic;
+    const diagnosticMarkup = failed ? `<div class="v6-chat-offline-hero-diagnostic"${diagnostic && diagnostic.code ? ` data-diagnostic-code="${escapeHtml(diagnostic.code)}"` : ''}>
+          <h3 class="v6-chat-offline-hero-diagnostic-title">${escapeHtml((diagnostic && diagnostic.title) || 'Launch Failed')}</h3>
+          <p class="v6-chat-offline-hero-diagnostic-message">${escapeHtml((diagnostic && diagnostic.message) || launch.message || 'The server refused to start this session.')}</p>
+          ${diagnostic && Array.isArray(diagnostic.remediation) && diagnostic.remediation.length
+    ? `<ul class="v6-chat-offline-hero-diagnostic-remediation">${diagnostic.remediation.map((step) => `<li>${escapeHtml(String(step))}</li>`).join('')}</ul>`
+    : ''}
+        </div>` : '';
+    const actions = failed
+      ? `<div class="v6-chat-offline-hero-failure" role="alert">
+          ${diagnosticMarkup}
+          <div class="v6-chat-offline-hero-actions">
+            <button type="button" id="v6ChatRetryLaunchHero" class="btn btn-primary v6-chat-offline-hero-retry"
+              data-action="start-chat-session">↻ Retry Launch</button>
+            ${editButton}
+          </div>
+        </div>`
+      : `<div class="v6-chat-offline-hero-actions">
+          <button type="button" id="v6ChatStartHero" class="btn btn-primary v6-chat-offline-hero-start"
+            data-action="start-chat-session"${starting ? ' disabled' : ''}>▶ Start Session</button>
+          <button type="button" id="v6ChatViewHistoryHero" class="btn btn-secondary v6-chat-offline-hero-history"
+            data-action="view-offline-history">🕓 View Previous Conversation</button>
+          ${editButton}
+        </div>`;
+    // #3203 R4: aligned with sibling Car V659-W1-C's CSS (PR #3226,
+    // public/style.css) -- `.v6-chat-offline-hero` is the outer centering
+    // flex container, `is-starting` on IT (not only the pill) is what its
+    // `.is-starting .v6-chat-offline-hero-title::after` spinner selector
+    // targets, and `.v6-chat-offline-hero-card` is the column card that
+    // CSS centers inside it.
+    return `<div class="v6-chat-offline-hero${starting ? ' is-starting' : ''}" role="status" aria-label="${escapeHtml(name)} is offline">
+      <div class="v6-chat-offline-hero-card">
+        <h2 class="v6-chat-offline-hero-heading v6-chat-offline-hero-title">${escapeHtml(name)} is offline
+          <span class="v6-chat-offline-hero-pill ${pillClass}">${escapeHtml(pillLabel)}</span>
+        </h2>
+        <p class="v6-chat-offline-hero-subtitle">This session is not running. Start it to resume your workspace, or inspect its previous conversation and settings.</p>
+        ${actions}
+      </div>
+    </div>`;
+  }
+
+  /**
+   * One compact Start/Edit bar for {@link offlineHistoryMarkup} (#3203),
+   * drawn both above and below the history body — `idSuffix` keeps each
+   * copy's element ids unique, since both exist in the DOM at once.
+   * @param {string} idSuffix - `'Top'` or `'Bottom'`.
+   * @returns {string} HTML.
+   */
+  function offlineHistoryBarMarkup(idSuffix) {
+    return `<div class="v6-chat-offline-history-bar">
+      <button type="button" id="v6ChatOfflineHistoryStart${idSuffix}" class="btn btn-primary btn-small v6-chat-offline-hero-start"
+        data-action="start-chat-session">▶ Start Session</button>
+      <button type="button" id="v6ChatOfflineHistoryReturn${idSuffix}" class="btn btn-secondary btn-small v6-chat-offline-hero-return"
+        data-action="return-to-start-card">↩ Return to Start Card</button>
+      <button type="button" id="v6ChatOfflineHistoryEdit${idSuffix}" class="btn btn-secondary btn-small v6-chat-offline-hero-edit"
+        data-action="open-chat-settings">⚙ Edit Session Properties</button>
+    </div>`;
+  }
+
+  /**
+   * The offline chat's "View Previous Conversation" mode (#3203): the most
+   * recent persisted session's own summary sections (what
+   * {@link module:lib/continuity} already records; the same source the
+   * sidebar's history panel reads), with the compact Start/Edit bar above
+   * and below it. Loading, empty and error each read as their own short
+   * line, never an empty stream that looks like "no messages yet".
+   * @param {object} chat - `conversationViewMarkup`'s own `chat`; reads `chat.offlineHistory`.
+   * @returns {string} HTML.
+   */
+  function offlineHistoryMarkup(chat) {
+    const h = chat.offlineHistory || { status: 'loading', snapshot: null, error: null };
+    const sections = h.snapshot && Array.isArray(h.snapshot.sections) ? h.snapshot.sections : [];
+    const name = String((chat.project && chat.project.name) || '');
+    let body;
+    if (h.status === 'loading') {
+      body = '<p class="v6-chat-offline-history-empty">Loading previous conversation…</p>';
+    } else if (h.status === 'error') {
+      body = `<p class="v6-chat-offline-history-empty">${escapeHtml(h.error || 'Could not load the previous conversation.')}</p>`;
+    } else if (h.status === 'ready' && h.kind === 'events' && Array.isArray(h.events) && h.events.length) {
+      // #3203 R3: the project's own persisted B2 conversation events, via
+      // the same bubble formatter a live chat's recorded events use — no
+      // live attachment blobs or link unfurls are fetched for a closed
+      // session, so thumbs/unfurls are passed empty (messageMarkup already
+      // renders attachment references without one).
+      body = `<ul class="v6-conversation-events v6-chat-offline-history-events">${recordedEventsMarkup(h.events, name, {}, {})}</ul>`;
+    } else if (h.status === 'ready' && sections.length) {
+      body = `<ol class="v6-chat-offline-history-sections">${sections.map((s) => (
+        `<li class="v6-chat-offline-history-section"><h4>${escapeHtml(s.name)}</h4><p>${escapeHtml(s.body)}</p></li>`
+      )).join('')}</ol>`;
+    } else {
+      body = '<p class="v6-chat-offline-history-empty">No previous conversation recorded for this workspace yet.</p>';
+    }
+    const bar = offlineHistoryBarMarkup('Top');
+    return `<div class="v6-chat-offline-history" aria-label="Previous conversation">
+      ${bar}
+      <div class="v6-chat-offline-history-body">${body}</div>
+      ${offlineHistoryBarMarkup('Bottom')}
+    </div>`;
+  }
+
+  /**
    * Render the B2 Conversation View for one legacy project (#3022
    * deliverable e): its replayed conversation events and an ADR 0026
    * "Open Hood" link to the live terminal page. With no live session it
-   * says so instead of rendering an empty stream that reads as "no
-   * messages yet".
+   * shows the offline startup hero (#3203) — or, once the operator clicks
+   * "View Previous Conversation", that session's persisted history —
+   * instead of an empty stream that reads as "no messages yet".
    * @param {{project: {id?: *, name?: string}|null, sessionId?: number|null,
    *   events?: Array<{seq?: number, role?: string, content?: string, redacted?: number}>|null,
    *   error?: string|null, chat?: object}} view - `chat.sidebarCollapsed` adds a Show Fleet
    *   button and `chat.activityElapsed` is the busy line's time (#3057); `chat.telemetry`, when
-   *   given (null included), is the telemetry bar drawn inside the header row (#3063).
+   *   given (null included), is the telemetry bar drawn inside the header row (#3063); `chat.launchState`,
+   *   `chat.viewingOfflineHistory` and `chat.offlineHistory` drive the offline hero (#3203).
    * @returns {string} HTML.
    */
   function conversationViewMarkup(view) {
@@ -2156,6 +2316,15 @@
     const modeText = delegateMode ? 'Designated Project Delegate' : 'Direct Session';
     const identityTip = `Talking to ${name}${v.sessionId != null ? ` (#${v.sessionId})` : ''} · ${modeText} · ${CHAT_STATUS_LABELS[status]}`;
     const iconButton = (id, label, glyph) => `<button type="button" id="${id}" class="btn btn-secondary btn-small v6-chat-icon-btn" title="${label}" aria-label="${label}"><span aria-hidden="true">${glyph}</span></button>`;
+    // #3203: the offline hero (or, once clicked, its history view) replaces
+    // the stream, Under the Hood/old offline banner, waiting-on line,
+    // activity line and composer entirely while offline -- none of them
+    // mean anything with no session to show or send to. The header above
+    // (identity pill, its own small Start button, Settings, etc.) is
+    // unchanged for either case.
+    const offlineBody = !liveSession
+      ? (chat.viewingOfflineHistory ? offlineHistoryMarkup(chat) : offlineHeroMarkup(name, chat))
+      : null;
     return `<section class="v6-conversation v6-chat" aria-label="Conversation — ${escapeHtml(name)}">
       <header class="v6-chat-header">
         <h2 class="v6-detail-title">${escapeHtml(title)}</h2>
@@ -2181,8 +2350,8 @@
             title="Project Settings" aria-label="Project Settings"><span aria-hidden="true">⚙ Edit Session</span></button>
         </div>
       </header>
-      ${stream}
-      ${liveSession ? `<details id="v6ChatUnderHood" class="v6-chat-under-hood${chat.hideHoodTraffic !== false ? ' is-traffic-hidden' : ''}"${chat.hoodOpen ? ' open' : ''}${
+      ${offlineBody || `${stream}
+      <details id="v6ChatUnderHood" class="v6-chat-under-hood${chat.hideHoodTraffic !== false ? ' is-traffic-hidden' : ''}"${chat.hoodOpen ? ' open' : ''}${
         // #3135: a dark-palette modal overlay, in lieu of a style.css rule
         // (reserved for Wave 2's own Car) — inline, so it costs nothing when not active.
         chat.hoodFullScreen ? ' style="position:fixed;inset:0;z-index:9000;width:100%;height:100%;max-width:none;max-height:none;'
@@ -2213,9 +2382,7 @@
           chat.hoodInteractive ? '<span id="v6ChatHoodLiveIndicator" style="color:#9CF732;display:block;">LIVE CLI — Type directly into pane</span>' : ''
         }${chatPeekMarkup(chat.peek, { hideTraffic: chat.hideHoodTraffic !== false })}</pre>
         ${chatPaneResizerMarkup('v6ChatHoodResizeBottom', 'hood-bottom', 'bottom', 'Resize Under the Hood (bottom)')}
-      </details>` : `<p class="v6-chat-offline">${escapeHtml(name)} has no live session.
-        <button type="button" id="v6ChatStartBanner" class="btn btn-primary btn-small" data-action="start-chat-session">▶ Start ${escapeHtml(name)}</button>
-        <a class="v6-chat-classic-launch" href="#/">Open Classic View to launch ${escapeHtml(name)}</a></p>`}
+      </details>
       ${waitingOnMarkup(waitingOnModel(live, chat, v.events, liveTurns, chat.knownProjects), chat.collapsedWaitingOn)}
       ${chatActivityMarkup(chatBusyLabel(chat), chat.activityElapsed)}
       ${chatPaneResizerMarkup('v6ChatComposerResizeTop', 'composer-top', 'top', 'Resize Composer')}
@@ -2232,7 +2399,7 @@
             aria-label="Force send: send now, even while a reply or another send is in flight"><span aria-hidden="true">⚡</span> Force</button>
           <button type="submit" id="v6ChatSend" class="btn btn-primary v6-chat-send-btn"${disabled}>Send</button>
         </div>
-      </form>
+      </form>`}
       <p id="v6ChatStatus" class="v6-chat-send-status${send ? ` is-${send.kind}` : ''}" role="status" aria-live="polite">${send ? escapeHtml(send.message) : ''}</p>
     </section>`;
   }
@@ -5304,6 +5471,20 @@
     // file of the same name, so a name is never reused (#3053).
     const uploadedNames = new Map();
     let attachSeq = 0;
+    // #3203: the offline startup hero's own per-project state -- separate
+    // from `send` (showSend/chat.send, the composer's own status line),
+    // since there is no composer to render under while offline. Keyed by
+    // project NAME, matching startSession's own existing key (it can be
+    // called for a project other than the one on screen, e.g. from the
+    // sidebar or Overview).
+    const launchState = new Map();
+    // #3203: whether the offline hero has been switched to "View Previous
+    // Conversation" mode, and that mode's own loaded snapshot -- both keyed
+    // by project id, reset each time a fresh (still-offline) load of that
+    // chat begins, so returning to an offline chat always starts at the
+    // hero again.
+    const viewingOfflineHistory = new Set();
+    const offlineHistoryCache = new Map();
     const readFileAsBase64 = deps.readFileAsBase64 || defaultReadFileAsBase64;
     const textToBase64 = deps.textToBase64 || defaultTextToBase64;
     // #3079 item 6: per project, the message this chat last sent and
@@ -5329,6 +5510,14 @@
     let sendSeq = 0;
     // #3085: chat reads since the usage meter last refreshed.
     let usagePolls = 0;
+    // #3201: chat reads since the Fleet Sidebar last refreshed.
+    let sidebarPolls = 0;
+    // #3201: the standalone ~12s sidebar-only timer, for a route with no
+    // chat poll of its own to piggyback on (Overview, Settings, no project
+    // resolved) — independent of `pollId`, since the two can never both be
+    // active for the same route generation but each needs its own id to
+    // stop.
+    let sidebarPollId = null;
     let usageActionsGiven = false;
     // #3132: the automated probe's own actions are handed to the shell once, separately.
     let usageProbeActionsGiven = false;
@@ -5468,6 +5657,48 @@
     function stopPolling() {
       if (pollId != null && stopTimer) stopTimer(pollId);
       pollId = null;
+    }
+
+    /** Stop the standalone sidebar-only refresh timer (#3201), independent of {@link stopPolling}. */
+    function stopSidebarPolling() {
+      if (sidebarPollId != null && stopTimer) stopTimer(sidebarPollId);
+      sidebarPollId = null;
+    }
+
+    /**
+     * Start the standalone ~12s sidebar-only refresh timer (#3201), for a
+     * route with no chat poll of its own to piggyback on. A no-op when one
+     * is already running for this route generation (`pollId` -- the chat
+     * poll already covers it) or `sidebarPollId` is already set.
+     * @param {number} mine - The route generation this timer belongs to.
+     */
+    function startSidebarPolling(mine) {
+      if (pollId != null || sidebarPollId != null || !startTimer) return;
+      sidebarPollId = startTimer(async () => {
+        if (mine !== seq) { stopSidebarPolling(); return; }
+        const shell = getShell();
+        if (!shell) return;
+        await refreshSidebarStatus(shell, mine);
+      }, SIDEBAR_POLL_MS);
+    }
+
+    /**
+     * The consolidated Fleet Sidebar refresh (#3201): reloads the project
+     * rows and engine health, and hands both to the shell. Each setter
+     * (`setProjects`/`setTree`/`setEngineHealth`) re-renders through the
+     * shell's own `render()`, which already wraps every redraw in
+     * `captureViewState()`/`restoreViewState()` — so this never resets the
+     * chat composer draft, focus/caret, open dropdowns, or scroll
+     * positions; nothing further is needed here to preserve them.
+     * @param {object} shell
+     * @param {number} mine - The route generation this refresh belongs to.
+     * @returns {Promise<void>}
+     */
+    async function refreshSidebarStatus(shell, mine) {
+      await loadProjects();
+      if (mine !== seq) return;
+      showProjects(shell);
+      await loadEngineHealth(shell);
     }
 
     /**
@@ -5777,6 +6008,16 @@
       });
       current = { project, sessionId, launchId: (status && status.launchId) || null, ctx, mine, view: null };
       if (sessionId == null) {
+        // #3203: a fresh (re-)entry into an offline chat always starts at
+        // the hero, never wherever a PREVIOUS visit left it -- the
+        // operator clicks "View Previous Conversation" again if they want
+        // it. launchState is keyed by name, not id, since startSession can
+        // set it for a project other than the one on screen; clearing it
+        // here only matters for THIS project's own key.
+        const offlineKey = String(project.id);
+        viewingOfflineHistory.delete(offlineKey);
+        offlineHistoryCache.delete(offlineKey);
+        launchState.delete(String(project.name || ''));
         current.view = { project, sessionId: null, chat };
         shell.setAttestation(pickAttestation(null, project));
         showChat(shell);
@@ -5791,6 +6032,17 @@
             if (checking) return;
             checking = true;
             try {
+              // #3201: piggyback the consolidated Fleet Sidebar refresh
+              // every 3rd tick, same cadence as the live-chat poll below —
+              // an offline chat's own session is already covered by the
+              // status check right after, but a SIBLING session starting
+              // or stopping elsewhere needs this too.
+              sidebarPolls = (sidebarPolls + 1) % SIDEBAR_EVERY_POLLS;
+              if (sidebarPolls === 0) {
+                const sidebarShell = getShell();
+                if (sidebarShell) await refreshSidebarStatus(sidebarShell, mine);
+                if (mine !== seq) return;
+              }
               const now = await api(`/api/sessions/${name}/status`);
               if (mine !== seq || !(now && now.active && now.sessionId != null)) return;
               stopPolling();
@@ -5841,6 +6093,17 @@
           // scheduler or an explicit "↻ Refresh now" last recorded.
           usagePolls = (usagePolls + 1) % USAGE_EVERY_POLLS;
           if (usagePolls === 0) { loadUsage(); loadUsageProbe(); }
+          // #3201: piggyback the consolidated Fleet Sidebar refresh every
+          // 3rd tick — this chat's OWN status already rides the
+          // session-status read below, but a SIBLING session starting or
+          // stopping elsewhere would otherwise stay stale until the
+          // operator navigates away and back.
+          sidebarPolls = (sidebarPolls + 1) % SIDEBAR_EVERY_POLLS;
+          if (sidebarPolls === 0) {
+            const sidebarShell = getShell();
+            if (sidebarShell) await refreshSidebarStatus(sidebarShell, mine);
+            if (mine !== seq) return;
+          }
           // #3167: the session status poll runs alongside peek/medusa so the
           // universal busy signal (chatBusyLabel's chat.statusBusy) stays
           // live too, not just the pane-text one — set once at load, it
@@ -5864,14 +6127,24 @@
     }
 
     /**
-     * Hand the chat on screen to the shell, with its attachment chips: they
-     * belong to the target project, not to the view a load built.
+     * Hand the chat on screen to the shell, with its attachment chips and
+     * #3203's own offline-hero state: all three belong to the target
+     * project, not to the view a load built, so each is re-read fresh here
+     * every time rather than threaded through every call site that changes
+     * one of them.
      * @param {object} shell
      */
     function showChat(shell) {
       if (!current || !current.view || !shell) return;
+      const key = String(current.project.id);
+      const name = String(current.project.name || '');
       current.view = Object.assign({}, current.view, {
-        chat: Object.assign({}, current.view.chat, { attachments: (attachments.get(String(current.project.id)) || []).slice() })
+        chat: Object.assign({}, current.view.chat, {
+          attachments: (attachments.get(key) || []).slice(),
+          launchState: launchState.get(name) || null,
+          viewingOfflineHistory: viewingOfflineHistory.has(key),
+          offlineHistory: offlineHistoryCache.get(key) || null
+        })
       });
       shell.setDetail({ kind: 'conversation', view: current.view });
     }
@@ -6339,6 +6612,7 @@
       lastRouteKey = key;
       const mine = ++seq;
       stopPolling();
+      stopSidebarPolling();
       current = null;
       if (!key) return;
       if (entering || !projects || freshNext) {
@@ -6367,9 +6641,17 @@
         shell.setAttestation(null);
         shell.setDetail({ kind: 'loading' });
         await loadSettings(route, mine);
+        // #3201: Settings never resolves a chat, so it has no poll of its
+        // own to piggyback the sidebar refresh on.
+        startSidebarPolling(mine);
         return;
       }
       await loadRouteDetail(route, mine);
+      // #3201: a route whose detail load did not end up starting a chat
+      // poll (Overview, or "no project resolved") gets the standalone
+      // timer instead; one that DID (loadConversation's own pollId) is
+      // already covered by that poll's own every-3rd-tick piggyback.
+      if (mine === seq) startSidebarPolling(mine);
     }
 
     /**
@@ -6508,12 +6790,15 @@
       if (!route || !route.view || route.view === 'settings') return;
       const mine = ++seq;
       stopPolling();
+      stopSidebarPolling();
       await loadProjects();
       if (mine !== seq) return;
       showProjects(shell);
       await loadEngineHealth(shell);
       if (mine !== seq) return;
       await loadRouteDetail(route, mine);
+      // #3201: see handleRoute's own identical comment.
+      if (mine === seq) startSidebarPolling(mine);
     }
 
     /**
@@ -6568,6 +6853,20 @@
      * stranded-wraps gate itself (`lib/stranded-wraps.js`) has no
      * single-flag override; resolving it (acknowledge, or open a PR for
      * the branch) stays Classic View's own flow for now (#3154 PR body).
+     *
+     * #3203: also drives the offline startup hero's own `launchState`
+     * (`starting` while this call is in flight, `failed` with the server's
+     * reason if it is refused, cleared on success) — the same call this
+     * chat's own `[▶ Start Session]`/`[↻ Retry Launch]` hero buttons use.
+     * #3203 R2: a failure's structured `diagnostic` (#3202's own
+     * `{code, category, title, message, remediation, retryable,
+     * canEditProperties}` shape, when the server sends one) is read from
+     * `api.lastBody` — `apiMutate`/`api()`'s own documented side channel
+     * for "the whole refusal body" (`public/api-helper.js`, #711), set
+     * alongside `api.lastError` on every failure and cleared on every
+     * success; never a new contract this file invents. A server not yet
+     * sending `diagnostic` (or sending a non-object one) simply reads as
+     * `null` here, falling back to the plain `api.lastError` string.
      * @param {string} [projectName] - Defaults to the chat on screen.
      * @returns {Promise<void>}
      */
@@ -6579,13 +6878,125 @@
       if (!name) return;
       const onThisChat = Boolean(chat) && String(chat.project.name || '') === name;
       if (onThisChat) showSend({ kind: 'pending', message: `Starting ${name}…` });
+      launchState.set(name, { status: 'starting', message: null, diagnostic: null });
+      if (onThisChat) showChat(shell);
       const ok = await apiMutate(`/api/sessions/${encodeURIComponent(name)}`, 'POST', {});
       if (onThisChat && chat !== current) return;
       if (!ok) {
-        if (onThisChat) showSend({ kind: 'error', message: `Not started: ${api.lastError || 'the server refused it'}` });
+        const message = `Not started: ${api.lastError || 'the server refused it'}`;
+        const diagnostic = api.lastBody && typeof api.lastBody === 'object' && api.lastBody.diagnostic
+          && typeof api.lastBody.diagnostic === 'object' ? api.lastBody.diagnostic : null;
+        if (onThisChat) showSend({ kind: 'error', message });
+        launchState.set(name, { status: 'failed', message, diagnostic });
+        if (onThisChat) showChat(shell);
         return;
       }
+      launchState.delete(name);
       await refresh();
+    }
+
+    /**
+     * Switch the offline startup hero to its "View Previous Conversation"
+     * mode (#3203): loads the chat's most recently persisted session and
+     * shows it in place of the hero.
+     *
+     * #3203 R3: tries the project's persisted B2 conversation events first
+     * — `GET /api/sessions/:name/history?limit=1` (`lib/routes/sessions.js`)
+     * names the most recent session row regardless of status, and
+     * `GET /api/v6/projects/:id/sessions/:sessionId/conversation/events`
+     * (the same route an open chat already reads above) serves that
+     * session's own events whether or not it is still live —
+     * `_v6RequireProjectSession` (server.js) only checks the row exists for
+     * this project, never that it is active. Rendered through
+     * {@link recordedEventsMarkup}, the same USER/ASSISTANT bubble
+     * formatter a live chat's own recorded events use, so message
+     * rendering (and redaction, attachments, Medusa bubbles) is identical
+     * whether the session is live or closed.
+     *
+     * Falls back to the continuity wrap-summary source
+     * {@link loadHistory}/{@link openHistorySession} already read only when
+     * no session row exists, or its own events come back empty — e.g. a
+     * session old enough to predate B2, or one that recorded nothing. A
+     * project with no persisted history by EITHER route reads `'empty'`,
+     * never `'error'`.
+     * @param {string} [projectName] - Must name the chat on screen; a
+     *   mismatch (stale click after the chat changed) is a no-op.
+     * @returns {Promise<void>}
+     */
+    async function viewOfflineHistory(projectName) {
+      const shell = getShell();
+      const chat = current;
+      if (!chat || !shell) return;
+      const name = String(projectName || chat.project.name || '');
+      if (!name || String(chat.project.name || '') !== name) return;
+      const key = String(chat.project.id);
+      viewingOfflineHistory.add(key);
+      offlineHistoryCache.set(key, { status: 'loading', snapshot: null, error: null });
+      showChat(shell);
+      const historyRes = await api(`/api/sessions/${encodeURIComponent(name)}/history?limit=1`);
+      if (chat !== current) return;
+      const latestId = historyRes && Array.isArray(historyRes.sessions) && historyRes.sessions[0]
+        && historyRes.sessions[0].id != null ? historyRes.sessions[0].id : null;
+      if (latestId != null) {
+        const eventsRes = await api(`/api/v6/projects/${encodeURIComponent(chat.project.id)}/sessions/${encodeURIComponent(latestId)}/conversation/events`);
+        if (chat !== current) return;
+        const events = eventsRes && Array.isArray(eventsRes.events) ? eventsRes.events : null;
+        if (events && events.length) {
+          offlineHistoryCache.set(key, { status: 'ready', kind: 'events', events, snapshot: null, error: null });
+          showChat(shell);
+          return;
+        }
+      }
+      const listRes = await api(`/api/continuity/${encodeURIComponent(name)}/sessions`);
+      if (chat !== current) return;
+      const sessions = listRes && Array.isArray(listRes.sessions) ? listRes.sessions : null;
+      if (sessions === null) {
+        offlineHistoryCache.set(key, { status: 'error', snapshot: null, error: api.lastError || 'Could not read this session’s history.' });
+        showChat(shell);
+        return;
+      }
+      if (!sessions.length) {
+        offlineHistoryCache.set(key, { status: 'empty', snapshot: null, error: null });
+        showChat(shell);
+        return;
+      }
+      const newest = [...sessions].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))[0];
+      const detailRes = await api(`/api/continuity/${encodeURIComponent(name)}/sessions/${encodeURIComponent(newest.sid)}`);
+      if (chat !== current) return;
+      if (!detailRes) {
+        offlineHistoryCache.set(key, { status: 'error', snapshot: null, error: api.lastError || 'Could not open this session.' });
+        showChat(shell);
+        return;
+      }
+      const summary = detailRes.summary && detailRes.summary.sections ? detailRes.summary.sections : {};
+      offlineHistoryCache.set(key, {
+        status: 'ready',
+        snapshot: {
+          sid: String(newest.sid),
+          date: (detailRes.session && detailRes.session.date) || '',
+          sections: Object.entries(summary).filter(([, body]) => body).map(([secName, body]) => ({ name: secName, body: String(body) }))
+        },
+        error: null
+      });
+      showChat(shell);
+    }
+
+    /**
+     * Return the offline chat from "View Previous Conversation" mode back
+     * to the centered startup hero (#3203 R2's "Return to Start Card"),
+     * in place — no route change, no reload, matching how
+     * {@link viewOfflineHistory} entered it in the first place.
+     * @param {string} [projectName] - Must name the chat on screen; a
+     *   mismatch (stale click after the chat changed) is a no-op.
+     */
+    function returnToStartCard(projectName) {
+      const shell = getShell();
+      const chat = current;
+      if (!chat || !shell) return;
+      const name = String(projectName || chat.project.name || '');
+      if (!name || String(chat.project.name || '') !== name) return;
+      viewingOfflineHistory.delete(String(chat.project.id));
+      showChat(shell);
     }
 
     /**
@@ -7068,6 +7479,7 @@
     return {
       handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, attachFiles, removeAttachment,
       startSession, startFleet, treeLinkClicked, renameProject, changeEngine, loadHistory, openHistorySession,
+      viewOfflineHistory, returnToStartCard,
       createWorkspaceProject, convertToFleet, provisionFleet, requestUnfurl,
       loadBundledFleetSpecs, requestValidateFleetSpec, applyFleetSpec, exportFleetSpec,
       getProjects() { return projects; }
@@ -7086,6 +7498,7 @@
    *   detail?: object|null, showWatermark?: boolean, onRender?: (route: object) => void,
    *   onLaunchTemplate?: (templateId: string) => void,
    *   storage?: {getItem: Function, setItem: Function}|null,
+   *   sessionStorage?: {getItem: Function, setItem: Function}|null,
    *   onSendChat?: (text: string) => void, onChangeDelegate?: (nodeId: string, projectId: string) => void,
    *   onRefreshChat?: () => void, onOpenProjectSettings?: (projectName: string) => void,
    *   onChangeEngine?: (projectName: string, engine: string) => void,
@@ -7094,6 +7507,8 @@
    *   onRenameProject?: (oldName: string, newName: string, opts?: {confirmOrphanRisk: boolean}) => void,
    *   onHistoryLoad?: (form: {scope: string, kind: string, q: string}) => void,
    *   onHistoryOpenSession?: (pick: {member: string, sid: string, q: string, kind: string}) => void,
+   *   onViewOfflineHistory?: (projectName: string) => void,
+   *   onReturnToStartCard?: (projectName: string) => void,
    *   onHoodCommand?: (name: string, body: {command: string, enter: true}|{rawKey: string}) => void,
    *   now?: () => number, setInterval?: (fn: Function, ms: number) => *, clearInterval?: (id: *) => void,
    *   requestAnimationFrame?: (fn: Function) => *, fetch?: Function}} opts - `onHoodCommand` is
@@ -7104,9 +7519,17 @@
    *   it (planned for Wave 2), its fallback reuses `onSendChat` for literal text and a direct
    *   `fetch` (this option, or the page's own) for a raw key — see `sendHoodCommand`. `storage`
    *   remembers the sidebar layout (#3046); defaults to the page's `localStorage`,
-   *   and `null` keeps it for this page only. The `on*Chat`/delegate/settings
+   *   and `null` keeps it for this page only. `sessionStorage` is the #3204 tab-scoped
+   *   equivalent, for the fleet filter specifically; defaults to the page's own
+   *   `window.sessionStorage`. The `on*Chat`/delegate/settings
    *   callbacks are the chat view's controls (#3047). `now` and the interval pair
    *   drive the busy line's elapsed time (#3057); they default to the page's.
+   *   `onViewOfflineHistory` is the offline startup hero's own "View Previous
+   *   Conversation" button (#3203), and `onReturnToStartCard` its history view's
+   *   own "Return to Start Card" button (#3203 R2) — until the page wires
+   *   each, that one button has no effect (every other hero/history-bar
+   *   action reuses the already-wired `onStartSession`/`onOpenProjectSettings`,
+   *   so they work unchanged).
    * @returns {{getRoute: () => object, navigate: (hash: string) => void,
    *   toggleDrawer: (force?: boolean) => void, isDrawerOpen: () => boolean,
    *   toggleSidebar: (force?: boolean) => void, isSidebarCollapsed: () => boolean,
@@ -7146,6 +7569,12 @@
     let currentRoute = { view: null };
     let drawerOpen = false;
     const prefs = makePrefs(options.storage !== undefined ? options.storage : defaultStorage(win));
+    // #3204: tab-scoped navigation filter state (the fleet picker) --
+    // `sessionStorage`, not `localStorage`, so two browser tabs open on
+    // different fleets never read back each other's last-written filter.
+    // Separate makePrefs instance, same injectable-storage shape as `prefs`
+    // (`options.sessionStorage` for tests).
+    const tabPrefs = makePrefs(options.sessionStorage !== undefined ? options.sessionStorage : defaultSessionStorage(win));
     let sidebarCollapsed = prefs.get('tc_v6_sidebar_collapsed', false, isBoolean);
     // #3133: drag-resizable width, independent of collapse (which still wins
     // when both apply — see applySidebarWidthStyle).
@@ -7156,7 +7585,7 @@
     let engineHealth = {};
     let filterText = '';
     let filterEngine = '';
-    let selectedGroups = new Set(prefs.get('tc_v6_selected_groups', [], isStringArray));
+    let selectedGroups = new Set(tabPrefs.get('tc_v6_selected_groups', [], isStringArray));
     // #3068: whether the search and engine filters show. They can only be
     // set while it is open, and closing clears them, so a filter in force is
     // never out of sight.
@@ -7622,7 +8051,15 @@
      * several agents at once.
      */
     function wireStart() {
-      ['v6ChatStart', 'v6ChatStartBanner'].forEach((id) => {
+      // #3203: the offline hero's own Start button, its Retry Launch button
+      // (same action — a retry is just starting again), and the compact
+      // top/bottom bar's Start button once "View Previous Conversation" is
+      // showing — all the same `options.onStartSession()` the header's own
+      // small Start button already calls.
+      [
+        'v6ChatStart', 'v6ChatStartHero', 'v6ChatRetryLaunchHero',
+        'v6ChatOfflineHistoryStartTop', 'v6ChatOfflineHistoryStartBottom'
+      ].forEach((id) => {
         const button = doc.getElementById(id);
         if (button && typeof options.onStartSession === 'function') button.addEventListener('click', () => options.onStartSession());
       });
@@ -8563,11 +9000,34 @@
           options.onRefreshChat();
         });
       }
-      const settings = doc.getElementById('v6ChatSettings');
       const project = detail && detail.view ? detail.view.project : null;
-      if (settings && project && typeof options.onOpenProjectSettings === 'function') {
-        settings.addEventListener('click', () => options.onOpenProjectSettings(String(project.name || '')));
+      // #3203: the offline hero's own Edit Session Properties button, its
+      // failure-panel copy, and the compact history bar's copy (top and
+      // bottom) — all the same `options.onOpenProjectSettings(name)` the
+      // header's own Settings button already calls.
+      [
+        'v6ChatSettings', 'v6ChatEditPropertiesHero',
+        'v6ChatOfflineHistoryEditTop', 'v6ChatOfflineHistoryEditBottom'
+      ].forEach((id) => {
+        const settings = doc.getElementById(id);
+        if (settings && project && typeof options.onOpenProjectSettings === 'function') {
+          settings.addEventListener('click', () => options.onOpenProjectSettings(String(project.name || '')));
+        }
+      });
+      // #3203: "View Previous Conversation" -- a fresh fetch each click
+      // (never cached across chats), so no id array to dedupe against.
+      const viewHistory = doc.getElementById('v6ChatViewHistoryHero');
+      if (viewHistory && project && typeof options.onViewOfflineHistory === 'function') {
+        viewHistory.addEventListener('click', () => options.onViewOfflineHistory(String(project.name || '')));
       }
+      // #3203 R2: "Return to Start Card" -- top and bottom copies of the
+      // compact history bar, same callback either way.
+      ['v6ChatOfflineHistoryReturnTop', 'v6ChatOfflineHistoryReturnBottom'].forEach((id) => {
+        const returnBtn = doc.getElementById(id);
+        if (returnBtn && project && typeof options.onReturnToStartCard === 'function') {
+          returnBtn.addEventListener('click', () => options.onReturnToStartCard(String(project.name || '')));
+        }
+      });
       // #3153: the inline engine picker — direct, no Settings modal needed.
       const engineSelect = doc.getElementById('v6ChatEngineSelect');
       if (engineSelect && project && typeof options.onChangeEngine === 'function') {
@@ -9681,6 +10141,7 @@
     }
 
     function render() {
+      const previousRoute = currentRoute;
       currentRoute = parseRoute(readHash());
       if (!root) return;
       const saved = captureViewState();
@@ -9700,15 +10161,29 @@
       const oldDrawerToggle = bar && typeof bar.querySelector === 'function' ? bar.querySelector('.v6-shell-drawer-toggle') : null;
       if (oldDrawerToggle) oldDrawerToggle.remove();
       const title = routeTitle(currentRoute);
-      // #3191: another tab's own `tc_v6_selected_groups` write can leave
-      // THIS tab narrowed to a different fleet than the one it is actually
-      // talking to or looking at — most visibly right after a reload,
-      // which re-reads that now-stale value from storage. Reconcile before
-      // the narrowed set ever reaches filterTree below.
+      // #3204: entering Overview (not merely re-rendering while already
+      // there) defaults the fleet filter to All Fleets, so the Global
+      // Overview never stays locked to whatever fleet a previous
+      // conversation/project route last narrowed it to. Checked BEFORE the
+      // #3191 sync right below, which is a no-op for 'overview' anyway
+      // (activeLogicalProjectId only ever resolves for a conversation/
+      // project/fleet route) — ordering only matters for clarity here.
+      const enteringOverview = currentRoute && currentRoute.view === 'overview'
+        && (!previousRoute || previousRoute.view !== 'overview');
+      if (enteringOverview && selectedGroups.size > 0) {
+        selectedGroups = new Set();
+        tabPrefs.set('tc_v6_selected_groups', []);
+      }
+      // #3191: a direct navigation (a link, a reload landing mid-route) can
+      // leave the filter narrowed to a fleet other than the one actually on
+      // screen. Reconcile before the narrowed set ever reaches filterTree
+      // below. #3204 moved this key to sessionStorage (tab-scoped), so the
+      // cross-tab case this originally targeted cannot happen anymore —
+      // this now only ever fires on a same-tab inconsistency.
       const activeLP = activeLogicalProjectId();
       if (activeLP != null && selectedGroups.size > 0 && !selectedGroups.has(activeLP)) {
         selectedGroups = new Set([activeLP]);
-        prefs.set('tc_v6_selected_groups', [...selectedGroups]);
+        tabPrefs.set('tc_v6_selected_groups', [...selectedGroups]);
       }
       shownTree = filterTree(tree, { text: filterText, engine: filterEngine, groups: selectedGroups }, projectRows);
       // #3053: the template wizard and attestation pills are not chat
@@ -9870,7 +10345,8 @@
     /** @param {Iterable<string>} ids - The logical project ids to show; empty shows all. */
     function setSelectedGroups(ids) {
       selectedGroups = new Set(ids);
-      prefs.set('tc_v6_selected_groups', [...selectedGroups]);
+      // #3204: sessionStorage (tab-scoped), not the shared `prefs`.
+      tabPrefs.set('tc_v6_selected_groups', [...selectedGroups]);
       render();
     }
 

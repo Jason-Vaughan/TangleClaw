@@ -620,10 +620,11 @@ describe('tcV6FleetPlanMarkup / tcV6ConversationViewMarkup (#3022 deliverables d
     assert.match(html, /is-assistant/);
   });
 
-  it('says there is no live session rather than rendering an empty stream', () => {
+  it('shows the offline startup hero rather than an empty stream (#3203)', () => {
     const html = G.tcV6ConversationViewMarkup({ project: { id: 7, name: 'X' }, sessionId: null });
-    assert.match(html, /No live session/);
-    assert.match(html, /Open Hood/, 'the terminal link is still offered');
+    assert.match(html, /v6-chat-offline-hero/);
+    assert.match(html, /X is offline/);
+    assert.match(html, /Open Hood/, 'the terminal link is still offered (it is in the unchanged header)');
   });
 
   it('distinguishes "no events yet" from a failed load', () => {
@@ -1553,7 +1554,14 @@ function mountShell(opts) {
   doc.body.appendChild(root);
   doc._register(root);
   const win = makeFakeWindow((opts && opts.initialHash) || '#/projects/tc-lane');
-  const shell = G.tcCreateV6Shell(doc, Object.assign({ root, window: win }, opts || {}));
+  const merged = Object.assign({ root, window: win }, opts || {});
+  // #3204: tc_v6_selected_groups moved to the tab-scoped `sessionStorage`
+  // option. Every caller here that only ever passed one `storage` mock
+  // (most of this file, pre-dating that split) keeps working unchanged —
+  // the same mock backs both — unless a test explicitly wants two
+  // DIFFERENT objects to simulate separate browser tabs.
+  if (merged.sessionStorage === undefined && merged.storage !== undefined) merged.sessionStorage = merged.storage;
+  const shell = G.tcCreateV6Shell(doc, merged);
   return { shell, doc, win, root, G };
 }
 
@@ -1865,11 +1873,14 @@ describe('tcCreateV6Shell — filter controls (#3046)', () => {
 
   // Restated by #3068: no pills to Ctrl-click; the additive selectGroup API remains.
   it('the additive selectGroup API still adds to the selection, and the picker says how many', () => {
-    // #3191: parked at a routeless overview — mountShell's own default hash
-    // (#/projects/tc-lane) is itself a project route, and the multi-tab
-    // fleet-sync this car adds would otherwise reconcile this test's own
-    // deliberate selection back to whatever that default route resolves to.
-    const { shell, root } = mountWithProjects({ initialHash: '#/overview' });
+    // #3191/#3204: parked at a genuinely routeless hash ('#/', view: null)
+    // — mountShell's own default hash (#/projects/tc-lane) is a project
+    // route, whose #3191 fleet-sync would otherwise reconcile this test's
+    // own deliberate selection back to whatever that route resolves to;
+    // '#/overview' used to be the neutral stand-in for that, but #3204
+    // made entering Overview itself reset the filter to All Fleets, so it
+    // is no longer neutral for a test that seeds or asserts a selection.
+    const { shell, root } = mountWithProjects({ initialHash: '#/' });
     shell.selectGroup('tc-lane', false);
     assert.match(root.innerHTML, /<option value="tc-lane" selected>TC-Lane<\/option>/);
     shell.selectGroup('medusa', true);
@@ -1886,7 +1897,7 @@ describe('tcCreateV6Shell — filter controls (#3046)', () => {
     const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) });
     // #3191: same reason as the test above — a routeless mount so the new
     // multi-tab fleet-sync has no active project/fleet route to reconcile against.
-    const { doc, root } = mountWithProjects({ storage, initialHash: '#/overview' });
+    const { doc, root } = mountWithProjects({ storage, initialHash: '#/' });
     assert.doesNotMatch(root.innerHTML, /TC-Lane Fleet/, 'a remembered selection is restored on mount');
     assert.match(root.innerHTML, /<option value="medusa" selected>Medusa<\/option>/);
     const el = doc.getElementById('v6FilterFleet');
@@ -2041,12 +2052,14 @@ describe('tcV6ConversationViewMarkup — chat (#3047)', () => {
     assert.match(html, /<button type="submit" id="v6ChatSend" class="btn btn-primary v6-chat-send-btn">Send<\/button>/);
   });
 
-  it('an offline target disables the composer and says why', () => {
+  it('an offline target shows the startup hero instead of a disabled composer (#3203)', () => {
     const html = G.tcV6ConversationViewMarkup(base({ status: 'offline' }, { sessionId: null }));
     assert.match(html, /class="v6-chat-pill is-offline">Offline</);
-    assert.match(html, /<textarea id="v6ChatInput"[^>]*disabled/);
-    assert.match(html, /<button type="submit"[^>]*disabled/);
-    assert.match(html, /TC-Lane-PM has no live session/);
+    assert.match(html, /v6-chat-offline-hero/);
+    assert.match(html, /TC-Lane-PM is offline/);
+    // #3203: no composer at all while offline -- the hero replaces it entirely.
+    assert.doesNotMatch(html, /id="v6ChatInput"/);
+    assert.doesNotMatch(html, /id="v6ChatForm"/);
   });
 
   it('an idle session is labelled idle', () => {
@@ -2331,7 +2344,7 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     await m.settle();
     await m.live.sendChat('hello');
     assert.equal(m.mutateCalls.length, 0);
-    assert.match(m.root.innerHTML, /Medusa-INT has no live session/);
+    assert.match(m.root.innerHTML, /Medusa-INT is offline/);
     // #3053: an offline chat polls its status (to turn Active by itself),
     // never its pane, which has nothing to show.
     assert.equal(m.timers.length, 1);
@@ -3278,23 +3291,27 @@ describe('the chat frame\'s scroll-position coordinator (#3200)', () => {
     assert.equal(disconnected.length, 1, 'the first render\'s observer was disconnected before the second render\'s was created');
   });
 
-  it('opening, canceling, and completing a header rename preserves #v6ChatStream\'s exact scroll position and pinned state', () => {
+  it('opening, canceling, and completing a header rename preserves the sidebar\'s exact scroll position', () => {
     // #3071's own offline/no-session shape — chat.rename only ever renders
     // the form over a project the server will actually let the operator
-    // rename, same as every other rename test in this file.
+    // rename, same as every other rename test in this file. #3203: an
+    // offline chat shows the hero in place of #v6ChatStream, so this now
+    // tracks the sidebar's own scroll position instead — the SAME
+    // captureViewState/restoreViewState mechanism this test is really
+    // exercising (every render preserves it, regardless of which chat
+    // state is on screen).
     const { doc, shell } = mountStream(null, { sessionId: null, chat: { mode: 'direct', status: 'offline', members: [], peek: { lines: ['x'] } } });
-    const stream = doc.getElementById('v6ChatStream');
-    stream.scrollTop = 500;
-    stream.dispatch('scroll'); // streamPinned = false, at a specific position
+    const sidebar = doc.getElementById('v6ShellSidebar');
+    sidebar.scrollTop = 500;
     doc.getElementById('v6ChatRename').dispatch('click');
-    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 500, 'opening rename did not move the stream');
+    assert.equal(doc.getElementById('v6ShellSidebar').scrollTop, 500, 'opening rename did not move the sidebar');
     doc.getElementById('v6ChatRenameCancel').dispatch('click');
-    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 500, 'canceling rename did not move the stream either');
+    assert.equal(doc.getElementById('v6ShellSidebar').scrollTop, 500, 'canceling rename did not move the sidebar either');
     doc.getElementById('v6ChatRename').dispatch('click');
     doc.getElementById('v6ChatRenameInput').value = 'TC-Lane-Renamed';
     doc.getElementById('v6ChatRenameForm').dispatch('submit');
     shell.renameResult({ ok: true });
-    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 500, 'completing the rename did not move the stream');
+    assert.equal(doc.getElementById('v6ShellSidebar').scrollTop, 500, 'completing the rename did not move the sidebar');
   });
 });
 
@@ -3366,12 +3383,14 @@ describe('chat composer attachment markup (#3053)', () => {
     assert.doesNotMatch(html, /<b>\.txt/);
   });
 
-  // Attaching saves files into the project; only sending needs a live
-  // session, so files can be attached first and sent once the chat is started.
-  it('an offline target can still take attachments, while sending stays disabled', () => {
+  // #3203: the offline startup hero replaces the composer (and its attach
+  // button) entirely while offline -- pre-attaching a file before starting
+  // the session is no longer offered; attach once the session is live.
+  it('an offline target shows the startup hero, with no composer or attach button to use', () => {
     const html = G.tcV6ConversationViewMarkup(v({ status: 'offline' }));
-    assert.doesNotMatch(html, /id="v6ChatAttachBtn"[^>]*disabled/);
-    assert.match(html, /<button type="submit" id="v6ChatSend"[^>]*disabled/);
+    assert.match(html, /v6-chat-offline-hero/);
+    assert.doesNotMatch(html, /id="v6ChatAttachBtn"/);
+    assert.doesNotMatch(html, /id="v6ChatSend"/);
   });
 });
 
@@ -3543,14 +3562,16 @@ describe('chat start controls and delegate recognition markup (#3053)', () => {
       members: [{ id: '10', name: 'TC-Lane-A', live: true }, { id: '12', name: 'TC-Lane-PM', live: false }, { id: '14', name: 'TC-Lane-B', live: false }] }, chat || {})
   }, extra || {});
 
-  it('an offline target offers Start in the header and the offline banner, plus the Classic launcher', () => {
+  // #3203: the old offline banner (and its Classic View fallback link —
+  // superseded now that the hero's own Start button performs the real
+  // start action directly, the same one the header's small Start button
+  // already did) is replaced by the centered startup hero.
+  it('an offline target offers Start in the header and the startup hero', () => {
     const html = G.tcV6ConversationViewMarkup(base());
     assert.match(html, /<button type="button" id="v6ChatStart" class="btn btn-primary btn-small v6-chat-start" data-action="start-chat-session">▶ Start TC-Lane-PM<\/button>/);
-    assert.match(html, /<p class="v6-chat-offline">TC-Lane-PM has no live session\.[\s\S]*id="v6ChatStartBanner"[^>]*data-action="start-chat-session"/);
-    // Classic's launch link needs an intent token (#2124), so the chat links
-    // to Classic View itself and says so, rather than to a launcher it cannot open.
-    assert.match(html, /<a class="v6-chat-classic-launch" href="#\/">Open Classic View to launch TC-Lane-PM<\/a>/);
-    assert.doesNotMatch(html, /\?launch=/);
+    assert.match(html, /id="v6ChatStartHero"[^>]*data-action="start-chat-session"/);
+    assert.match(html, /TC-Lane-PM is offline/);
+    assert.doesNotMatch(html, /v6ChatStartBanner|v6-chat-classic-launch/);
   });
 
   it('a live target offers no Start for itself (a group may still offer Start for its offline members)', () => {
@@ -3670,12 +3691,14 @@ describe('start, refresh and offline polling through the live controller (#3053)
     assert.match(m.root.innerHTML, /class="v6-chat-pill is-active">Active</);
   });
 
-  it('a refused start shows the server\'s reason and leaves the chat offline', async () => {
+  it('a refused start shows the server\'s reason in the offline hero and leaves the chat offline (#3203)', async () => {
     const m = mountStart({ refuse: { 'TC-Lane-PM': 'Stranded wraps need acknowledging (STRANDED_WRAPS)' } });
     await m.settle();
-    m.doc.getElementById('v6ChatStartBanner').dispatch('click');
+    m.doc.getElementById('v6ChatStartHero').dispatch('click');
     await m.settle();
-    assert.match(m.root.innerHTML, /is-error[^>]*>Not started: Stranded wraps need acknowledging \(STRANDED_WRAPS\)</);
+    assert.match(m.root.innerHTML, /Launch Failed/);
+    assert.match(m.root.innerHTML, /Not started: Stranded wraps need acknowledging \(STRANDED_WRAPS\)/);
+    assert.match(m.root.innerHTML, /id="v6ChatRetryLaunchHero"/);
     assert.match(m.root.innerHTML, /is-offline/);
   });
 
@@ -4898,7 +4921,7 @@ describe('a remembered fleet that is gone does not trap the picker (#3068, cumul
     // #3191: routeless — mountShell's own default (#/projects/tc-lane) is a
     // project route the new multi-tab fleet-sync would otherwise reconcile
     // this test's own deliberate (if stale) selection against.
-    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage, initialHash: '#/overview' });
+    const { doc, root } = mountShell({ tree: TWO_GROUP_TREE, storage, initialHash: '#/' });
     assert.match(root.innerHTML, /<option value="">All Fleets<\/option><option value="" disabled selected>Fleet not found<\/option>/);
     const el = doc.getElementById('v6FilterFleet');
     el.value = '';
@@ -4911,7 +4934,7 @@ describe('a remembered fleet that is gone does not trap the picker (#3068, cumul
   it('before the project list loads it says so, and keeps the remembered choice', () => {
     const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) });
     // #3191: routeless, same reason as the test above.
-    const { root, shell } = mountShell({ tree: [], storage, initialHash: '#/overview' });
+    const { root, shell } = mountShell({ tree: [], storage, initialHash: '#/' });
     assert.match(root.innerHTML, /<option value="" disabled selected>Loading fleets…<\/option>/);
     shell.setTree(TWO_GROUP_TREE);
     assert.match(root.innerHTML, /<option value="medusa" selected>Medusa<\/option>/);
@@ -4920,16 +4943,16 @@ describe('a remembered fleet that is gone does not trap the picker (#3068, cumul
 
   it('#3154: getSelectedFleetId names the one known fleet selected, null for none/several/gone', () => {
     // #3191: routeless throughout — same reason as the tests above.
-    const none = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage(), initialHash: '#/overview' });
+    const none = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage(), initialHash: '#/' });
     assert.equal(none.shell.getSelectedFleetId(), null);
-    const one = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) }), initialHash: '#/overview' });
+    const one = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) }), initialHash: '#/' });
     assert.equal(one.shell.getSelectedFleetId(), 'medusa');
-    const gone = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['gone-fleet']) }), initialHash: '#/overview' });
+    const gone = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['gone-fleet']) }), initialHash: '#/' });
     assert.equal(gone.shell.getSelectedFleetId(), null);
   });
 
   it('#3154: picking a fleet in the picker navigates the main view straight to it', () => {
-    const { doc, win } = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage(), initialHash: '#/overview' });
+    const { doc, win } = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage(), initialHash: '#/' });
     const el = doc.getElementById('v6FilterFleet');
     el.value = 'medusa';
     el.dispatch('change');
@@ -4949,9 +4972,9 @@ describe('a remembered fleet that is gone does not trap the picker (#3068, cumul
     // already includes 'tc-lane', mountShell's own default route, so it
     // never actually collided, but parking it here too keeps both cases
     // testing the same thing regardless of what that default happens to be).
-    const several = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['tc-lane', 'medusa', 'gone']) }), initialHash: '#/overview' });
+    const several = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['tc-lane', 'medusa', 'gone']) }), initialHash: '#/' });
     assert.match(several.root.innerHTML, /disabled selected>Several fleets \(2\)</);
-    const single = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa', 'gone']) }), initialHash: '#/overview' });
+    const single = mountShell({ tree: TWO_GROUP_TREE, storage: makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa', 'gone']) }), initialHash: '#/' });
     assert.match(single.root.innerHTML, /<option value="medusa" selected>Medusa<\/option>/);
     assert.doesNotMatch(single.root.innerHTML, /disabled selected/);
   });
@@ -6455,19 +6478,29 @@ describe('the Medusa indicator, live through the controller (#3076)', () => {
       [['> go'], ['> go'], ['> go', '⏺ Bash(tc message send peer "hi")'], ['> go', '⏺ Bash(tc message send peer "hi")']],
       [{ state: 'listening', unread: 0 }, { state: 'listening', unread: 1 }, { state: 'listening', unread: 1 }, { state: 'listening', unread: 1 }]);
     await m.settle();
-    // Updated in place, so the button the operator may be on is never replaced (Critic W1).
-    const btn = m.doc.getElementById('v6ChatMedusa');
+    // Updated in place on an ordinary tick, so the button the operator may
+    // be on is never replaced by THAT (Critic W1). #3201 narrows this one
+    // guarantee deliberately: every SIDEBAR_EVERY_POLLS-th tick (here, the
+    // 3rd) also piggybacks the consolidated Fleet Sidebar refresh
+    // (loadProjects/loadEngineHealth), and this shell has no partial-update
+    // path (render() is always a full root.innerHTML replace) -- so that
+    // ONE tick genuinely redraws everything, including this button, by
+    // design. captureViewState/restoreViewState still preserve scroll,
+    // focus and the composer draft across it; re-querying the button
+    // (rather than reusing a reference across ticks) reflects that.
     await m.timers[0]();
+    let btn = m.doc.getElementById('v6ChatMedusa');
     assert.equal(btn.className, 'v6-chat-medusa is-listening is-flow-in');
     assert.equal(m.doc.getElementById('v6ChatMedusaBadge').textContent, '1');
     assert.equal(m.doc.getElementById('v6ChatMedusaBadge').className, 'v6-chat-medusa-badge has-unread');
     assert.equal(btn.getAttribute('aria-label'), 'Medusa: listening · 1 unread · on screen: 0 in, 0 out — open Under the Hood for the traffic');
     await m.timers[0]();
+    btn = m.doc.getElementById('v6ChatMedusa');
     assert.equal(btn.className, 'v6-chat-medusa is-listening is-flow-out');
     assert.match(m.doc.getElementById('v6ChatSwitchboard').innerHTML, /is-out[\s\S]*tc message send peer/);
-    await m.timers[0]();
+    await m.timers[0](); // the 3rd tick: also the #3201 sidebar-refresh piggyback
+    btn = m.doc.getElementById('v6ChatMedusa');
     assert.equal(btn.className, 'v6-chat-medusa is-listening');
-    assert.equal(m.doc.getElementById('v6ChatMedusa'), btn);
   });
 
   it('a quiet poll does not touch the indicator at all, and one that hides it removes it', async () => {
@@ -7702,7 +7735,9 @@ describe('Force Send (#3082 item 3, Ruling A757)', () => {
     const pending = view({ send: { kind: 'pending', message: 'Sending…' } });
     assert.match(pending, /<button type="button" id="v6ChatForceSend" class="btn btn-secondary v6-chat-force-send"\s+title="Send now, even while a reply or another send is in flight \(Ctrl\/Cmd\+Shift\+Enter\)"\s+aria-label="Force send: send now, even while a reply or another send is in flight"><span aria-hidden="true">⚡<\/span> Force<\/button>/);
     assert.match(pending, /<button type="submit" id="v6ChatSend"[^>]*disabled/);
-    assert.match(view({ status: 'offline' }, { sessionId: null }), /id="v6ChatForceSend"[^>]*disabled/);
+    // #3203: the offline hero replaces the composer (and Force Send with
+    // it) entirely, rather than rendering it disabled.
+    assert.doesNotMatch(view({ status: 'offline' }, { sessionId: null }), /id="v6ChatForceSend"/);
   });
 
   /**
@@ -9238,12 +9273,13 @@ describe('Car V656-W1-A: Gobble & Fill chat pane resizers (#3186)', () => {
       assert.match(html, /<div id="v6ChatComposerResizeTop"[^>]*data-chat-resizer="composer-top"[^>]*>[\s\S]*?<\/div>\s*<form id="v6ChatForm"/);
     });
 
-    it('renders all 4 resizers even while offline, except the two inside the drawer (which only renders live)', () => {
+    // #3203: the offline startup hero replaces the stream, drawer AND
+    // composer entirely -- none of the 4 resizers (which exist to resize
+    // those exact panes) render while offline anymore.
+    it('renders none of the 4 resizers while offline -- the hero replaces every pane they resize', () => {
       const offline = G.tcV6ConversationViewMarkup(view({ status: 'offline' }, { sessionId: null }));
-      assert.match(offline, /data-chat-resizer="stream-bottom"/);
-      assert.match(offline, /data-chat-resizer="composer-top"/);
-      assert.doesNotMatch(offline, /data-chat-resizer="hood-top"/);
-      assert.doesNotMatch(offline, /data-chat-resizer="hood-bottom"/);
+      assert.doesNotMatch(offline, /data-chat-resizer=/);
+      assert.match(offline, /v6-chat-offline-hero/);
     });
   });
 });
@@ -10059,8 +10095,435 @@ describe('Car V657-W1-A: UTH traffic filter, scroll pinning, multi-tab fleet syn
 
     it('does nothing for a route that names no project at all (e.g. the Overview)', () => {
       const storage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) });
-      mountShell({ tree: TWO_GROUP_TREE, storage, initialHash: '#/overview' });
+      mountShell({ tree: TWO_GROUP_TREE, storage, initialHash: '#/' });
       assert.deepEqual(JSON.parse(storage.data.tc_v6_selected_groups), ['medusa']);
     });
+  });
+});
+
+describe('Car V659-W1-B: consolidated Fleet Sidebar polling (#3201)', () => {
+  /**
+   * A live controller + shell whose chat target has no live session (so
+   * `loadConversation`'s own status-watching poll is what would run, if
+   * any), with injectable timers so a test can invoke a specific tick
+   * directly.
+   */
+  function mountSidebarPoll(routeHash) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const rows = [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }];
+    const calls = [];
+    const api = async (url) => {
+      calls.push(url);
+      if (url === '/api/projects') return { projects: rows };
+      if (url === '/api/models/status') return { status: { claude: { status: 'ok' } } };
+      if (/\/status$/.test(url)) return { active: false };
+      return null;
+    };
+    const timers = [];
+    let shell = null;
+    const pending = [];
+    const win = makeFakeWindow(routeHash);
+    const live = G.tcV6CreateLiveController({
+      getShell: () => shell, api, apiMutate: async () => null, storage: null,
+      setInterval: (fn) => { timers.push({ fn, cleared: false }); return timers.length - 1; },
+      clearInterval: (id) => { if (timers[id]) timers[id].cleared = true; }
+    });
+    shell = G.tcCreateV6Shell(doc, {
+      root, window: win, storage: null,
+      onRender: (r) => pending.push(live.handleRoute(r))
+    });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    return { root, doc, win, calls, timers, settle };
+  }
+
+  it('starts a standalone ~12s sidebar-only timer on the Overview, where no chat poll exists to piggyback on', async () => {
+    const m = mountSidebarPoll('#/overview');
+    await m.settle();
+    const live = m.timers.filter((t) => !t.cleared);
+    assert.equal(live.length, 1, JSON.stringify(m.timers));
+    const before = m.calls.filter((c) => c === '/api/projects').length;
+    await live[0].fn();
+    assert.equal(m.calls.filter((c) => c === '/api/projects').length, before + 1);
+    assert.ok(m.calls.includes('/api/models/status'));
+  });
+
+  it('starts the same standalone timer on Settings, which also has no chat poll', async () => {
+    const m = mountSidebarPoll('#/settings/');
+    await m.settle();
+    assert.equal(m.timers.filter((t) => !t.cleared).length, 1, JSON.stringify(m.timers));
+  });
+
+  it('does NOT start the standalone timer for an offline chat -- its own poll piggybacks the refresh every 3rd tick instead', async () => {
+    const m = mountSidebarPoll('#/resources/12/conversation');
+    await m.settle();
+    // Exactly one live timer: the chat's own offline-status poll. A second,
+    // standalone sidebar timer would mean the two were double-refreshing.
+    assert.equal(m.timers.filter((t) => !t.cleared).length, 1, JSON.stringify(m.timers));
+    const before = m.calls.filter((c) => c === '/api/projects').length;
+    const chatPoll = m.timers[m.timers.length - 1].fn;
+    await chatPoll();
+    await chatPoll();
+    assert.equal(m.calls.filter((c) => c === '/api/projects').length, before, 'ticks 1 and 2 do not refresh the sidebar');
+    await chatPoll();
+    assert.equal(m.calls.filter((c) => c === '/api/projects').length, before + 1, 'the 3rd tick does');
+  });
+
+  it('leaving the Overview for a chat stops the standalone timer (no leaked double-polling)', async () => {
+    const m = mountSidebarPoll('#/overview');
+    await m.settle();
+    const overviewTimer = m.timers.find((t) => !t.cleared);
+    assert.ok(overviewTimer, 'the standalone timer started on Overview');
+    m.win.location.hash = '#/resources/12/conversation';
+    await m.settle();
+    assert.equal(overviewTimer.cleared, true, 'the overview-only timer was cleared on leaving it');
+    assert.equal(m.timers.filter((t) => !t.cleared).length, 1, 'replaced by exactly the chat\'s own poll, not a leaked second one');
+  });
+});
+
+describe('Car V659-W1-B: Global Fleet Overview defaults to All Fleets, and per-tab sessionStorage isolation (#3204)', () => {
+  const TREE = [
+    { id: 'tc-lane', displayName: 'TC-Lane', fleets: [{ id: 'tc-lane', displayName: 'TC-Lane Fleet',
+      members: [{ seatId: '11', role: 'TC-Lane-A' }] }] },
+    { id: 'medusa', displayName: 'Medusa', fleets: [{ id: 'medusa', displayName: 'Medusa Fleet',
+      members: [{ seatId: '21', role: 'Medusa-PM' }] }] }
+  ];
+
+  function mountOverview(opts) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    root.id = 'v6ShellRoot';
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow((opts && opts.initialHash) || '#/');
+    const shell = G.tcCreateV6Shell(doc, Object.assign({ root, window: win, tree: TREE }, opts || {}));
+    return { shell, doc, root, win };
+  }
+
+  it('entering the Overview resets a non-empty fleet selection to All Fleets', () => {
+    const sessionStorage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) });
+    const { root } = mountOverview({ sessionStorage, initialHash: '#/overview' });
+    assert.deepEqual(JSON.parse(sessionStorage.data.tc_v6_selected_groups), []);
+    assert.match(root.innerHTML, /<option value="" selected>All Fleets<\/option>/);
+  });
+
+  it('does not touch an already-empty selection on entering the Overview (no spurious write)', () => {
+    const sessionStorage = makeStorage();
+    mountOverview({ sessionStorage, initialHash: '#/overview' });
+    assert.equal(sessionStorage.data.tc_v6_selected_groups, undefined);
+  });
+
+  it('two tabs (two different sessionStorage objects) never see each other\'s fleet filter', () => {
+    // A genuinely routeless mount for both ('#/', view: null) -- #3191's
+    // owning-fleet sync only reconciles the picker for a conversation/
+    // project/fleet route (its own describe block above already covers
+    // that interaction); this test isolates tab storage alone.
+    const tabA = makeStorage({ tc_v6_selected_groups: JSON.stringify(['tc-lane']) });
+    const tabB = makeStorage({ tc_v6_selected_groups: JSON.stringify(['medusa']) });
+    const a = mountOverview({ sessionStorage: tabA, initialHash: '#/' });
+    const b = mountOverview({ sessionStorage: tabB, initialHash: '#/' });
+    assert.equal(a.shell.getSelectedFleetId(), 'tc-lane');
+    assert.equal(b.shell.getSelectedFleetId(), 'medusa');
+    a.shell.selectGroup('medusa', false);
+    assert.equal(a.shell.getSelectedFleetId(), 'medusa');
+    assert.equal(b.shell.getSelectedFleetId(), 'medusa', 'tab B started at medusa and stays there, untouched by tab A\'s own write');
+    assert.deepEqual(JSON.parse(tabA.data.tc_v6_selected_groups), ['medusa']);
+    assert.deepEqual(JSON.parse(tabB.data.tc_v6_selected_groups), ['medusa'], 'tab B\'s OWN storage never changed -- it already read \'medusa\'');
+  });
+
+  it('#3191\'s owning-fleet sync still applies on a conversation/project/fleet route, unaffected by the storage move', () => {
+    const sessionStorage = makeStorage({ tc_v6_selected_groups: JSON.stringify(['tc-lane']) });
+    const { root } = mountOverview({ sessionStorage, initialHash: '#/projects/medusa' });
+    assert.match(root.innerHTML, /<option value="medusa" selected>Medusa<\/option>/, 'reconciled to the route actually on screen');
+    assert.deepEqual(JSON.parse(sessionStorage.data.tc_v6_selected_groups), ['medusa']);
+  });
+});
+
+describe('Car V659-W1-B: centered offline startup hero (#3203)', () => {
+  function mountHero(opts) {
+    const o = opts || {};
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow(o.initialHash || '#/resources/12/conversation');
+    const rows = [{ id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }];
+    const calls = [];
+    const api = async (url) => {
+      calls.push(url);
+      if (url === '/api/projects') return { projects: rows };
+      if (/\/status$/.test(url)) return { active: false };
+      // #3203 R3: the B2-events-first lookup viewOfflineHistory tries before
+      // ever reaching continuity. Default (no o.history) is "no session
+      // row", so every pre-existing continuity-only test is unaffected.
+      if (url === '/api/sessions/TC-Lane-PM/history?limit=1') return o.history === undefined ? { sessions: [] } : o.history;
+      if (/^\/api\/v6\/projects\/12\/sessions\/[^/]+\/conversation\/events$/.test(url)) return o.b2Events === undefined ? null : o.b2Events;
+      if (url === '/api/continuity/TC-Lane-PM/sessions') return o.sessions === undefined ? { sessions: [] } : o.sessions;
+      if (/\/api\/continuity\/TC-Lane-PM\/sessions\//.test(url)) return o.sessionDetail === undefined ? null : o.sessionDetail;
+      return null;
+    };
+    const mutateCalls = [];
+    const apiMutate = async (url, method, body) => {
+      mutateCalls.push({ url, method, body: plain(body) });
+      if (o.refuse) {
+        api.lastError = o.refuse;
+        // #3203 R2: the real api()'s own documented side channel for "the
+        // whole refusal body" (public/api-helper.js, #711) -- a diagnostic
+        // object here is #3202's own shape.
+        api.lastBody = o.refuseDiagnostic ? { error: o.refuse, diagnostic: o.refuseDiagnostic } : { error: o.refuse };
+        return null;
+      }
+      return { ok: true };
+    };
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, {
+      root, window: win, storage: null,
+      onRender: (r) => pending.push(live.handleRoute(r)),
+      onStartSession: () => pending.push(live.startSession()),
+      onOpenProjectSettings: (name) => { o.settingsOpened = name; },
+      onViewOfflineHistory: (name) => pending.push(live.viewOfflineHistory(name)),
+      onReturnToStartCard: (name) => live.returnToStartCard(name)
+    });
+    pending.push(live.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    return { root, doc, win, calls, mutateCalls, settle, o };
+  }
+
+  it('renders the hero with Start, View Previous Conversation and Edit Session Properties', async () => {
+    const m = mountHero();
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-offline-hero/);
+    assert.match(m.root.innerHTML, /TC-Lane-PM is offline/);
+    assert.match(m.root.innerHTML, /v6-chat-offline-hero-pill is-offline">Offline/);
+    assert.match(m.root.innerHTML, /id="v6ChatStartHero"/);
+    assert.match(m.root.innerHTML, /id="v6ChatViewHistoryHero"/);
+    assert.match(m.root.innerHTML, /id="v6ChatEditPropertiesHero"/);
+  });
+
+  it('aligns with sibling Car V659-W1-C\'s CSS (#3203 R4): a .v6-chat-offline-hero-card wrapper, .v6-chat-offline-hero-title on the heading, and is-starting on the OUTER hero while launching', async () => {
+    const m = mountHero();
+    await m.settle();
+    assert.match(m.root.innerHTML, /<div class="v6-chat-offline-hero" role="status"[^>]*>\s*<div class="v6-chat-offline-hero-card">/, 'the card must be the hero\'s direct child, where the CSS centers it');
+    assert.match(m.root.innerHTML, /<h2 class="v6-chat-offline-hero-heading v6-chat-offline-hero-title">/);
+    assert.doesNotMatch(m.root.innerHTML, /class="v6-chat-offline-hero is-starting"/, 'not starting at rest');
+    m.doc.getElementById('v6ChatStartHero').dispatch('click');
+    // Synchronous up to startSession's first await: the "starting" render
+    // already landed before settle() ever runs the apiMutate microtask.
+    assert.match(m.root.innerHTML, /class="v6-chat-offline-hero is-starting"/, 'is-starting must be on the outer hero, where PR #3226\'s spinner selector targets it');
+    await m.settle();
+  });
+
+  it('Start Session from the hero launches it, the same real action the header\'s own Start button triggers', async () => {
+    const m = mountHero();
+    await m.settle();
+    m.doc.getElementById('v6ChatStartHero').dispatch('click');
+    await m.settle();
+    assert.deepEqual(m.mutateCalls[0], { url: '/api/sessions/TC-Lane-PM', method: 'POST', body: {} });
+  });
+
+  it('a refused launch shows Launch Failed with the server\'s plain reason, Retry Launch and Edit Session Properties (no #3202 diagnostic sent)', async () => {
+    const m = mountHero({ refuse: 'Stranded wraps need acknowledging (STRANDED_WRAPS)' });
+    await m.settle();
+    m.doc.getElementById('v6ChatStartHero').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /Launch Failed/);
+    assert.match(m.root.innerHTML, /Not started: Stranded wraps need acknowledging \(STRANDED_WRAPS\)/);
+    assert.match(m.root.innerHTML, /v6-chat-offline-hero-diagnostic/);
+    assert.match(m.root.innerHTML, /id="v6ChatRetryLaunchHero"/);
+    assert.match(m.root.innerHTML, /id="v6ChatEditPropertiesHero"/);
+    assert.doesNotMatch(m.root.innerHTML, /id="v6ChatStartHero"/, 'the resting Start action is replaced by the failure panel');
+  });
+
+  it('a refused launch with a #3202 structured diagnostic shows its title, message and remediation steps (#3203 R2)', async () => {
+    const m = mountHero({
+      refuse: 'preflight check failed',
+      refuseDiagnostic: {
+        code: 'ENGINE_NOT_INSTALLED', category: 'preflight', title: 'Claude Code is not installed',
+        message: 'The claude CLI could not be found on this machine.',
+        remediation: ['Install Claude Code', 'Re-run Start Session'], retryable: true, canEditProperties: true
+      }
+    });
+    await m.settle();
+    m.doc.getElementById('v6ChatStartHero').dispatch('click');
+    await m.settle();
+    const diag = /<div class="v6-chat-offline-hero-diagnostic" data-diagnostic-code="ENGINE_NOT_INSTALLED">[\s\S]*?<\/div>/.exec(m.root.innerHTML);
+    assert.ok(diag, m.root.innerHTML);
+    assert.match(diag[0], /Claude Code is not installed/);
+    assert.match(diag[0], /The claude CLI could not be found on this machine\./);
+    assert.match(diag[0], /<li>Install Claude Code<\/li>/);
+    assert.match(diag[0], /<li>Re-run Start Session<\/li>/);
+    assert.match(m.root.innerHTML, /id="v6ChatRetryLaunchHero"/);
+  });
+
+  it('falls back to the plain error string when the diagnostic has no remediation list', async () => {
+    const m = mountHero({
+      refuse: 'preflight check failed',
+      refuseDiagnostic: { code: 'UNKNOWN', title: 'Launch Failed', message: 'preflight check failed' }
+    });
+    await m.settle();
+    m.doc.getElementById('v6ChatStartHero').dispatch('click');
+    await m.settle();
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-offline-hero-diagnostic-remediation/);
+    assert.match(m.root.innerHTML, /preflight check failed/);
+  });
+
+  it('Edit Session Properties from the hero opens Settings for this project', async () => {
+    const m = mountHero();
+    await m.settle();
+    m.doc.getElementById('v6ChatEditPropertiesHero').dispatch('click');
+    assert.equal(m.o.settingsOpened, 'TC-Lane-PM');
+  });
+
+  it('View Previous Conversation loads the most recent persisted session and shows it with a compact Start/Edit bar', async () => {
+    const m = mountHero({
+      sessions: { sessions: [{ sid: '1', date: '2026-01-01' }, { sid: '2', date: '2026-02-01' }] },
+      sessionDetail: { session: { date: '2026-02-01' }, summary: { sections: { overview: 'Shipped the thing.' } } }
+    });
+    await m.settle();
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    assert.ok(m.calls.includes('/api/continuity/TC-Lane-PM/sessions/2'), 'picked the NEWEST session, not the first listed');
+    assert.match(m.root.innerHTML, /v6-chat-offline-history/);
+    assert.match(m.root.innerHTML, /Shipped the thing\./);
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-offline-hero-heading/, 'the hero itself is gone while viewing history');
+    assert.match(m.root.innerHTML, /id="v6ChatOfflineHistoryStartTop"/);
+    assert.match(m.root.innerHTML, /id="v6ChatOfflineHistoryReturnTop"/);
+    assert.match(m.root.innerHTML, /id="v6ChatOfflineHistoryEditTop"/);
+    assert.match(m.root.innerHTML, /id="v6ChatOfflineHistoryStartBottom"/);
+    assert.match(m.root.innerHTML, /id="v6ChatOfflineHistoryReturnBottom"/);
+    assert.match(m.root.innerHTML, /id="v6ChatOfflineHistoryEditBottom"/);
+  });
+
+  it('Return to Start Card exits history mode and restores the hero, in place -- no route change (#3203 R2)', async () => {
+    const m = mountHero({ sessions: { sessions: [] } });
+    await m.settle();
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-offline-history/);
+    m.doc.getElementById('v6ChatOfflineHistoryReturnTop').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-offline-hero/);
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-offline-history-body/);
+    assert.equal(m.win.location.hash, '#/resources/12/conversation', 'the route itself never changed');
+  });
+
+  it('View Previous Conversation renders the persisted B2 conversation events when the project has a past session with recorded events (#3203 R3)', async () => {
+    const m = mountHero({
+      history: { sessions: [{ id: 47, status: 'ended' }], total: 1 },
+      b2Events: {
+        events: [
+          { seq: 1, role: 'user', content: 'What is the status of the migration?' },
+          { seq: 2, role: 'assistant', content: 'The migration finished at 09:14 UTC.' }
+        ]
+      }
+    });
+    await m.settle();
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-offline-history-events/);
+    assert.match(m.root.innerHTML, /is-user/);
+    assert.match(m.root.innerHTML, /is-assistant/);
+    assert.match(m.root.innerHTML, /What is the status of the migration\?/);
+    assert.match(m.root.innerHTML, /The migration finished at 09:14 UTC\./);
+    // Fidelity + non-duplication: each recorded message appears exactly once.
+    const userCount = (m.root.innerHTML.match(/What is the status of the migration\?/g) || []).length;
+    const assistantCount = (m.root.innerHTML.match(/The migration finished at 09:14 UTC\./g) || []).length;
+    assert.equal(userCount, 1);
+    assert.equal(assistantCount, 1);
+    // No continuity call needed once B2 events answer -- the CLI is never started.
+    assert.ok(!m.calls.includes('/api/continuity/TC-Lane-PM/sessions'));
+    assert.match(m.root.innerHTML, /id="v6ChatOfflineHistoryReturnTop"/);
+  });
+
+  it('falls back to the continuity summary when the project has a past session row but no recorded B2 events', async () => {
+    const m = mountHero({
+      history: { sessions: [{ id: 47, status: 'ended' }], total: 1 },
+      b2Events: { events: [] },
+      sessions: { sessions: [{ sid: '2026-11-20', date: '2026-11-20' }] },
+      sessionDetail: { session: { date: '2026-11-20' }, summary: { sections: { Decisions: 'Rolled out the new hero.' } } }
+    });
+    await m.settle();
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-offline-history-events/);
+    assert.match(m.root.innerHTML, /Rolled out the new hero\./);
+  });
+
+  it('falls back to the continuity summary when no past session row exists at all', async () => {
+    const m = mountHero({
+      history: { sessions: [] },
+      sessions: { sessions: [{ sid: '2026-11-20', date: '2026-11-20' }] },
+      sessionDetail: { session: { date: '2026-11-20' }, summary: { sections: { Decisions: 'Rolled out the new hero.' } } }
+    });
+    await m.settle();
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-offline-history-events/);
+    assert.match(m.root.innerHTML, /Rolled out the new hero\./);
+  });
+
+  it('Return to Start Card exits a B2-events history view back to the hero, same as the continuity view', async () => {
+    const m = mountHero({
+      history: { sessions: [{ id: 47, status: 'ended' }], total: 1 },
+      b2Events: { events: [{ seq: 1, role: 'user', content: 'Hello' }] }
+    });
+    await m.settle();
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-offline-history-events/);
+    m.doc.getElementById('v6ChatOfflineHistoryReturnTop').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-offline-hero/);
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-offline-history-events/);
+  });
+
+  it('says so, never "No previous conversation" as an error, when a project genuinely has no history', async () => {
+    const m = mountHero({ sessions: { sessions: [] } });
+    await m.settle();
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /No previous conversation recorded for this workspace yet\./);
+  });
+
+  it('reports a failed history read distinctly from "no history at all"', async () => {
+    const m = mountHero({ sessions: null });
+    await m.settle();
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    assert.doesNotMatch(m.root.innerHTML, /No previous conversation recorded/);
+    assert.match(m.root.innerHTML, /v6-chat-offline-history-empty/);
+  });
+
+  it('starting the Start button from the compact history bar still performs the real start action', async () => {
+    const m = mountHero({ sessions: { sessions: [] } });
+    await m.settle();
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    m.doc.getElementById('v6ChatOfflineHistoryStartTop').dispatch('click');
+    await m.settle();
+    assert.deepEqual(m.mutateCalls[0], { url: '/api/sessions/TC-Lane-PM', method: 'POST', body: {} });
+  });
+
+  it('re-entering an offline chat always starts back at the hero, not wherever a previous visit left it', async () => {
+    const m = mountHero({ sessions: { sessions: [] }, initialHash: '#/' });
+    await m.settle();
+    const navigate = async (hash) => { m.win.location.hash = hash; await m.settle(); };
+    await navigate('#/resources/12/conversation');
+    assert.match(m.root.innerHTML, /v6-chat-offline-hero/);
+    m.doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await m.settle();
+    assert.match(m.root.innerHTML, /v6-chat-offline-history/);
+    await navigate('#/');
+    await navigate('#/resources/12/conversation');
+    assert.match(m.root.innerHTML, /v6-chat-offline-hero/, 'back at the hero, not still showing history');
+    assert.doesNotMatch(m.root.innerHTML, /v6-chat-offline-history-body/);
   });
 });
