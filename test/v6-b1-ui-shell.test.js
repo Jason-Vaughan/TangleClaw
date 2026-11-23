@@ -5046,6 +5046,31 @@ describe('the Overview screen\'s own row actions (#3154)', () => {
     const { root } = mountShell({ detail: { kind: 'overview', view: { tree: [], projects: [] } } });
     assert.match(root.innerHTML, /No projects yet/);
   });
+
+  it('Car V659-W2-D (#3215): the card header shows ▶ Start Offline (N) when one of two members is running', () => {
+    const { root } = mountOverview();
+    assert.match(root.innerHTML, /id="v6OverviewStartFleet-tc-lane"[^>]*>▶ Start Offline \(1\)<\/button>/);
+  });
+
+  it('Car V659-W2-D (#3215): shows ▶ Start Fleet (N) when every member is offline, and nothing when none are', () => {
+    const { root: allOfflineRoot } = mountShell({ detail: { kind: 'overview', view: {
+      tree: OVERVIEW_TREE,
+      projects: [{ id: 11, name: 'TC-Lane-A', session: { active: false } }, { id: 12, name: 'TC-Lane-PM', session: { active: false } }]
+    } } });
+    assert.match(allOfflineRoot.innerHTML, /id="v6OverviewStartFleet-tc-lane"[^>]*>▶ Start Fleet \(2\)<\/button>/);
+    const { root: allLiveRoot } = mountShell({ detail: { kind: 'overview', view: {
+      tree: OVERVIEW_TREE,
+      projects: [{ id: 11, name: 'TC-Lane-A', session: { active: true } }, { id: 12, name: 'TC-Lane-PM', session: { active: true } }]
+    } } });
+    assert.doesNotMatch(allLiveRoot.innerHTML, /v6-tree-start-fleet-btn/);
+  });
+
+  it('Car V659-W2-D (#3215): Start Fleet/Start Offline calls onStartFleet with only the offline members\' real names', () => {
+    const startFleetCalls = [];
+    const { doc } = mountOverview({ onStartFleet: (names) => startFleetCalls.push(names) });
+    doc.getElementById('v6OverviewStartFleet-tc-lane').dispatch('click');
+    assert.deepEqual(startFleetCalls, [['TC-Lane-A']], 'TC-Lane-PM (already live) is never included');
+  });
 });
 
 // ── #3071 (Car V628-W1-A): rename a fleet member from the chat header ──
@@ -5362,6 +5387,175 @@ describe('sidebar inline rename for Fleets, Fleet Members and Solo Work (#3136)'
     await Promise.resolve();
     assert.deepEqual(calls, [['TC-Lane-A', 'TC-Lane-Beta-A', undefined]], 'TC-Lane-PM is never attempted');
     assert.match(root.innerHTML, /Renamed 0 of 2\. TC-Lane-A was not: engine state would be orphaned — rename it from its own row\./);
+  });
+});
+
+describe('Car V659-W2-D: sidebar member row actions (#3205)', () => {
+  it('every member row exposes Rename, Edit Session Properties and Start inside .v6-tree-member-actions when offline', () => {
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    shell.setProjects([{ id: 11, name: 'TC-Lane-A', session: null }, { id: 12, name: 'TC-Lane-PM', session: null }, { id: 21, name: 'Medusa-PM', session: null }]);
+    const actions = /<div class="v6-tree-member-actions">[\s\S]*?<\/div>/.exec(root.innerHTML);
+    assert.ok(actions, root.innerHTML);
+    assert.match(actions[0], /id="v6TreeRename-m0-0-0"/);
+    assert.match(actions[0], /id="v6TreeEditProps-m0-0-0"/);
+    assert.match(actions[0], /id="v6TreeMemberStart-m0-0-0"/);
+    assert.match(root.innerHTML, /<span class="v6-status-pill--offline" title="No live session">offline<\/span>/);
+  });
+
+  it('a running member\'s row has no Start action (never restarts a live session) but keeps Rename and Edit Session Properties', () => {
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    shell.setProjects([{ id: 11, name: 'TC-Lane-A', session: { active: true } }, { id: 12, name: 'TC-Lane-PM', session: null }, { id: 21, name: 'Medusa-PM', session: null }]);
+    assert.match(root.innerHTML, /id="v6TreeRename-m0-0-0"/);
+    assert.match(root.innerHTML, /id="v6TreeEditProps-m0-0-0"/);
+    assert.doesNotMatch(root.innerHTML, /id="v6TreeMemberStart-m0-0-0"/);
+    const row = /<li class="v6-shell-member"><a class="v6-shell-member-link is-live"[\s\S]*?<\/li>/.exec(root.innerHTML);
+    assert.ok(row, root.innerHTML);
+    assert.doesNotMatch(row[0], /v6-status-pill--/, 'live has its own existing indicators, no new pill');
+  });
+
+  it('a failed launch shows the failed status pill with its own message, and Start (Retry) stays available', () => {
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    shell.setProjects([
+      { id: 11, name: 'TC-Lane-A', session: null, launchStatus: { status: 'failed', message: 'Not started: the server refused it' } },
+      { id: 12, name: 'TC-Lane-PM', session: null }, { id: 21, name: 'Medusa-PM', session: null }
+    ]);
+    assert.match(root.innerHTML, /<span class="v6-status-pill--failed" title="Not started: the server refused it">failed<\/span>/);
+    assert.match(root.innerHTML, /id="v6TreeMemberStart-m0-0-0"/);
+  });
+
+  it('a starting member disables its own Start button', () => {
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    shell.setProjects([
+      { id: 11, name: 'TC-Lane-A', session: null, launchStatus: { status: 'starting' } },
+      { id: 12, name: 'TC-Lane-PM', session: null }, { id: 21, name: 'Medusa-PM', session: null }
+    ]);
+    assert.match(root.innerHTML, /id="v6TreeMemberStart-m0-0-0"[^>]* disabled/);
+  });
+
+  it('Edit Session Properties and Start call the same real onOpenProjectSettings/onStartSession callbacks the Overview screen uses', () => {
+    const settingsCalls = [];
+    const startCalls = [];
+    const { doc, shell } = mountShell({
+      tree: TWO_GROUP_TREE, storage: null,
+      onOpenProjectSettings: (name) => settingsCalls.push(name),
+      onStartSession: (name) => startCalls.push(name)
+    });
+    shell.setProjects([{ id: 11, name: 'TC-Lane-A', session: null }, { id: 12, name: 'TC-Lane-PM', session: null }, { id: 21, name: 'Medusa-PM', session: null }]);
+    doc.getElementById('v6TreeEditProps-m0-0-0').dispatch('click');
+    doc.getElementById('v6TreeMemberStart-m0-0-0').dispatch('click');
+    assert.deepEqual(settingsCalls, ['TC-Lane-A']);
+    assert.deepEqual(startCalls, ['TC-Lane-A']);
+  });
+
+  it('end-to-end: starting a sidebar member from its row shows Starting then, on refusal, the failed pill with the server\'s own message', async () => {
+    const rows = [{ id: 11, name: 'TC-Lane-A', engine: { id: 'claude' } }, { id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }];
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('#/overview');
+    const api = async (url) => (url === '/api/projects' ? { projects: rows } : null);
+    const apiMutate = async () => { api.lastError = 'Stranded wraps need acknowledging'; api.lastBody = { error: api.lastError }; return null; };
+    let shell = null;
+    const pending = [];
+    const G = loadV6Shell();
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, {
+      root, window: win, storage: null,
+      onRender: (r) => pending.push(live.handleRoute(r)),
+      onStartSession: (name) => pending.push(live.startSession(name))
+    });
+    pending.push(live.handleRoute(shell.getRoute()));
+    await Promise.all(pending.splice(0));
+    assert.match(root.innerHTML, /id="v6TreeMemberStart-m0-0-0"/, root.innerHTML);
+    doc.getElementById('v6TreeMemberStart-m0-0-0').dispatch('click');
+    assert.match(root.innerHTML, /v6-status-pill--starting/, 'the row reflects launchState synchronously, before the apiMutate microtask settles');
+    await Promise.all(pending.splice(0));
+    assert.match(root.innerHTML, /<span class="v6-status-pill--failed" title="Not started: Stranded wraps need acknowledging">failed<\/span>/);
+  });
+});
+
+describe('Car V659-W2-D: one-click fleet start (#3215)', () => {
+  it('renders ▶ Start Fleet (N) when every member is offline', () => {
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    shell.setProjects([{ id: 11, name: 'TC-Lane-A', session: null }, { id: 12, name: 'TC-Lane-PM', session: null }, { id: 21, name: 'Medusa-PM', session: null }]);
+    assert.match(root.innerHTML, /id="v6TreeStartFleet-f0-0" class="btn btn-primary btn-small v6-tree-start-fleet-btn"\s+data-start-fleet="f:tc-lane\/tc-lane">▶ Start Fleet \(2\)<\/button>/);
+  });
+
+  it('renders ▶ Start Offline (N) when some members are already running, and never touches them', () => {
+    const settingsCalls = [];
+    const startFleetCalls = [];
+    const { doc, root, shell } = mountShell({
+      tree: TWO_GROUP_TREE, storage: null,
+      onStartFleet: (names) => startFleetCalls.push(names)
+    });
+    shell.setProjects([{ id: 11, name: 'TC-Lane-A', session: { active: true } }, { id: 12, name: 'TC-Lane-PM', session: null }, { id: 21, name: 'Medusa-PM', session: null }]);
+    assert.match(root.innerHTML, /id="v6TreeStartFleet-f0-0"[^>]*>▶ Start Offline \(1\)<\/button>/);
+    doc.getElementById('v6TreeStartFleet-f0-0').dispatch('click');
+    assert.deepEqual(startFleetCalls, [['TC-Lane-PM']], 'TC-Lane-A (already live) is never included');
+    void settingsCalls;
+  });
+
+  it('shows no Start Fleet button when every member of the fleet is already running', () => {
+    const { doc, root, shell } = mountShell({ tree: TWO_GROUP_TREE, storage: null });
+    shell.setProjects([{ id: 11, name: 'TC-Lane-A', session: { active: true } }, { id: 12, name: 'TC-Lane-PM', session: { active: true } }, { id: 21, name: 'Medusa-PM', session: null }]);
+    assert.doesNotMatch(root.innerHTML, /id="v6TreeStartFleet-f0-0"/);
+    assert.match(root.innerHTML, /id="v6TreeStartFleet-f1-0"[^>]*>▶ Start Fleet \(1\)<\/button>/, 'Medusa Fleet, still offline, keeps its own button');
+  });
+
+  it('a flattened single-fleet project (its own row never separately shown, #3117) still gets its Start Fleet button, on the project row', () => {
+    const tree = [{ id: 'solo', displayName: 'Solo Fleet', fleets: [{ id: 'solo', displayName: 'Solo Fleet',
+      members: [{ seatId: '31', role: 'Solo-A' }, { seatId: '32', role: 'Solo-B' }] }] }];
+    const { doc, root, shell } = mountShell({ tree, storage: null });
+    shell.setProjects([{ id: 31, name: 'Solo-A', session: null }, { id: 32, name: 'Solo-B', session: null }]);
+    assert.doesNotMatch(root.innerHTML, /id="v6TreeStartFleet-f0-0"/, 'no separate fleet row to put it on');
+    assert.match(root.innerHTML, /id="v6TreeStartFleet-p0"[^>]*>▶ Start Fleet \(2\)<\/button>/);
+  });
+
+  it('the catch-all "Workspace Projects" bucket (not a fleet the operator made) gets no Start Fleet button', () => {
+    const tree = [{ id: 'workspace', displayName: 'Workspace Projects', fleets: [{ id: 'workspace', displayName: 'Workspace Projects',
+      members: [{ seatId: '41', role: 'Solo-One' }] }] }];
+    const { doc, root, shell } = mountShell({ tree, storage: null });
+    shell.setProjects([{ id: 41, name: 'Solo-One', session: null }]);
+    assert.doesNotMatch(root.innerHTML, /v6-tree-start-fleet-btn/);
+  });
+
+  it('end-to-end: startFleetMembers launches sequentially, continuing past one member\'s refusal', async () => {
+    const rows = [{ id: 11, name: 'TC-Lane-A', engine: { id: 'claude' } }, { id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' } }];
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('#/overview');
+    const api = async (url) => (url === '/api/projects' ? { projects: rows } : null);
+    const outcomes = { 'TC-Lane-A': false, 'TC-Lane-PM': true };
+    const mutateCalls = [];
+    const apiMutate = async (url) => {
+      mutateCalls.push(url);
+      const name = decodeURIComponent(url.replace('/api/sessions/', ''));
+      if (!outcomes[name]) { api.lastError = `${name} refused`; api.lastBody = { error: api.lastError }; return null; }
+      return { ok: true };
+    };
+    let shell = null;
+    const pending = [];
+    const G = loadV6Shell();
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {} });
+    shell = G.tcCreateV6Shell(doc, {
+      root, window: win, storage: null,
+      onRender: (r) => pending.push(live.handleRoute(r)),
+      onStartFleet: (names) => pending.push(live.startFleetMembers(names))
+    });
+    pending.push(live.handleRoute(shell.getRoute()));
+    await Promise.all(pending.splice(0));
+    doc.getElementById('v6TreeStartFleet-f0-0').dispatch('click');
+    await Promise.all(pending.splice(0));
+    assert.deepEqual(mutateCalls, ['/api/sessions/TC-Lane-A', '/api/sessions/TC-Lane-PM'], 'both attempted, in order, despite the first failing');
+    const aRow = /<li class="v6-shell-member"><a class="v6-shell-member-link is-failed"[\s\S]*?<\/li>/.exec(root.innerHTML);
+    assert.ok(aRow, root.innerHTML);
+    assert.match(aRow[0], /<span class="v6-status-pill--failed" title="Not started: TC-Lane-A refused">failed<\/span>/);
+    const pmRow = /<li class="v6-shell-member"><a class="v6-shell-member-link is-offline"[\s\S]*?id="v6TreeLink-m0-0-1"[\s\S]*?<\/li>/.exec(root.innerHTML);
+    assert.ok(pmRow, root.innerHTML);
+    assert.doesNotMatch(pmRow[0], /v6-status-pill--failed/, 'TC-Lane-PM launched successfully, no failure recorded for it');
   });
 });
 
