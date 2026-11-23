@@ -6173,5 +6173,40 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
         sessionsLib.launchSession = origLaunch;
       }
     });
+
+    it('R4: a TCC-protected workspace with the server up+anchored but EXPLICITLY denied also reaches launchSession, never a route-level 403 (PRR-A R2 BLOCKING — createSessionWithTccBootstrap can still evict a stale server and re-bootstrap)', async () => {
+      const sessionsLib = require('../lib/sessions');
+      const tmuxLib = require('../lib/tmux');
+      const origHomedir = os.homedir;
+      const origHealth = tmuxLib.probeTccServerHealth;
+      const origReadable = tmuxLib.probeTccReadable;
+      const origLaunch = sessionsLib.launchSession;
+      let launchSessionCalled = false;
+      os.homedir = () => projectsDir;
+      // Up, anchored, and EXPLICITLY denied — the case R3 itself still
+      // classified as TCC_PERMISSION_DENIED for preflight's own purposes.
+      // createSessionWithTccBootstrap's own stale-anchor-eviction + fresh
+      // Terminal.app rebootstrap step (lib/tmux.js ~1418-1438) still runs
+      // for exactly this combination, so the route must not preempt it.
+      tmuxLib.probeTccServerHealth = () => ({ socket: 'x', running: true, anchorAlive: true, readable: false });
+      tmuxLib.probeTccReadable = () => false; // default server can't read it either
+      sessionsLib.launchSession = (name, opts) => {
+        launchSessionCalled = true;
+        return { session: null, primePrompt: null, ttydUrl: null, error: 'stubbed for this test' };
+      };
+      try {
+        const dir = path.join(projectsDir, 'Documents', 'protected-genuinely-denied-route');
+        fs.mkdirSync(dir, { recursive: true });
+        store.projects.create({ name: 'protected-genuinely-denied-route', path: dir, engine: 'claude' });
+        const res = await request('POST', '/api/sessions/protected-genuinely-denied-route');
+        assert.equal(launchSessionCalled, true, 'the route must reach launchSession — createSessionWithTccBootstrap\'s own eviction/rebootstrap step must get the chance even here');
+        assert.notEqual(res.status, 403);
+      } finally {
+        os.homedir = origHomedir;
+        tmuxLib.probeTccServerHealth = origHealth;
+        tmuxLib.probeTccReadable = origReadable;
+        sessionsLib.launchSession = origLaunch;
+      }
+    });
   });
 });
