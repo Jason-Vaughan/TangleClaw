@@ -730,15 +730,25 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
   </div>
 
 
-  <!-- Settings Modal -->
+  <!-- Settings Modal. #3214: widened from the stylesheet's own 680px/90vh
+       cap (`.modal-content.settings-modal`, public/style.css) toward a
+       near-full-page view via this inline override — an inline style always
+       wins over a stylesheet rule regardless of selector specificity, so
+       the class's own flex-column/scroll-body plumbing (title and actions
+       pinned, #settingsBody the only scrolling region) still applies
+       unchanged underneath it; only the box's own size grows. -->
   <div class="modal-backdrop" id="settingsModal">
-    <div class="modal-content settings-modal" role="dialog" aria-label="Project settings" aria-modal="true">
-      <h3 class="modal-title" id="settingsTitle">Settings</h3>
+    <div class="modal-content settings-modal" role="dialog" aria-label="Project settings" aria-modal="true"
+         style="max-width:min(1600px, 97vw); max-height:95vh;">
+      <h3 class="modal-title" id="settingsTitle" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <span id="settingsTitleText">Settings</span>
+        <span id="settingsStatusBadge" class="form-hint" style="font-weight:normal;"></span>
+      </h3>
       <div id="settingsBody"></div>
       <div class="modal-actions">
         <button class="btn" id="settingsCancelBtn">Cancel</button>
-        <button class="btn btn-primary" id="settingsSaveBtn">Save</button>
-        <button class="btn btn-primary hidden" id="settingsSaveLaunchBtn">Save &amp; Launch</button>
+        <button class="btn btn-primary" id="settingsSaveBtn">Save Properties</button>
+        <button class="btn btn-primary hidden" id="settingsSaveLaunchBtn">Save &amp; Launch / Restart Session</button>
       </div>
     </div>
   </div>

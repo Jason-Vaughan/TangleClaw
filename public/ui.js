@@ -2028,7 +2028,17 @@ function openSettings(name, options) {
   const project = state.projects.find(p => p.name === name);
   if (!project) return;
   const modal = document.getElementById('settingsModal');
-  document.getElementById('settingsTitle').textContent = 'Project Settings';
+  document.getElementById('settingsTitleText').textContent = `Project Settings — ${name}`;
+  // #3214: a status badge beside the title, in the sticky header bar that
+  // stays on screen while #settingsBody scrolls underneath it (see this
+  // modal's own inline style and public/style.css's `.settings-modal`
+  // flex-column rule) — the same "Active since …" wording the project
+  // card already uses (line ~736), not a new phrasing to keep in sync.
+  const statusBadgeEl = document.getElementById('settingsStatusBadge');
+  if (statusBadgeEl) {
+    statusBadgeEl.textContent = project.session && project.session.active
+      ? `Active since ${project.session.startedAt || 'unknown'}` : 'No active session';
+  }
 
   const engineOpts = buildEngineOptions(state.engines, project.engine ? project.engine.id : '');
 
@@ -2116,83 +2126,102 @@ function openSettings(name, options) {
   // `enrichProject` always sends the default template, so it is never restated here.
   const provenanceSetting = project.provenanceWatermark
     || { enabled: false, template: null, defaultTemplate: '', warning: null };
+  // #3214: a full-page settings view groups its fields into 3 responsive
+  // cards (flex-wrap, so they reflow to one column on a narrow viewport
+  // with no media query — public/style.css is not touched by this car) —
+  // Identity & Workspace Paths, the 3-phase Engine/Model/Effort/Launch Mode
+  // configuration, and Switchboard/Wake/Governance controls. Every existing
+  // field keeps its exact id and inner markup; only the OUTER grouping
+  // changed, so every id a caller or a test already reaches for is still
+  // exactly where it was.
+  const settingsCard = (title, bodyHtml) => `
+    <section style="flex:1 1 340px; min-width:280px; border:1px solid var(--border, #333); border-radius:8px; padding:14px 16px; margin-bottom:14px;">
+      <h4 style="margin:0 0 10px; font-size:0.95em; text-transform:uppercase; letter-spacing:0.03em; opacity:0.75;">${esc(title)}</h4>
+      ${bodyHtml}
+    </section>`;
+
   document.getElementById('settingsBody').innerHTML = `
-    <div class="form-group">
-      <label class="form-label" for="settingsName">Name</label>
-      <input type="text" class="form-input" id="settingsName" value="${esc(name)}"
-             autocomplete="off" autocorrect="off" autocapitalize="off"
-             ${hasSession ? 'disabled' : ''}>
-      ${hasSession ? '<div class="form-hint" style="color:var(--danger)">Cannot rename while a session is active</div>' : ''}
-    </div>
-    <div class="form-group">
-      <label class="form-label" for="settingsEngine">Engine</label>
-      <select class="form-select" id="settingsEngine">${engineOpts}</select>
-      <div class="form-hint">Takes effect on next session launch</div>
-      <div id="settingsGeneratedConfigContainer"></div>
-    </div>
-    <div id="settingsModelEffortContainer"></div>
-    <div class="form-group">
-      <label class="form-label" for="settingsTags">Tags (comma-separated)</label>
-      <input type="text" class="form-input" id="settingsTags" value="${esc((project.tags || []).join(', '))}"
-             autocomplete="off" autocorrect="off" autocapitalize="off">
-    </div>
-    <div id="settingsLaunchModeContainer"></div>
-    <div class="settings-toggles-grid">
-      <div id="settingsSilentPrimeContainer"></div>
-      <div id="settingsFeatureIndexContainer"></div>
-      <div id="settingsProjectMapContainer"></div>
-      <div id="settingsEvalAuditContainer"></div>
-      <div class="form-group">
-        <label class="form-label" for="settingsReleaseMode">Release mode</label>
-        <select class="form-select" id="settingsReleaseMode">${releaseModeOpts}</select>
-        <div class="form-hint">Whether a wrap cuts a release: promote CHANGELOG <code>[Unreleased]</code> and bump the project's semver — from the Version file path setting if set, otherwise <code>version.json</code> then <code>package.json</code>. <strong>Agent</strong> cuts when the release checks pass (entries in <code>[Unreleased]</code>, the active build plan finished), holds mid-plan, and asks when it can't tell. <strong>Operator</strong> stops any wrap that has a release to cut at the version bump, for you to choose Cut or Hold. <strong>Off</strong> never cuts, for projects that manage their own versioning. The wrap dialog's Release choice overrides Agent and Operator for one wrap.</div>
-        ${releaseOwnerHint}
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="settingsVersionFilePath">Version file path</label>
-        <input type="text" class="form-input" id="settingsVersionFilePath" placeholder="version.json" value="${esc(project.versionFilePath || '')}">
-        <div class="form-hint">Leave blank to probe <code>version.json</code>, then <code>package.json</code>. Set this when the file has a different name or case (e.g. <code>VERSION.json</code>) — the probe only tests the lowercase name, so on a case-sensitive filesystem it would otherwise miss and bump <code>package.json</code> instead. Must be a relative path inside the project.</div>
-      </div>
-      <div class="form-group">
-        <label class="gs-toggle-label">
-          <span>Enable Medusa session comms</span>
-          <input type="checkbox" id="settingsMedusa" ${initialMedusaChecked ? 'checked' : ''}>
-          <span class="toggle-switch"></span>
-        </label>
-        <div class="form-hint">Auto-start this project's sessions on the Medusa switchboard so inbound messages badge in the banner without a manual toggle. Off by default; the banner control is always available as a per-session override.</div>
-      </div>
-      <div id="settingsMedusaWakeContainer"></div>
-      <div id="settingsSubagentParallelizationContainer"></div>
-      <div class="form-group">
-        <label class="gs-toggle-label">
-          <span>Keep the session running after a wrap</span>
-          <input type="checkbox" id="settingsWrapKeepRunning" ${initialKeepRunningChecked ? 'checked' : ''}>
-          <span class="toggle-switch"></span>
-        </label>
-        <div class="form-hint">What a wrap does to this project's session when it completes, if whoever started it did not choose: another session, the Project Manager or a script. On, the session keeps running; off, the wrap ends it. The wrap dialog starts from this setting and can override it for one wrap. A wrap that stops, fails or is cancelled always leaves the session running.</div>
-      </div>
-      <div class="form-group">
-        <label class="gs-toggle-label">
-          <span>Accept the folder-trust dialog at launch</span>
-          <input type="checkbox" id="settingsAcceptFolderTrust" ${initialAcceptFolderTrustChecked ? 'checked' : ''}>
-          <span class="toggle-switch"></span>
-        </label>
-        <div class="form-hint">For a directory TangleClaw itself created and manages, answer the engine's first-run "Do you trust this folder?" dialog automatically instead of waiting for you to click through it. Off by default — a global "always accept" is too broad for a repository you did not create. Only acts on a dialog the engine positively shows and declares an answer for; an engine with no such dialog, or a different one, is unaffected. Never types anything blind, and never writes the engine's own trust file directly.</div>
-      </div>
-      <div class="form-group">
-        <label class="gs-toggle-label">
-          <span>Mark generated files with this project's name</span>
-          <input type="checkbox" id="settingsProvenance" ${provenanceSetting.enabled ? 'checked' : ''}>
-          <span class="toggle-switch"></span>
-        </label>
-        <label class="form-label" for="settingsProvenanceTemplate">Provenance line</label>
-        <input type="text" class="form-input" id="settingsProvenanceTemplate" maxlength="120"
-               placeholder="${esc(provenanceSetting.defaultTemplate)}" value="${esc(provenanceSetting.template || '')}"
-               autocomplete="off" autocorrect="off" autocapitalize="off">
-        <div class="form-hint" id="settingsProvenancePreview"></div>
-        ${provenanceSetting.warning ? `<div class="form-hint" style="color:var(--danger)">${esc(provenanceSetting.warning)}</div>` : ''}
-        <div class="form-hint">Adds one comment line naming this project to the files TangleClaw writes whole and keeps private: the session prime and re-entry notes (while silent prime is on), the UI wrap advisory, and a <code>.codex.yaml</code> or <code>.aider.conf.yml</code> that git ignores. It never touches <code>CLAUDE.md</code>, <code>AGENTS.md</code>, a config file git does not ignore, or any other file you own, so on an engine with no config file (OpenClaw) only the files in <code>.tangleclaw/</code> carry it. Off by default. Leave the line blank for the default; <code>{project}</code> and <code>{engine}</code> are the only placeholders. A change reaches each file the next time TangleClaw regenerates it — usually the next session launch — not when you save.</div>
-      </div>
+    <div style="display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
+      ${settingsCard('Identity &amp; Workspace Paths', `
+        <div class="form-group">
+          <label class="form-label" for="settingsName">Name</label>
+          <input type="text" class="form-input" id="settingsName" value="${esc(name)}"
+                 autocomplete="off" autocorrect="off" autocapitalize="off"
+                 ${hasSession ? 'disabled' : ''}>
+          ${hasSession ? '<div class="form-hint" style="color:var(--danger)">Cannot rename while a session is active</div>' : ''}
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="settingsTags">Tags (comma-separated)</label>
+          <input type="text" class="form-input" id="settingsTags" value="${esc((project.tags || []).join(', '))}"
+                 autocomplete="off" autocorrect="off" autocapitalize="off">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="settingsVersionFilePath">Version file path</label>
+          <input type="text" class="form-input" id="settingsVersionFilePath" placeholder="version.json" value="${esc(project.versionFilePath || '')}">
+          <div class="form-hint">Leave blank to probe <code>version.json</code>, then <code>package.json</code>. Set this when the file has a different name or case (e.g. <code>VERSION.json</code>) — the probe only tests the lowercase name, so on a case-sensitive filesystem it would otherwise miss and bump <code>package.json</code> instead. Must be a relative path inside the project.</div>
+        </div>`)}
+      ${settingsCard('AI Engine, Model &amp; Effort &mdash; Launch Mode', `
+        <div class="form-group">
+          <label class="form-label" for="settingsEngine">Engine</label>
+          <select class="form-select" id="settingsEngine">${engineOpts}</select>
+          <div class="form-hint">Takes effect on next session launch</div>
+          <div id="settingsGeneratedConfigContainer"></div>
+        </div>
+        <div id="settingsModelEffortContainer"></div>
+        <div id="settingsLaunchModeContainer"></div>`)}
+      ${settingsCard('Switchboard, Wake &amp; Governance Controls', `
+        <div class="settings-toggles-grid">
+          <div id="settingsSilentPrimeContainer"></div>
+          <div id="settingsFeatureIndexContainer"></div>
+          <div id="settingsProjectMapContainer"></div>
+          <div id="settingsEvalAuditContainer"></div>
+          <div class="form-group">
+            <label class="form-label" for="settingsReleaseMode">Release mode</label>
+            <select class="form-select" id="settingsReleaseMode">${releaseModeOpts}</select>
+            <div class="form-hint">Whether a wrap cuts a release: promote CHANGELOG <code>[Unreleased]</code> and bump the project's semver — from the Version file path setting if set, otherwise <code>version.json</code> then <code>package.json</code>. <strong>Agent</strong> cuts when the release checks pass (entries in <code>[Unreleased]</code>, the active build plan finished), holds mid-plan, and asks when it can't tell. <strong>Operator</strong> stops any wrap that has a release to cut at the version bump, for you to choose Cut or Hold. <strong>Off</strong> never cuts, for projects that manage their own versioning. The wrap dialog's Release choice overrides Agent and Operator for one wrap.</div>
+            ${releaseOwnerHint}
+          </div>
+          <div class="form-group">
+            <label class="gs-toggle-label">
+              <span>Enable Medusa session comms</span>
+              <input type="checkbox" id="settingsMedusa" ${initialMedusaChecked ? 'checked' : ''}>
+              <span class="toggle-switch"></span>
+            </label>
+            <div class="form-hint">Auto-start this project's sessions on the Medusa switchboard so inbound messages badge in the banner without a manual toggle. Off by default; the banner control is always available as a per-session override.</div>
+          </div>
+          <div id="settingsMedusaWakeContainer"></div>
+          <div id="settingsSubagentParallelizationContainer"></div>
+          <div class="form-group">
+            <label class="gs-toggle-label">
+              <span>Keep the session running after a wrap</span>
+              <input type="checkbox" id="settingsWrapKeepRunning" ${initialKeepRunningChecked ? 'checked' : ''}>
+              <span class="toggle-switch"></span>
+            </label>
+            <div class="form-hint">What a wrap does to this project's session when it completes, if whoever started it did not choose: another session, the Project Manager or a script. On, the session keeps running; off, the wrap ends it. The wrap dialog starts from this setting and can override it for one wrap. A wrap that stops, fails or is cancelled always leaves the session running.</div>
+          </div>
+          <div class="form-group">
+            <label class="gs-toggle-label">
+              <span>Accept the folder-trust dialog at launch</span>
+              <input type="checkbox" id="settingsAcceptFolderTrust" ${initialAcceptFolderTrustChecked ? 'checked' : ''}>
+              <span class="toggle-switch"></span>
+            </label>
+            <div class="form-hint">For a directory TangleClaw itself created and manages, answer the engine's first-run "Do you trust this folder?" dialog automatically instead of waiting for you to click through it. Off by default — a global "always accept" is too broad for a repository you did not create. Only acts on a dialog the engine positively shows and declares an answer for; an engine with no such dialog, or a different one, is unaffected. Never types anything blind, and never writes the engine's own trust file directly.</div>
+          </div>
+          <div class="form-group">
+            <label class="gs-toggle-label">
+              <span>Mark generated files with this project's name</span>
+              <input type="checkbox" id="settingsProvenance" ${provenanceSetting.enabled ? 'checked' : ''}>
+              <span class="toggle-switch"></span>
+            </label>
+            <label class="form-label" for="settingsProvenanceTemplate">Provenance line</label>
+            <input type="text" class="form-input" id="settingsProvenanceTemplate" maxlength="120"
+                   placeholder="${esc(provenanceSetting.defaultTemplate)}" value="${esc(provenanceSetting.template || '')}"
+                   autocomplete="off" autocorrect="off" autocapitalize="off">
+            <div class="form-hint" id="settingsProvenancePreview"></div>
+            ${provenanceSetting.warning ? `<div class="form-hint" style="color:var(--danger)">${esc(provenanceSetting.warning)}</div>` : ''}
+            <div class="form-hint">Adds one comment line naming this project to the files TangleClaw writes whole and keeps private: the session prime and re-entry notes (while silent prime is on), the UI wrap advisory, and a <code>.codex.yaml</code> or <code>.aider.conf.yml</code> that git ignores. It never touches <code>CLAUDE.md</code>, <code>AGENTS.md</code>, a config file git does not ignore, or any other file you own, so on an engine with no config file (OpenClaw) only the files in <code>.tangleclaw/</code> carry it. Off by default. Leave the line blank for the default; <code>{project}</code> and <code>{engine}</code> are the only placeholders. A change reaches each file the next time TangleClaw regenerates it — usually the next session launch — not when you save.</div>
+          </div>
+        </div>`)}
     </div>
     ${renderProjectRulesSection(project)}`;
 

@@ -535,7 +535,7 @@ describe('#2188 engine-model-picker — lib/projects.js wiring (effort persisten
       assert.equal(cfg.model, 'gpt-5.6-sol', 'the refused update must not have changed the stored model either');
     });
 
-    it('a static (non-perModel) engine like Claude is unaffected — clearing its model (if it had one) never touches effort', async () => {
+    it('a static (non-perModel) engine like Claude is unaffected — clearing its model never touches effort', async () => {
       stubCheckEffortSelection(true);
       stubCheckSelection(true);
       projects.createProject({ name: 'effort-claude-unaffected', engine: 'claude' });
@@ -543,6 +543,37 @@ describe('#2188 engine-model-picker — lib/projects.js wiring (effort persisten
       const result = await projects.updateProject('effort-claude-unaffected', { model: null });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.effort, 'high');
+    });
+
+    // #3214: Claude's model axis (static-list roster, lib/engine-models.js)
+    // and effort axis (lib/engines.js's ENGINE_EFFORT) are two independent
+    // blocks (#2188's own design), attached from two different places —
+    // these 3 tests prove they actually compose for a real project, both
+    // axes at once, through the bundled profile rather than a hand-built
+    // fixture — unstubbed (`stubCheckSelection`/`stubCheckEffortSelection`
+    // not called), so the real `checkSelection`/`checkEffortSelection` run
+    // against Claude's real roster and effort block.
+    it('the bundled Claude profile offers both a model and an effort selection', () => {
+      const claude = engines.resolveProfile('claude');
+      assert.equal(models.selectionState(claude).state, 'ok');
+      assert.equal(models.effortSelectionState(claude).state, 'ok');
+      assert.equal(models.checkSelection(claude, 'claude-opus-5-5').ok, true);
+      assert.equal(models.checkEffortSelection(claude, null, 'high').ok, true, 'Claude\'s effort is engine-wide, not perModel — no model id required');
+    });
+
+    it('a project can store both a Claude model and an effort level together', async () => {
+      projects.createProject({ name: 'claude-model-and-effort', engine: 'claude' });
+      const result = await projects.updateProject('claude-model-and-effort', { model: 'claude-fable-5-1', effort: 'max' });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.model, 'claude-fable-5-1');
+      assert.equal(result.project.effort, 'max');
+    });
+
+    it('refuses a model Claude does not offer, independent of effort', async () => {
+      projects.createProject({ name: 'claude-bad-model', engine: 'claude' });
+      const result = await projects.updateProject('claude-bad-model', { model: 'gpt-6-luna', effort: 'high' });
+      assert.equal(result.project, null);
+      assert.ok(result.errors.some((e) => e.includes('not a model offered')));
     });
   });
 });
