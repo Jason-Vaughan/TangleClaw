@@ -21,7 +21,9 @@ const http = require('node:http');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { setLevel } = require('../lib/logger');
+const lift = require('./helpers/lift');
 
 setLevel('error');
 
@@ -604,6 +606,117 @@ describe('lib/system-health (#345)', () => {
       assert.equal(c.state, 'unknown');
       assert.match(c.detail, /child crashed/);
     });
+
+    // #3198: the resolved node identity and TCC-socket reading, on every
+    // state — a Homebrew-upgrade-induced FDA loss and a stopped-session TCC
+    // anchor problem must be visible even on an otherwise-clear read.
+    describe('the #3198 node-identity and TCC-socket reading', () => {
+      const MANAGED = '/Users/op/.tangleclaw/bin/node';
+      const CLEAR_PROBES = { ...DARWIN, probeDir: async () => ({ entries: 1 }) };
+
+      it('reports usingManagedNode true when the resolved execPath is the owned stable path', async () => {
+        systemHealth._setProbes({
+          ...CLEAR_PROBES, execPath: () => MANAGED, realpath: (p) => p, managedNodePath: () => MANAGED,
+          tccSocketHealth: () => ({ socket: 'tangleclaw-tcc-authorized', running: true, anchorAlive: true, readable: null })
+        });
+        const c = await systemHealth.detectFullDiskAccess();
+        assert.equal(c.reading.usingManagedNode, true);
+        assert.equal(c.reading.resolvedExecPath, MANAGED);
+        assert.match(c.detail, /the owned, stable-path runtime/);
+      });
+
+      it('reports usingManagedNode false and flags the drift when node resolves through a Homebrew Cellar symlink', async () => {
+        const cellar = '/opt/homebrew/Cellar/node@22/22.22.3/bin/node';
+        systemHealth._setProbes({
+          ...CLEAR_PROBES, execPath: () => '/opt/homebrew/bin/node', realpath: () => cellar, managedNodePath: () => MANAGED,
+          tccSocketHealth: () => ({ socket: 'tangleclaw-tcc-authorized', running: false, anchorAlive: false, readable: null })
+        });
+        const c = await systemHealth.detectFullDiskAccess();
+        assert.equal(c.reading.usingManagedNode, false);
+        assert.equal(c.reading.resolvedExecPath, cellar);
+        assert.equal(c.reading.execPath, '/opt/homebrew/bin/node');
+        assert.match(c.detail, /NOT the owned stable-path runtime/);
+        assert.match(c.detail, new RegExp(cellar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      });
+
+      it('reports the TCC-authorized socket as not running, distinct from running-without-its-anchor', async () => {
+        systemHealth._setProbes({
+          ...CLEAR_PROBES, execPath: () => MANAGED, realpath: (p) => p, managedNodePath: () => MANAGED,
+          tccSocketHealth: () => ({ socket: 'tangleclaw-tcc-authorized', running: false, anchorAlive: false, readable: null })
+        });
+        const notRunning = await systemHealth.detectFullDiskAccess();
+        assert.deepEqual(notRunning.reading.tccSocket, { name: 'tangleclaw-tcc-authorized', running: false, anchorAlive: false, readable: null });
+        assert.match(notRunning.detail, /tangleclaw-tcc-authorized tmux server is not running/);
+
+        systemHealth._setProbes({
+          ...CLEAR_PROBES, execPath: () => MANAGED, realpath: (p) => p, managedNodePath: () => MANAGED,
+          tccSocketHealth: () => ({ socket: 'tangleclaw-tcc-authorized', running: true, anchorAlive: false, readable: null })
+        });
+        const noAnchor = await systemHealth.detectFullDiskAccess();
+        assert.equal(noAnchor.reading.tccSocket.anchorAlive, false);
+        assert.match(noAnchor.detail, /running but its anchor session is gone/);
+      });
+
+      it('reports readable when the socket probe carries it (a caller-supplied cwd reached probeTccServerHealth)', async () => {
+        systemHealth._setProbes({
+          ...CLEAR_PROBES, execPath: () => MANAGED, realpath: (p) => p, managedNodePath: () => MANAGED,
+          tccSocketHealth: () => ({ socket: 'tangleclaw-tcc-authorized', running: true, anchorAlive: true, readable: true })
+        });
+        const c = await systemHealth.detectFullDiskAccess();
+        assert.equal(c.reading.tccSocket.readable, true);
+      });
+
+      it('degrades resolvedExecPath to execPath, rather than failing the whole condition, when realpath throws', async () => {
+        systemHealth._setProbes({
+          ...CLEAR_PROBES, execPath: () => '/opt/homebrew/bin/node',
+          realpath: () => { throw new Error('ENOENT: no such file'); },
+          managedNodePath: () => MANAGED, tccSocketHealth: () => ({ socket: 'tangleclaw-tcc-authorized', running: false, anchorAlive: false, readable: null })
+        });
+        const c = await systemHealth.detectFullDiskAccess();
+        assert.equal(c.state, 'clear', 'an unreadable symlink is not itself an FDA failure');
+        assert.equal(c.reading.resolvedExecPath, '/opt/homebrew/bin/node');
+        assert.equal(c.reading.usingManagedNode, false);
+      });
+
+      it('degrades tccSocket to its own "nothing learned" shape, rather than failing the whole condition, when the socket probe throws', async () => {
+        systemHealth._setProbes({
+          ...CLEAR_PROBES, execPath: () => MANAGED, realpath: (p) => p, managedNodePath: () => MANAGED,
+          tccSocketHealth: () => { throw new Error('tmux not on PATH'); }
+        });
+        const c = await systemHealth.detectFullDiskAccess();
+        assert.equal(c.state, 'clear', 'a socket-probe failure is not itself an FDA failure');
+        assert.deepEqual(c.reading.tccSocket, { name: null, running: false, anchorAlive: false, readable: null });
+        assert.match(c.detail, /the TCC-authorized tmux server is not running/);
+      });
+
+      it('carries reading on a fired state too, not only clear', async () => {
+        systemHealth._setProbes({
+          ...DARWIN, probeDir: async () => { const e = new Error('refused'); e.code = 'EPERM'; throw e; },
+          execPath: () => MANAGED, realpath: (p) => p, managedNodePath: () => MANAGED,
+          tccSocketHealth: () => ({ socket: 'tangleclaw-tcc-authorized', running: true, anchorAlive: true, readable: null })
+        });
+        const c = await systemHealth.detectFullDiskAccess();
+        assert.equal(c.state, 'fired');
+        assert.equal(c.reading.usingManagedNode, true);
+      });
+
+      // PRR-A R1 BLOCKING 2: every other test in this describe block
+      // overrides `tccSocketHealth` directly (as production code itself
+      // never could — the override IS the test), so none of them can
+      // prove the REAL, non-overridden probe actually measures readable in
+      // production rather than leaving it permanently null. A source
+      // check, not a probe override, is how the ACTUAL wiring is verified
+      // — the same style `server.js`'s own exec/execSync source-probe test
+      // at the end of this file already uses for the same reason.
+      it('the real (non-overridden) tccSocketHealth probe passes a cwd, so GET /api/system/health actually measures readable in production (source check)', () => {
+        const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'system-health.js'), 'utf8');
+        const line = src.split('\n').find((l) => l.includes('tccSocketHealth:') && l.includes('probeTccServerHealth('));
+        assert.ok(line, 'the default tccSocketHealth probe must call tmux.probeTccServerHealth');
+        assert.doesNotMatch(line, /probeTccServerHealth\(\)/, 'must not call it with no cwd — that is exactly the bug BLOCKING 2 found');
+        assert.match(line, /probeTccServerHealth\(\{\s*cwd:/, 'must pass a cwd so readable is actually measured');
+        assert.match(line, /os\.homedir\(\)/, 'the cwd must be rooted at the real home directory, not a placeholder');
+      });
+    });
   });
 
   describe('getHealth', () => {
@@ -1044,5 +1157,321 @@ describe('POST /api/server/restart — non-blocking exec (#2140)', () => {
     assert.doesNotMatch(body, /execSync\(/, 'the restart exec must not block the event loop');
     assert.match(body, /require\('node:child_process'\)\.exec\(command, \{ timeout: 5000 \}/);
     assert.match(body, /if \(err\.signal === 'SIGTERM' && !err\.killed\) return;/);
+  });
+});
+
+/*
+ * #3198 — scripts/install-fda-anchor.sh, run for real against a scratch
+ * --base-dir (never the operator's own ~/.tangleclaw): the staged binary
+ * must actually RUN, not just exist, since that is the whole point — a
+ * copy that cannot execute would be caught by its own run-verification and
+ * never promoted, but these tests prove that promise from the outside.
+ */
+describe('scripts/install-fda-anchor.sh (#3198)', () => {
+  const SCRIPT = path.join(__dirname, '..', 'scripts', 'install-fda-anchor.sh');
+  let baseDir;
+
+  beforeEach(() => {
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fda-anchor-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(baseDir, { recursive: true, force: true });
+  });
+
+  function run(args, extraEnv) {
+    return execFileSync(SCRIPT, args, { encoding: 'utf8', env: extraEnv ? { ...process.env, ...extraEnv } : process.env });
+  }
+
+  it('is executable', () => {
+    assert.ok(fs.statSync(SCRIPT).mode & 0o111, 'scripts/install-fda-anchor.sh must be chmod +x');
+  });
+
+  it('--status on an unstaged base-dir reports staged:false and the current process node, without creating anything', () => {
+    const out = run(['--status', '--base-dir', baseDir, '--json']);
+    const status = JSON.parse(out);
+    assert.equal(status.staged, false);
+    assert.equal(status.managedNodePath, path.join(baseDir, 'bin', 'node'));
+    assert.equal(status.currentProcessVersion, process.version, 'reads the same node this test itself is running on');
+    assert.equal(fs.existsSync(path.join(baseDir, 'bin')), false, '--status must never create the staging directory');
+  });
+
+  it('--stage copies a binary that actually runs and reports the right version', () => {
+    run(['--stage', '--base-dir', baseDir]);
+    const managedNode = path.join(baseDir, 'bin', 'node');
+    assert.ok(fs.existsSync(managedNode));
+    assert.ok(fs.statSync(managedNode).mode & 0o111, 'the staged binary must be executable');
+    const version = execFileSync(managedNode, ['--version'], { encoding: 'utf8' }).trim();
+    assert.equal(version, process.version, 'the staged copy runs and reports the same version as the source it was staged from');
+  });
+
+  it('--stage writes a manifest in the exact schema #3198 asks for', () => {
+    run(['--stage', '--base-dir', baseDir]);
+    const manifest = JSON.parse(fs.readFileSync(path.join(baseDir, 'bin', 'node.manifest.json'), 'utf8'));
+    assert.equal(manifest.schema, 1);
+    assert.equal(manifest.binary.path, path.join(baseDir, 'bin', 'node'));
+    assert.match(manifest.binary.sourcePath, /node$/);
+    assert.match(manifest.binary.sourceRealpath, /node$/);
+    assert.equal(manifest.binary.version, process.version);
+    assert.match(manifest.binary.sha256, /^[0-9a-f]{64}$/);
+    assert.match(manifest.stagedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+
+  it('--status on a staged base-dir reports staged:true with the matching version and sha256', () => {
+    run(['--stage', '--base-dir', baseDir]);
+    const manifest = JSON.parse(fs.readFileSync(path.join(baseDir, 'bin', 'node.manifest.json'), 'utf8'));
+    const status = JSON.parse(run(['--status', '--base-dir', baseDir, '--json']));
+    assert.equal(status.staged, true);
+    assert.equal(status.stagedVersion, process.version);
+    assert.equal(status.stagedSha256, manifest.binary.sha256);
+  });
+
+  it('a second --stage is idempotent: same sha256, says "nothing to do", never fails', () => {
+    run(['--stage', '--base-dir', baseDir]);
+    const first = JSON.parse(fs.readFileSync(path.join(baseDir, 'bin', 'node.manifest.json'), 'utf8'));
+    const secondOut = run(['--stage', '--base-dir', baseDir]);
+    const second = JSON.parse(fs.readFileSync(path.join(baseDir, 'bin', 'node.manifest.json'), 'utf8'));
+    assert.match(secondOut, /Already staged/);
+    assert.equal(second.binary.sha256, first.binary.sha256);
+    assert.equal(second.stagedAt, first.stagedAt, 'a true no-op never rewrites the manifest');
+  });
+
+  it('re-stages (does not just report "nothing to do") when the staged binary cannot currently run', () => {
+    run(['--stage', '--base-dir', baseDir]);
+    // Simulate the staged copy having been broken independently of this
+    // script (its dylib sibling deleted, disk corruption, …) without
+    // touching the manifest, whose sha256 would otherwise still match.
+    fs.writeFileSync(path.join(baseDir, 'bin', 'node'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    const out = run(['--stage', '--base-dir', baseDir]);
+    assert.doesNotMatch(out, /Already staged/, 'a staged binary that cannot run must never be reported as fine');
+    const version = execFileSync(path.join(baseDir, 'bin', 'node'), ['--version'], { encoding: 'utf8' }).trim();
+    assert.equal(version, process.version, 'the broken copy was actually replaced, not left in place');
+  });
+
+  it('prints the one-time Operator FDA-grant instruction naming the staged path, never claiming to grant it itself', () => {
+    const out = run(['--stage', '--base-dir', baseDir]);
+    assert.match(out, /ONE-TIME OPERATOR STEP/);
+    assert.match(out, /this script never does it for you/);
+    assert.match(out, new RegExp(path.join(baseDir, 'bin', 'node').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.doesNotMatch(out, /granted|authorized Full Disk Access/i, 'never claims to have performed the grant itself');
+  });
+
+  it('never touches macOS TCC.db, from any subcommand (source check)', () => {
+    const src = fs.readFileSync(SCRIPT, 'utf8');
+    // The doc header names TCC.db once, as the thing never to touch — this
+    // checks for an actual OPERATION against it (sqlite3/any command whose
+    // arguments reach it), not the mere word, which the prose above (and
+    // this very assertion) must be free to say.
+    assert.doesNotMatch(src, /\bTCC\.db\b[^\n]*(sqlite3|INSERT|UPDATE|DELETE)/i);
+    assert.doesNotMatch(src, /sqlite3[^\n]*TCC\.db/i);
+  });
+
+  // Extracts one named function's body out of the script source, so a
+  // source check can assert what a SPECIFIC subcommand does without a false
+  // positive/negative from a sibling function elsewhere in the same file.
+  // Delegates the actual brace-balancing to the shared lift helper (#1903)
+  // rather than a private copy.
+  function functionBody(src, name) {
+    return lift.liftBody(src, `\n${name}() {`);
+  }
+
+  it('--stage and --status never write the plist (PRR-A R1 BLOCKING 3 — only --cutover may, source check)', () => {
+    const src = fs.readFileSync(SCRIPT, 'utf8');
+    for (const fn of ['stage', 'status']) {
+      const body = functionBody(src, fn);
+      assert.doesNotMatch(body, /PlistBuddy -c ['"]?Set/, `${fn}() must never Set the plist — only cutover() may`);
+      assert.doesNotMatch(body, /Set :ProgramArguments/, `${fn}() must never write ProgramArguments`);
+    }
+    // status() still only ever Prints — unchanged read-only contract.
+    assert.match(functionBody(src, 'plist_node_path'), /PlistBuddy -c ['"]Print/);
+  });
+
+  it('--cutover is the one place that writes ProgramArguments[0], and only there (source check)', () => {
+    const src = fs.readFileSync(SCRIPT, 'utf8');
+    const cutoverBody = functionBody(src, 'cutover');
+    assert.match(cutoverBody, /PlistBuddy -c "Set :ProgramArguments:0/);
+    const withoutCutover = src.replace(cutoverBody, '');
+    assert.doesNotMatch(withoutCutover, /Set :ProgramArguments/, 'ProgramArguments is written from exactly one place: cutover()');
+  });
+
+  it('rejects an unknown flag with a non-zero exit and the usage text, mutating nothing', () => {
+    assert.throws(() => execFileSync(SCRIPT, ['--nonsense', '--base-dir', baseDir], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+    assert.equal(fs.readdirSync(baseDir).length, 0, 'an unknown flag must not stage anything');
+  });
+
+  it('--help prints usage and exits 0', () => {
+    const out = run(['--help']);
+    assert.match(out, /Usage: install-fda-anchor\.sh/);
+  });
+
+  it('--stage prints the exact --cutover command to run once FDA is granted', () => {
+    const out = run(['--stage', '--base-dir', baseDir]);
+    assert.match(out, new RegExp(`--cutover --base-dir ${baseDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  });
+
+  describe('--cutover (PRR-A R1 BLOCKING 3)', () => {
+    let plistPath;
+    let fakeHome;
+
+    beforeEach(() => {
+      plistPath = path.join(baseDir, 'fake-server.plist');
+      fs.writeFileSync(plistPath, [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+        '<plist version="1.0"><dict>',
+        '<key>Label</key><string>com.tangleclaw.server</string>',
+        '<key>ProgramArguments</key><array><string>/opt/homebrew/bin/node</string><string>server.js</string></array>',
+        '</dict></plist>',
+        ''
+      ].join('\n'));
+      // check_fda reads the real $HOME/Documents, with no override of its
+      // own — on a Linux CI runner (or any host that has never created one)
+      // that directory genuinely does not exist, which is a different
+      // failure (ENOENT, fast) from the one most of these tests mean to
+      // exercise. A fixture HOME with a real, always-present Documents
+      // directory makes the check's REAL pass/fail path portable across
+      // every host, not just a macOS dev machine that happens to have one.
+      fakeHome = path.join(baseDir, 'fake-home');
+      fs.mkdirSync(path.join(fakeHome, 'Documents'), { recursive: true });
+    });
+
+    it('refuses when nothing is staged yet, and changes nothing', () => {
+      assert.throws(() => execFileSync(SCRIPT, ['--cutover', '--base-dir', baseDir, '--plist', plistPath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+      assert.match(fs.readFileSync(plistPath, 'utf8'), /\/opt\/homebrew\/bin\/node/, 'plist must be untouched');
+      assert.equal(fs.readdirSync(baseDir).filter((f) => f.startsWith('fake-server.plist')).length, 1, 'no backup must be made either');
+    });
+
+    it('refuses when the staged binary cannot run, and changes nothing', () => {
+      const binDir = path.join(baseDir, 'bin');
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.writeFileSync(path.join(binDir, 'node'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+      assert.throws(() => execFileSync(SCRIPT, ['--cutover', '--base-dir', baseDir, '--plist', plistPath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+      assert.match(fs.readFileSync(plistPath, 'utf8'), /\/opt\/homebrew\/bin\/node/);
+    });
+
+    it('refuses when the Full Disk Access check never answers in time (hang), and changes nothing', { timeout: 10000 }, () => {
+      run(['--stage', '--base-dir', baseDir]);
+      const managedNode = path.join(baseDir, 'bin', 'node');
+      // Replace the staged binary with a fake that behaves exactly like the
+      // real failure mode #3198 documents: --version returns instantly
+      // (so cutover's own run-check passes), but the FDA read itself
+      // (`-e ...`) never returns at all — the same shape a genuinely
+      // missing Full Disk Access grant produces (`lib/tcc-folders.js`'s
+      // own documented symptom), which is why check_fda must be killed
+      // from OUTSIDE rather than racing an in-process timer against it.
+      // `exec` replaces the sh process's own image with sleep's — sleep's
+      // pid IS this script's pid, with no separate child — so `kill -9`
+      // on the one pid run_with_timeout captured ends it outright. A
+      // plain backgrounded `sleep 999 &` would instead leave sleep as an
+      // orphaned grandchild still holding the test's stdout/stderr pipes
+      // open after the sh parent is killed, hanging execFileSync's own
+      // wait for EOF — not the behavior under test, just an artifact of
+      // faking the hang with a real subprocess.
+      fs.writeFileSync(managedNode, [
+        '#!/bin/sh',
+        'case "$1" in',
+        '  --version) echo "v99.0.0"; exit 0 ;;',
+        '  -e) exec sleep 999 ;;',
+        'esac'
+      ].join('\n'), { mode: 0o755 });
+
+      let threw = false;
+      let stderr = '';
+      try {
+        execFileSync(SCRIPT, ['--cutover', '--base-dir', baseDir, '--plist', plistPath], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, TANGLECLAW_FDA_CHECK_TIMEOUT_SECS: '1' }
+        });
+      } catch (err) {
+        threw = true;
+        stderr = String(err.stderr || '');
+      }
+      assert.ok(threw, 'a hanging FDA check must make --cutover fail, never hang the test itself');
+      assert.match(stderr, /could not read .* within/);
+      assert.match(fs.readFileSync(plistPath, 'utf8'), /\/opt\/homebrew\/bin\/node/, 'a timed-out FDA check must never reach the plist write');
+    });
+
+    it('stages, passes FDA (this test process can itself read ~/Documents), backs up the plist, and rewrites ProgramArguments[0]', () => {
+      run(['--stage', '--base-dir', baseDir]);
+      const managedNode = path.join(baseDir, 'bin', 'node');
+      const out = run(['--cutover', '--base-dir', baseDir, '--plist', plistPath], { HOME: fakeHome });
+      assert.match(out, /Full Disk Access confirmed/);
+      assert.match(out, /Backed up/);
+      assert.match(out, /VERIFY/);
+      assert.match(out, /launchctl kickstart/);
+      assert.match(out, /ROLLBACK/);
+      const updated = fs.readFileSync(plistPath, 'utf8');
+      assert.match(updated, new RegExp(managedNode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      assert.doesNotMatch(updated, /\/opt\/homebrew\/bin\/node/, 'the old path must be gone, not merely appended alongside');
+      const backups = fs.readdirSync(baseDir).filter((f) => f.startsWith('fake-server.plist.pre-fda-anchor-'));
+      assert.equal(backups.length, 1, 'exactly one backup must exist');
+      assert.match(fs.readFileSync(path.join(baseDir, backups[0]), 'utf8'), /\/opt\/homebrew\/bin\/node/, 'the backup preserves the pre-cutover content');
+    });
+
+    it('refuses when the named plist does not exist, and never fabricates one', () => {
+      run(['--stage', '--base-dir', baseDir]);
+      const missingPlist = path.join(baseDir, 'does-not-exist.plist');
+      let stderr = '';
+      assert.throws(() => {
+        try {
+          execFileSync(SCRIPT, ['--cutover', '--base-dir', baseDir, '--plist', missingPlist], {
+            encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HOME: fakeHome }
+          });
+        } catch (err) {
+          stderr = String(err.stderr || '');
+          throw err;
+        }
+      });
+      // Pins the ACTUAL refusal reason — without a real FDA pass first (the
+      // fixture HOME above), this would also throw, but for the wrong
+      // reason, and the test would pass without proving what its own name
+      // claims.
+      assert.match(stderr, /does not exist; nothing to cut over/);
+      assert.equal(fs.existsSync(missingPlist), false);
+    });
+
+    describe('the Node XML fallback (#3198 R3 — no PlistBuddy, e.g. Linux CI)', () => {
+      it('--status reads ProgramArguments[0] via the Node fallback, matching PlistBuddy\'s own answer', () => {
+        run(['--stage', '--base-dir', baseDir]);
+        run(['--cutover', '--base-dir', baseDir, '--plist', plistPath], { HOME: fakeHome });
+        const viaPlistBuddy = JSON.parse(run(['--status', '--base-dir', baseDir, '--plist', plistPath, '--json']));
+        const viaFallback = JSON.parse(run(
+          ['--status', '--base-dir', baseDir, '--plist', plistPath, '--json'],
+          { TANGLECLAW_FDA_FORCE_NODE_PLIST: '1' }
+        ));
+        assert.equal(viaFallback.plistProgramArgument0, viaPlistBuddy.plistProgramArgument0);
+        assert.equal(viaFallback.plistUsingManagedNode, true);
+      });
+
+      it('--cutover writes ProgramArguments[0] via the Node fallback, byte-identical in effect to PlistBuddy\'s Set', () => {
+        run(['--stage', '--base-dir', baseDir]);
+        const managedNode = path.join(baseDir, 'bin', 'node');
+        run(['--cutover', '--base-dir', baseDir, '--plist', plistPath],
+          { HOME: fakeHome, TANGLECLAW_FDA_FORCE_NODE_PLIST: '1' });
+        const updated = fs.readFileSync(plistPath, 'utf8');
+        assert.match(updated, new RegExp(managedNode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+        assert.doesNotMatch(updated, /\/opt\/homebrew\/bin\/node/);
+        // Every surrounding line is untouched — the fallback edits only the
+        // one <string>, never rewrites the file wholesale.
+        assert.match(updated, /<key>Label<\/key><string>com\.tangleclaw\.server<\/string>/);
+        assert.match(updated, /<string>server\.js<\/string>/);
+      });
+
+      it('--cutover refuses, changing nothing, when the plist does not have the expected ProgramArguments shape', () => {
+        run(['--stage', '--base-dir', baseDir]);
+        const unshapedPlist = '<plist version="1.0"><dict><key>Label</key><string>x</string></dict></plist>';
+        fs.writeFileSync(plistPath, unshapedPlist);
+        assert.throws(() => execFileSync(SCRIPT, ['--cutover', '--base-dir', baseDir, '--plist', plistPath], {
+          encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, HOME: fakeHome, TANGLECLAW_FDA_FORCE_NODE_PLIST: '1' }
+        }));
+        // The backup is made before the write is attempted (so a partial
+        // write can always be rolled back) — a harmless, already-shipped
+        // R2 behavior this test isn't about; what matters here is that the
+        // LIVE plist itself is never touched when the shape doesn't match.
+        assert.equal(fs.readFileSync(plistPath, 'utf8'), unshapedPlist, 'a plist the fallback cannot parse must be left byte-for-byte unchanged');
+      });
+    });
   });
 });

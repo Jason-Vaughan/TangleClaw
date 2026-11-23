@@ -138,6 +138,26 @@ function startAuthorizedAnchor() {
 }
 
 /**
+ * Kill {@link TCC_ANCHOR_SESSION} while keeping the TCC-authorized server
+ * itself up (#3198) — tmux's default `exit-empty` kills the whole server
+ * the instant its LAST session closes, so killing a lone anchor with
+ * nothing else on that server kills the server too, not just the anchor.
+ * A throwaway sibling session (never addressed by anything else) models
+ * the realistic shape this is actually testing: a server already hosting
+ * other real project sessions, where only the anchor specifically died.
+ * `startAuthorizedAnchor()` must have run first.
+ * @returns {void}
+ */
+function killAnchorKeepingServerAlive() {
+  try {
+    execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', 'tc-tcc-test-sibling'], { stdio: 'ignore' });
+  } catch {
+    execFileSync('tmux', ['-L', tmux.TCC_SOCKET, ['new', 'session'].join('-'), '-d', '-s', 'tc-tcc-test-sibling', '-c', '/tmp'], { stdio: 'ignore' });
+  }
+  execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'kill-session', '-t', tmux.TCC_ANCHOR_SESSION], { stdio: 'ignore' });
+}
+
+/**
  * Run `fn` with a `tmux` shim prepended to PATH that sleeps past any
  * timeout when its arguments match `pattern`, and otherwise execs the real
  * binary — so everything the bootstrap does beyond the probe itself still
@@ -1414,6 +1434,95 @@ describe('probeTccReadable targets the anchor explicitly, never untargeted, for 
       startAuthorizedAnchor();
       assert.equal(tmux.probeTccReadable(os.tmpdir(), { socket: tmux.TCC_SOCKET }), true);
     });
+  });
+});
+
+describe('probeTccServerHealth (#3198) — non-mutating health summary for GET /api/system/health', () => {
+  it('reports not running, with no anchor and no readable check, when the server is absent', () => {
+    const h = tmux.probeTccServerHealth();
+    assert.deepEqual(h, { socket: tmux.TCC_SOCKET, running: false, anchorAlive: false, readable: null });
+  });
+
+  it('reports running with anchorAlive true once the anchor is up, readable still null with no cwd asked', () => {
+    startAuthorizedAnchor();
+    const h = tmux.probeTccServerHealth();
+    assert.equal(h.running, true);
+    assert.equal(h.anchorAlive, true);
+    assert.equal(h.readable, null);
+  });
+
+  it('reports running but anchorAlive false when the server is up but the anchor session has died', () => {
+    startAuthorizedAnchor();
+    killAnchorKeepingServerAlive();
+    const h = tmux.probeTccServerHealth();
+    assert.equal(h.running, true);
+    assert.equal(h.anchorAlive, false);
+    assert.equal(h.readable, null);
+  });
+
+  it('never creates the server — a true read, not a side-effecting one', () => {
+    tmux.probeTccServerHealth();
+    assert.throws(() => execFileSync(
+      'tmux', ['-L', tmux.TCC_SOCKET, 'has-session'], { stdio: 'ignore' }
+    ), 'no server must exist after a plain health read against an absent one');
+  });
+
+  it('never recreates a dead anchor — a true read, not ensureTccAnchorAlive in disguise', () => {
+    startAuthorizedAnchor();
+    killAnchorKeepingServerAlive();
+    tmux.probeTccServerHealth();
+    assert.throws(() => execFileSync(
+      'tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', tmux.TCC_ANCHOR_SESSION], { stdio: 'ignore' }
+    ), 'the dead anchor must still be dead after a plain health read');
+  });
+
+  it('checks readable only when running + anchorAlive + a cwd are all given', () => {
+    startAuthorizedAnchor();
+    const h = tmux.probeTccServerHealth({ cwd: os.tmpdir() });
+    assert.equal(h.readable, true);
+  });
+
+  it('leaves readable null when a cwd is given but the anchor is dead — probing a dead anchor would be meaningless', () => {
+    startAuthorizedAnchor();
+    killAnchorKeepingServerAlive();
+    const h = tmux.probeTccServerHealth({ cwd: os.tmpdir() });
+    assert.equal(h.anchorAlive, false);
+    assert.equal(h.readable, null);
+  });
+});
+
+describe('stopped sessions under a protected path recover cleanly after a service restart (#3198)', () => {
+  it('creates the session normally even when the TCC-authorized anchor died since the last restart', () => {
+    // What a service restart actually leaves behind: the TCC-authorized
+    // tmux server is an INDEPENDENT process, never a child of node, so it
+    // (unlike every in-process JS module) survives a `com.tangleclaw.server`
+    // restart untouched — but nothing re-verified its anchor session
+    // specifically stayed alive in the meantime (#3130's own root cause,
+    // here exercised through the full createSessionWithTccBootstrap path
+    // rather than ensureTccAnchorAlive in isolation).
+    startAuthorizedAnchor();
+    killAnchorKeepingServerAlive();
+    assert.throws(() => execFileSync(
+      'tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', tmux.TCC_ANCHOR_SESSION], { stdio: 'ignore' }
+    ), 'the anchor must genuinely be dead before this test proves anything');
+
+    const cwd = fakeProtectedCwd('Documents/stopped-project');
+    const name = uniqueSessionName('tcc_stopped_recovery');
+    createdDefault.push(name);
+    tmux.bootstrapTccAuthorizedServer = () => {
+      throw new Error('must not need Terminal.app — the server is already up, only its anchor session was gone');
+    };
+
+    assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
+    assert.doesNotThrow(() => execFileSync(
+      'tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }
+    ), 'the real session must exist on the TCC-authorized server, not just the default-server attach proxy');
+    // The health summary now reflects the recovery too — the same anchor
+    // this path just restored, read back non-mutatingly.
+    assert.deepEqual(
+      { running: true, anchorAlive: true },
+      { running: tmux.probeTccServerHealth().running, anchorAlive: tmux.probeTccServerHealth().anchorAlive }
+    );
   });
 });
 
