@@ -230,6 +230,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       onRefreshChat: () => pending.push(live.refresh()),
       onAttachFiles: (files) => pending.push(live.attachFiles(files)),
       onRemoveAttachment: (i) => pending.push(live.removeAttachment(i)),
+      onRenameProject: (oldName, newName, opts) => pending.push(live.renameProject(oldName, newName, opts)),
       storage: null
     });
     pending.push(live.handleRoute(shell.getRoute()));
@@ -792,6 +793,31 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       streamEl.clientHeight = clientHeight;
     }
 
+    /**
+     * The exact `v6TreeRename-m<pi>-<fi>-<mi>` suffix for ONE project's own
+     * sidebar member row, found by its real DB id rather than assumed to be
+     * `p0`. This DB is shared across the whole test file (seeded once in
+     * `before()`), so a project's positional index among the sidebar tree's
+     * fleet/workspace groups depends on how many OTHER projects earlier
+     * tests have already seeded, and (`synthesizeTreeFromProjects`) on
+     * whether this project's name happens to share a dash-prefix with any
+     * of them — `p0` is neither stable in isolation nor guaranteed to be
+     * THIS project rather than a same-prefix group bulk-renaming unrelated
+     * projects together. The per-MEMBER button found here always renames
+     * exactly this one project via `options.onRenameProject` directly,
+     * never the bulk `renameFleetMembers` path a project-level button can
+     * trigger.
+     * @param {object} root
+     * @param {number} projectId
+     * @returns {string} e.g. `"m2-0-1"`
+     */
+    function findMemberRenameIdSuffix(root, projectId) {
+      const re = new RegExp(`id="v6TreeLink-(m[0-9]+-[0-9]+-[0-9]+)" data-rename-dblclick="m:${projectId}"`);
+      const found = re.exec(root.innerHTML);
+      assert.ok(found, `no sidebar member row found for project ${projectId} — is it even in the tree?`);
+      return found[1];
+    }
+
     it('pins #v6ChatStream to the bottom on initial conversation open — #v6ChatJumpLatest starts hidden', async () => {
       const projectId = seedProject('e2e-3200-initial-pin');
       const sessionId = seedLiveSession(projectId);
@@ -876,11 +902,11 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       await send('POST', base, { body: event(2, 'hi there') });
       const { root, doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
       await settle();
-      assert.match(root.innerHTML, /id="v6TreeRename-p0"/, 'the one seeded project\'s sidebar row');
+      const idSuffix = findMemberRenameIdSuffix(root, projectId);
       assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true, 'starts pinned');
-      doc.getElementById('v6TreeRename-p0').dispatch('click');
+      doc.getElementById(`v6TreeRename-${idSuffix}`).dispatch('click');
       assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true, 'opening the rename form must not unpin the stream');
-      doc.getElementById('v6TreeRenameCancel-p0').dispatch('click');
+      doc.getElementById(`v6TreeRenameCancel-${idSuffix}`).dispatch('click');
       assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true, 'canceling it must not unpin the stream either');
     });
 
@@ -890,35 +916,75 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
       await send('POST', base, { body: event(1, 'hello', 'user') });
       await send('POST', base, { body: event(2, 'hi there') });
-      const { doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      const { root, doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
       await settle();
+      const idSuffix = findMemberRenameIdSuffix(root, projectId);
       withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
       doc.getElementById('v6ChatStream').dispatch('scroll');
       withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 77, scrollHeight: 1000, clientHeight: 400 });
       doc.getElementById('v6ChatStream').dispatch('scroll');
       assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'unpinned by the scroll above');
-      doc.getElementById('v6TreeRename-p0').dispatch('click');
+      doc.getElementById(`v6TreeRename-${idSuffix}`).dispatch('click');
       // render() replaces the stream element; re-query rather than reuse
       // the reference captured before the click, the same discipline
       // restoreViewState itself uses.
       assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'opening the rename form must not silently re-pin it');
       assert.equal(doc.getElementById('v6ChatStream').scrollTop, 77, 'the exact reading position must survive the render, not snap back to 0 or to the bottom');
-      doc.getElementById('v6TreeRenameCancel-p0').dispatch('click');
+      doc.getElementById(`v6TreeRenameCancel-${idSuffix}`).dispatch('click');
       assert.equal(doc.getElementById('v6ChatStream').scrollTop, 77, 'canceling must not disturb it either');
     });
 
-    // R2 BLOCKING 2b: a bare `toggle` on #v6ChatUnderHood does not, on this
-    // branch, invoke any resize/reflow of #v6ChatStream at all (confirmed
-    // by reading its two wired listeners directly: one persists
-    // chatHoodOpen to prefs, the other only re-arms the PEEK group, not the
-    // stream) -- so this holds vacuously today and must keep holding once
-    // sibling Car V658-W1-B's ResizeObserver-driven re-pin lands, since
-    // that fix is additive (it reacts to an actual size change, which this
-    // mini-DOM harness cannot produce) rather than a replacement for this
-    // baseline. It does not, and cannot, prove the real-browser resize
-    // case the sibling car's own fix addresses -- that needs its test
-    // suite's own coverage once merged.
-    it('a bare Under the Hood toggle does not disturb #v6ChatStream\'s pin state or scrollTop either way', async () => {
+    // R3 (PRRA-R1-V658-W1C-PR3220-577120C7-REVISE item 1): the submit/save
+    // path, not just open/cancel -- a real PATCH /api/projects/:name
+    // against the real server (no stub: this file never mocks its API,
+    // and apiMutate has no seam to stub through anyway), through the
+    // per-MEMBER rename button -- options.onRenameProject ->
+    // live.renameProject -> shell.renameResult -> closeSidebarRename ->
+    // render(), the same render() cycle the open/cancel tests above
+    // already rely on. Deliberately NOT the project-level button: with
+    // this file's shared, cumulative test DB, many `e2e-*`-named projects
+    // from OTHER tests can end up sharing a dash-prefix group, and that
+    // button bulk-renames the whole group via renameFleetMembers --
+    // the per-member button always targets exactly this one project.
+    it('preserves #v6ChatStream\'s pin state and exact scrollTop across a real rename SUBMIT', async () => {
+      const projectId = seedProject('e2e-3200-rename-submit');
+      const sessionId = seedLiveSession(projectId);
+      const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
+      await send('POST', base, { body: event(1, 'hello', 'user') });
+      await send('POST', base, { body: event(2, 'hi there') });
+      const { root, doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
+      await settle();
+      const idSuffix = findMemberRenameIdSuffix(root, projectId);
+      withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
+      doc.getElementById('v6ChatStream').dispatch('scroll');
+      withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 77, scrollHeight: 1000, clientHeight: 400 });
+      doc.getElementById('v6ChatStream').dispatch('scroll');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'unpinned by the scroll above');
+      doc.getElementById(`v6TreeRename-${idSuffix}`).dispatch('click');
+      const input = doc.getElementById(`v6TreeRenameInput-${idSuffix}`);
+      assert.ok(input, 'the rename input must be mounted once the form is open');
+      input.value = 'e2e-3200-rename-submit-NEW';
+      input.dispatch('input');
+      doc.getElementById(`v6TreeRenameForm-${idSuffix}`).dispatch('submit');
+      await settle();
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'a successful rename submit must not silently re-pin the stream');
+      assert.equal(doc.getElementById('v6ChatStream').scrollTop, 77, 'and must not disturb the exact reading position either');
+    });
+
+    // R3 (PRRA-R1-V658-W1C-PR3220-577120C7-REVISE item 2): a REAL open<->
+    // close state transition (hood.open mutated before each dispatch, not
+    // a bare synthetic event with no state behind it), asserting the
+    // listener that IS wired (rearmPeekPin, firing on every toggle
+    // regardless of direction) actually re-arms #v6ChatPeek's own bottom
+    // pin on each transition, while #v6ChatStream's own pin state and
+    // exact scrollTop -- genuinely untouched by either of Under the
+    // Hood's two toggle listeners (confirmed by reading both directly) --
+    // survive both directions too. This exercises real, current, wired
+    // behavior; it still cannot produce the real-browser RESIZE sibling
+    // Car V658-W1-B's own ResizeObserver-driven re-pin reacts to (this
+    // mini-DOM harness has no layout engine), which needs that car's own
+    // test suite once merged.
+    it('Under the Hood open<->close re-arms #v6ChatPeek\'s bottom pin on each transition, without disturbing #v6ChatStream', async () => {
       const projectId = seedProject('e2e-3200-uth-toggle');
       const sessionId = seedLiveSession(projectId);
       const base = `/api/v6/projects/${projectId}/sessions/${sessionId}/conversation/events`;
@@ -928,16 +994,33 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       await settle();
       const hood = doc.getElementById('v6ChatUnderHood');
       assert.ok(hood, 'Under the Hood must be mounted');
-      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true, 'starts pinned');
-      hood.dispatch('toggle');
-      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true, 'a toggle alone must not unpin an already-pinned stream');
+
+      // Unpin the stream with a specific reading position, so the toggle
+      // transitions below have something real to preserve or disturb.
       withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
       doc.getElementById('v6ChatStream').dispatch('scroll');
       withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 77, scrollHeight: 1000, clientHeight: 400 });
       doc.getElementById('v6ChatStream').dispatch('scroll');
-      hood.dispatch('toggle');
-      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'still unpinned after the toggle');
-      assert.equal(doc.getElementById('v6ChatStream').scrollTop, 77, 'and the reading position is untouched');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'stream unpinned by the scroll above');
+
+      // Scroll the peek pane away from its own bottom too, so re-arming is
+      // a real, visible state change rather than a no-op.
+      const peek = doc.getElementById('v6ChatPeek');
+      peek.scrollHeight = 900;
+      peek.scrollTop = 200;
+
+      hood.open = true;
+      hood.dispatch('toggle'); // closed -> open
+      assert.equal(peek.scrollTop, 900, 'opening re-arms #v6ChatPeek to its own bottom (rearmPeekPin) -- a real, wired effect');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'the stream itself is untouched by the open transition');
+      assert.equal(doc.getElementById('v6ChatStream').scrollTop, 77, 'and its exact reading position survives it');
+
+      peek.scrollTop = 300; // scroll peek away again before the other direction
+      hood.open = false;
+      hood.dispatch('toggle'); // open -> closed
+      assert.equal(peek.scrollTop, 900, 'closing re-arms #v6ChatPeek to its own bottom too, the same listener firing either direction');
+      assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false, 'the stream is still untouched by the close transition');
+      assert.equal(doc.getElementById('v6ChatStream').scrollTop, 77, 'and its reading position still survives it');
     });
   });
 
