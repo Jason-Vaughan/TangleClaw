@@ -1880,3 +1880,86 @@ describe('Car V659-W2-C R2: Master chat workspace height budget and attach-butto
     assert.match(rule, /border-radius: var\(--radius-pill\);/);
   });
 });
+
+/**
+ * Car V6510-W1-C (#3206, #3207, #3208, #3209 — Sprint v6.5.10 Wave C,
+ * Milestone #104). Exclusive file scope: public/style.css and this file
+ * only. `public/v6-shell.js`/`public/api-helper.js` are NOT in scope — the
+ * real markup/wiring these selectors style lives in two OPEN sibling PRs
+ * (checked directly, not assumed): PR #3240 (#3207's loading-label wiring
+ * + #3208's Content-Type fix) and PR #3233 (#3207's animated-ellipsis
+ * controller + #3209's per-engine card helpers, in public/api-helper.js).
+ * Neither has merged as of this car's own base commit.
+ *
+ * #3206 (sub-100ms click feedback) and #3208 (Content-Type header on the
+ * usage-probe POSTs) are NOT covered by a test here, and that omission is
+ * deliberate, not an oversight:
+ * - #3206's own fix is reordering `handleRoute`'s synchronous visual
+ *   feedback before its sequential awaits (public/v6-shell.js:6716) — a
+ *   `public/v6-shell.js` change outside this car's envelope, unfixed by
+ *   either sibling PR above. A wall-clock "<100ms" assertion against this
+ *   file's own in-process mounted-shell harness (handleRequest called
+ *   directly, no real network) would also be VACUOUS either way — there is
+ *   no real latency here for a sequential-vs-parallel difference to show
+ *   up against, so the assertion would pass regardless of whether the
+ *   underlying ordering bug is fixed. Flagged to the PM rather than
+ *   shipping a test that cannot actually fail on the bug it names.
+ * - #3208's fix (adding `Content-Type: application/json` to
+ *   `refreshUsageProbeAction`/`setUsageProbeIntervalAction`,
+ *   `public/v6-shell.js:5687`/`5708`) is real and unmerged — confirmed
+ *   directly: `server.js`'s own body-parser guard
+ *   (`server.js:8223`, `ownApiSurface && hasBody && declaredType !==
+ *   'application/json'`) does reject exactly this today. Still outside
+ *   this car's envelope (`public/v6-shell.js`) and mid-review in PR #3240
+ *   already — writing a test for it here would either duplicate that PR's
+ *   own fix verification or fail until it merges, for a bug this car's own
+ *   scope cannot close.
+ */
+describe('Car V6510-W1-C: shared loading indicator & per-engine usage card styling (#3207, #3209)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  /** @param {string} selector @returns {string} the selector's own `{ ... }` body, or '' if not found. */
+  const body = (selector) => {
+    const m = new RegExp(`(^|\\n)${selector.replace(/[.[\]>="^-]/g, '\\$&')} \\{([^}]*)\\}`).exec(css);
+    return m ? m[2] : '';
+  };
+
+  it('.v6-loading-indicator/.v6-loading-ellipsis are layout-only (no @keyframes of their own), since the JS controller already owns the dot-cycling and its own prefers-reduced-motion check', () => {
+    assert.match(body('.v6-loading-indicator'), /display: inline-flex;/);
+    assert.match(body('.v6-loading-ellipsis'), /min-width: 1\.5em;/);
+    assert.doesNotMatch(css, /\.v6-loading-ellipsis(::after)?\s*\{[^}]*animation:/, 'the dot content is set via JS textContent, not a CSS keyframe — a CSS animation here would double up with it');
+  });
+
+  it('.v6-loading-ellipsis drops its width reservation under prefers-reduced-motion, matching the controller\'s own static (non-cycling) render in that mode', () => {
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\/\*[^]*?\*\/\s*\.v6-loading-ellipsis \{\s*min-width: 0;/);
+  });
+
+  it('.v6-loading-error/.v6-loading-retry-btn get a visible error treatment and an actionable Retry control', () => {
+    assert.match(body('.v6-loading-error'), /color: #f85149;/);
+    assert.match(body('.v6-loading-retry-btn'), /cursor: pointer;/);
+  });
+
+  it('#v6EngineUsagePopover is bounded and scrolls internally, so multiple engine cards cannot grow past the viewport', () => {
+    const rule = body('.v6-usage-popover');
+    assert.match(rule, /max-height: min\(75vh, 580px\);/);
+    assert.match(rule, /overflow-y: auto;/);
+  });
+
+  it('.v6-usage-engine-card groups one provider\'s header, quota windows, sub-tiers, local estimates and degraded note into one bordered card', () => {
+    assert.match(body('.v6-usage-engine-card'), /border: 1px solid var\(--border-color, #2a2f36\);/);
+    assert.match(body('.v6-usage-card-title'), /font-weight: 600;/);
+    assert.match(body('.v6-usage-source-badge--probed'), /color: #56d364;/);
+    assert.match(body('.v6-usage-degraded-note'), /color: #f85149;/);
+  });
+
+  it('.v6-usage-window-row renders a real progress track behind .v6-usage-progress-bar\'s own inline width, in the SAME grid cell — the markup never nests a separate track element', () => {
+    const row = body('.v6-usage-window-row');
+    assert.match(row, /display: grid;/);
+    assert.match(row, /grid-template-columns: 7em minmax\(60px, 1fr\) 4\.5em auto;/);
+    const track = body('.v6-usage-window-row::before');
+    assert.match(track, /grid-column: 2;/);
+    assert.match(track, /background: var\(--elevated-bg, #1a1a1a\);/);
+    const bar = body('.v6-usage-progress-bar');
+    assert.match(bar, /grid-column: 2;/, 'the fill must share the track\'s own grid cell, not a different one, to visually overlay it');
+    assert.match(bar, /background: var\(--primary, #8bc34a\);/);
+  });
+});

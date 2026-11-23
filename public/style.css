@@ -5147,6 +5147,56 @@ p.v6-history-secret {
   font-variant-numeric: tabular-nums;
   opacity: 0.8;
 }
+
+/* ── Car V6510-W1-C: shared animated-ellipsis loading indicator (#3207)
+   — `tcV6AnimatedEllipsisMarkup`/`tcV6CreateAnimatedEllipsisController`
+   (public/api-helper.js). Unlike `.v6-chat-activity-dots` above, the dot
+   count here is JS-driven (the controller sets `.v6-loading-ellipsis`'s
+   own textContent on an interval, and already checks
+   `prefers-reduced-motion` itself before ever starting that timer) — this
+   CSS is deliberately layout-only, not another animation, so the two
+   mechanisms never compound into double-animating the same element. The
+   one thing CSS still owns: stopping the dot count from visibly
+   reflowing the label next to it as it cycles 1/2/3 characters. */
+.v6-loading-indicator {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+}
+.v6-loading-ellipsis {
+  display: inline-block;
+  min-width: 1.5em;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* The controller already renders a static "..." under reduced motion,
+     so nothing ever cycles here — the reservation above is moot then,
+     not harmful either way, but dropping it keeps the indicator's own
+     width exactly as wide as its final static text, never wider. */
+  .v6-loading-ellipsis {
+    min-width: 0;
+  }
+}
+.v6-loading-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #f85149;
+}
+.v6-loading-retry-btn {
+  padding: 2px 8px;
+  font-size: 0.85em;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--border-color, #2a2f36);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.v6-loading-retry-btn:hover,
+.v6-loading-retry-btn:focus-visible {
+  border-color: #56d364;
+}
+
 /* #3057: the chat target's own version and git branch, beside its status. */
 .v6-chat-version-badge,
 .v6-chat-git-badge {
@@ -6230,6 +6280,11 @@ p.v6-history-secret {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
   font-size: 0.85em;
   overflow-x: auto;
+  /* #3209 (UI-006): multiple engines' tables/probe rows/controls could
+     otherwise grow taller than the viewport with nothing to contain
+     them — bound it and let IT scroll, not the page underneath it. */
+  max-height: min(75vh, 580px);
+  overflow-y: auto;
 }
 .v6-usage-popover[hidden] {
   display: none;
@@ -6254,6 +6309,121 @@ p.v6-history-secret {
 }
 .v6-usage-status.is-error {
   color: #f85149;
+}
+
+/* ── Car V6510-W1-C: structured per-engine usage popover cards (#3209)
+   — `tcV6RenderEngineUsageCardMarkup`/`_tcV6UsageWindowRowMarkup`
+   (public/api-helper.js). One `<section class="v6-usage-engine-card">`
+   per provider, replacing the flat table row this popover used before. */
+.v6-usage-engine-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border-color, #2a2f36);
+  border-radius: var(--radius-card, 8px);
+}
+.v6-usage-engine-card:last-child {
+  margin-bottom: 0;
+}
+.v6-usage-card-header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.v6-usage-card-title {
+  margin: 0;
+  font-size: 1em;
+  font-weight: 600;
+}
+.v6-usage-source-badge--probed,
+.v6-usage-source-badge--estimated {
+  font-size: 0.75em;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--border-color, #2a2f36);
+}
+.v6-usage-source-badge--probed {
+  color: #56d364;
+  border-color: #56d364;
+}
+.v6-usage-last-probed {
+  margin-left: auto;
+  font-size: 0.8em;
+  opacity: 0.7;
+}
+/* One quota window per row: label, a progress bar (the real % left,
+   via `.v6-usage-progress-bar`'s own inline `width`), the "% left"
+   badge, and a reset countdown. `.v6-usage-progress-bar` carries no
+   wrapping track element of its own (the real markup never nests one),
+   so its "track" is this row's `::before`, placed in the SAME grid
+   cell — the only way to show the unfilled remainder behind an
+   element whose own width is the inline percentage, without a second
+   element the markup doesn't provide. */
+.v6-usage-window-row {
+  display: grid;
+  grid-template-columns: 7em minmax(60px, 1fr) 4.5em auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 2px 0;
+}
+.v6-usage-window-row::before {
+  content: '';
+  grid-column: 2;
+  grid-row: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--elevated-bg, #1a1a1a);
+}
+.v6-usage-window-label {
+  font-size: 0.85em;
+  opacity: 0.85;
+  overflow-wrap: anywhere;
+}
+.v6-usage-progress-bar {
+  grid-column: 2;
+  grid-row: 1;
+  height: 6px;
+  min-width: 2px;
+  border-radius: 3px;
+  background: var(--primary, #8bc34a);
+}
+.v6-usage-pct-left {
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.v6-usage-reset {
+  font-size: 0.8em;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+.v6-usage-subtiers {
+  list-style: none;
+  margin: 0 0 0 1em;
+  padding: 0;
+  border-left: 1px solid var(--border-color, #2a2f36);
+}
+.v6-usage-local-estimates {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-color, #2a2f36);
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+.v6-usage-local-estimates h5 {
+  margin: 0 0 2px;
+  font-size: 1em;
+}
+.v6-usage-local-estimates p {
+  margin: 0;
+}
+.v6-usage-degraded-note {
+  margin: 4px 0 0;
+  color: #f85149;
+  font-size: 0.85em;
 }
 
 /* #3086: the workspace mode bar at the top of the main view, and the wizard
