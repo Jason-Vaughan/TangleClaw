@@ -263,6 +263,42 @@ describe('#768 the bar behaves', () => {
     assert.equal(file.rawName, 'Screenshot 2026-11-22 at 9.15.00 PM.png', 'the original name is still recoverable from .rawName');
   });
 
+  // #3218 R2 WARNING (R-Gate R2): a real File is always extensible, so the
+  // in-place Object.defineProperty above always succeeds against one — but
+  // a frozen File-LIKE object (which a real File never is, only a test
+  // double can be) must still never throw, and a 1-argument onUpload(f)
+  // must still see the sanitized name, via a read-through proxy.
+  it('normalizes a real File in place, and never throws against a frozen File-like object — falling back to a proxy for the latter (#3218)', () => {
+    const { doc, ids } = makeDocument(['masterPanelBar']);
+    withIdParsingInnerHTML(ids.masterPanelBar, doc);
+    const names = [];
+    const bar = G.tcCreateMasterControlBar({
+      doc, rootId: 'masterPanelBar', prefix: 'masterPanel', onUpload: (f) => names.push(f.name)
+    });
+    bar.mount();
+    const input = doc.getElementById('masterPanelUploadInput');
+
+    const realFile = new File(['hello'], 'Screenshot 2026-11-22.png', { type: 'image/png' });
+    input.files = [realFile];
+    assert.doesNotThrow(() => input.dispatch('change'));
+    assert.equal(names[0], 'Screenshot-2026-11-22.png');
+    assert.equal(realFile.name, 'Screenshot-2026-11-22.png', 'a real File is always extensible, so it normalizes in place');
+
+    // A real File's `name` is an ACCESSOR inherited from `File.prototype`,
+    // not an own property of the instance — freezing the instance (which
+    // `Object.freeze` does to OWN properties only) leaves that accessor
+    // alone, which is exactly why the proxy below is even legal: a Proxy
+    // may not report a value for an own, non-configurable, non-writable
+    // data property that disagrees with the target's actual one (a plain
+    // frozen `{ name: '...' }` object literal would hit that invariant and
+    // throw), but an inherited accessor carries no such constraint.
+    const frozen = Object.freeze(new File(['x'], 'frozen (1).txt'));
+    input.files = [frozen];
+    assert.doesNotThrow(() => input.dispatch('change'));
+    assert.equal(names[1], 'frozen-1.txt', 'a 1-arg onUpload(f) reading f.name still gets the sanitized value via the proxy');
+    assert.equal(frozen.name, 'frozen (1).txt', 'the frozen File itself is untouched — it could not have been, by definition');
+  });
+
   it('paints the model pill from a real fetch', async () => {
     // BEHAVIOURAL, because the source-pin version of this was itself a review
     // finding: `assert.match(UI, /masterBar\.loadModel\(/)` stays green for
@@ -1887,5 +1923,46 @@ describe('#3218 tcBindMasterDropzone', () => {
   it('does nothing and never throws when doc/panelEl/onUpload are missing', () => {
     assert.doesNotThrow(() => G.tcBindMasterDropzone({}));
     assert.doesNotThrow(() => G.tcBindMasterDropzone({ doc: makeDocument([]).doc }));
+  });
+
+  // #3218 R2 BLOCKING (R-Gate R2): the dashboard surface (#masterPanel +
+  // #masterFrame) — neither has its own `position` rule in production, so
+  // the overlay's `position: absolute; inset: 0` must get one from here,
+  // and the iframe itself must go pointer-events: none while a drag is
+  // live, not just rely on the overlay's z-index.
+  it('dashboard surface: positions the unpositioned panel, and disables/restores the frame\'s pointer-events across show/hide', () => {
+    const { doc, ids } = makeDocument(['masterPanel', 'masterFrame']);
+    ids.masterPanel.style = {};
+    ids.masterFrame.style = {};
+    const docHandlers = captureAddEventListener(doc);
+    const panelHandlers = captureAddEventListener(ids.masterPanel);
+    G.tcBindMasterDropzone({ doc, panelEl: ids.masterPanel, prefix: 'masterPanel', onUpload: () => {} });
+    assert.equal(ids.masterPanel.style.position, 'relative', 'the panel must become a positioned containing block');
+    docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+    assert.equal(ids.masterFrame.style.pointerEvents, 'none', 'the iframe must stop intercepting pointer input while a drag is live');
+    panelHandlers.drop[0]({ preventDefault: () => {}, dataTransfer: { files: [] } });
+    assert.equal(ids.masterFrame.style.pointerEvents, '', 'restored once the drop is handled (even an empty one)');
+  });
+
+  // The drawer surface (#masterDrawer + its #masterDrawerFrameWrap +
+  // #masterDrawerFrame) is the OTHER shape: #masterDrawer is already
+  // `position: fixed` via its own stylesheet rule and must be left alone,
+  // while the frame's actual parent (the wrap, not the drawer itself) is
+  // the one that needs the fix.
+  it('drawer surface: leaves an already-positioned panel alone, positions the frame\'s real (non-panel) parent, and still toggles pointer-events', () => {
+    const { doc, ids } = makeDocument(['masterDrawer', 'masterDrawerFrameWrap', 'masterDrawerFrame']);
+    ids.masterDrawer.style = { position: 'fixed' };
+    ids.masterDrawerFrameWrap.style = {};
+    ids.masterDrawerFrame.style = {};
+    ids.masterDrawerFrameWrap.appendChild(ids.masterDrawerFrame);
+    const docHandlers = captureAddEventListener(doc);
+    const panelHandlers = captureAddEventListener(ids.masterDrawer);
+    G.tcBindMasterDropzone({ doc, panelEl: ids.masterDrawer, prefix: 'masterDrawer', onUpload: () => {} });
+    assert.equal(ids.masterDrawer.style.position, 'fixed', 'already positioned via its own stylesheet rule — must not be downgraded to relative');
+    assert.equal(ids.masterDrawerFrameWrap.style.position, 'relative', 'the frame\'s REAL parent (not the panel) is what needed the fix');
+    docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
+    assert.equal(ids.masterDrawerFrame.style.pointerEvents, 'none');
+    panelHandlers.drop[0]({ preventDefault: () => {}, dataTransfer: { files: [] } });
+    assert.equal(ids.masterDrawerFrame.style.pointerEvents, '');
   });
 });

@@ -4616,23 +4616,43 @@
    * `onUpload(file)` caller that reads `file.name` directly (e.g.
    * `public/ui.js`'s `uploadMasterAttachment`) gets the
    * `SAFE_FILENAME_RE`-compliant name automatically, with no call-site
-   * change of its own. Never throws: a `File`-like object a test
-   * constructs as non-configurable keeps its raw name, and
-   * `file.sanitizedName` still carries the correct value for a caller
-   * that reads that explicitly instead.
+   * change of its own. Never throws: a frozen/non-extensible File-like
+   * object (a real `File` never is one, only a test double can be) that
+   * refuses the in-place override is wrapped in a read-through proxy
+   * instead, so a 1-argument caller's `f.name` still resolves to the
+   * sanitized value — returns that wrapper rather than mutating further,
+   * since `Object.freeze`'s own-property invariants forbid a proxy from
+   * reporting a different value for an own, non-configurable property
+   * (never an issue for a real `File`, whose `name` is an accessor
+   * inherited from `File.prototype`, not an own property).
    * @param {File} file
    * @param {string} sanitizedName
+   * @returns {File} `file` itself, normalized in place, or a read-through
+   *   proxy of it when the in-place override could not be applied.
    */
   function _tcNormalizeAttachmentFilename(file, sanitizedName) {
-    if (!file) return;
+    if (!file) return file;
     const rawName = file.name;
+    try { file.rawName = rawName; file.sanitizedName = sanitizedName; } catch (_) { /* frozen; the proxy below covers reads either way */ }
     if (rawName !== sanitizedName) {
       try {
         Object.defineProperty(file, 'name', { value: sanitizedName, configurable: true, enumerable: true });
-      } catch (_) { /* raw name kept; sanitizedName below still carries the safe value */ }
+      } catch (_) { /* a frozen/non-extensible File falls through to the proxy below */ }
     }
-    file.rawName = rawName;
-    file.sanitizedName = sanitizedName;
+    if (file.name === sanitizedName) return file;
+    // #3218 R2 BLOCKING (R-Gate R2 WARNING): `file` refused the
+    // redefine — frozen or non-extensible, which a real `File` never is,
+    // but a test's File-like stand-in can be. A 1-argument `onUpload(f)`
+    // reading `f.name` still needs the sanitized value, so wrap it in a
+    // read-through proxy rather than give up on the normalization.
+    return new Proxy(file, {
+      get(target, prop) {
+        if (prop === 'name' || prop === 'sanitizedName') return sanitizedName;
+        if (prop === 'rawName') return rawName;
+        const val = Reflect.get(target, prop, target);
+        return typeof val === 'function' ? val.bind(target) : val;
+      }
+    });
   }
 
   /**
@@ -4648,9 +4668,37 @@
       if (!file) return;
       const sanitized = tcSanitizeMasterAttachmentFilename(file.name, taken);
       taken.add(sanitized);
-      _tcNormalizeAttachmentFilename(file, sanitized);
-      onUpload(file, sanitized);
+      onUpload(_tcNormalizeAttachmentFilename(file, sanitized), sanitized);
     });
+  }
+
+  /**
+   * `el`'s effective CSS `position` — via `getComputedStyle` where the
+   * environment has one (a real page), falling back to its inline
+   * `.style.position` (treating unset as `"static"`, the CSS default)
+   * where it doesn't (this file's own mini-DOM test harness). Never
+   * throws, never returns an empty/undefined value.
+   * @param {HTMLElement} el
+   * @returns {string}
+   */
+  function _tcEffectivePosition(el) {
+    if (!el) return 'static';
+    try {
+      if (typeof getComputedStyle === 'function') return getComputedStyle(el).position || 'static';
+    } catch (_) { /* no real computed style available in this environment */ }
+    return (el.style && el.style.position) || 'static';
+  }
+
+  /**
+   * Gives `el` a positioned containing block (#3218 R2 BLOCKING, R-Gate
+   * R2) ONLY if it is currently `static` — an element already positioned
+   * via its own stylesheet rule (`.master-drawer`'s `position: fixed`)
+   * is left alone rather than downgraded to `relative` and losing its
+   * own positioning.
+   * @param {HTMLElement} el
+   */
+  function _tcEnsurePositioned(el) {
+    if (el && el.style && _tcEffectivePosition(el) === 'static') el.style.position = 'relative';
   }
 
   /**
@@ -4663,7 +4711,11 @@
    * @param {object} deps
    * @param {Document} deps.doc - The page document.
    * @param {HTMLElement} deps.panelEl - The panel the overlay mounts inside and listens on.
-   * @param {HTMLElement} [deps.frameEl] - The terminal iframe the overlay sits above; only used to confirm the overlay is appended after it in DOM order.
+   * @param {HTMLElement} [deps.frameEl] - The terminal iframe the overlay sits above; while a
+   *   drag is in flight its `pointer-events` are disabled too, belt-and-suspenders against the
+   *   overlay's own z-index stacking, since an iframe can swallow drag/drop events meant for its
+   *   own embedded page. Falls back to `#masterFrame` (dashboard) / `#${prefix}Frame` (drawer)
+   *   when omitted.
    * @param {string} [deps.prefix] - Id prefix for the overlay element; defaults to `"masterPanel"`.
    * @param {(file: File, sanitizedName: string) => void} deps.onUpload - Called once per file, with its sanitized name.
    * @returns {{destroy: () => void}} Removes every listener this installed.
@@ -4674,6 +4726,21 @@
     const onUpload = deps.onUpload;
     if (!doc || !panelEl || typeof onUpload !== 'function') {
       return { destroy() {} };
+    }
+
+    // #3218 R2 BLOCKING (R-Gate R2): the overlay below is `position:
+    // absolute; inset: 0`, which resolves against the nearest POSITIONED
+    // ancestor. In production neither `.master-panel` nor `.master-
+    // drawer-frame-wrap` sets one (`.master-drawer` itself DOES, via
+    // `position: fixed` — left alone, never downgraded to `relative`,
+    // since `_tcEnsurePositioned` only overrides a truly `static` one),
+    // so without this the overlay would size itself against whichever
+    // ancestor up the tree happens to be positioned instead of the panel
+    // it's meant to cover.
+    _tcEnsurePositioned(panelEl);
+    const resolvedFrame = deps.frameEl || doc.getElementById(prefix === 'masterPanel' ? 'masterFrame' : `${prefix}Frame`);
+    if (resolvedFrame && resolvedFrame.parentNode && resolvedFrame.parentNode !== panelEl) {
+      _tcEnsurePositioned(resolvedFrame.parentNode);
     }
 
     let overlay = doc.getElementById(`${prefix}DropzoneOverlay`);
@@ -4695,8 +4762,18 @@
       const types = evt && evt.dataTransfer && evt.dataTransfer.types;
       return Boolean(types) && Array.prototype.includes.call(types, 'Files');
     };
-    const show = () => overlay.classList.remove('hidden');
-    const hide = () => overlay.classList.add('hidden');
+    const show = () => {
+      overlay.classList.remove('hidden');
+      // #3218 R2 BLOCKING (R-Gate R2): the iframe itself ignores pointer
+      // input for as long as a file drag is in flight, so it cannot
+      // swallow the drag/drop even if the overlay's own stacking ever
+      // fails to cover it.
+      if (resolvedFrame && resolvedFrame.style) resolvedFrame.style.pointerEvents = 'none';
+    };
+    const hide = () => {
+      overlay.classList.add('hidden');
+      if (resolvedFrame && resolvedFrame.style) resolvedFrame.style.pointerEvents = '';
+    };
 
     const onDragEnter = (evt) => { if (carriesFiles(evt)) show(); };
     const onDragOver = (evt) => {
@@ -4960,8 +5037,7 @@
           const file = uploadInput.files && uploadInput.files[0];
           if (file && deps.onUpload) {
             const sanitized = tcSanitizeMasterAttachmentFilename(file.name);
-            _tcNormalizeAttachmentFilename(file, sanitized);
-            deps.onUpload(file, sanitized);
+            deps.onUpload(_tcNormalizeAttachmentFilename(file, sanitized), sanitized);
           }
           uploadInput.value = '';
         });
