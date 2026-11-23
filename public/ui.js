@@ -8114,6 +8114,23 @@ function wrapAndRelaunchMaster() {
 const MASTER_ATTACHMENT_THUMB_CACHE = new Map(); // filename -> blob: URL, revoked on refresh
 
 /**
+ * Whether a filename names a raster image this panel can thumbnail (#3218).
+ * `lib/secure-clipboard.js#listSecretFiles` (`GET /api/master/attachments`)
+ * returns only `{filename, bytes, mtimeMs}` — no image/not-image flag — so
+ * this is inferred client-side from the extension rather than branching on
+ * a server field that does not exist. A false positive here costs nothing
+ * worse than a thumbnail `<img>` that never gets a `src`:
+ * `GET /api/master/attachments/:filename` only ever serves a real raster
+ * image (`readImageFile`'s own contract), so `fetchMasterAttachmentThumb`
+ * fails closed on anything else.
+ * @param {string} filename
+ * @returns {boolean}
+ */
+function isMasterAttachmentImage(filename) {
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(String(filename || ''));
+}
+
+/**
  * Fetch one pending attachment's bytes as a `blob:` URL, with the same
  * operator-proof headers `tcOperatorProofHeaders` builds for every other
  * authenticated-but-not-JSON read on this page (mirrors
@@ -8150,12 +8167,28 @@ async function refreshMasterAttachments() {
     const item = document.createElement('span');
     item.className = 'master-attachment-thumb';
     item.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin:2px;';
-    const img = document.createElement('img');
-    img.alt = file.filename;
-    img.style.cssText = 'width:36px;height:36px;object-fit:cover;border-radius:3px;';
-    fetchMasterAttachmentThumb(file.filename).then((url) => {
-      if (url) { MASTER_ATTACHMENT_THUMB_CACHE.set(file.filename, url); img.src = url; }
-    });
+
+    if (isMasterAttachmentImage(file.filename)) {
+      const img = document.createElement('img');
+      img.alt = file.filename;
+      img.style.cssText = 'width:36px;height:36px;object-fit:cover;border-radius:3px;';
+      fetchMasterAttachmentThumb(file.filename).then((url) => {
+        if (url) { MASTER_ATTACHMENT_THUMB_CACHE.set(file.filename, url); img.src = url; }
+      });
+      item.appendChild(img);
+    } else {
+      const chip = document.createElement('span');
+      chip.className = 'master-attachment-chip';
+      chip.style.cssText = 'display:inline-flex;align-items:center;padding:2px 6px;border-radius:3px;background:var(--elevated-bg);font-size:0.8em;';
+      chip.textContent = `📄 ${Math.max(1, Math.round((file.bytes || 0) / 1024))} KB`;
+      item.appendChild(chip);
+    }
+    const name = document.createElement('span');
+    name.className = 'master-attachment-name';
+    name.textContent = file.filename;
+    name.style.cssText = 'font-size:0.75em;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    item.appendChild(name);
+
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'banner-btn';
@@ -8165,7 +8198,6 @@ async function refreshMasterAttachments() {
       apiMutate(`/api/master/attachments/${encodeURIComponent(file.filename)}`, 'DELETE')
         .then(() => refreshMasterAttachments());
     });
-    item.appendChild(img);
     item.appendChild(del);
     strip.appendChild(item);
   }
@@ -8188,9 +8220,14 @@ async function uploadMasterAttachment(file) {
   });
   const content = String(dataUrl).split(',')[1] || '';
   if (!content) return;
-  const result = await apiMutate('/api/master/attachments', 'POST', {
-    filename: file.name || `attachment-${Date.now()}.png`, content
-  });
+  // #3218: sanitize via the shared helper when another car's module provides
+  // one (feature-detected — this car does not add that module), falling back
+  // to the same character class inline so uploads work before it lands.
+  const rawName = (file && file.name) ? file.name : `attachment-${Date.now()}.png`;
+  const filename = (typeof window.tcSanitizeMasterAttachmentFilename === 'function')
+    ? window.tcSanitizeMasterAttachmentFilename(rawName)
+    : rawName.replace(/[^A-Za-z0-9._-]/g, '_');
+  const result = await apiMutate('/api/master/attachments', 'POST', { filename, content });
   if (result) refreshMasterAttachments();
 }
 
@@ -8217,6 +8254,20 @@ function addMasterAttachmentStrip() {
   const seatsRow = document.getElementById('masterUtilitySeatsRow');
   if (seatsRow && seatsRow.parentNode) seatsRow.parentNode.insertBefore(strip, seatsRow.nextSibling);
 
+  // #3218: the iframe-safe dropzone binder (another car's module) is wired
+  // when present — it can capture drag/drop and paste that happen over
+  // `#masterFrame` itself, which the iframe would otherwise swallow before
+  // these parent-document listeners ever fire. Feature-detected: this car
+  // does not add that module, and the listeners below keep working as the
+  // fallback regardless, both before it lands and after (belt and braces,
+  // not a replacement for it).
+  if (typeof window.tcBindMasterDropzone === 'function') {
+    window.tcBindMasterDropzone({
+      doc: document, panelEl: panel, frameEl: document.getElementById('masterFrame'),
+      prefix: 'masterPanel', onUpload: uploadMasterAttachment
+    });
+  }
+
   panel.addEventListener('dragover', (e) => { e.preventDefault(); });
   panel.addEventListener('drop', (e) => {
     e.preventDefault();
@@ -8227,7 +8278,9 @@ function addMasterAttachmentStrip() {
     const items = e.clipboardData && e.clipboardData.items;
     if (!items) return;
     for (const item of items) {
-      if (item.kind === 'file' && item.type.startsWith('image/')) {
+      // #3218: any file, not just an image — the all-file upload support
+      // this car adds applies to paste too.
+      if (item.kind === 'file') {
         const f = item.getAsFile();
         if (f) uploadMasterAttachment(f);
         break;
@@ -8236,6 +8289,133 @@ function addMasterAttachmentStrip() {
   });
 
   refreshMasterAttachments();
+}
+
+/**
+ * Append one conversation bubble to the Admin Fleet chat stream, using the
+ * same `.v6-conversation-event`/`.v6-conversation-content` classes the real
+ * V6 chat stream renders (`public/v6-shell.js#conversationViewMarkup`), so
+ * this panel's bubbles already pick up that styling without touching
+ * `public/style.css` (outside this car's file scope).
+ * @param {'user'|'assistant'} role
+ * @param {string} text
+ * @returns {void}
+ */
+function appendMasterChatTurn(role, text) {
+  const stream = document.getElementById('masterChatStream');
+  if (!stream) return;
+  const li = document.createElement('li');
+  li.className = `v6-conversation-event is-${role}`;
+  const content = document.createElement('span');
+  content.className = 'v6-conversation-content';
+  content.textContent = text;
+  li.appendChild(content);
+  stream.appendChild(li);
+  stream.scrollTop = stream.scrollHeight;
+}
+
+/**
+ * Send the composer's text into the live Admin-PM terminal (#3218 Req 1).
+ *
+ * There is no `/api/master/*` route for injecting an arbitrary chat command
+ * the way `/api/sessions/:project/command` does for an ordinary project's V6
+ * chat (`public/v6-shell.js#deliverChat`) — Admin-PM is not a row in the
+ * `projects` table that route resolves against, and adding a new server
+ * route is outside this car's 2-file envelope. So this reaches into the
+ * attached ttyd iframe's own terminal object directly, the only mechanism
+ * available from here: `.paste()` is xterm.js's own documented API and the
+ * one ttyd's bundle is expected to expose as `term`; `.input()` is a
+ * fallback for a build that wires it differently. Not independently
+ * verified against a live ttyd session in this environment — flagged in
+ * the PR.
+ * @returns {Promise<void>}
+ */
+async function sendMasterChatMessage() {
+  const input = document.getElementById('masterChatInput');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  appendMasterChatTurn('user', text);
+  input.value = '';
+
+  const frame = document.getElementById('masterFrame');
+  const win = frame && frame.contentWindow;
+  const term = win && (win.term || win.terminal);
+  let delivered = false;
+  if (term) {
+    try {
+      if (typeof term.paste === 'function') { term.paste(`${text}\r`); delivered = true; }
+      else if (typeof term.input === 'function') { term.input(`${text}\r`); delivered = true; }
+    } catch (err) {
+      delivered = false;
+    }
+  }
+  if (!delivered) {
+    appendMasterChatTurn('assistant', 'Could not deliver that to the Admin-PM terminal — open Under the Hood and type it there directly.');
+  }
+}
+
+/**
+ * Mount the Admin Fleet V6 Chat workspace (#3218 Req 1): a conversation
+ * stream, a collapsible "Under the Hood" bar hiding/showing the already-
+ * attached `#masterFrame` ttyd terminal (never re-pointing its `src` —
+ * {@link attachMasterFrame} owns that, untouched, idempotent via
+ * `dataset.attached`), and a composer. Plain DOM injection into
+ * `#masterPanel`, the same technique {@link addMasterRelaunchButton},
+ * {@link addMasterFleetRow} and {@link addMasterAttachmentStrip} already
+ * use — no new file, no `public/style.css` dependency beyond the real V6
+ * classes `.v6-chat-stream`/`.v6-conversation-event`/`.v6-chat-composer`/
+ * `.v6-chat-input`/`.v6-chat-attach-btn` already provide.
+ * @returns {void}
+ */
+function addMasterChatWorkspace() {
+  const panel = document.getElementById('masterPanel');
+  const strip = document.getElementById('masterAttachmentStrip');
+  if (!panel || !strip) return;
+
+  const workspace = document.createElement('div');
+  workspace.id = 'masterChatWorkspace';
+  workspace.className = 'master-chat-workspace v6-chat-workspace';
+  workspace.innerHTML = `
+    <ul id="masterChatStream" class="v6-chat-stream master-chat-stream" role="log" aria-label="Admin-PM Conversation Stream">
+      <li class="v6-conversation-event is-assistant"><span class="v6-conversation-content">Admin Fleet — Admin-PM. Messages sent here go straight to the live terminal below; open "Under the Hood" for the raw CLI.</span></li>
+    </ul>
+    <div id="masterUnderHoodBar" style="display:flex; align-items:center; gap:8px; padding:4px 8px;">
+      <button type="button" id="masterUnderHoodToggle" class="banner-btn" aria-expanded="true" aria-controls="masterFrame">Under the Hood &middot; CLI Terminal</button>
+    </div>
+    <div id="masterChatComposer" class="v6-chat-composer master-chat-composer" style="display:flex; gap:6px; padding:4px 8px; align-items:flex-end;">
+      <button type="button" id="masterChatAttachBtn" class="v6-chat-attach-btn" title="Attach file or image"><span aria-hidden="true">📎</span></button>
+      <textarea id="masterChatInput" class="v6-chat-input" rows="2" style="flex:1 1 auto;" placeholder="Message Admin-PM (Enter to send, Shift+Enter for newline, or drop/paste files)…"></textarea>
+      <button type="button" id="masterChatSendBtn" class="btn btn-primary v6-chat-send-btn">Send</button>
+    </div>`;
+
+  const frameWrap = document.querySelector('#masterPanel .master-frame-wrap');
+  if (frameWrap && frameWrap.parentNode) frameWrap.parentNode.insertBefore(workspace, frameWrap);
+  else panel.insertBefore(workspace, strip.nextSibling);
+
+  const toggle = document.getElementById('masterUnderHoodToggle');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      const expanded = toggle.getAttribute('aria-expanded') !== 'false';
+      const next = !expanded;
+      toggle.setAttribute('aria-expanded', String(next));
+      const frame = document.getElementById('masterFrame');
+      if (frame) frame.classList.toggle('hidden', !next);
+    });
+  }
+
+  const attachBtn = document.getElementById('masterChatAttachBtn');
+  const uploadInput = document.getElementById('masterPanelUploadInput');
+  if (attachBtn && uploadInput) attachBtn.addEventListener('click', () => uploadInput.click());
+
+  const sendBtn = document.getElementById('masterChatSendBtn');
+  if (sendBtn) sendBtn.addEventListener('click', () => sendMasterChatMessage());
+  const input = document.getElementById('masterChatInput');
+  if (input) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMasterChatMessage(); }
+    });
+  }
 }
 
 // ── Advisor (Morpheus) panel (#2819) ──
@@ -8547,6 +8727,7 @@ addMasterRelaunchButton('masterPanel');
 renameMasterSurfacesToAdminFleet();
 addMasterFleetRow('masterPanel');
 addMasterAttachmentStrip();
+addMasterChatWorkspace();
 
 // The Advisor control bar (#2819). Same component the session drawer mounts.
 advisorBar = window.tcCreateAdvisorControlBar({

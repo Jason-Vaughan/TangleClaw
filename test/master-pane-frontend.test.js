@@ -211,7 +211,39 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
     it('paste and drag-and-drop on the panel both route through uploadMasterAttachment', () => {
       assert.match(masterSection, /panel\.addEventListener\('drop', /);
       assert.match(masterSection, /panel\.addEventListener\('paste', /);
-      assert.match(masterSection, /item\.kind === 'file' && item\.type\.startsWith\('image\/'\)/);
+      // #3218: any pasted file, not just an image — the all-file upload
+      // support this car adds applies to paste too.
+      assert.match(masterSection, /item\.kind === 'file'/);
+      assert.doesNotMatch(masterSection, /item\.kind === 'file' && item\.type\.startsWith\('image\/'\)/,
+        'the image-only restriction on paste must be gone');
+    });
+
+    it('binds the iframe-safe dropzone helper when another car provides it, keeping the fallback listeners regardless (#3218)', () => {
+      assert.match(masterSection, /typeof window\.tcBindMasterDropzone === 'function'/);
+      assert.match(masterSection, /window\.tcBindMasterDropzone\(\{/);
+      assert.match(masterSection, /doc: document, panelEl: panel, frameEl: document\.getElementById\('masterFrame'\)/);
+      assert.match(masterSection, /prefix: 'masterPanel', onUpload: uploadMasterAttachment/);
+    });
+
+    it('sanitizes the filename via the shared helper when present, falling back to the same character class inline (#3218)', () => {
+      const fn = masterSection.slice(
+        masterSection.indexOf('async function uploadMasterAttachment'),
+        masterSection.indexOf('function addMasterAttachmentStrip')
+      );
+      assert.match(fn, /typeof window\.tcSanitizeMasterAttachmentFilename === 'function'/);
+      assert.match(fn, /window\.tcSanitizeMasterAttachmentFilename\(rawName\)/);
+      assert.match(fn, /rawName\.replace\(\/\[\^A-Za-z0-9\._-\]\/g, '_'\)/);
+      assert.match(fn, /apiMutate\('\/api\/master\/attachments', 'POST', \{ filename, content \}\)/);
+    });
+
+    it('refreshMasterAttachments renders a non-image chip alongside a raster-image thumbnail (#3218)', () => {
+      const fn = masterSection.slice(
+        masterSection.indexOf('async function refreshMasterAttachments'),
+        masterSection.indexOf('async function uploadMasterAttachment')
+      );
+      assert.match(fn, /isMasterAttachmentImage\(file\.filename\)/);
+      assert.match(fn, /master-attachment-chip/);
+      assert.match(fn, /master-attachment-name/);
     });
 
     it('deleting a thumbnail uses apiMutate\'s (url, method) signature, not a fetch-options object', () => {
@@ -262,6 +294,49 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
       assert.match(css, /\.master-dot\.live \{/);
       assert.match(css, /\.master-dot\.pending \{/);
       assert.match(css, /\.master-dot\.down \{/);
+    });
+  });
+
+  // #3218 Req 1 — Admin Fleet's own V6-style chat workspace (stream,
+  // collapsible Under the Hood terminal, composer), mounted into
+  // #masterPanel right after addMasterAttachmentStrip() the same way that
+  // function and its siblings already inject plain DOM (no new file, no
+  // style.css dependency beyond the real V6 classes those already provide).
+  describe('Admin Fleet V6 chat workspace (#3218)', () => {
+    it('addMasterChatWorkspace injects the stream, Under the Hood bar and composer', () => {
+      assert.match(masterSection, /function addMasterChatWorkspace\(\)/);
+      assert.match(masterSection, /workspace\.id = 'masterChatWorkspace'/);
+      assert.match(masterSection, /id="masterChatStream"[^>]*role="log"[^>]*aria-label="Admin-PM Conversation Stream"/);
+      assert.match(masterSection, /id="masterUnderHoodToggle"[^>]*aria-expanded="true"[^>]*aria-controls="masterFrame"/);
+      assert.match(masterSection, /id="masterChatComposer"/);
+      assert.match(masterSection, /id="masterChatInput"/);
+      assert.match(masterSection, /id="masterChatAttachBtn"/);
+      assert.match(masterSection, /id="masterChatSendBtn"/);
+    });
+
+    it('is mounted right after addMasterAttachmentStrip() in the init sequence', () => {
+      assert.match(js, /addMasterAttachmentStrip\(\);\s*\n\s*addMasterChatWorkspace\(\);/);
+    });
+
+    it('the Under the Hood toggle hides/shows the already-attached #masterFrame, never re-pointing its src', () => {
+      const fn = masterSection.slice(
+        masterSection.indexOf('function addMasterChatWorkspace'),
+        masterSection.indexOf('── Advisor (Morpheus) panel')
+      );
+      assert.match(fn, /frame\.classList\.toggle\('hidden', !next\)/);
+      assert.doesNotMatch(fn, /frame\.src\s*=/, 'must not re-point #masterFrame — attachMasterFrame owns that');
+    });
+
+    it('sendMasterChatMessage appends the user turn and routes it to the terminal, not a new server route', () => {
+      assert.match(masterSection, /async function sendMasterChatMessage\(\)/);
+      assert.match(masterSection, /appendMasterChatTurn\('user', text\)/);
+      assert.match(masterSection, /term\.paste\(`\$\{text\}\\r`\)/);
+      assert.match(masterSection, /term\.input\(`\$\{text\}\\r`\)/);
+    });
+
+    it('Enter sends (without Shift); the attach button delegates to the shared bar\'s upload input', () => {
+      assert.match(masterSection, /e\.key === 'Enter' && !e\.shiftKey/);
+      assert.match(masterSection, /document\.getElementById\('masterPanelUploadInput'\)/);
     });
   });
 });
