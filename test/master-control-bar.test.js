@@ -2185,6 +2185,15 @@ describe('Car V6510-W1-D: tcV6FormatResetCountdown (#3209)', () => {
     assert.equal(G.tcV6FormatResetCountdown(undefined, NOW), '');
     assert.equal(G.tcV6FormatResetCountdown('not a date', NOW), '');
   });
+
+  it('R2 BLOCKING 2: an exact hour (or exact N hours) reads "Nh 0m", not "Nh 1m" -- the minutes-only clamp must not leak into the hours branch', () => {
+    assert.equal(G.tcV6FormatResetCountdown(NOW + 3600000, NOW), 'resets in 1h 0m');
+    assert.equal(G.tcV6FormatResetCountdown(NOW + 2 * 3600000, NOW), 'resets in 2h 0m');
+  });
+
+  it('R2 BLOCKING 2: under a minute remaining still reads "resets in 1m", never "resets in 0m"', () => {
+    assert.equal(G.tcV6FormatResetCountdown(NOW + 30000, NOW), 'resets in 1m');
+  });
 });
 
 describe('Car V6510-W1-D: tcV6RenderEngineUsageCardMarkup (#3209)', () => {
@@ -2266,5 +2275,31 @@ describe('Car V6510-W1-D: tcV6RenderEngineUsageCardMarkup (#3209)', () => {
   it('shows no degraded note at all when the refresh is healthy', () => {
     const html = G.tcV6RenderEngineUsageCardMarkup('claude', { weeklyRemainingPct: 62 }, null, { nowMs: NOW });
     assert.doesNotMatch(html, /v6-usage-degraded-note/);
+  });
+
+  it('R2 BLOCKING 1: a real persisted probe snapshot (lib/usage-windows.js#getUsageProbeSnapshot\'s own shape) reads as Provider Probed, with its own observedAt as the last-probed timestamp', () => {
+    const html = G.tcV6RenderEngineUsageCardMarkup('claude', {
+      provider: 'claude', status: 'configured', source: 'cli-print', observedAt: '2026-11-23T08:00:00Z',
+      fiveHourRemainingPct: 82, weeklyRemainingPct: 64
+    }, null, { nowMs: NOW });
+    assert.match(html, /v6-usage-source-badge--probed">Provider Probed/);
+    assert.match(html, /v6-usage-last-probed">Last probed: 2026-11-23T08:00:00Z/);
+  });
+
+  it('R2 BLOCKING 1: a real probe failure (status !== "configured", source: "none", a real error message) shows the degraded note', () => {
+    const html = G.tcV6RenderEngineUsageCardMarkup('codex', {
+      provider: 'codex', status: 'not-configured', source: 'none', observedAt: '2026-11-23T08:05:00Z', error: 'Timed out'
+    }, null, { nowMs: NOW });
+    assert.match(html, /v6-usage-degraded-note" role="alert">Timed out<\/p>/);
+    assert.match(html, /v6-usage-last-probed">Last probed: 2026-11-23T08:05:00Z/, 'observedAt still shows, even though this reading never configured');
+    assert.doesNotMatch(html, /v6-usage-source-badge--probed/, 'a failed probe is not "Provider Probed" -- there is no reading to show as probed');
+  });
+
+  it('R2 Ruling A956: a sub-tier label containing & escapes exactly once, never doubled', () => {
+    const html = G.tcV6RenderEngineUsageCardMarkup('antigravity', {
+      subTiers: { 'Claude & GPT models': { fiveHourRemainingPct: 50, weeklyRemainingPct: 70 } }
+    }, null, { nowMs: NOW });
+    assert.match(html, /Claude &amp; GPT models/);
+    assert.doesNotMatch(html, /&amp;amp;/);
   });
 });

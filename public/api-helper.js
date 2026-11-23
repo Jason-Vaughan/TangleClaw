@@ -7180,10 +7180,14 @@
     if (diff <= 0) return 'resetting soon';
     const days = Math.floor(diff / 86400000);
     const hours = Math.floor((diff % 86400000) / 3600000);
-    const minutes = Math.max(1, Math.floor((diff % 3600000) / 60000));
+    // #3209 R2: the minutes-only branch below floors to at least 1 (so
+    // "<1m remaining" never reads "resets in 0m") -- that clamp must not
+    // leak into the hours branch, or an exact 1h/2h reads "1h 1m"/"2h 1m"
+    // instead of "1h 0m"/"2h 0m".
+    const minutes = Math.floor((diff % 3600000) / 60000);
     if (days >= 1) return `resets in ${days}d ${hours}h`;
     if (hours >= 1) return `resets in ${hours}h ${minutes}m`;
-    return `resets in ${minutes}m`;
+    return `resets in ${Math.max(1, minutes)}m`;
   }
 
   /**
@@ -7234,24 +7238,46 @@
     const r = probeReading || {};
     const t = tokenEstimate || {};
     const nowMs = opts && Number.isFinite(opts.nowMs) ? opts.nowMs : undefined;
-    const probed = r.source === 'probed';
+    // #3209 R2: real probe snapshots (lib/usage-windows.js#_probeResult)
+    // carry source: 'cli-print'/'cli-status-pane' (configured) or 'none'
+    // (not-present/not-configured) -- 'probed' alone (this car's own
+    // forward-looking spelling, not yet produced anywhere) only ever
+    // matches a reading no real prober writes.
+    const probed = Boolean(r && (r.source === 'probed' || r.source === 'cli-print' || r.source === 'cli-status-pane'
+      || (r.status === 'configured' && (Number.isFinite(r.fiveHourRemainingPct) || Number.isFinite(r.weeklyRemainingPct)))));
     const badgeClass = probed ? 'v6-usage-source-badge--probed' : 'v6-usage-source-badge--estimated';
     const badgeLabel = probed ? 'Provider Probed' : 'Local Estimate';
-    const lastProbed = r.lastSuccessObservedAt
-      ? `<span class="v6-usage-last-probed">Last probed: ${tcEscapeHtml(String(r.lastSuccessObservedAt))}</span>` : '';
+    // `lastSuccessObservedAt` is this car's own forward-looking field
+    // (not yet produced); every real probe reading's own timestamp is
+    // `observedAt` (lib/usage-windows.js#_probeResult) regardless of status.
+    const lastProbedIso = r && (r.lastSuccessObservedAt || r.observedAt);
+    const lastProbed = lastProbedIso
+      ? `<span class="v6-usage-last-probed">Last probed: ${tcEscapeHtml(String(lastProbedIso))}</span>` : '';
     const subTierKeys = r.subTiers && typeof r.subTiers === 'object' ? Object.keys(r.subTiers) : [];
     const subTiersMarkup = subTierKeys.length
       ? `<ul class="v6-usage-subtiers">${subTierKeys.map((tierKey) => {
         const sub = r.subTiers[tierKey] || {};
+        // #3209 R2 Ruling A956: `_tcV6UsageWindowRowMarkup` already
+        // escapes its own `label` -- pre-escaping `tierKey` here (as the
+        // first draft did) double-escapes it, so "Claude & GPT models"
+        // rendered "Claude &amp;amp; GPT models" instead of "&amp;" once.
         return `<li data-usage-subtier="${tcEscapeHtml(tierKey)}">
-          ${_tcV6UsageWindowRowMarkup('five-hour', `${tcEscapeHtml(tierKey)} · 5h`, sub.fiveHourRemainingPct, sub.fiveHourResetAt, nowMs)}
-          ${_tcV6UsageWindowRowMarkup('weekly', `${tcEscapeHtml(tierKey)} · Weekly`, sub.weeklyRemainingPct, sub.weeklyResetAt, nowMs)}
+          ${_tcV6UsageWindowRowMarkup('five-hour', `${tierKey} · 5h`, sub.fiveHourRemainingPct, sub.fiveHourResetAt, nowMs)}
+          ${_tcV6UsageWindowRowMarkup('weekly', `${tierKey} · Weekly`, sub.weeklyRemainingPct, sub.weeklyResetAt, nowMs)}
         </li>`;
       }).join('')}</ul>`
       : '';
-    const degraded = Boolean(r.refreshDegraded || r.lastRefreshError);
+    // #3209 R2: a real probe reading has no `refreshDegraded`/
+    // `lastRefreshError` yet (both forward-looking, same as
+    // `lastSuccessObservedAt` above) -- its OWN degradation signal is
+    // `status !== 'configured'` (`'not-present'`/`'not-configured'`,
+    // lib/usage-windows.js's real enum) or its single `error` field
+    // (holding either a non-fatal note or the caught error's message).
+    const degraded = Boolean(r && (r.refreshDegraded || r.lastRefreshError || r.error || (r.status && r.status !== 'configured')));
+    const degradedMessage = (r && (r.lastRefreshError || r.error || r.note || r.status))
+      || 'Usage refresh degraded — showing the last known reading.';
     const degradedNote = degraded
-      ? `<p class="v6-usage-degraded-note" role="alert">${tcEscapeHtml(String(r.lastRefreshError || 'Usage refresh degraded — showing the last known reading.'))}</p>`
+      ? `<p class="v6-usage-degraded-note" role="alert">${tcEscapeHtml(String(degradedMessage))}</p>`
       : '';
     return `<section class="v6-usage-engine-card" data-usage-provider="${tcEscapeHtml(key)}">
       <header class="v6-usage-card-header">
