@@ -254,7 +254,8 @@
       <span>TangleClaw Autonomous Sprint Reports</span>
     </div>
     <div class="nav-links">
-      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.6/">v6.5.6 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.7/">v6.5.7 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.6/">v6.5.6</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.5/">v6.5.5</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.4/">v6.5.4</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v6.5.3/">v6.5.3</a>
@@ -335,8 +336,8 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">Published Sprint Reports</div>
-          <div class="kpi-val">66 Releases</div>
-          <div class="kpi-sub"><code>v5.34.0</code>–<code>v6.5.6</code> + <code>v6.2.2–v6.4.0</code>, <code>v6.0.0–v6.2.1</code>, <code>v5.68.0–v5.71.0</code>, <code>v5.65.0–v5.66.0</code>, <code>v5.62.0–v5.64.0</code>, <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
+          <div class="kpi-val">67 Releases</div>
+          <div class="kpi-sub"><code>v5.34.0</code>–<code>v6.5.7</code> + <code>v6.2.2–v6.4.0</code>, <code>v6.0.0–v6.2.1</code>, <code>v5.68.0–v5.71.0</code>, <code>v5.65.0–v5.66.0</code>, <code>v5.62.0–v5.64.0</code>, <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
@@ -350,18 +351,40 @@
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Release Report</div>
-          <div class="kpi-val" style="color:var(--green);">v6.5.6</div>
-          <div class="kpi-sub">Tag <code>v6.5.6 @ 5aa0199a</code> (Merge <code>5aa0199a</code>) · Milestone <code>#92</code> (<code>2/2</code> Closed: <code>#3186, #3187</code>)</div>
+          <div class="kpi-val" style="color:var(--green);">v6.5.7</div>
+          <div class="kpi-sub">Tag <code>v6.5.7 @ 6b022f9b</code> (Merge <code>6b022f9b</code>) · Milestone <code>#93/#100</code> (<code>2/2</code> Closed: <code>#3191, #3192</code>)</div>
         </div>
       </div>
     </section>
 
     <div class="report-list">
+      <!-- v6.5.7 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-green">● Latest Release · Nov 22, 2026 (Rulings A896–A903)</span>
+            <h2 class="report-title"><a href="./v6.5.7/">TangleClaw <code>v6.5.7</code>: “UTH Default-Checked Hide Medusa &amp; Fleet Chatter Filter, All-Pane Pin-to-Latest Scroll &amp; Multi-Tab Fleet Sidebar Auto-Sync”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v6.5.7 → 6b022f9b · 3/3 True Merges (#3193, #3195, #3197) &amp; Milestone Closed</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Added a default-checked <em>“Hide Medusa &amp; fleet chatter”</em> filter checkbox (<code>#v6ChatHideHoodTraffic</code> + <code>filterPeekTrafficLines</code>) inside V6 Under the Hood, enforced zero-space suppression (<code>.v6-chat-under-hood.is-traffic-hidden</code> &amp; <code>.v6-chat-verbosity-option--traffic</code>) in <code>public/style.css</code> (<code>#3192</code>), pinned Main Chat and Under the Hood scroll containers to the bottom across reloads/unfurls via <code>pinAllChatScrollersToBottom</code>, and wired automatic multi-tab Fleet sidebar refresh on <code>visibilitychange</code> / <code>focus</code> / <code>storage</code> / 15s heartbeat (<code>#3191</code>).
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-green">⏱️ T_eng = 1.17h (~1h 10m · 1.00 avg rounds/PR · 0 CI Red Runs)</span>
+          <span class="badge badge-cyan">3/3 True Merges (#3193, #3195, #3197)</span>
+          <span class="badge badge-purple">Milestone #93/#100: 2/2 Issues Closed (#3191, #3192)</span>
+          <span class="badge badge-green">Live :3102 Updated &amp; Gate 4 Certified (OBSR-OGATE-V657-SPRINT-EXIT-6B022F9B-PASS)</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v6.5.7/">Open v6.5.7 Sprint Report →</a>
+        </div>
+      </article>
       <!-- v6.5.6 Card -->
       <article class="report-card">
         <div class="report-header">
           <div>
-            <span class="badge badge-green">● Latest Release · Nov 22, 2026 (Rulings A889–A895)</span>
+            <span class="badge badge-green">● Release · Nov 22, 2026 (Rulings A889–A895)</span>
             <h2 class="report-title"><a href="./v6.5.6/">TangleClaw <code>v6.5.6</code>: “Two-Way Gobble &amp; Fill Chat Pane Resizers &amp; Sticky Under the Hood Toggle”</a></h2>
           </div>
           <span class="badge badge-cyan">Tag v6.5.6 → 5aa0199a · 3/3 True Merges (#3188–#3190) &amp; Milestone #92 Closed</span>
