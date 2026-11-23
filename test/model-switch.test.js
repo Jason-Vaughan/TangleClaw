@@ -201,6 +201,10 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(result.code, 'SESSION_SUPERSEDED');
     assert.equal(killed, false, 'must never kill a session once the wrap itself reports it did not complete the lifecycle');
     assert.equal(launched, false, 'must never launch a successor on an unconfirmed lifecycle');
+    // #3216 (Pillar 3 — PRR-A R2 finding 1): SQLite and project.json both
+    // roll back together, not left on the never-completed target.
+    assert.equal(store.projects.get(project.id).engineId, 'claude');
+    assert.equal(store.projectConfig.load(projectPath).model, undefined);
   });
 
   it('cross-provider: refuses (SESSION_SUPERSEDED) when triggerWrap\'s own sessionId does not match the session this switch started with', async () => {
@@ -218,6 +222,8 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(result.code, 'SESSION_SUPERSEDED');
     assert.equal(killed, false);
     assert.equal(launched, false);
+    assert.equal(store.projects.get(project.id).engineId, 'claude');
+    assert.equal(store.projectConfig.load(projectPath).model, undefined);
   });
 
   it('cross-provider: refuses (SESSION_SUPERSEDED) rather than killing a REPLACEMENT session or launching a third, when a different session is active after triggerWrap', async () => {
@@ -238,6 +244,8 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(result.code, 'SESSION_SUPERSEDED');
     assert.equal(killed, false, 'must never kill the replacement session');
     assert.equal(launched, false, 'must never launch a third session');
+    assert.equal(store.projects.get(project.id).engineId, 'claude');
+    assert.equal(store.projectConfig.load(projectPath).model, undefined);
   });
 
   it('cross-provider: refuses (WRAP_FAILED) before killing or relaunching, when the governed wrap itself fails', async () => {
@@ -256,9 +264,12 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.match(result.error, /3 failing assertions/);
     assert.equal(killed, false, 'must not kill the session once the governed wrap itself failed');
     assert.equal(launched, false);
-    // The config write already happened (it precedes the wrap, same as it
-    // always preceded the relaunch) — a later launch will still get it right.
-    assert.equal(store.projectConfig.load(projectPath).model, 'claude-sonnet-5');
+    // #3216 (Pillar 3 — PRR-A R2 finding 1): the config write already
+    // happened (it precedes the wrap), but this switch did NOT complete —
+    // both SQLite and project.json are rolled back to what they held
+    // before this attempt, not left on the never-applied target.
+    assert.equal(store.projectConfig.load(projectPath).model, undefined);
+    assert.equal(store.projects.get(project.id).engineId, 'claude');
   });
 
   it('cross-provider: refuses (WRAP_FAILED) when triggerWrap returns a falsy result entirely', async () => {
@@ -323,6 +334,8 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(result.ok, false);
     assert.equal(result.code, 'KILL_FAILED');
     assert.match(result.error, /tmux has-session/);
+    assert.equal(store.projects.get(project.id).engineId, 'claude');
+    assert.equal(store.projectConfig.load(projectPath).model, undefined);
   });
 
   it('cross-provider: refuses (LAUNCH_FAILED) when launchSession fails after a successful kill', async () => {
@@ -339,6 +352,8 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(result.ok, false);
     assert.equal(result.code, 'LAUNCH_FAILED');
     assert.match(result.error, /ENGINE_PROFILE_INVALID/);
+    assert.equal(store.projects.get(project.id).engineId, 'claude');
+    assert.equal(store.projectConfig.load(projectPath).model, undefined);
   });
 
   it('cross-provider: the real default killSession records stoppedBy \'model-switch\' on the session row (#2249)', async () => {
@@ -437,6 +452,8 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(result.code, 'HANDOFF_WRITE_FAILED');
     assert.match(result.error, /disk full/);
     assert.equal(killed, false, 'must not kill the session once the handoff cannot be recorded');
+    assert.equal(store.projects.get(project.id).engineId, 'claude');
+    assert.equal(store.projectConfig.load(projectPath).model, undefined);
   });
 
   it('same-provider: reconciles the live session through lib/profile-reconciler instead of relaunching', async () => {
@@ -962,9 +979,12 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(result.ok, false);
     assert.equal(result.code, 'RECONCILE_FAILED');
     assert.match(result.error, /did not match/);
-    // The config write already happened (it precedes the reconcile attempt
-    // on purpose) — a later launch will still get it right.
-    assert.equal(store.projectConfig.load(projectPath).model, 'claude-sonnet-5');
+    // #3216 (Pillar 3 — PRR-A R2 finding 1): the config write already
+    // happened (it precedes the reconcile attempt on purpose), but this
+    // switch did NOT complete — project.json is rolled back to what it
+    // held before this attempt, not left on the never-confirmed target.
+    assert.equal(store.projectConfig.load(projectPath).model, undefined);
+    assert.equal(store.projects.get(project.id).engineId, 'fake');
   });
 
   it('outage-takeover: refuses when there is no active session to take over', async () => {
@@ -1093,6 +1113,68 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(result.ok, true, 'the recovery (snapshot + terminate) already succeeded; a launch failure is reported, not escalated');
     assert.equal(result.handoff.successorLaunched, false);
     assert.match(result.handoff.successorError, /no engine installed/);
+  });
+
+  // #3216 (Pillar 3 — PRR-A R2 finding 2): the same successor-convergence
+  // check the boundary mode's cross-provider relaunch already makes,
+  // applied to the outage-takeover successor launch too.
+  it('outage-takeover: converges the SUCCESSOR session row\'s engine_id when launchSuccessor leaves it on the wrong value', async () => {
+    initRepo(projectPath, ['-q']);
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'committed.txt'), 'a\n');
+    execFileSync('git', ['add', '-A'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: projectPath });
+
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    let successorId = null;
+    const result = await modelSwitch.switchSessionModel(project.name, {
+      engine: 'fake', model: 'claude-sonnet-5', mode: 'outage-takeover'
+    }, {
+      ...target(),
+      killSession: () => {
+        store.sessions.kill(session.id, 'test outage (#3216)', store.SESSION_STOP_SOURCES.MODEL_SWITCH);
+        return { error: null };
+      },
+      // Simulate a real launch that creates the successor row but — the
+      // exact bug this convergence check exists to correct — persists
+      // the WRONG engine_id on it.
+      launchSuccessor: () => {
+        const successor = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'y', primePrompt: null });
+        successorId = successor.id;
+        return { error: null };
+      }
+    });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.handoff.successorLaunched, true);
+    assert.ok(successorId, 'a successor session row must have been created by the stub');
+    assert.equal(
+      store.sessions.get(successorId).engineId, 'fake',
+      'the successor row is converged to the target engine, not left at the wrong value the stub persisted'
+    );
+  });
+
+  it('outage-takeover: a successor-launch FAILURE is not converged — nothing was created to converge', async () => {
+    initRepo(projectPath, ['-q']);
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'committed.txt'), 'a\n');
+    execFileSync('git', ['add', '-A'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: projectPath });
+
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    let updateCalls = 0;
+    const result = await modelSwitch.switchSessionModel(project.name, {
+      engine: 'fake', model: 'claude-sonnet-5', mode: 'outage-takeover'
+    }, {
+      ...target(),
+      killSession: () => ({ error: null }),
+      launchSuccessor: () => ({ error: 'ENGINE_PROFILE_INVALID' }),
+      updateSessionEngine: () => { updateCalls += 1; }
+    });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.handoff.successorLaunched, false);
+    assert.equal(updateCalls, 0, 'no successor launched — nothing to converge');
   });
 
   it('outage-takeover: a clean worktree is left uncommitted, with wipBranch null', async () => {
