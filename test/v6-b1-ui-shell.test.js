@@ -2683,6 +2683,89 @@ describe('tcV6ExtractLiveTurns unwraps soft-wrapped terminal lines into flowing 
   });
 });
 
+describe('tcV6ExtractLiveTurns: terminal-echoed/wrapped prompts never duplicate as assistant turns (#3199)', () => {
+  const G = loadV6Shell();
+
+  it('drops a queued-prompt preview row and its send-immediately hint, never reading either as a reply', () => {
+    const lines = ['❯ do the next thing', '▸ fix the other bug too', '(alt+m to send immediately)'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.deepEqual(out.turns, [{ role: 'user', text: 'do the next thing' }]);
+    assert.equal(out.activity, null);
+  });
+
+  it('still reads Antigravity/Codex\'s own "▸ Thought for …" recap as chrome (the engine-specific rule), not the new queued-prompt exclusion', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['❯ go', '▸ Thought for 3s, 40 tokens', '⏺ Done.'], 'codex', []));
+    assert.deepEqual(out.turns, [{ role: 'user', text: 'go' }, { role: 'assistant', text: 'Done.' }]);
+  });
+
+  // At least WRAP_WIDTH_THRESHOLD (55) chars: only a prompt this long could
+  // plausibly have been cut off by the terminal's own column width — same
+  // signal `appendReplyLine`'s own soft-wrap merging already uses on the
+  // REPLY side (#3167). A short prompt like "go" or "do thing one" never
+  // enables continuation tracking at all, so every one of THOSE existing
+  // fixtures elsewhere in this file is unaffected.
+  const LONG_PROMPT = 'please check the deploy script end to end before you ship it';
+
+  it('an unrecorded prompt long enough for the terminal to have wrapped it keeps its continuation line as part of the SAME user turn, not a fresh assistant reply', () => {
+    const lines = [`❯ ${LONG_PROMPT}`, 'and also update the README while you are at it', '⏺ Checked both.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: `${LONG_PROMPT}\nand also update the README while you are at it` },
+      { role: 'assistant', text: 'Checked both.' }
+    ]);
+  });
+
+  it('a short prompt never enables continuation tracking at all, so its very next line always starts the reply, bulleted or not', () => {
+    const lines = ['❯ do thing one', 'Done with thing one.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'do thing one' },
+      { role: 'assistant', text: 'Done with thing one.' }
+    ]);
+  });
+
+  it('a blank line ends a long prompt\'s continuation tracking, so a later plain reply line is not swallowed into it', () => {
+    const lines = [`❯ ${LONG_PROMPT}`, '', 'Done with it.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: LONG_PROMPT },
+      { role: 'assistant', text: 'Done with it.' }
+    ]);
+  });
+
+  it('a stray continuation line of a RECORDED long prompt is dropped, not appended or duplicated as a reply', () => {
+    const lines = [`❯ ${LONG_PROMPT}`, 'overflow-x', '⏺ Done.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', [LONG_PROMPT]));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: LONG_PROMPT, recorded: true },
+      { role: 'assistant', text: 'Done.' }
+    ]);
+  });
+
+  it('a genuine BULLETED assistant reply line right after a long prompt starts a real reply, never a prompt continuation', () => {
+    const lines = [`❯ ${LONG_PROMPT}`, '⏺ Working on it now.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: LONG_PROMPT },
+      { role: 'assistant', text: 'Working on it now.' }
+    ]);
+  });
+
+  it('prose quoting the operator\'s own words INSIDE an active assistant reply (started by a bullet) is kept as reply prose, not treated as a stray prompt continuation', () => {
+    const lines = [`❯ ${LONG_PROMPT}`, `⏺ You said "${LONG_PROMPT}" — here is what I found:`, 'Resolved.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.equal(out.turns.length, 2);
+    assert.equal(out.turns[0].role, 'user');
+    assert.match(out.turns[1].text, /Resolved/);
+  });
+
+  it('exports isOperatorEcho for direct testing', () => {
+    assert.equal(typeof G.tcV6IsOperatorEcho, 'function');
+    assert.equal(G.tcV6IsOperatorEcho('> quoted', new Set(), []), true);
+    assert.equal(G.tcV6IsOperatorEcho('totally new text', new Set(), []), false);
+  });
+});
+
 describe('Above-the-Hood chat view (#3052)', () => {
   const G = loadV6Shell();
   const view = (chat, extra) => Object.assign({
@@ -2951,6 +3034,125 @@ describe('the chat stream stays pinned to its newest line (#3135)', () => {
       chat: { status: 'active', peek: { lines: ['y'] } } } });
     assert.equal(doc.getElementById('v6ChatStream').scrollTop, 900);
     assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true);
+  });
+});
+
+describe('the chat frame\'s scroll-position coordinator (#3200)', () => {
+  /** Same fixture as "the chat stream stays pinned to its newest line" above, with Under the Hood's own geometry too. */
+  function mountStream(winExtra, viewOverrides) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const realGet = doc.getElementById;
+    doc.getElementById = (id) => {
+      const el = realGet(id);
+      if (el && id === 'v6ChatStream' && el.scrollHeight === undefined) {
+        el.scrollHeight = 900; el.clientHeight = 300; el.scrollTop = 0;
+      }
+      return el;
+    };
+    const win = Object.assign(makeFakeWindow('#/projects/tc-lane'), winExtra || {});
+    const shell = G.tcCreateV6Shell(doc, { root, window: win, storage: null });
+    shell.setDetail({ kind: 'conversation', view: Object.assign({ project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [],
+      chat: { status: 'active', peek: { lines: ['x'] } } }, viewOverrides || {}) });
+    return { doc, root, shell, win };
+  }
+
+  it('exports createChatScrollCoordinator', () => {
+    assert.equal(typeof loadV6Shell().tcV6CreateChatScrollCoordinator, 'function');
+  });
+
+  it('toggling Under the Hood while the stream is pinned re-pins #v6ChatStream to the bottom, not wherever the resize left it', () => {
+    const { doc } = mountStream();
+    const stream = doc.getElementById('v6ChatStream');
+    // The drawer's own resize moved it, without the operator scrolling by
+    // hand (no 'scroll' dispatch), so `streamPinned` is still true.
+    stream.scrollTop = 300;
+    const hood = doc.getElementById('v6ChatUnderHood');
+    hood.open = true;
+    hood.dispatch('toggle');
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 900);
+  });
+
+  it('toggling Under the Hood while the stream is NOT pinned preserves its exact scroll position instead of jumping it', () => {
+    const { doc } = mountStream();
+    const stream = doc.getElementById('v6ChatStream');
+    stream.scrollTop = 500;
+    stream.dispatch('scroll'); // genuinely scrolled away by hand -> streamPinned = false
+    const hood = doc.getElementById('v6ChatUnderHood');
+    hood.open = true;
+    hood.dispatch('toggle');
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 500, 'held at its own last position, not reset or jumped to the bottom');
+  });
+
+  it('a ResizeObserver on #v6ChatStream re-pins it to bottom on any container height change while pinned', () => {
+    const observers = [];
+    class FakeResizeObserver {
+      constructor(cb) { this.cb = cb; this.observed = null; observers.push(this); }
+      observe(el) { this.observed = el; }
+      disconnect() { this.disconnected = true; }
+    }
+    const { doc } = mountStream({ ResizeObserver: FakeResizeObserver });
+    const stream = doc.getElementById('v6ChatStream');
+    assert.equal(observers.length, 1, 'one observer attached on mount');
+    assert.equal(observers[0].observed, stream);
+    // Simulate a Gobble & Fill resizer drag or a window resize shrinking the
+    // container, with no 'scroll' dispatch — streamPinned stays true.
+    stream.scrollTop = 300;
+    observers[0].cb();
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 900, 'still pinned, so the resize re-pinned it rather than reading the shrink as the operator having scrolled away');
+  });
+
+  it('a ResizeObserver callback while NOT pinned never re-pins (a shrink is never misread as an unpin either)', () => {
+    const observers = [];
+    class FakeResizeObserver {
+      constructor(cb) { observers.push({ cb }); }
+      observe() {}
+      disconnect() {}
+    }
+    const { doc } = mountStream({ ResizeObserver: FakeResizeObserver });
+    const stream = doc.getElementById('v6ChatStream');
+    stream.scrollTop = 500;
+    stream.dispatch('scroll'); // streamPinned = false
+    observers[0].cb();
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 500, 'left exactly where the operator scrolled it');
+  });
+
+  it('a full render (a new chat) disconnects the PREVIOUS render\'s ResizeObserver (the old #v6ChatStream node is detached)', () => {
+    const disconnected = [];
+    class FakeResizeObserver {
+      constructor() { }
+      observe() {}
+      disconnect() { disconnected.push(this); }
+    }
+    const { shell } = mountStream({ ResizeObserver: FakeResizeObserver });
+    // `setLive` targets specific sub-elements' innerHTML and never replaces
+    // #v6ChatStream itself, so only a FULL render (setDetail, a different
+    // chat) exercises `wireControls`'s own re-wiring.
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 99, name: 'Other' }, sessionId: 2, events: [],
+      chat: { status: 'active', peek: { lines: ['y'] } } } });
+    assert.equal(disconnected.length, 1, 'the first render\'s observer was disconnected before the second render\'s was created');
+  });
+
+  it('opening, canceling, and completing a header rename preserves #v6ChatStream\'s exact scroll position and pinned state', () => {
+    // #3071's own offline/no-session shape — chat.rename only ever renders
+    // the form over a project the server will actually let the operator
+    // rename, same as every other rename test in this file.
+    const { doc, shell } = mountStream(null, { sessionId: null, chat: { mode: 'direct', status: 'offline', members: [], peek: { lines: ['x'] } } });
+    const stream = doc.getElementById('v6ChatStream');
+    stream.scrollTop = 500;
+    stream.dispatch('scroll'); // streamPinned = false, at a specific position
+    doc.getElementById('v6ChatRename').dispatch('click');
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 500, 'opening rename did not move the stream');
+    doc.getElementById('v6ChatRenameCancel').dispatch('click');
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 500, 'canceling rename did not move the stream either');
+    doc.getElementById('v6ChatRename').dispatch('click');
+    doc.getElementById('v6ChatRenameInput').value = 'TC-Lane-Renamed';
+    doc.getElementById('v6ChatRenameForm').dispatch('submit');
+    shell.renameResult({ ok: true });
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 500, 'completing the rename did not move the stream');
   });
 });
 
