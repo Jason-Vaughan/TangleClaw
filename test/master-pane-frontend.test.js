@@ -11,7 +11,7 @@
  * contract lock-in — same pattern as test/upload-modal-frontend.test.js.
  */
 
-const { describe, it, before } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -535,6 +535,29 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
     // ones an earlier dispatch guessed and this car already corrected in R2;
     // kept here rather than reintroduced.
     describe('sendMasterChatMessage + terminal readback, run for real (#3218)', () => {
+      // #3218 R-Gate R7: retirement is driven by a REAL setTimeout now, not
+      // a second onWriteParsed/onRender callback — these globals (read by
+      // _masterTurnSettleMs/_masterTurnNoReplyMs, lifted into the sandbox's
+      // own `new Function` scope, which shares this process's REAL
+      // globalThis, unlike the vm-isolated sandboxes other test files use)
+      // keep both timeouts small so these tests stay fast.
+      let savedSettleMs;
+      let savedNoReplyMs;
+      before(() => {
+        savedSettleMs = globalThis.TC_MASTER_TURN_SETTLE_MS;
+        savedNoReplyMs = globalThis.TC_MASTER_TURN_NO_REPLY_MS;
+        globalThis.TC_MASTER_TURN_SETTLE_MS = 5;
+        globalThis.TC_MASTER_TURN_NO_REPLY_MS = 15;
+      });
+      after(() => {
+        globalThis.TC_MASTER_TURN_SETTLE_MS = savedSettleMs;
+        globalThis.TC_MASTER_TURN_NO_REPLY_MS = savedNoReplyMs;
+      });
+      /** Waits past the settle timeout, for a turn whose content has already stopped changing. */
+      const waitForSettle = () => new Promise((r) => setTimeout(r, 20));
+      /** Waits past the no-reply timeout, for a turn that never gets any content at all. */
+      const waitForNoReply = () => new Promise((r) => setTimeout(r, 30));
+
       /** A minimal fake xterm.js Terminal: a mutable line buffer, paste()/input() recorders, and one onWriteParsed hook. */
       function makeFakeTerm(initialLines) {
         let lines = (initialLines || []).slice();
@@ -569,6 +592,12 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
           let _masterActiveTurns = [];
           let _masterActiveBaseline = [];
           let _masterActiveDispose = null;
+          let _masterSettleTimer = null;
+          let _masterNoReplyTimer = null;
+          ${liftDeclaration(js, 'function _masterTurnSettleMs(')}
+          ${liftDeclaration(js, 'function _masterTurnNoReplyMs(')}
+          ${liftDeclaration(js, 'function _clearMasterTurnTimers(')}
+          ${liftDeclaration(js, 'function _retireOldestMasterTurn(')}
           ${liftDeclaration(js, 'function _masterTerminalLineDelta(')}
           ${liftDeclaration(js, 'function isMasterTerminalEchoLine(')}
           ${liftDeclaration(js, 'function _partitionMasterTerminalDelta(')}
@@ -664,9 +693,9 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         // this), before the operator sends a second message.
         term.setLines(['$ ', 'first', 'first-reply']);
         term.fireWrite();
-        // A second, quiet write (no new lines) idle-settles turn 1,
-        // retiring it and dispatching turn 2 to the terminal for real.
-        term.fireWrite();
+        // Content stopped changing; once the settle timer elapses, turn 1
+        // retires and turn 2 is dispatched to the terminal for real.
+        await waitForSettle();
 
         input.value = 'second';
         await sandbox.sendMasterChatMessage();
@@ -700,7 +729,7 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
 
         term.setLines(['$ ', 'first', 'first-reply']);
         term.fireWrite();
-        term.fireWrite(); // idle settle: turn 1 retires, turn 2 is dispatched for real
+        await waitForSettle(); // turn 1 retires, turn 2 is dispatched for real
         assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'turn 2 only reaches the terminal once turn 1 retires');
 
         term.setLines(['$ ', 'first', 'first-reply', 'second', 'second-reply']);
@@ -728,12 +757,12 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
 
         term.setLines(['$ ', 'one', 'one-reply']);
         term.fireWrite();
-        term.fireWrite(); // retires "one", dispatches "two"
+        await waitForSettle(); // retires "one", dispatches "two"
         assert.deepEqual(term.pasted, ['one\r', 'two\r']);
 
         term.setLines(['$ ', 'one', 'one-reply', 'two', 'two-reply']);
         term.fireWrite();
-        term.fireWrite(); // retires "two", dispatches "three"
+        await waitForSettle(); // retires "two", dispatches "three"
         assert.deepEqual(term.pasted, ['one\r', 'two\r', 'three\r']);
 
         term.setLines(['$ ', 'one', 'one-reply', 'two', 'two-reply', 'three', 'three-reply']);
@@ -765,7 +794,7 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         await sandbox.sendMasterChatMessage();
         term.setLines(['$ ', 'status', 'first-reply']);
         term.fireWrite();
-        term.fireWrite(); // idle settle: retires turn 1, dispatches turn 2
+        await waitForSettle(); // retires turn 1, dispatches turn 2
 
         input.value = 'status';
         await sandbox.sendMasterChatMessage();
@@ -796,7 +825,7 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         await sandbox.sendMasterChatMessage();
         term.setLines(['$ ', 'foo', 'bar']);
         term.fireWrite();
-        term.fireWrite(); // idle settle: retires turn 1 before turn 2 is ever sent
+        await waitForSettle(); // retires turn 1 before turn 2 is ever sent
 
         input.value = 'bar';
         await sandbox.sendMasterChatMessage();
@@ -829,7 +858,7 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         assert.equal(term._hooks.length, 1, 'the first send arms the shared listener');
         term.setLines(['$ ', 'first', 'first-reply']);
         term.fireWrite();
-        term.fireWrite(); // idle settle: turn 1 retires; queue is empty, so the listener disposes
+        await waitForSettle(); // turn 1 retires; queue is empty, so the listener disposes
         assert.equal(term._hooks.length, 0, 'the shared listener disposes once idle with nothing queued');
 
         // The buffer changes shape entirely while nothing is listening —
@@ -848,6 +877,110 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply');
         assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'second-reply',
           'the second turn\'s content came from the buffer AT SEND TIME, not a stale baseline left over from turn 1');
+      });
+
+      // #3218 R-Gate R7 BLOCKING 1 — the exact repro named in the
+      // dispatch: a SINGLE fireWrite() delivering echo+reply, then
+      // genuine silence (no second fireWrite() at all). R6's own
+      // retirement check needed a SECOND onWriteParsed/onRender callback
+      // to even notice the quiet round — a real terminal fires that
+      // event only on an actual write/render, so once the reply has
+      // landed and the terminal goes silent, no such follow-up is
+      // guaranteed, and R6's turn would never retire. The settle timer
+      // fires on its own, with no further terminal activity needed.
+      it('l) a single write delivering echo+reply, then silence with no second fireWrite(), still retires once the settle timer elapses', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'first';
+        await sandbox.sendMasterChatMessage();
+        input.value = 'second';
+        await sandbox.sendMasterChatMessage();
+        assert.deepEqual(term.pasted, ['first\r'], 'second is queued, not yet pasted');
+
+        term.setLines(['$ ', 'first', 'first-reply']);
+        term.fireWrite(); // the ONLY write event — no second call anywhere in this test
+        await waitForSettle();
+        assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'the settle timer alone retired turn 1 and dispatched turn 2');
+
+        term.setLines(['$ ', 'first', 'first-reply', 'second', 'second-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 2);
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply');
+        assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'second-reply');
+      });
+
+      // #3218 R-Gate R7 BLOCKING 1 — a same-line streaming update (the
+      // LAST line's own text keeps changing across writes, as a real
+      // streamed CLI reply would) must reset the settle timer each time,
+      // never retiring early just because the LINE COUNT stayed the same.
+      it('m) a same-line streaming update resets the settle timer on content change, not just on new lines', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'first';
+        await sandbox.sendMasterChatMessage();
+        input.value = 'second';
+        await sandbox.sendMasterChatMessage();
+
+        term.setLines(['$ ', 'first', 'Thinking']);
+        term.fireWrite();
+        // Still well inside the settle window: the SAME line's text grows.
+        await new Promise((r) => setTimeout(r, 2));
+        term.setLines(['$ ', 'first', 'Thinking about it']);
+        term.fireWrite();
+        assert.deepEqual(term.pasted, ['first\r'], 'turn 1 must NOT have retired yet -- content just changed again');
+
+        await new Promise((r) => setTimeout(r, 2));
+        term.setLines(['$ ', 'first', 'Final answer']);
+        term.fireWrite();
+        assert.deepEqual(term.pasted, ['first\r'], 'still not retired -- the line changed content yet again');
+
+        await waitForSettle(); // NOW it goes quiet for real
+        assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'retires only once the content genuinely stops changing');
+
+        const stream = doc.getElementById('masterChatStream');
+        const firstBubble = stream.childNodes.filter((li) => li.classList.contains('is-assistant'))[0];
+        assert.equal(firstBubble.querySelector('.v6-conversation-content').text, 'Final answer',
+          'the LAST version of the streamed content, not an earlier snapshot');
+      });
+
+      // #3218 R-Gate R7 BLOCKING 1 — an echo-only/no-reply turn (the CLI
+      // never prints anything back at all) must still retire eventually,
+      // via the independent no-reply timeout — the settle timer alone
+      // would never even START for a turn whose bucket never leaves empty.
+      it('n) an echo-only/no-reply turn retires after the no-reply timeout, without deadlocking the queue', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'quiet';
+        await sandbox.sendMasterChatMessage();
+        input.value = 'second';
+        await sandbox.sendMasterChatMessage();
+
+        // The pty echoes the sent text and then... nothing. No reply ever
+        // arrives for "quiet".
+        term.setLines(['$ ', 'quiet']);
+        term.fireWrite();
+        assert.deepEqual(term.pasted, ['quiet\r'], 'second is still queued');
+
+        await waitForNoReply();
+        assert.deepEqual(term.pasted, ['quiet\r', 'second\r'],
+          'the no-reply timeout retired the echo-only turn and dispatched the next queued send, with no deadlock');
+
+        term.setLines(['$ ', 'quiet', 'second', 'second-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 1, 'the echo-only turn never got a bubble of its own -- it had no content');
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'second-reply');
       });
     });
   });

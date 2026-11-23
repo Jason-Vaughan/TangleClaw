@@ -8428,6 +8428,75 @@ let _masterActiveBaseline = [];
 let _masterActiveDispose = null;
 
 /**
+ * The oldest active turn's resettable "gone quiet" timer (#3218 R-Gate R7
+ * BLOCKING 1) — any CONTENT change (new lines, or a same-line streaming
+ * update) on a sync resets it; firing after {@link _masterTurnSettleMs}
+ * of silence retires the turn. Replaces R6's own two-consecutive-callback
+ * check, which assumed a quiet round would always get a FOLLOW-UP
+ * `onWriteParsed`/`onRender` callback to notice it was quiet in — a real
+ * xterm.js terminal only ever fires that event on an actual write or
+ * render, so once the final reply line has landed and the terminal goes
+ * genuinely silent, there is no guaranteed second callback at all, and
+ * R6's retirement could wait forever.
+ * @type {ReturnType<typeof setTimeout>|null}
+ */
+let _masterSettleTimer = null;
+
+/**
+ * Armed the moment a turn is dispatched, cleared the instant it gets ANY
+ * reply content at all — an echo-only/no-reply turn (#3218 R-Gate R7
+ * BLOCKING 1) would otherwise wedge the serialized queue forever, since
+ * {@link _masterSettleTimer} only ever starts on a CONTENT change and
+ * never even arms for a turn that gets no content whatsoever.
+ * @type {ReturnType<typeof setTimeout>|null}
+ */
+let _masterNoReplyTimer = null;
+
+/**
+ * How long a turn's content must sit unchanged before it's considered
+ * settled (#3218 R-Gate R7), overridable per `globalThis.TC_MASTER_TURN_SETTLE_MS`
+ * (tests use a small value to stay fast).
+ * @returns {number}
+ */
+function _masterTurnSettleMs() {
+  const v = typeof globalThis !== 'undefined' ? globalThis.TC_MASTER_TURN_SETTLE_MS : undefined;
+  return Number.isFinite(v) && v >= 0 ? v : 150;
+}
+
+/**
+ * How long a dispatched turn may go with NO reply content at all before
+ * it's retired anyway (#3218 R-Gate R7), overridable per
+ * `globalThis.TC_MASTER_TURN_NO_REPLY_MS`.
+ * @returns {number}
+ */
+function _masterTurnNoReplyMs() {
+  const v = typeof globalThis !== 'undefined' ? globalThis.TC_MASTER_TURN_NO_REPLY_MS : undefined;
+  return Number.isFinite(v) && v >= 0 ? v : 800;
+}
+
+/** Clears both turn-lifecycle timers, if armed. @returns {void} */
+function _clearMasterTurnTimers() {
+  if (_masterSettleTimer != null) { clearTimeout(_masterSettleTimer); _masterSettleTimer = null; }
+  if (_masterNoReplyTimer != null) { clearTimeout(_masterNoReplyTimer); _masterNoReplyTimer = null; }
+}
+
+/**
+ * Retire the oldest active turn for good: clears both lifecycle timers,
+ * shifts it out of {@link _masterActiveTurns}, advances {@link
+ * _masterActiveBaseline} past it, and dispatches whatever is next in
+ * {@link _masterSendQueue} (#3218 R-Gate R6/R7).
+ * @param {object} term
+ * @param {string[]} baselineNow - A fresh {@link readMasterTerminalSnapshot}, taken AT retirement time (a timer fires later than the sync call that armed it, so the terminal may have moved on since).
+ * @returns {void}
+ */
+function _retireOldestMasterTurn(term, baselineNow) {
+  _clearMasterTurnTimers();
+  _masterActiveTurns.shift();
+  _masterActiveBaseline = baselineNow;
+  _dispatchNextQueuedMasterSend(term);
+}
+
+/**
  * The new lines in `nowLines` that were not already in `beforeLines`, by
  * multiset frequency rather than set membership (#3218 R-Gate R4 BLOCKING 3):
  * a `Set`-based diff would make a genuinely new reply line invisible the
@@ -8519,17 +8588,21 @@ function _partitionMasterTerminalDelta(delta, turns) {
  * turn still waiting on a reply shows no bubble at all (#3218 R-Gate
  * R2/R4/R5).
  *
- * #3218 R-Gate R6 BLOCKING 2: once the OLDEST turn's own bucket has
- * stopped GROWING across two consecutive syncs (its length is unchanged
- * from the last call, having been non-zero at least once) it is
- * considered idle-settled: retired from {@link _masterActiveTurns},
- * {@link _masterActiveBaseline} advances past it for good, and whatever
- * is next in {@link _masterSendQueue} gets dispatched for real.
- * `delta.length` alone can't signal "no new content this round" — it's
- * always recomputed fresh against the SAME fixed baseline, so it stays
- * constant (not zero) for as long as a turn has replied at all, until
- * something genuinely new appears; only comparing this round's bucket
- * LENGTH against the previous round's actually detects a quiet round.
+ * #3218 R-Gate R7 BLOCKING 1: retirement is timer-driven, not another
+ * `onWriteParsed`/`onRender` callback (R6's own model, which assumed a
+ * quiet round would always get a follow-up callback to notice it was
+ * quiet in — a real terminal fires that event only on an actual write or
+ * render, so once the final reply line lands and the terminal goes
+ * genuinely silent, no such follow-up is guaranteed at all). The oldest
+ * turn's bucket CONTENT (not just its length — a same-line streaming
+ * update can change text without changing line count) is compared
+ * against what it was last sync; any change (re)starts {@link
+ * _masterSettleTimer}, and clears {@link _masterNoReplyTimer} for good
+ * once that content is non-empty. {@link _masterNoReplyTimer}, armed
+ * when the turn was first dispatched, independently retires an
+ * echo-only/no-reply turn after its own (longer) timeout, since the
+ * settle timer alone would never even start for a turn that never gets
+ * any content.
  * @param {object} term
  * @returns {void}
  */
@@ -8558,14 +8631,18 @@ function syncMasterAssistantTurnsFromTerminal(term) {
 
   const oldest = _masterActiveTurns[0];
   if (!oldest) return;
-  const oldestLen = buckets[0] ? buckets[0].length : 0;
-  const settled = oldestLen > 0 && oldestLen === oldest._lastBucketLen;
-  oldest._lastBucketLen = oldestLen;
-  if (settled) {
-    _masterActiveTurns.shift();
-    _masterActiveBaseline = now;
-    _dispatchNextQueuedMasterSend(term);
+  const oldestContent = buckets[0] ? buckets[0].join('\n') : '';
+  if (oldestContent === oldest._lastContent) return;
+  oldest._lastContent = oldestContent;
+  if (oldestContent !== '' && _masterNoReplyTimer != null) {
+    clearTimeout(_masterNoReplyTimer);
+    _masterNoReplyTimer = null;
   }
+  if (_masterSettleTimer != null) clearTimeout(_masterSettleTimer);
+  _masterSettleTimer = setTimeout(() => {
+    _masterSettleTimer = null;
+    _retireOldestMasterTurn(term, readMasterTerminalSnapshot(term));
+  }, _masterTurnSettleMs());
 }
 
 /**
@@ -8574,9 +8651,10 @@ function syncMasterAssistantTurnsFromTerminal(term) {
  * pasting (never a stale one left over from a retired turn, so a buffer
  * that changed shape in between, scrollback rollover included, is never
  * mistaken for new output belonging to this turn). Arms the shared
- * listener on first use; disposes it once the queue is genuinely empty
- * too, so nothing keeps listening once the conversation goes idle
- * (#3218 R-Gate R6 BLOCKING 2).
+ * listener on first use, and this turn's own no-reply timeout (#3218
+ * R-Gate R7 BLOCKING 1); disposes the listener once the queue is
+ * genuinely empty too, so nothing keeps listening once the conversation
+ * goes idle (#3218 R-Gate R6 BLOCKING 2).
  * @param {object} term
  * @returns {void}
  */
@@ -8603,7 +8681,11 @@ function _dispatchNextQueuedMasterSend(term) {
     _dispatchNextQueuedMasterSend(term);
     return;
   }
-  _masterActiveTurns.push({ sentText: text, assistantTurnEl: null, _lastBucketLen: 0 });
+  _masterActiveTurns.push({ sentText: text, assistantTurnEl: null, _lastContent: '' });
+  _masterNoReplyTimer = setTimeout(() => {
+    _masterNoReplyTimer = null;
+    _retireOldestMasterTurn(term, readMasterTerminalSnapshot(term));
+  }, _masterTurnNoReplyMs());
   syncMasterAssistantTurnsFromTerminal(term);
   if (!_masterActiveDispose) {
     const hook = term && typeof term.onWriteParsed === 'function' ? term.onWriteParsed.bind(term)
