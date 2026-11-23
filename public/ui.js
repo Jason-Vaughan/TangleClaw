@@ -2060,11 +2060,18 @@ let settingsOfferLaunch = false;
  * @returns {string} HTML for the two badges, separated by a middle dot.
  */
 function pathHealthBadgeHtml(project) {
+  // `enrichProject` (lib/projects.js) sets `exists: false` BOTH for a
+  // genuinely absent directory AND for a scan that failed to read one that's
+  // still there (EACCES/FDA) — `unreadable` is what tells those two apart,
+  // so it must be checked FIRST (R-Gate R6 BLOCKING, PRR-A 5b19131d): a
+  // real FDA failure would otherwise render as "missing" and claim the
+  // directory isn't a git repo, when it was never actually inspected.
+  if (project.unreadable) {
+    return `<span style="color:var(--danger)">&#10007; Unreadable: ${esc(project.unreadable)}${project.unreadableHint ? ` — ${esc(project.unreadableHint)}` : ''}</span>`;
+  }
   const pathBadge = project.exists === false
     ? `<span style="color:var(--danger)">&#10007; Path missing</span>`
-    : project.unreadable
-      ? `<span style="color:var(--danger)">&#10007; Unreadable: ${esc(project.unreadable)}${project.unreadableHint ? ` — ${esc(project.unreadableHint)}` : ''}</span>`
-      : `<span style="color:var(--primary)">&#10003; Path OK</span>`;
+    : `<span style="color:var(--primary)">&#10003; Path OK</span>`;
   const gitBadge = project.git
     ? `<span style="color:var(--primary)">&#10003; Git repository${project.git.branch ? ` (${esc(project.git.branch)})` : ''}</span>`
     : `<span style="opacity:0.7">Not a git repository</span>`;

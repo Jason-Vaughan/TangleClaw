@@ -683,9 +683,16 @@ describe('#3214 Project Settings — path-health badge (R-Gate R5 BLOCKING 1)', 
   it('a missing path is called out distinctly from an unreadable one', () => {
     const missing = pathHealthBadgeHtml({ path: '/gone', exists: false, unreadable: null, git: null });
     assert.match(missing, /Path missing/);
-    const unreadable = pathHealthBadgeHtml({ path: '/locked', exists: true, unreadable: 'EACCES', unreadableHint: 'Grant Full Disk Access', git: null });
+    // #3214 R-Gate R6 BLOCKING (PRR-A 5b19131d): `enrichProject` sets
+    // `exists: false` for BOTH a genuinely absent path AND a scan that
+    // failed to read one that's still there (EACCES/FDA) — `unreadable` is
+    // what tells them apart, so this fixture uses the REAL shape
+    // `enrichProject` emits for a scan failure, not an invented one.
+    const unreadable = pathHealthBadgeHtml({ path: '/locked', exists: false, unreadable: 'EACCES', unreadableHint: 'Grant Full Disk Access', git: null });
     assert.match(unreadable, /Unreadable: EACCES/);
     assert.match(unreadable, /Grant Full Disk Access/);
+    assert.doesNotMatch(unreadable, /Path missing/, 'a real FDA failure must not render as if the directory were absent');
+    assert.doesNotMatch(unreadable, /Not a git repository/, 'the directory was never actually inspected, so nothing can be said about it being a git repo');
   });
 
   it('a non-git-repo path renders a distinct, non-error badge', () => {
