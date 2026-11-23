@@ -8357,9 +8357,20 @@
      * removed.
      * @returns {void}
      */
-    function wireEllipsisLoaders() {
+    /**
+     * Stop every controller {@link wireEllipsisLoaders} currently has
+     * bound, and forget them (#3206/#3209 R5) — shared by `wireEllipsisLoaders`
+     * itself (before rebinding to fresh DOM) and `destroy()` (shell
+     * teardown, where nothing should be rebound afterward at all).
+     * @returns {void}
+     */
+    function stopEllipsisLoaders() {
       ellipsisControllers.forEach((c) => { if (c && typeof c.stop === 'function') c.stop(); });
       ellipsisControllers = [];
+    }
+
+    function wireEllipsisLoaders() {
+      stopEllipsisLoaders();
       if (typeof global.tcV6CreateAnimatedEllipsisController !== 'function') return;
       if (!root || typeof root.querySelectorAll !== 'function') return;
       root.querySelectorAll('.v6-loading-indicator').forEach((el) => {
@@ -11323,6 +11334,16 @@
         if (panel && shownNow && workspaceMode === mode) {
           panel.innerHTML = panelMarkupNow(mode);
           wireWorkspacePanel(mode);
+          // #3206/#3209 R5: this is a PARTIAL render (only #v6WorkspacePanel's
+          // own innerHTML) outside the full render()/wireControls() cycle
+          // wireEllipsisLoaders is otherwise only ever called from — fleet
+          // plan / bundled-template loading states rendered through this
+          // path (both v6EllipsisLoadingMarkup call sites) would otherwise
+          // never get a controller bound at all, and whatever controller
+          // was bound to the panel's PREVIOUS content would leak (ticking
+          // against a now-detached node this innerHTML replace just
+          // removed) since nothing here ever stopped it.
+          wireEllipsisLoaders();
         }
       },
       destroy() {
@@ -11330,6 +11351,8 @@
         if (tickerId != null) { stopTicker(tickerId); tickerId = null; }
         busy = null;
         if (win && typeof win.removeEventListener === 'function') win.removeEventListener('hashchange', handleHashChange);
+        // #3206/#3209 R5: no controller may keep ticking past shell teardown.
+        stopEllipsisLoaders();
       }
     };
   }

@@ -9444,6 +9444,18 @@ describe('wireEllipsisLoaders — binding the shared animated-ellipsis controlle
     doc.body.appendChild(root);
     const win = makeFakeWindow('#/projects/tc-lane');
     const shell = Gd.tcCreateV6Shell(doc, { root, window: win, storage: null });
+    // #3206/#3209 R5: setWorkspacePanel() sets #v6WorkspacePanel's OWN
+    // innerHTML directly, never root's — withIdParsingInnerHTML only ever
+    // makes the FIRST id it sees a real child of root (everything else is
+    // a floating, doc-registered node with no parentNode at all), so
+    // #v6WorkspacePanel needs the SAME extended parsing, and a real place
+    // in root's tree, for wireEllipsisLoaders's root.querySelectorAll scan
+    // to ever find anything rendered through this path.
+    const panel = doc.getElementById('v6WorkspacePanel');
+    if (panel) {
+      withEllipsisParsingInnerHTML(panel, doc);
+      root.appendChild(panel);
+    }
     return { shell, doc, root, calls };
   }
 
@@ -9474,6 +9486,36 @@ describe('wireEllipsisLoaders — binding the shared animated-ellipsis controlle
     shell.setDetail(null);
     assert.equal(calls[0].stopped.value, true, 'no ellipsis indicator remains, so the stale controller must still be stopped');
     assert.equal(calls.length, 1, 'nothing new to bind — no indicator is mounted');
+  });
+
+  // #3206/#3209 R5 — setWorkspacePanel() is a PARTIAL render (only
+  // #v6WorkspacePanel's own innerHTML) outside the full render()/
+  // wireControls() cycle wireEllipsisLoaders is otherwise only called
+  // from; fleet plan / bundled-template loading states render through
+  // THIS path, so a controller bound to the panel's previous content
+  // must be stopped, and a freshly-rendered one bound, here too.
+  it('setWorkspacePanel() stops the previous panel\'s controller and binds a fresh one for the new content', () => {
+    const { shell, calls } = mountWithFakeController();
+    shell.setWorkspaceMode('sprint');
+    shell.setWorkspacePanel('sprint', fakeAnimatedEllipsisMarkup('Loading plan'));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].opts.label, 'Loading plan');
+    assert.equal(calls[0].stopped.value, false);
+
+    shell.setWorkspacePanel('sprint', fakeAnimatedEllipsisMarkup('Loading bundled templates'));
+    assert.equal(calls[0].stopped.value, true, 'the previous panel content\'s controller must be stopped before the replace');
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].opts.label, 'Loading bundled templates');
+    assert.equal(calls[1].stopped.value, false);
+  });
+
+  it('destroy() stops every bound controller so none survives shell teardown', () => {
+    const { shell, calls } = mountWithFakeController();
+    shell.setDetail({ kind: 'loading', label: 'Loading chat' });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].stopped.value, false);
+    shell.destroy();
+    assert.equal(calls[0].stopped.value, true, 'no controller may keep ticking past shell teardown');
   });
 
   it('never attempts to bind when the shared controller helper is not loaded', () => {
