@@ -2050,6 +2050,28 @@ let settingsTarget = null;
 let settingsOfferLaunch = false;
 
 /**
+ * The Identity & Workspace card's path-health badge (#3214 R-Gate R5
+ * BLOCKING 1): whether `project.path` is actually there and readable, and
+ * whether it is a git repository — both already computed by `enrichProject`
+ * (`lib/projects.js`: `exists`, `unreadable`, `unreadableHint`, `git`) but,
+ * per that file's own comment, rendered nowhere until this (`#885`).
+ * Semantic text, not color alone, carries each state for accessibility.
+ * @param {object} project - A project from `state.projects`/`enrichProject`.
+ * @returns {string} HTML for the two badges, separated by a middle dot.
+ */
+function pathHealthBadgeHtml(project) {
+  const pathBadge = project.exists === false
+    ? `<span style="color:var(--danger)">&#10007; Path missing</span>`
+    : project.unreadable
+      ? `<span style="color:var(--danger)">&#10007; Unreadable: ${esc(project.unreadable)}${project.unreadableHint ? ` — ${esc(project.unreadableHint)}` : ''}</span>`
+      : `<span style="color:var(--primary)">&#10003; Path OK</span>`;
+  const gitBadge = project.git
+    ? `<span style="color:var(--primary)">&#10003; Git repository${project.git.branch ? ` (${esc(project.git.branch)})` : ''}</span>`
+    : `<span style="opacity:0.7">Not a git repository</span>`;
+  return `${pathBadge} &middot; ${gitBadge}`;
+}
+
+/**
  * Open the Settings modal for a project.
  *
  * `options` defaults inside the body, not `= {}` in the parameter list —
@@ -2210,6 +2232,7 @@ function openSettings(name, options) {
         <div class="form-group">
           <label class="form-label">Workspace path</label>
           <div class="form-hint" id="settingsPathBadge" style="font-family:monospace; word-break:break-all;">${esc(project.path || 'unknown')}</div>
+          <div class="form-hint" id="settingsPathHealthBadge">${pathHealthBadgeHtml(project)}</div>
         </div>
         <div class="form-group">
           <label class="form-label" for="settingsTags">Tags (comma-separated)</label>

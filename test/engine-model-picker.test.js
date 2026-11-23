@@ -658,6 +658,57 @@ describe('#3214 Project Settings — Identity & Workspace card fields (R-Gate R1
   });
 });
 
+// #3214 R-Gate R5 BLOCKING 1 — the Identity & Workspace card renders a path
+// existence/readability badge and a git-repository badge alongside
+// `#settingsPathBadge`, using fields `enrichProject` (lib/projects.js)
+// already returns (`exists`, `unreadable`, `unreadableHint`, `git`) but that
+// comment's own header says nothing renders yet (#885) — this is that.
+describe('#3214 Project Settings — path-health badge (R-Gate R5 BLOCKING 1)', () => {
+  const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+  const { liftDeclaration } = require('./helpers/lift');
+  const esc = loadEsc();
+  const pathHealthBadgeHtml = new Function('esc', `
+    ${liftDeclaration(uiSrc, 'function pathHealthBadgeHtml(')}
+    return pathHealthBadgeHtml;
+  `)(esc);
+
+  it('a valid, readable, git-backed path renders both badges as healthy', () => {
+    const html = pathHealthBadgeHtml({ path: '/x', exists: true, unreadable: null, git: { branch: 'main' } });
+    assert.match(html, /Path OK/);
+    assert.doesNotMatch(html, /missing|Unreadable/i);
+    assert.match(html, /Git repository/);
+    assert.match(html, /main/);
+  });
+
+  it('a missing path is called out distinctly from an unreadable one', () => {
+    const missing = pathHealthBadgeHtml({ path: '/gone', exists: false, unreadable: null, git: null });
+    assert.match(missing, /Path missing/);
+    const unreadable = pathHealthBadgeHtml({ path: '/locked', exists: true, unreadable: 'EACCES', unreadableHint: 'Grant Full Disk Access', git: null });
+    assert.match(unreadable, /Unreadable: EACCES/);
+    assert.match(unreadable, /Grant Full Disk Access/);
+  });
+
+  it('a non-git-repo path renders a distinct, non-error badge', () => {
+    const html = pathHealthBadgeHtml({ path: '/plain', exists: true, unreadable: null, git: null });
+    assert.match(html, /Not a git repository/);
+    assert.doesNotMatch(html, /color:var\(--danger\)">\s*Not a git repository/);
+  });
+
+  it('escapes an unreadable reason/hint and a git branch name', () => {
+    const html = pathHealthBadgeHtml({
+      path: '/x', exists: true, unreadable: '<script>', unreadableHint: '<b>hint</b>', git: null
+    });
+    assert.doesNotMatch(html, /<script>/);
+    assert.match(html, /&lt;script&gt;/);
+  });
+
+  it('is wired into openSettings\' Identity & Workspace card, next to #settingsPathBadge', () => {
+    const { liftBody } = require('./helpers/lift');
+    const openSettingsBody = liftBody(uiSrc, 'function openSettings(');
+    assert.match(openSettingsBody, /id="settingsPathHealthBadge"[^<]*>\$\{pathHealthBadgeHtml\(project\)\}/);
+  });
+});
+
 // #3214 R-Gate R2, Architect Ruling A921 — `claude-sonnet-reviewer` and
 // `claude-fable-sprint` are real, live operator profiles (`~/.tangleclaw/
 // engines/*.json`, 10 live projects on the host this ruling was issued
