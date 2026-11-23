@@ -240,13 +240,71 @@ manifest_field() {
   grep -o "\"$2\": *\"[^\"]*\"" "$1" | head -1 | sed -E "s/.*\"([^\"]*)\"\$/\1/" || printf ''
 }
 
-# The server plist's ProgramArguments[0] — read-only, via PlistBuddy (ships
-# with macOS). Empty when the plist or PlistBuddy is absent (a fresh
-# install, or a non-macOS dev checkout): never an error, just "nothing to
+# Node-based plist XML read of ProgramArguments[0], for a host with no
+# PlistBuddy (#3198 R3: any non-macOS host, Linux CI runners included).
+# Finds the first <string>...</string> immediately inside
+# <key>ProgramArguments</key><array>...</array>. Never errors — empty when
+# the file doesn't parse to this shape, the same "nothing to report yet"
+# contract PlistBuddy's own branch keeps.
+_node_plist_read_program_arg0() {
+  local node_bin="$1" plist_path="$2"
+  "$node_bin" -e '
+    const fs = require("fs");
+    try {
+      const xml = fs.readFileSync(process.argv[1], "utf8");
+      const m = xml.match(/<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/);
+      process.stdout.write(m ? m[1] : "");
+    } catch (e) { /* nothing to report yet */ }
+  ' "$plist_path" 2>/dev/null
+}
+
+# The Node fallback's write half, for --cutover below. Replaces exactly the
+# first <string> inside <key>ProgramArguments</key><array>...</array>,
+# leaving the rest of the file byte-for-byte untouched. Exits non-zero
+# (changing nothing) when that shape isn't found — PlistBuddy's own Set
+# would refuse an unexpected plist shape too.
+_node_plist_write_program_arg0() {
+  local node_bin="$1" plist_path="$2" new_value="$3"
+  # `process.exit(1)`, not a bare top-level `return` -- `node -e` runs the
+  # snippet as a script, not inside a function, so a bare `return` there is
+  # a SyntaxError (confirmed empirically before this shipped).
+  "$node_bin" -e '
+    const fs = require("fs");
+    const [plistPath, newValue] = [process.argv[1], process.argv[2]];
+    const xml = fs.readFileSync(plistPath, "utf8");
+    const re = /(<key>ProgramArguments<\/key>\s*<array>\s*<string>)([^<]*)(<\/string>)/;
+    if (!re.test(xml)) { process.exit(1); }
+    fs.writeFileSync(plistPath, xml.replace(re, (m, pre, _old, post) => pre + newValue + post));
+  ' "$plist_path" "$new_value"
+}
+
+# Whether to use PlistBuddy — false on any host without it (Linux CI
+# included), and overridable via $TANGLECLAW_FDA_FORCE_NODE_PLIST so a test
+# can exercise the Node XML fallback's actual behavior on a real macOS dev
+# machine too, without needing a host that genuinely lacks PlistBuddy.
+_have_plistbuddy() {
+  [ "${TANGLECLAW_FDA_FORCE_NODE_PLIST:-}" != "1" ] && command -v /usr/libexec/PlistBuddy >/dev/null 2>&1
+}
+
+# The server plist's ProgramArguments[0] — read-only. PlistBuddy where it
+# exists (macOS); the Node fallback above otherwise, against whatever node
+# is on PATH right now (never requires the staged managed node to exist —
+# this is a report, not a verification of it). Empty when the plist is
+# absent, or neither reader is available: never an error, just "nothing to
 # report yet".
 plist_node_path() {
-  if [ -f "$SERVER_PLIST" ] && command -v /usr/libexec/PlistBuddy >/dev/null 2>&1; then
+  if [ ! -f "$SERVER_PLIST" ]; then
+    printf ''
+    return 0
+  fi
+  if _have_plistbuddy; then
     /usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$SERVER_PLIST" 2>/dev/null || printf ''
+    return 0
+  fi
+  local fallback_node
+  fallback_node="$(command -v node 2>/dev/null || printf '')"
+  if [ -n "$fallback_node" ]; then
+    _node_plist_read_program_arg0 "$fallback_node" "$SERVER_PLIST"
   else
     printf ''
   fi
@@ -446,17 +504,23 @@ cutover() {
     echo "install-fda-anchor.sh: $SERVER_PLIST does not exist; nothing to cut over" >&2
     exit 1
   fi
-  if ! command -v /usr/libexec/PlistBuddy >/dev/null 2>&1; then
-    echo "install-fda-anchor.sh: PlistBuddy is unavailable; refusing to hand-edit the plist" >&2
-    exit 1
-  fi
 
   local backup
   backup="$SERVER_PLIST.pre-fda-anchor-$(date -u +%Y%m%dT%H%M%SZ).bak"
   cp "$SERVER_PLIST" "$backup"
   echo "Backed up $SERVER_PLIST to $backup"
 
-  /usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 $MANAGED_NODE" "$SERVER_PLIST"
+  # PlistBuddy where it exists (macOS); the Node fallback above otherwise
+  # (#3198 R3 — any non-macOS host, Linux CI included). $MANAGED_NODE is
+  # already confirmed staged and running by this point, so it is a safe
+  # reader/writer for its own cutover.
+  if _have_plistbuddy; then
+    /usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 $MANAGED_NODE" "$SERVER_PLIST"
+  elif ! _node_plist_write_program_arg0 "$MANAGED_NODE" "$SERVER_PLIST" "$MANAGED_NODE"; then
+    echo "install-fda-anchor.sh: could not find ProgramArguments[0] in $SERVER_PLIST to rewrite" >&2
+    echo "  (neither PlistBuddy nor the Node XML fallback matched its shape); nothing was changed" >&2
+    exit 1
+  fi
   echo "Cut over: $SERVER_PLIST now names $MANAGED_NODE"
 
   echo

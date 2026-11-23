@@ -1179,8 +1179,8 @@ describe('scripts/install-fda-anchor.sh (#3198)', () => {
     fs.rmSync(baseDir, { recursive: true, force: true });
   });
 
-  function run(args) {
-    return execFileSync(SCRIPT, args, { encoding: 'utf8' });
+  function run(args, extraEnv) {
+    return execFileSync(SCRIPT, args, { encoding: 'utf8', env: extraEnv ? { ...process.env, ...extraEnv } : process.env });
   }
 
   it('is executable', () => {
@@ -1311,6 +1311,7 @@ describe('scripts/install-fda-anchor.sh (#3198)', () => {
 
   describe('--cutover (PRR-A R1 BLOCKING 3)', () => {
     let plistPath;
+    let fakeHome;
 
     beforeEach(() => {
       plistPath = path.join(baseDir, 'fake-server.plist');
@@ -1323,6 +1324,15 @@ describe('scripts/install-fda-anchor.sh (#3198)', () => {
         '</dict></plist>',
         ''
       ].join('\n'));
+      // check_fda reads the real $HOME/Documents, with no override of its
+      // own — on a Linux CI runner (or any host that has never created one)
+      // that directory genuinely does not exist, which is a different
+      // failure (ENOENT, fast) from the one most of these tests mean to
+      // exercise. A fixture HOME with a real, always-present Documents
+      // directory makes the check's REAL pass/fail path portable across
+      // every host, not just a macOS dev machine that happens to have one.
+      fakeHome = path.join(baseDir, 'fake-home');
+      fs.mkdirSync(path.join(fakeHome, 'Documents'), { recursive: true });
     });
 
     it('refuses when nothing is staged yet, and changes nothing', () => {
@@ -1385,7 +1395,7 @@ describe('scripts/install-fda-anchor.sh (#3198)', () => {
     it('stages, passes FDA (this test process can itself read ~/Documents), backs up the plist, and rewrites ProgramArguments[0]', () => {
       run(['--stage', '--base-dir', baseDir]);
       const managedNode = path.join(baseDir, 'bin', 'node');
-      const out = run(['--cutover', '--base-dir', baseDir, '--plist', plistPath]);
+      const out = run(['--cutover', '--base-dir', baseDir, '--plist', plistPath], { HOME: fakeHome });
       assert.match(out, /Full Disk Access confirmed/);
       assert.match(out, /Backed up/);
       assert.match(out, /VERIFY/);
@@ -1402,8 +1412,66 @@ describe('scripts/install-fda-anchor.sh (#3198)', () => {
     it('refuses when the named plist does not exist, and never fabricates one', () => {
       run(['--stage', '--base-dir', baseDir]);
       const missingPlist = path.join(baseDir, 'does-not-exist.plist');
-      assert.throws(() => execFileSync(SCRIPT, ['--cutover', '--base-dir', baseDir, '--plist', missingPlist], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+      let stderr = '';
+      assert.throws(() => {
+        try {
+          execFileSync(SCRIPT, ['--cutover', '--base-dir', baseDir, '--plist', missingPlist], {
+            encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HOME: fakeHome }
+          });
+        } catch (err) {
+          stderr = String(err.stderr || '');
+          throw err;
+        }
+      });
+      // Pins the ACTUAL refusal reason — without a real FDA pass first (the
+      // fixture HOME above), this would also throw, but for the wrong
+      // reason, and the test would pass without proving what its own name
+      // claims.
+      assert.match(stderr, /does not exist; nothing to cut over/);
       assert.equal(fs.existsSync(missingPlist), false);
+    });
+
+    describe('the Node XML fallback (#3198 R3 — no PlistBuddy, e.g. Linux CI)', () => {
+      it('--status reads ProgramArguments[0] via the Node fallback, matching PlistBuddy\'s own answer', () => {
+        run(['--stage', '--base-dir', baseDir]);
+        run(['--cutover', '--base-dir', baseDir, '--plist', plistPath], { HOME: fakeHome });
+        const viaPlistBuddy = JSON.parse(run(['--status', '--base-dir', baseDir, '--plist', plistPath, '--json']));
+        const viaFallback = JSON.parse(run(
+          ['--status', '--base-dir', baseDir, '--plist', plistPath, '--json'],
+          { TANGLECLAW_FDA_FORCE_NODE_PLIST: '1' }
+        ));
+        assert.equal(viaFallback.plistProgramArgument0, viaPlistBuddy.plistProgramArgument0);
+        assert.equal(viaFallback.plistUsingManagedNode, true);
+      });
+
+      it('--cutover writes ProgramArguments[0] via the Node fallback, byte-identical in effect to PlistBuddy\'s Set', () => {
+        run(['--stage', '--base-dir', baseDir]);
+        const managedNode = path.join(baseDir, 'bin', 'node');
+        run(['--cutover', '--base-dir', baseDir, '--plist', plistPath],
+          { HOME: fakeHome, TANGLECLAW_FDA_FORCE_NODE_PLIST: '1' });
+        const updated = fs.readFileSync(plistPath, 'utf8');
+        assert.match(updated, new RegExp(managedNode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+        assert.doesNotMatch(updated, /\/opt\/homebrew\/bin\/node/);
+        // Every surrounding line is untouched — the fallback edits only the
+        // one <string>, never rewrites the file wholesale.
+        assert.match(updated, /<key>Label<\/key><string>com\.tangleclaw\.server<\/string>/);
+        assert.match(updated, /<string>server\.js<\/string>/);
+      });
+
+      it('--cutover refuses, changing nothing, when the plist does not have the expected ProgramArguments shape', () => {
+        run(['--stage', '--base-dir', baseDir]);
+        const unshapedPlist = '<plist version="1.0"><dict><key>Label</key><string>x</string></dict></plist>';
+        fs.writeFileSync(plistPath, unshapedPlist);
+        assert.throws(() => execFileSync(SCRIPT, ['--cutover', '--base-dir', baseDir, '--plist', plistPath], {
+          encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, HOME: fakeHome, TANGLECLAW_FDA_FORCE_NODE_PLIST: '1' }
+        }));
+        // The backup is made before the write is attempted (so a partial
+        // write can always be rolled back) — a harmless, already-shipped
+        // R2 behavior this test isn't about; what matters here is that the
+        // LIVE plist itself is never touched when the shape doesn't match.
+        assert.equal(fs.readFileSync(plistPath, 'utf8'), unshapedPlist, 'a plist the fallback cannot parse must be left byte-for-byte unchanged');
+      });
     });
   });
 });
