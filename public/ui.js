@@ -8114,6 +8114,25 @@ function wrapAndRelaunchMaster() {
 const MASTER_ATTACHMENT_THUMB_CACHE = new Map(); // filename -> blob: URL, revoked on refresh
 
 /**
+ * Whether a filename names a raster image this panel can thumbnail (#3218).
+ * `lib/secure-clipboard.js#listSecretFiles` (`GET /api/master/attachments`)
+ * returns only `{filename, bytes, mtimeMs}` — no image/not-image flag — so
+ * this is inferred client-side from the extension rather than branching on
+ * a server field that does not exist. The extension set mirrors
+ * `lib/secure-clipboard.js#readImageFile`'s own `IMAGE_TYPES` exactly
+ * (R-Gate R2 BLOCKING 2): png/jpg/jpeg/webp/gif only — NOT bmp or svg,
+ * which that route refuses with 415. A false positive for an extension it
+ * DOES accept costs nothing worse than a thumbnail `<img>` that never gets
+ * a `src`; one for an extension it refuses would instead try to preview a
+ * file the server will never serve as an image.
+ * @param {string} filename
+ * @returns {boolean}
+ */
+function isMasterAttachmentImage(filename) {
+  return /\.(png|jpe?g|webp|gif)$/i.test(String(filename || ''));
+}
+
+/**
  * Fetch one pending attachment's bytes as a `blob:` URL, with the same
  * operator-proof headers `tcOperatorProofHeaders` builds for every other
  * authenticated-but-not-JSON read on this page (mirrors
@@ -8150,12 +8169,28 @@ async function refreshMasterAttachments() {
     const item = document.createElement('span');
     item.className = 'master-attachment-thumb';
     item.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin:2px;';
-    const img = document.createElement('img');
-    img.alt = file.filename;
-    img.style.cssText = 'width:36px;height:36px;object-fit:cover;border-radius:3px;';
-    fetchMasterAttachmentThumb(file.filename).then((url) => {
-      if (url) { MASTER_ATTACHMENT_THUMB_CACHE.set(file.filename, url); img.src = url; }
-    });
+
+    if (isMasterAttachmentImage(file.filename)) {
+      const img = document.createElement('img');
+      img.alt = file.filename;
+      img.style.cssText = 'width:36px;height:36px;object-fit:cover;border-radius:3px;';
+      fetchMasterAttachmentThumb(file.filename).then((url) => {
+        if (url) { MASTER_ATTACHMENT_THUMB_CACHE.set(file.filename, url); img.src = url; }
+      });
+      item.appendChild(img);
+    } else {
+      const chip = document.createElement('span');
+      chip.className = 'master-attachment-chip';
+      chip.style.cssText = 'display:inline-flex;align-items:center;padding:2px 6px;border-radius:3px;background:var(--elevated-bg);font-size:0.8em;';
+      chip.textContent = `📄 ${Math.max(1, Math.round((file.bytes || 0) / 1024))} KB`;
+      item.appendChild(chip);
+    }
+    const name = document.createElement('span');
+    name.className = 'master-attachment-name';
+    name.textContent = file.filename;
+    name.style.cssText = 'font-size:0.75em;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    item.appendChild(name);
+
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'banner-btn';
@@ -8165,10 +8200,30 @@ async function refreshMasterAttachments() {
       apiMutate(`/api/master/attachments/${encodeURIComponent(file.filename)}`, 'DELETE')
         .then(() => refreshMasterAttachments());
     });
-    item.appendChild(img);
     item.appendChild(del);
     strip.appendChild(item);
   }
+}
+
+/**
+ * A filename sanitizer equivalent to `tcSanitizeMasterAttachmentFilename`
+ * (`public/api-helper.js`) for when that module is absent (#3218 R-Gate R2
+ * WARNING 1) — the same character class, PLUS the two edge cases that
+ * class alone misses: `lib/secure-clipboard.js`'s `SAFE_FILENAME_RE`
+ * (`/^(?!\.{1,2}$)[A-Za-z0-9._-]{1,128}$/`) explicitly refuses a bare `.`
+ * or `..`, which surviving the character-class replace unchanged would
+ * otherwise send straight to the server; and a 128-character cap, since
+ * that regex refuses anything longer. Deliberately simpler than the real
+ * sanitizer (no stem/extension split, no batch dedup) — this is a
+ * fallback for when that one is not loaded, not a second implementation
+ * of it.
+ * @param {string} rawName
+ * @returns {string}
+ */
+function _tcMasterFallbackSanitizeFilename(rawName) {
+  let name = String(rawName || '').replace(/[^A-Za-z0-9._-]/g, '_');
+  if (!name || /^\.{1,2}$/.test(name)) name = 'attachment';
+  return name.slice(0, 128);
 }
 
 /**
@@ -8188,9 +8243,14 @@ async function uploadMasterAttachment(file) {
   });
   const content = String(dataUrl).split(',')[1] || '';
   if (!content) return;
-  const result = await apiMutate('/api/master/attachments', 'POST', {
-    filename: file.name || `attachment-${Date.now()}.png`, content
-  });
+  // #3218: sanitize via the shared helper when another car's module provides
+  // one (feature-detected — this car does not add that module), falling back
+  // to an equivalent inline sanitizer so uploads work before it lands.
+  const rawName = (file && file.name) ? file.name : `attachment-${Date.now()}.png`;
+  const filename = (typeof window.tcSanitizeMasterAttachmentFilename === 'function')
+    ? window.tcSanitizeMasterAttachmentFilename(rawName)
+    : _tcMasterFallbackSanitizeFilename(rawName);
+  const result = await apiMutate('/api/master/attachments', 'POST', { filename, content });
   if (result) refreshMasterAttachments();
 }
 
@@ -8217,25 +8277,951 @@ function addMasterAttachmentStrip() {
   const seatsRow = document.getElementById('masterUtilitySeatsRow');
   if (seatsRow && seatsRow.parentNode) seatsRow.parentNode.insertBefore(strip, seatsRow.nextSibling);
 
-  panel.addEventListener('dragover', (e) => { e.preventDefault(); });
-  panel.addEventListener('drop', (e) => {
-    e.preventDefault();
-    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) uploadMasterAttachment(f);
-  });
-  panel.addEventListener('paste', (e) => {
-    const items = e.clipboardData && e.clipboardData.items;
-    if (!items) return;
-    for (const item of items) {
-      if (item.kind === 'file' && item.type.startsWith('image/')) {
-        const f = item.getAsFile();
-        if (f) uploadMasterAttachment(f);
-        break;
+  // #3218 R-Gate R2 BLOCKING 1: the iframe-safe dropzone binder (another
+  // car's module) already installs its OWN dragover/drop/paste listeners
+  // directly on this same `panel` element — running the fallback listeners
+  // below unconditionally alongside it meant a single paste or drop fired
+  // BOTH handlers, uploading every file twice. The fallback now only
+  // installs when the real binder is absent, so it is a genuine fallback
+  // (belt OR suspenders on this element, never both), not a permanent
+  // second listener.
+  if (typeof window.tcBindMasterDropzone === 'function') {
+    window.tcBindMasterDropzone({
+      doc: document, panelEl: panel, frameEl: document.getElementById('masterFrame'),
+      prefix: 'masterPanel', onUpload: uploadMasterAttachment
+    });
+  } else {
+    panel.addEventListener('dragover', (e) => { e.preventDefault(); });
+    panel.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) uploadMasterAttachment(f);
+    });
+    panel.addEventListener('paste', (e) => {
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      for (const item of items) {
+        // #3218: any file, not just an image — the all-file upload support
+        // this car adds applies to paste too.
+        if (item.kind === 'file') {
+          const f = item.getAsFile();
+          if (f) uploadMasterAttachment(f);
+          break;
+        }
       }
-    }
-  });
+    });
+  }
 
   refreshMasterAttachments();
+}
+
+/**
+ * Append one conversation bubble to the Admin Fleet chat stream, using the
+ * same `.v6-conversation-event`/`.v6-conversation-content` classes the real
+ * V6 chat stream renders (`public/v6-shell.js#conversationViewMarkup`), so
+ * this panel's bubbles already pick up that styling without touching
+ * `public/style.css` (outside this car's file scope).
+ * @param {'user'|'assistant'} role
+ * @param {string} text
+ * @returns {void}
+ */
+function appendMasterChatTurn(role, text) {
+  const stream = document.getElementById('masterChatStream');
+  if (!stream) return;
+  const li = document.createElement('li');
+  li.className = `v6-conversation-event is-${role}`;
+  const content = document.createElement('span');
+  content.className = 'v6-conversation-content';
+  content.textContent = text;
+  li.appendChild(content);
+  stream.appendChild(li);
+  stream.scrollTop = stream.scrollHeight;
+}
+
+/**
+ * A snapshot of the terminal's current non-empty output lines (#3218
+ * R-Gate R2 BLOCKING 3), for diffing against a later snapshot to find new
+ * assistant output. Reads xterm.js's own buffer API first
+ * (`term.buffer.active`, one `getLine(i).translateToString(true)` per row,
+ * trimmed) — `term.getText()`/`term.lastOutput` are fallback seams for a
+ * build that wires the terminal differently. Never throws: any failure
+ * reading the buffer returns an empty snapshot rather than breaking the
+ * send this supports.
+ * @param {object} term
+ * @returns {string[]}
+ */
+function readMasterTerminalSnapshot(term) {
+  if (!term) return [];
+  try {
+    const buf = term.buffer && term.buffer.active;
+    if (buf && typeof buf.getLine === 'function' && typeof buf.length === 'number') {
+      const lines = [];
+      for (let i = 0; i < buf.length; i++) {
+        const line = buf.getLine(i);
+        const text = line && typeof line.translateToString === 'function' ? line.translateToString(true).trim() : '';
+        if (text) lines.push(text);
+      }
+      return lines;
+    }
+    if (typeof term.getText === 'function') {
+      return String(term.getText() || '').split('\n').map((l) => l.trim()).filter(Boolean);
+    }
+    if (typeof term.lastOutput === 'string') {
+      return term.lastOutput.split('\n').map((l) => l.trim()).filter(Boolean);
+    }
+  } catch (err) {
+    // Reading the buffer must never break the send it supports.
+  }
+  return [];
+}
+
+/**
+ * Outbound sends queued here, never pasted into the terminal immediately
+ * (#3218 R-Gate R6 BLOCKING 1) — R5's model pasted every send the moment
+ * the operator made it, sharing one listener across however many turns
+ * were simultaneously in flight. That left a genuine ambiguity a raw,
+ * undifferentiated PTY stream cannot resolve: a line that happens to read
+ * the same text as the NEXT queued turn's own sent text is indistinguishable
+ * from that turn's real echo, whether it's a REPEATED identical command
+ * ("status" twice) or turn 1's reply text just happening to read the same
+ * as turn 2's about-to-be-sent command. The only way to remove that
+ * ambiguity by construction, rather than guess harder at it, is to never
+ * have more than one turn's text sitting in the terminal's own input
+ * stream unresolved at a time — so a send made while another is still
+ * active queues here instead, and {@link _dispatchNextQueuedMasterSend}
+ * pastes it for real only once the turn ahead of it has retired.
+ * @type {string[]}
+ */
+let _masterSendQueue = [];
+
+/**
+ * The turn currently in flight — at most one entry, by construction of
+ * the serialized queue above (kept as an array only because {@link
+ * _partitionMasterTerminalDelta} already has this shape; never expect
+ * more than one here).
+ * @type {{sentText: string, assistantTurnEl: (object|null), _lastBucketLen: number}[]}
+ */
+let _masterActiveTurns = [];
+
+/**
+ * The snapshot taken right before the active turn's own `paste`/`input`
+ * call — advanced forward (#3218 R-Gate R6 BLOCKING 2) only when that
+ * turn RETIRES, never on every sync, so a still-active turn's own delta
+ * keeps being recomputed from scratch against the SAME fixed point (each
+ * sync's bucket is the turn's full reply-so-far, safe to overwrite the
+ * bubble's `textContent` with) — but a retired turn's lines are baked
+ * into history and never recomputed again, which is what actually bounds
+ * memory and keeps a later turn's delta from ever being corrupted by an
+ * earlier one's content if the pty's scrollback later rolls over it.
+ * @type {string[]}
+ */
+let _masterActiveBaseline = [];
+
+/**
+ * The shared listener's own `dispose()` — armed on first dispatch, and
+ * disposed once BOTH {@link _masterActiveTurns} and {@link
+ * _masterSendQueue} are empty, so nothing keeps listening once the
+ * conversation goes fully idle; a later send re-arms a fresh one rather
+ * than reusing anything left over.
+ * @type {Function|null}
+ */
+let _masterActiveDispose = null;
+
+/**
+ * The oldest active turn's resettable "gone quiet" timer (#3218 R-Gate R7
+ * BLOCKING 1) — any CONTENT change (new lines, or a same-line streaming
+ * update) on a sync resets it; firing after {@link _masterTurnSettleMs}
+ * of silence retires the turn. Replaces R6's own two-consecutive-callback
+ * check, which assumed a quiet round would always get a FOLLOW-UP
+ * `onWriteParsed`/`onRender` callback to notice it was quiet in — a real
+ * xterm.js terminal only ever fires that event on an actual write or
+ * render, so once the final reply line has landed and the terminal goes
+ * genuinely silent, there is no guaranteed second callback at all, and
+ * R6's retirement could wait forever.
+ * @type {ReturnType<typeof setTimeout>|null}
+ */
+let _masterSettleTimer = null;
+
+/**
+ * Armed the moment a turn is dispatched, cleared the instant it gets ANY
+ * reply content at all — an echo-only/no-reply turn (#3218 R-Gate R7
+ * BLOCKING 1) would otherwise wedge the serialized queue forever, since
+ * {@link _masterSettleTimer} only ever starts on a CONTENT change and
+ * never even arms for a turn that gets no content whatsoever.
+ * @type {ReturnType<typeof setTimeout>|null}
+ */
+let _masterNoReplyTimer = null;
+
+/**
+ * A CONSERVATIVE fallback only (#3218 R-Gate R8) — the PRIMARY retirement
+ * signal is the terminal actually returning to its prompt (see {@link
+ * _isMasterPromptLine}), trustworthy regardless of how long generation
+ * took. This is how long a turn's content may sit unchanged with NO
+ * prompt ever appearing before it's retired anyway, overridable per
+ * `globalThis.TC_MASTER_TURN_SETTLE_MS` (tests use a small value to stay
+ * fast). R7's own 150ms default assumed "quiet" meant "done" — real model
+ * output routinely pauses well past 150ms BETWEEN streamed chunks while
+ * still mid-reply, which this fallback must never mistake for completion;
+ * raised by two orders of magnitude so it only ever fires for a CLI that
+ * genuinely never prints a prompt again.
+ * @returns {number}
+ */
+function _masterTurnSettleMs() {
+  const v = typeof globalThis !== 'undefined' ? globalThis.TC_MASTER_TURN_SETTLE_MS : undefined;
+  return Number.isFinite(v) && v >= 0 ? v : 15000;
+}
+
+/**
+ * A CONSERVATIVE fallback only (#3218 R-Gate R8) — how long a dispatched
+ * turn may go with NO reply content AND no prompt return at all before
+ * it's retired anyway, overridable per `globalThis.TC_MASTER_TURN_NO_REPLY_MS`.
+ * R7's own 800ms default assumed a model's time-to-first-token could
+ * never exceed it — real models routinely take several seconds, which
+ * this fallback must never mistake for "never going to reply"; raised well
+ * past realistic TTFT so it only ever fires for a genuinely stuck session.
+ * @returns {number}
+ */
+function _masterTurnNoReplyMs() {
+  const v = typeof globalThis !== 'undefined' ? globalThis.TC_MASTER_TURN_NO_REPLY_MS : undefined;
+  return Number.isFinite(v) && v >= 0 ? v : 30000;
+}
+
+/** Clears both turn-lifecycle timers, if armed. @returns {void} */
+function _clearMasterTurnTimers() {
+  if (_masterSettleTimer != null) { clearTimeout(_masterSettleTimer); _masterSettleTimer = null; }
+  if (_masterNoReplyTimer != null) { clearTimeout(_masterNoReplyTimer); _masterNoReplyTimer = null; }
+}
+
+/**
+ * Retire the oldest active turn for good: clears both lifecycle timers,
+ * shifts it out of {@link _masterActiveTurns}, advances {@link
+ * _masterActiveBaseline} past it, and dispatches whatever is next in
+ * {@link _masterSendQueue} (#3218 R-Gate R6/R7).
+ * @param {object} term
+ * @param {string[]} baselineNow - A fresh {@link readMasterTerminalSnapshot}, taken AT retirement time (a timer fires later than the sync call that armed it, so the terminal may have moved on since).
+ * @returns {void}
+ */
+function _retireOldestMasterTurn(term, baselineNow) {
+  _clearMasterTurnTimers();
+  _masterActiveTurns.shift();
+  _masterActiveBaseline = baselineNow;
+  _dispatchNextQueuedMasterSend(term);
+}
+
+/**
+ * The new lines in `nowLines` that were not already in `beforeLines`, by
+ * multiset frequency rather than set membership (#3218 R-Gate R4 BLOCKING 3):
+ * a `Set`-based diff would make a genuinely new reply line invisible the
+ * moment an identical string had EVER appeared earlier in scrollback (e.g.
+ * a terse "OK" reply, after an earlier "OK" line already sits in the
+ * buffer) — set membership cannot tell "seen before" from "seen again,
+ * for real this time". Counting consumes one occurrence of a repeated
+ * `before` line per matching `now` line, in order, so only a count that
+ * actually grew is reported as new.
+ * @param {string[]} beforeLines
+ * @param {string[]} nowLines
+ * @returns {string[]}
+ */
+function _masterTerminalLineDelta(beforeLines, nowLines) {
+  const remaining = new Map();
+  for (const line of beforeLines) remaining.set(line, (remaining.get(line) || 0) + 1);
+  const added = [];
+  for (const line of nowLines) {
+    const left = remaining.get(line) || 0;
+    if (left > 0) remaining.set(line, left - 1);
+    else added.push(line);
+  }
+  return added;
+}
+
+/**
+ * Whether `line` is the pty's own echo of what was just sent (#3218 R-Gate
+ * R4 BLOCKING 3) — either bare, or prefixed by a prompt the terminal
+ * printed alongside it (`"Admin-PM > status?"`, `"❯ status?"`, `"$
+ * status?"`, …). Stripping a leading prompt is deliberately generic (any
+ * run of prompt-ish characters, or a named-prompt-then-delimiter form)
+ * rather than a fixed list of exact prompts, since this project's own
+ * prompt text is not guaranteed stable across ttyd/engine versions.
+ * @param {string} line
+ * @param {string} sentText
+ * @returns {boolean}
+ */
+/**
+ * A run of prompt-ish decoration a terminal prints alongside whatever it's
+ * showing — a named prompt then a delimiter (`"Admin-PM > "`,
+ * `"tangleclaw-master$ "`), or just bare prompt characters (`"$ "`,
+ * `"❯ "`). Shared by {@link isMasterTerminalEchoLine} (what's left after
+ * stripping it must equal the sent text, to recognize an echo) and {@link
+ * _isMasterPromptLine} (what's left after stripping it must be NOTHING AT
+ * ALL, to recognize the terminal sitting at a bare, idle prompt — #3218
+ * R-Gate R8).
+ */
+const MASTER_TERMINAL_PROMPT_PREFIX = /^(?:.*?(?:Admin-PM|tangleclaw-master)\s*[:>$❯›#]|[\s>$❯›#%]+)\s*/i;
+
+function isMasterTerminalEchoLine(line, sentText) {
+  if (line === sentText) return true;
+  const stripped = line.replace(MASTER_TERMINAL_PROMPT_PREFIX, '').trim();
+  return stripped === sentText;
+}
+
+/**
+ * Whether `line` is NOTHING but the terminal's own idle prompt — no real
+ * content survives stripping {@link MASTER_TERMINAL_PROMPT_PREFIX} off it
+ * (#3218 R-Gate R8). The PRIMARY signal a dispatched command has actually
+ * finished and control returned to the shell, trustworthy regardless of
+ * how long generation took — unlike a fixed "gone quiet for N ms" timer,
+ * which a real model's time-to-first-token or an inter-chunk streaming
+ * pause can both comfortably outlast while still legitimately mid-reply.
+ * @param {string} line
+ * @returns {boolean}
+ */
+function _isMasterPromptLine(line) {
+  return String(line || '').replace(MASTER_TERMINAL_PROMPT_PREFIX, '').trim() === '';
+}
+
+/**
+ * Busy-state substrings each supported engine's TUI prints while a turn
+ * is in flight (#3218 R-Gate R9), measured in `test/_wake-fixtures.js` —
+ * matched as a SUBSTRING since each is embedded within a longer
+ * help/status row in the real captures (Claude's
+ * `"… · esc to interrupt · …"`, antigravity/Gemini-CLI's
+ * `"esc to cancel                    Gemini 3.5 Flash (Medium)"`), never
+ * the row's whole content.
+ */
+const MASTER_ENGINE_BUSY_SUBSTRINGS = ['esc to interrupt', 'esc to cancel'];
+
+/**
+ * Codex's own busy run-state words (#3218 R-Gate R9) — matched ONLY as an
+ * EXACT match of one line's own TRIMMED text, never a substring: codex
+ * truncates its status row at the pane width and sometimes renders NO
+ * state token at all, and a model's own reply can legitimately contain
+ * the English word "working" or "thinking" in prose. `test/_wake-fixtures.js`'s
+ * own `CX_TRANSCRIPT_PROSE_PANE` documents exactly this risk for "Ready"
+ * (ledger 5030: a resting pane was wrongly reported busy — sorry, idle —
+ * because prose elsewhere on the pane merely MENTIONED the word); an
+ * exact-line match is what that fixture exists to guard against. #3218
+ * R-Gate R10 narrows this further: even an EXACT match is only trusted
+ * within the CHROME region {@link _masterChromeStartIndex} finds — a
+ * reply whose own content happens to be exactly the word "Working" is a
+ * real risk an exact match alone cannot rule out on its own.
+ */
+const MASTER_ENGINE_BUSY_EXACT_LINES = ['Working', 'Thinking'];
+
+/**
+ * Whether `trimmed` (an already-`.trim()`-med line) is an engine's own
+ * positive at-rest marker (#3218 R-Gate R9) — Codex's "Ready" run-state
+ * row, or antigravity/Gemini-CLI's "? for shortcuts" hint (`startsWith`,
+ * not `===`: the real capture pads it with trailing model-name text,
+ * `"? for shortcuts                    Gemini 3.5 Flash (Medium)"`).
+ * Exact/prefix-anchored for the same reason as {@link
+ * MASTER_ENGINE_BUSY_EXACT_LINES} — "Ready" is a word a reply could
+ * legitimately contain in running prose; #3218 R-Gate R10 additionally
+ * confines WHERE this is ever checked to the chrome region.
+ * @param {string} trimmed
+ * @returns {boolean}
+ */
+function _isMasterEngineIdleMarkerLine(trimmed) {
+  return trimmed === 'Ready' || trimmed.startsWith('? for shortcuts');
+}
+
+/**
+ * Whether `line` carries Codex's own animated composer shimmer (#3218
+ * R-Gate R10) — a run of Unicode Braille Patterns (U+2800–U+28FF) no
+ * natural-language reply would ever legitimately contain, making it a
+ * reliable anchor for "the composer row is HERE" regardless of whatever
+ * placeholder text or exact shimmer frame surrounds it.
+ * @param {string} line
+ * @returns {boolean}
+ */
+function _isMasterComposerLine(line) {
+  return /[⠀-⣿]/.test(String(line || ''));
+}
+
+/**
+ * The index of the LAST line in `nowLines` that anchors the terminal's
+ * own chrome — a bare idle/busy prompt glyph ({@link _isMasterPromptLine})
+ * or Codex's composer row ({@link _isMasterComposerLine}) — or
+ * `nowLines.length` (an EMPTY range) when no such anchor exists at all
+ * (#3218 R-Gate R10 BLOCKER A). This is what busy/idle marker detection
+ * is scoped to, from here to the end of the pane: a model's OWN reply
+ * streams out ABOVE this anchor, never below it, so a reply line that
+ * happens to read "Ready"/"Working"/"Thinking" sitting further up is
+ * never mistaken for the engine's real run-state row. No anchor found at
+ * all (a permission dialog replaces the normal prompt/composer with its
+ * own selector rows) deliberately scopes the range to NOTHING — neither
+ * busy nor idle can ever be detected there, which is exactly the
+ * fail-closed behavior a dialog needs (see {@link _isMasterEngineDialog}
+ * for the separate, deliberately UNscoped check that actually recognizes
+ * one).
+ * @param {string[]} nowLines
+ * @returns {number}
+ */
+function _masterChromeStartIndex(nowLines) {
+  for (let i = nowLines.length - 1; i >= 0; i--) {
+    if (_isMasterPromptLine(nowLines[i]) || _isMasterComposerLine(nowLines[i])) return i;
+  }
+  return nowLines.length;
+}
+
+/**
+ * Whether ANY line WITHIN the chrome region (see {@link
+ * _masterChromeStartIndex}) of the CURRENT terminal snapshot signals the
+ * attached engine's TUI is mid-turn (#3218 R-Gate R9, scoped in R10).
+ * Checked before either the positional idle signal or the settle/
+ * no-reply fallback timers are ever allowed to retire a turn — Claude and
+ * antigravity/Gemini-CLI both keep rendering their own bare prompt glyph
+ * (`❯ ` / `>`) throughout generation, not just at rest
+ * (`test/_wake-fixtures.js`'s own `BUSY_PANE`/`AG_BUSY_PANE`) —
+ * {@link _isMasterPromptLine} alone cannot tell those apart from idle.
+ * @param {string[]} nowLines
+ * @returns {boolean}
+ */
+function _isMasterEngineBusy(nowLines) {
+  const chromeStart = _masterChromeStartIndex(nowLines);
+  for (let i = chromeStart; i < nowLines.length; i++) {
+    const trimmed = String(nowLines[i] || '').trim();
+    if (MASTER_ENGINE_BUSY_SUBSTRINGS.some((s) => trimmed.includes(s))) return true;
+    if (MASTER_ENGINE_BUSY_EXACT_LINES.includes(trimmed)) return true;
+  }
+  return false;
+}
+
+/**
+ * Dialog/selector substrings measured in `test/_wake-fixtures.js`'s
+ * `AG_DIALOG_PANE` (#3218 R-Gate R10) — its help row names the keys a
+ * selector dialog (not a free-text prompt) actually accepts, a phrasing
+ * no model reply would naturally produce.
+ */
+const MASTER_ENGINE_DIALOG_SUBSTRINGS = ['enter to confirm', '↑↓ to select'];
+
+/**
+ * A structural radio-choice row — `"● Yes   ○ No"` (antigravity/Gemini-
+ * CLI's own real dialog capture) — anchored to the row's OWN start so
+ * ordinary prose that merely mentions both glyphs in passing (a status
+ * line, `"Status: ○ pending, ● complete"`) never matches (#3218 R-Gate
+ * R11 BLOCKER 1: R10's own `[●○]` test matched either glyph ANYWHERE in
+ * ANY line, with no structure required at all).
+ */
+const MASTER_ENGINE_RADIO_DIALOG_RE = /^●\s+\S+.*\s+○\s+\S+/;
+
+/**
+ * Whether `nowLines` shows a genuine numbered-selector dialog (#3218
+ * R-Gate R11 BLOCKER 1, given the same resolved-dialog lifecycle guard
+ * as {@link _hasMasterRadioDialogSignature} in R12 BLOCKER 1) — R10's
+ * own `[❯›]` cursor glyph before `\d+\.\s` was OPTIONAL, so an ordinary
+ * numbered reply list (`"1. Install dependencies"`, `"2. Run tests"`,
+ * no cursor anywhere) matched it exactly as well as a real dialog's
+ * highlighted option (`"❯ 1. Yes"`) did. The cursor is now MANDATORY:
+ * a bare numbered line never signals a dialog on its own, only a line a
+ * real selector actually highlights does — paired with a sibling
+ * numbered option row or the dialog's own help-row phrasing.
+ *
+ * R11 shipped this WITHOUT the "no chrome below" guard {@link
+ * _hasMasterRadioDialogSignature} already had, on the reasoning that the
+ * mandatory cursor was specific enough on its own — true for a FRESH
+ * false positive, but `readMasterTerminalSnapshot` reads the full
+ * active buffer including retained SCROLLBACK: once a real numbered
+ * dialog resolves, its own cursor/sibling rows stay sitting in `now`
+ * forever, with a fresh prompt/composer and a completed reply appearing
+ * BELOW them. Checked the same way as the radio case: find the LAST
+ * line among the cursor row, a sibling numbered option, or the help-row
+ * phrasing — not just "does one exist anywhere", so a sibling/help row
+ * belonging to an unrelated EARLIER, already-resolved dialog can't
+ * anchor the check — then require no bare prompt or Codex composer line
+ * sits AFTER it.
+ * @param {string[]} nowLines
+ * @param {string[]} trimmedLines
+ * @returns {boolean}
+ */
+function _hasMasterNumberedDialogSignature(nowLines, trimmedLines) {
+  if (!trimmedLines.some((t) => /^[❯›]\s*\d+\.\s/.test(t))) return false;
+  let lastSignalIndex = -1;
+  for (let i = 0; i < trimmedLines.length; i++) {
+    const t = trimmedLines[i];
+    if (/^[❯›]\s*\d+\.\s/.test(t) || /^\d+\.\s/.test(t) || MASTER_ENGINE_DIALOG_SUBSTRINGS.some((s) => t.includes(s))) lastSignalIndex = i;
+  }
+  const hasSiblingOption = trimmedLines.some((t) => /^\d+\.\s/.test(t));
+  const hasHelpRow = trimmedLines.some((t) => MASTER_ENGINE_DIALOG_SUBSTRINGS.some((s) => t.includes(s)));
+  if (!hasSiblingOption && !hasHelpRow) return false;
+  for (let i = lastSignalIndex + 1; i < nowLines.length; i++) {
+    if (_isMasterPromptLine(nowLines[i]) || _isMasterComposerLine(nowLines[i])) return false;
+  }
+  return true;
+}
+
+/**
+ * Whether `nowLines` shows a genuine radio-selector dialog (#3218
+ * R-Gate R11 BLOCKER 1) — a structural radio-choice row ({@link
+ * MASTER_ENGINE_RADIO_DIALOG_RE}) or the dialog's own help-row phrasing
+ * ({@link MASTER_ENGINE_DIALOG_SUBSTRINGS}), AND only when no bare
+ * prompt or Codex composer line ({@link _isMasterPromptLine}, {@link
+ * _isMasterComposerLine}) sits BELOW whichever of those two signals is
+ * the LAST one found in the snapshot — real chrome returning below
+ * stale dialog text means the dialog has already resolved. The numbered
+ * case above needs no such guard: its mandatory cursor glyph is already
+ * specific enough on its own, where "enter to confirm"/"↑↓ to select"
+ * alone is comparatively weaker and worth the extra check.
+ * @param {string[]} nowLines
+ * @param {string[]} trimmedLines
+ * @returns {boolean}
+ */
+function _hasMasterRadioDialogSignature(nowLines, trimmedLines) {
+  let lastSignalIndex = -1;
+  for (let i = 0; i < trimmedLines.length; i++) {
+    const t = trimmedLines[i];
+    if (MASTER_ENGINE_RADIO_DIALOG_RE.test(t) || MASTER_ENGINE_DIALOG_SUBSTRINGS.some((s) => t.includes(s))) lastSignalIndex = i;
+  }
+  if (lastSignalIndex === -1) return false;
+  for (let i = lastSignalIndex + 1; i < nowLines.length; i++) {
+    if (_isMasterPromptLine(nowLines[i]) || _isMasterComposerLine(nowLines[i])) return false;
+  }
+  return true;
+}
+
+/**
+ * Whether the CURRENT terminal snapshot shows an active permission/
+ * confirmation dialog (#3218 R-Gate R10 BLOCKER B, narrowed in R11
+ * BLOCKER 1) — checked UNSCOPED (not confined to {@link
+ * _masterChromeStartIndex}'s chrome region), since a dialog's own
+ * selector rows REPLACE the normal prompt/composer chrome entirely,
+ * leaving no anchor to scope against. Two independent structural
+ * signatures ({@link _hasMasterNumberedDialogSignature}, {@link
+ * _hasMasterRadioDialogSignature}), never the loose "Do you
+ * want"/"Yes,"/"No,"/"Allow" wording, or a bare `[●○]`-anywhere test, a
+ * model's own reply could legitimately contain.
+ * @param {string[]} nowLines
+ * @returns {boolean}
+ */
+function _isMasterEngineDialog(nowLines) {
+  const trimmedLines = nowLines.map((line) => String(line || '').trim());
+  return _hasMasterNumberedDialogSignature(nowLines, trimmedLines) || _hasMasterRadioDialogSignature(nowLines, trimmedLines);
+}
+
+/**
+ * Whether the attached engine is in ANY state that must block retirement
+ * (#3218 R-Gate R10 BLOCKER B) — busy, or showing an active dialog. The
+ * one combined gate both the positional idle signal and the settle/
+ * no-reply fallback timers check, rather than `_isMasterEngineBusy`
+ * alone: against the measured dialog fixtures, busy is false AND idle is
+ * false, so a fallback timer gated on busy alone would still retire and
+ * paste the next queued send into an active permission prompt.
+ * @param {string[]} nowLines
+ * @returns {boolean}
+ */
+function _isMasterEngineBlocking(nowLines) {
+  return _isMasterEngineBusy(nowLines) || _isMasterEngineDialog(nowLines);
+}
+
+/**
+ * Whether the terminal currently shows the attached engine genuinely at
+ * rest (#3218 R-Gate R9, scoped and corrected in R10) — an engine-specific
+ * positive idle marker, or a bare prompt line, found WITHIN the chrome
+ * region (see {@link _masterChromeStartIndex}) — never scanning reply
+ * content above it, which is what let a reply line that happened to read
+ * "Ready" retire the turn immediately in R9 regardless of position. EVERY
+ * signal found is still checked POSITIONALLY against `baselineLines`
+ * (R9's own fix, kept): fresh only when it sits beyond where baseline
+ * ended, or its content differs from whatever baseline had at that exact
+ * position — Claude's own TUI redraws its bare `❯ ` prompt glyph FIRST,
+ * with status chrome below it, not last, and R9's own marker check had NO
+ * positional gating at all, so a pre-existing "Ready" already sitting in
+ * `baselineLines` (Codex's own `CX_IDLE_PANE`, if that's what a turn
+ * started from) would otherwise retire on the very next unrelated delta,
+ * before the status row had even redrawn to "Working".
+ * @param {string[]} nowLines
+ * @param {string[]} baselineLines
+ * @returns {boolean}
+ */
+function _isMasterEngineIdle(nowLines, baselineLines) {
+  const chromeStart = _masterChromeStartIndex(nowLines);
+  for (let i = chromeStart; i < nowLines.length; i++) {
+    const trimmed = String(nowLines[i] || '').trim();
+    const signal = _isMasterEngineIdleMarkerLine(trimmed) || _isMasterPromptLine(nowLines[i]);
+    if (!signal) continue;
+    if (i >= baselineLines.length || nowLines[i] !== baselineLines[i]) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether `line` is terminal UI chrome rather than real reply content
+ * (#3218 R-Gate R9) — a bare idle prompt, or an engine's own positive
+ * idle marker row. Stripped from what actually renders into the
+ * assistant bubble, but ONLY from the TRAILING end of a retiring turn's
+ * own bucket (#3218 R-Gate R10 BLOCKER A: an EARLIER bucket line that
+ * merely happens to read "Ready" — genuine reply content, with more
+ * reply after it — must never be stripped just because it matches this
+ * predicate; only the chrome that actually trails the reply, the exact
+ * signal that triggered retirement, is this file's own idle state and
+ * never part of the reply).
+ * @param {string} line
+ * @returns {boolean}
+ */
+function _isMasterChromeLine(line) {
+  return _isMasterPromptLine(line) || _isMasterEngineIdleMarkerLine(String(line || '').trim());
+}
+
+/**
+ * Partition one shared delta of new terminal lines across every queued
+ * turn, in order (#3218 R-Gate R5 BLOCKING 1, R6 BLOCKING 1). Walks the
+ * delta with a single "currently receiving" pointer: a line is checked
+ * against the CURRENT turn's own echo FIRST — if that echo has not been
+ * consumed yet, THIS line is it, full stop, regardless of what it reads
+ * like. Only once the current turn's echo is already consumed does a
+ * line get checked against the NEXT queued turn's echo (advancing the
+ * pointer); everything else is appended to whichever turn is currently
+ * receiving. The order matters: checking the NEXT turn's echo before
+ * confirming the CURRENT one was already seen (R5's bug) mistook a
+ * repeated IDENTICAL command's own echo for the next turn's, skipping
+ * the current turn's echo consumption entirely and leaving it with no
+ * bubble while everything after landed in the wrong one. Re-derived from
+ * the full shared delta on every call (never accumulated), so re-running
+ * it as more output streams in is naturally idempotent — the same replay
+ * just lands on the same buckets.
+ * @param {string[]} delta
+ * @param {{sentText: string}[]} turns
+ * @returns {string[][]} One bucket of lines per `turns` entry, same order.
+ */
+function _partitionMasterTerminalDelta(delta, turns) {
+  const buckets = turns.map(() => []);
+  const echoed = turns.map(() => false);
+  let idx = 0;
+  for (const line of delta) {
+    if (!echoed[idx] && isMasterTerminalEchoLine(line, turns[idx].sentText)) {
+      echoed[idx] = true;
+      continue;
+    }
+    if (echoed[idx] && idx + 1 < turns.length && !echoed[idx + 1] && isMasterTerminalEchoLine(line, turns[idx + 1].sentText)) {
+      idx += 1;
+      echoed[idx] = true;
+      continue;
+    }
+    buckets[idx].push(line);
+  }
+  return buckets;
+}
+
+/**
+ * Diff the terminal's current output against {@link _masterActiveBaseline},
+ * partition it across every entry in {@link _masterActiveTurns} (at most
+ * one, by construction — see {@link _masterSendQueue}), and render each
+ * turn's OWN assistant bubble, created lazily on its first reply line so a
+ * turn still waiting on a reply shows no bubble at all (#3218 R-Gate
+ * R2/R4/R5).
+ *
+ * #3218 R-Gate R9 BLOCKING 1 (positional, not post-multiset-delta): the
+ * PRIMARY retirement signal is the CURRENT snapshot (`now`) genuinely
+ * showing the attached engine at rest ({@link _isMasterEngineIdle}) —
+ * checked against `now` directly, never against the partitioned delta.
+ * R8's own version checked the oldest turn's bucket instead, which broke
+ * on exactly the shape a real xterm session produces: pasting input
+ * MUTATES the SAME row the idle prompt occupied (`before = ['$']` becomes
+ * `now = ['$ first', …]`, not a NEW row), so once the reply finishes and a
+ * fresh trailing `'$'` row appears, `_masterTerminalLineDelta`'s multiset
+ * count silently consumes it as "the same `'$'` already in `before`" and
+ * it never reaches the bucket at all — R8's check could never see it.
+ *
+ * #3218 R-Gate R9 BLOCKING 2 (R10: widened to {@link _isMasterEngineBlocking}):
+ * busy OR an active dialog gates BOTH this positional signal and the
+ * settle/no-reply fallback timers, since Claude/antigravity both keep
+ * rendering their own bare prompt glyph throughout generation, not just
+ * at rest — without this gate, the positional idle check above would
+ * retire on the FIRST sync after the echo lands, mid-reply, every time;
+ * and against the measured dialog fixtures, busy alone is false, so a
+ * gate on busy alone would still retire and paste the next queued send
+ * into an active permission prompt.
+ *
+ * #3218 R-Gate R10 BLOCKER B: a turn that was genuinely OBSERVED busy at
+ * some point (`oldest._sawBusy`) and later returns to a snapshot
+ * BYTE-IDENTICAL to its own baseline (Claude's own `IDLE_PANE` ->
+ * `BUSY_PANE` -> the SAME `IDLE_PANE`) produces an EMPTY multiset delta —
+ * the bare prompt glyph sits at the exact same array position with the
+ * exact same content both times, so nothing about it ever looks "new".
+ * `delta.length > 0` alone would never let retirement fire for this
+ * round trip at all; once busy has genuinely been observed, an empty
+ * delta is re-checked against an EMPTY baseline instead (every line in
+ * the chrome region counts as fresh), which is what actually lets this
+ * round trip retire the moment the engine returns to rest.
+ * @param {object} term
+ * @returns {void}
+ */
+function syncMasterAssistantTurnsFromTerminal(term) {
+  if (_masterActiveTurns.length === 0) return;
+  const now = readMasterTerminalSnapshot(term);
+  const delta = _masterTerminalLineDelta(_masterActiveBaseline, now);
+  const buckets = _partitionMasterTerminalDelta(delta, _masterActiveTurns);
+  const oldest = _masterActiveTurns[0];
+  const blocking = Boolean(oldest) && _isMasterEngineBlocking(now);
+  if (oldest && _isMasterEngineBusy(now)) oldest._sawBusy = true;
+
+  let oldestIdle = false;
+  if (oldest && !blocking) {
+    if (delta.length > 0) {
+      oldestIdle = _isMasterEngineIdle(now, _masterActiveBaseline);
+    } else if (oldest._sawBusy) {
+      oldestIdle = _isMasterEngineIdle(now, []);
+    }
+  }
+  if (oldest && oldestIdle) {
+    // #3218 R-Gate R10 BLOCKER A: strip chrome from the TRAILING end of
+    // the bucket only, stopping at the first non-chrome line found — a
+    // reply whose own EARLIER content happens to read "Ready", with more
+    // reply after it, is never touched; only the trailing chrome that
+    // actually triggered retirement is.
+    //
+    // #3218 R-Gate R11 BLOCKER 2: that strip alone matched by PREDICATE
+    // only, with no bound at all — a SINGLE write delivering echo + a
+    // genuine final reply of exactly "Ready" + the completion prompt all
+    // at once produced a bucket of `['Ready']` (the trailing prompt
+    // itself is consumed as "old" by the multiset delta whenever it is
+    // byte-identical to the turn's own baseline prompt, never even
+    // reaching the bucket), and the loop still popped "Ready" off the
+    // end, since _isMasterChromeLine cannot tell a real reply of exactly
+    // "Ready" apart from a second chrome line once the real chrome is
+    // already gone. A bare line-COUNT budget is not enough either (it
+    // would still spend its one unit of budget popping "Ready" itself in
+    // exactly this shape) — strip is now bound to actual MEMBERSHIP in
+    // `now`'s own chrome region (`now.slice(chromeStart)`), consumed by
+    // multiset count exactly like {@link _masterTerminalLineDelta}: a
+    // bucket's trailing line is only ever chrome if it is a real
+    // occurrence of a line genuinely sitting in that region, never merely
+    // because some OTHER chrome line used to be there.
+    const chromeStart = _masterChromeStartIndex(now);
+    const chromeRemaining = new Map();
+    for (const line of now.slice(chromeStart)) chromeRemaining.set(line, (chromeRemaining.get(line) || 0) + 1);
+    while (buckets[0].length > 0) {
+      const last = buckets[0][buckets[0].length - 1];
+      if (!_isMasterChromeLine(last)) break;
+      const remaining = chromeRemaining.get(last) || 0;
+      if (remaining <= 0) break;
+      chromeRemaining.set(last, remaining - 1);
+      buckets[0] = buckets[0].slice(0, -1);
+    }
+  }
+
+  const stream = document.getElementById('masterChatStream');
+  let renderedAny = false;
+  _masterActiveTurns.forEach((turn, i) => {
+    if (buckets[i].length === 0) return;
+    if (stream && !turn.assistantTurnEl) {
+      const bubble = document.createElement('li');
+      bubble.className = 'v6-conversation-event is-assistant';
+      const content = document.createElement('span');
+      content.className = 'v6-conversation-content';
+      bubble.appendChild(content);
+      stream.appendChild(bubble);
+      turn.assistantTurnEl = bubble;
+    }
+    if (turn.assistantTurnEl) turn.assistantTurnEl.querySelector('.v6-conversation-content').textContent = buckets[i].join('\n');
+    renderedAny = true;
+  });
+  if (renderedAny && stream) stream.scrollTop = stream.scrollHeight;
+
+  if (!oldest) return;
+  if (oldestIdle) {
+    _retireOldestMasterTurn(term, now);
+    return;
+  }
+
+  const oldestContent = buckets[0].join('\n');
+  if (oldestContent === oldest._lastContent) return;
+  oldest._lastContent = oldestContent;
+  if (oldestContent !== '' && _masterNoReplyTimer != null) {
+    clearTimeout(_masterNoReplyTimer);
+    _masterNoReplyTimer = null;
+  }
+  if (_masterSettleTimer != null) clearTimeout(_masterSettleTimer);
+  _armMasterSettleTimer(term);
+}
+
+/**
+ * (Re)arm {@link _masterSettleTimer}. On firing, re-checks busy state
+ * against a FRESH snapshot before acting (#3218 R-Gate R9 BLOCKING 2) —
+ * real engine TUIs keep rendering their own bare prompt glyph throughout
+ * generation, so a conservative fallback must never retire WHILE busy
+ * just because its own window elapsed; it defers by re-arming itself
+ * instead, rather than firing the same mistake the positional check above
+ * already guards against.
+ * @param {object} term
+ * @returns {void}
+ */
+function _armMasterSettleTimer(term) {
+  _masterSettleTimer = setTimeout(() => {
+    _masterSettleTimer = null;
+    const freshNow = readMasterTerminalSnapshot(term);
+    if (_isMasterEngineBlocking(freshNow)) { _armMasterSettleTimer(term); return; }
+    _retireOldestMasterTurn(term, freshNow);
+  }, _masterTurnSettleMs());
+}
+
+/**
+ * (Re)arm {@link _masterNoReplyTimer} — same busy re-check and re-arm on
+ * firing as {@link _armMasterSettleTimer}, for the same reason (#3218
+ * R-Gate R9 BLOCKING 2): a dispatched command whose engine is still busy
+ * when this (longer) fallback window elapses must not be mistaken for a
+ * genuinely stuck, no-reply-ever turn.
+ * @param {object} term
+ * @returns {void}
+ */
+function _armMasterNoReplyTimer(term) {
+  _masterNoReplyTimer = setTimeout(() => {
+    _masterNoReplyTimer = null;
+    const freshNow = readMasterTerminalSnapshot(term);
+    if (_isMasterEngineBlocking(freshNow)) { _armMasterNoReplyTimer(term); return; }
+    _retireOldestMasterTurn(term, freshNow);
+  }, _masterTurnNoReplyMs());
+}
+
+/**
+ * Paste the next queued send (if any) into the terminal for real, now that
+ * nothing is in flight — taking a FRESH baseline snapshot right before
+ * pasting (never a stale one left over from a retired turn, so a buffer
+ * that changed shape in between, scrollback rollover included, is never
+ * mistaken for new output belonging to this turn). Arms the shared
+ * listener on first use, and this turn's own no-reply timeout (#3218
+ * R-Gate R7 BLOCKING 1); disposes the listener once the queue is
+ * genuinely empty too, so nothing keeps listening once the conversation
+ * goes idle (#3218 R-Gate R6 BLOCKING 2).
+ * @param {object} term
+ * @returns {void}
+ */
+function _dispatchNextQueuedMasterSend(term) {
+  if (_masterActiveTurns.length > 0) return;
+  const text = _masterSendQueue.shift();
+  if (text === undefined) {
+    if (typeof _masterActiveDispose === 'function') _masterActiveDispose();
+    _masterActiveDispose = null;
+    return;
+  }
+  _masterActiveBaseline = readMasterTerminalSnapshot(term);
+  let delivered = false;
+  if (term) {
+    try {
+      if (typeof term.paste === 'function') { term.paste(`${text}\r`); delivered = true; }
+      else if (typeof term.input === 'function') { term.input(`${text}\r`); delivered = true; }
+    } catch (err) {
+      delivered = false;
+    }
+  }
+  if (!delivered) {
+    appendMasterChatTurn('assistant', 'Could not deliver that to the Admin-PM terminal — open Under the Hood and type it there directly.');
+    _dispatchNextQueuedMasterSend(term);
+    return;
+  }
+  _masterActiveTurns.push({ sentText: text, assistantTurnEl: null, _lastContent: '', _sawBusy: false });
+  _armMasterNoReplyTimer(term);
+  syncMasterAssistantTurnsFromTerminal(term);
+  if (!_masterActiveDispose) {
+    const hook = term && typeof term.onWriteParsed === 'function' ? term.onWriteParsed.bind(term)
+      : term && typeof term.onRender === 'function' ? term.onRender.bind(term) : null;
+    if (hook) {
+      const disposable = hook(() => syncMasterAssistantTurnsFromTerminal(term));
+      _masterActiveDispose = disposable && typeof disposable.dispose === 'function' ? disposable.dispose.bind(disposable) : null;
+    }
+  }
+}
+
+/**
+ * Send the composer's text into the live Admin-PM terminal (#3218 Req 1),
+ * and read its reply back into `#masterChatStream` (#3218 R-Gate R2
+ * BLOCKING 3).
+ *
+ * There is no `/api/master/*` route for injecting an arbitrary chat command
+ * the way `/api/sessions/:project/command` does for an ordinary project's V6
+ * chat (`public/v6-shell.js#deliverChat`) — Admin-PM is not a row in the
+ * `projects` table that route resolves against, and adding a new server
+ * route is outside this car's 2-file envelope. So this reaches into the
+ * attached ttyd iframe's own terminal object directly, the only mechanism
+ * available from here: `.paste()` is xterm.js's own documented API and the
+ * one ttyd's bundle is expected to expose as `term` (`public/api-helper.js
+ * #getMasterTerm` already resolves it the same way, `win.term || win.terminal`);
+ * `.input()` is a fallback for a build that wires it differently. The
+ * reply readback listens via `term.onWriteParsed`/`term.onRender` (real
+ * xterm.js Terminal events) — an event subscription, never a repeating
+ * poll. A send made while another is still in flight queues rather than
+ * pasting immediately (#3218 R-Gate R6 BLOCKING 1 — see {@link
+ * _masterSendQueue}'s own doc for why). None of this is independently
+ * verified against a live ttyd session in this environment — flagged in
+ * the PR.
+ * @returns {Promise<void>}
+ */
+async function sendMasterChatMessage() {
+  const input = document.getElementById('masterChatInput');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  appendMasterChatTurn('user', text);
+  input.value = '';
+
+  const frame = document.getElementById('masterFrame');
+  const win = frame && frame.contentWindow;
+  const term = win && (win.term || win.terminal);
+
+  _masterSendQueue.push(text);
+  _dispatchNextQueuedMasterSend(term);
+}
+
+/**
+ * Mount the Admin Fleet V6 Chat workspace (#3218 Req 1): a conversation
+ * stream, a collapsible "Under the Hood" bar hiding/showing the already-
+ * attached `#masterFrame` ttyd terminal (never re-pointing its `src` —
+ * {@link attachMasterFrame} owns that, untouched, idempotent via
+ * `dataset.attached`), and a composer. Plain DOM injection into
+ * `#masterPanel`, the same technique {@link addMasterRelaunchButton},
+ * {@link addMasterFleetRow} and {@link addMasterAttachmentStrip} already
+ * use — no new file, no `public/style.css` dependency beyond the real V6
+ * classes `.v6-chat-stream`/`.v6-conversation-event`/`.v6-chat-composer`/
+ * `.v6-chat-input`/`.v6-chat-attach-btn` already provide.
+ * @returns {void}
+ */
+function addMasterChatWorkspace() {
+  const panel = document.getElementById('masterPanel');
+  const strip = document.getElementById('masterAttachmentStrip');
+  if (!panel || !strip) return;
+
+  const workspace = document.createElement('div');
+  workspace.id = 'masterChatWorkspace';
+  workspace.className = 'master-chat-workspace v6-chat-workspace';
+  workspace.innerHTML = `
+    <ul id="masterChatStream" class="v6-chat-stream master-chat-stream" role="log" aria-label="Admin-PM Conversation Stream">
+      <li class="v6-conversation-event is-assistant"><span class="v6-conversation-content">Admin Fleet — Admin-PM. Messages sent here go straight to the live terminal below; open "Under the Hood" for the raw CLI.</span></li>
+    </ul>
+    <div id="masterUnderHoodBar" style="display:flex; align-items:center; gap:8px; padding:4px 8px;">
+      <button type="button" id="masterUnderHoodToggle" class="banner-btn" aria-expanded="true" aria-controls="masterFrame">Under the Hood &middot; CLI Terminal</button>
+    </div>
+    <div id="masterChatComposer" class="v6-chat-composer master-chat-composer" style="display:flex; gap:6px; padding:4px 8px; align-items:flex-end;">
+      <button type="button" id="masterChatAttachBtn" class="v6-chat-attach-btn" title="Attach file or image"><span aria-hidden="true">📎</span></button>
+      <textarea id="masterChatInput" class="v6-chat-input" rows="2" style="flex:1 1 auto;" placeholder="Message Admin-PM (Enter to send, Shift+Enter for newline, or drop/paste files)…"></textarea>
+      <button type="button" id="masterChatSendBtn" class="btn btn-primary v6-chat-send-btn">Send</button>
+    </div>`;
+
+  const frameWrap = document.querySelector('#masterPanel .master-frame-wrap');
+  if (frameWrap && frameWrap.parentNode) frameWrap.parentNode.insertBefore(workspace, frameWrap);
+  else panel.insertBefore(workspace, strip.nextSibling);
+
+  const toggle = document.getElementById('masterUnderHoodToggle');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      const expanded = toggle.getAttribute('aria-expanded') !== 'false';
+      const next = !expanded;
+      toggle.setAttribute('aria-expanded', String(next));
+      const frame = document.getElementById('masterFrame');
+      if (frame) frame.classList.toggle('hidden', !next);
+    });
+  }
+
+  const attachBtn = document.getElementById('masterChatAttachBtn');
+  const uploadInput = document.getElementById('masterPanelUploadInput');
+  if (attachBtn && uploadInput) attachBtn.addEventListener('click', () => uploadInput.click());
+
+  const sendBtn = document.getElementById('masterChatSendBtn');
+  if (sendBtn) sendBtn.addEventListener('click', () => sendMasterChatMessage());
+  const input = document.getElementById('masterChatInput');
+  if (input) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMasterChatMessage(); }
+    });
+  }
 }
 
 // ── Advisor (Morpheus) panel (#2819) ──
@@ -8547,6 +9533,7 @@ addMasterRelaunchButton('masterPanel');
 renameMasterSurfacesToAdminFleet();
 addMasterFleetRow('masterPanel');
 addMasterAttachmentStrip();
+addMasterChatWorkspace();
 
 // The Advisor control bar (#2819). Same component the session drawer mounts.
 advisorBar = window.tcCreateAdvisorControlBar({

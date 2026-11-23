@@ -11,10 +11,13 @@
  * contract lock-in — same pattern as test/upload-modal-frontend.test.js.
  */
 
-const { describe, it, before } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
+const { liftDeclaration } = require('./helpers/lift');
+const loadApiHelperGlobals = require('./_api-helper-globals');
 
 describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
   let html;
@@ -35,6 +38,44 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
     assert.ok(start > -1 && end > start, 'ui.js has a Project Master section before Event Bindings');
     masterSection = js.slice(start, end);
   });
+
+  /**
+   * `_mini-dom.js`'s `makeElement` carries no `.style` object, no
+   * `insertBefore`, and a plain string `innerHTML` with no parsing — and
+   * its `doc` carries no `querySelector` at all (only elements have one).
+   * ui.js's `addMasterAttachmentStrip`/`addMasterChatWorkspace` need all
+   * of these. Stubs each onto every element this `doc` creates, and
+   * `insertBefore`/`querySelector` onto `doc` itself/`doc.body`, and onto
+   * every pre-created id-element `makeDocument(ids)` handed back (those
+   * are never routed through `createElement`, so the wrap below would
+   * otherwise miss them).
+   * @param {object} doc
+   * @param {object} [ids] - The `ids` map `makeDocument` returned, if any.
+   */
+  function withStyleAndInsertBeforeStub(doc, ids) {
+    const addInsertBefore = (el) => {
+      el.insertBefore = (newNode, referenceNode) => {
+        newNode.parentNode = el;
+        const idx = referenceNode ? el.childNodes.indexOf(referenceNode) : -1;
+        if (idx === -1) el.childNodes.push(newNode); else el.childNodes.splice(idx, 0, newNode);
+        return newNode;
+      };
+    };
+    addInsertBefore(doc.body);
+    doc.querySelector = (sel) => doc.body.querySelector(sel);
+    for (const el of Object.values(ids || {})) {
+      el.style = el.style || {};
+      addInsertBefore(el);
+    }
+    const realCreateElement = doc.createElement.bind(doc);
+    doc.createElement = (tag) => {
+      const el = realCreateElement(tag);
+      el.style = {};
+      addInsertBefore(el);
+      withIdParsingInnerHTML(el, doc);
+      return el;
+    };
+  }
 
   describe('markup', () => {
     it('header has a Master toggle button wired to the panel with a status dot', () => {
@@ -211,7 +252,136 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
     it('paste and drag-and-drop on the panel both route through uploadMasterAttachment', () => {
       assert.match(masterSection, /panel\.addEventListener\('drop', /);
       assert.match(masterSection, /panel\.addEventListener\('paste', /);
-      assert.match(masterSection, /item\.kind === 'file' && item\.type\.startsWith\('image\/'\)/);
+      // #3218: any pasted file, not just an image — the all-file upload
+      // support this car adds applies to paste too.
+      assert.match(masterSection, /item\.kind === 'file'/);
+      assert.doesNotMatch(masterSection, /item\.kind === 'file' && item\.type\.startsWith\('image\/'\)/,
+        'the image-only restriction on paste must be gone');
+    });
+
+    // #3218 R-Gate R2 BLOCKING 1: the fallback listeners must be the ELSE of
+    // the feature-detect, never installed alongside the real binder — both
+    // live on the same `panel` element, so a single paste or drop would
+    // otherwise fire both handlers and upload every file twice.
+    it('binds the iframe-safe dropzone helper when another car provides it; the fallback listeners are its else, not unconditional (#3218)', () => {
+      assert.match(masterSection, /typeof window\.tcBindMasterDropzone === 'function'/);
+      assert.match(masterSection, /window\.tcBindMasterDropzone\(\{/);
+      assert.match(masterSection, /doc: document, panelEl: panel, frameEl: document\.getElementById\('masterFrame'\)/);
+      assert.match(masterSection, /prefix: 'masterPanel', onUpload: uploadMasterAttachment/);
+      const fn = masterSection.slice(
+        masterSection.indexOf('function addMasterAttachmentStrip'),
+        masterSection.indexOf('function appendMasterChatTurn')
+      );
+      assert.match(fn, /\}\s*else\s*\{\s*\n\s*panel\.addEventListener\('dragover'/,
+        'the fallback dragover/drop/paste listeners must be the else branch of the tcBindMasterDropzone feature-detect');
+    });
+
+    it('BLOCKING 1 behavioral: with the real tcBindMasterDropzone present, a drop (or paste) uploads each file exactly once', () => {
+      const G = loadApiHelperGlobals();
+      const { doc, ids } = makeDocument(['masterPanel', 'masterFrame', 'masterUtilitySeatsRow']);
+      withStyleAndInsertBeforeStub(doc, ids);
+      const panelHandlers = {};
+      const realAdd = ids.masterPanel.addEventListener.bind(ids.masterPanel);
+      ids.masterPanel.addEventListener = (type, fn) => {
+        (panelHandlers[type] = panelHandlers[type] || []).push(fn);
+        realAdd(type, fn);
+      };
+      const uploaded = [];
+      const addMasterAttachmentStrip = new Function('document', 'window', 'uploadMasterAttachment', 'refreshMasterAttachments', `
+        ${liftDeclaration(js, 'function addMasterAttachmentStrip(')}
+        return addMasterAttachmentStrip;
+      `)(doc, G, (f) => uploaded.push(f), () => {});
+      addMasterAttachmentStrip();
+
+      assert.ok(panelHandlers.drop && panelHandlers.drop.length >= 1, 'tcBindMasterDropzone must have registered its own drop listener on the panel');
+      assert.equal(panelHandlers.drop.length, 1, 'ui.js must not ALSO register its own drop listener on the panel when the real binder is present');
+
+      // Fire every registered 'drop' listener once, the same way a browser
+      // fires every listener bound to the same element+type for one event.
+      const dropEvt = { preventDefault() {}, dataTransfer: { files: [{ name: 'a.png' }] } };
+      (panelHandlers.drop || []).forEach((fn) => fn(dropEvt));
+      assert.equal(uploaded.length, 1, 'exactly one upload for one dropped file, never two');
+
+      uploaded.length = 0;
+      const pasteEvt = { clipboardData: { items: [{ kind: 'file', type: 'text/plain', getAsFile: () => ({ name: 'notes.txt' }) }] } };
+      (panelHandlers.paste || []).forEach((fn) => fn(pasteEvt));
+      assert.equal(uploaded.length, 1, 'exactly one upload for one pasted file, never two');
+    });
+
+    it('BLOCKING 1 behavioral: without the real tcBindMasterDropzone, the fallback listeners still upload exactly once per file', () => {
+      const { doc, ids } = makeDocument(['masterPanel', 'masterFrame', 'masterUtilitySeatsRow']);
+      withStyleAndInsertBeforeStub(doc, ids);
+      const panelHandlers = {};
+      const realAdd = ids.masterPanel.addEventListener.bind(ids.masterPanel);
+      ids.masterPanel.addEventListener = (type, fn) => {
+        (panelHandlers[type] = panelHandlers[type] || []).push(fn);
+        realAdd(type, fn);
+      };
+      const uploaded = [];
+      const addMasterAttachmentStrip = new Function('document', 'window', 'uploadMasterAttachment', 'refreshMasterAttachments', `
+        ${liftDeclaration(js, 'function addMasterAttachmentStrip(')}
+        return addMasterAttachmentStrip;
+      `)(doc, {}, (f) => uploaded.push(f), () => {});
+      addMasterAttachmentStrip();
+
+      assert.equal(panelHandlers.drop.length, 1);
+      const dropEvt = { preventDefault() {}, dataTransfer: { files: [{ name: 'a.png' }] } };
+      (panelHandlers.drop || []).forEach((fn) => fn(dropEvt));
+      assert.equal(uploaded.length, 1, 'the fallback itself must still work when no other car has loaded');
+    });
+
+    it('sanitizes the filename via the shared helper when present, falling back to an equivalent inline sanitizer (#3218)', () => {
+      const fn = masterSection.slice(
+        masterSection.indexOf('async function uploadMasterAttachment'),
+        masterSection.indexOf('function addMasterAttachmentStrip')
+      );
+      assert.match(fn, /typeof window\.tcSanitizeMasterAttachmentFilename === 'function'/);
+      assert.match(fn, /window\.tcSanitizeMasterAttachmentFilename\(rawName\)/);
+      assert.match(fn, /_tcMasterFallbackSanitizeFilename\(rawName\)/);
+      assert.match(fn, /apiMutate\('\/api\/master\/attachments', 'POST', \{ filename, content \}\)/);
+    });
+
+    // #3218 R-Gate R2 WARNING 1: the fallback must match
+    // tcSanitizeMasterAttachmentFilename's edge cases, not just its
+    // character class — lib/secure-clipboard.js's SAFE_FILENAME_RE
+    // explicitly refuses a bare "." or "..", and a name over 128 chars.
+    it('_tcMasterFallbackSanitizeFilename rejects dot-only names, empty stems and names over 128 chars (#3218)', () => {
+      const fn = new Function(`
+        ${liftDeclaration(js, 'function _tcMasterFallbackSanitizeFilename(')}
+        return _tcMasterFallbackSanitizeFilename;
+      `)();
+      assert.equal(fn('.'), 'attachment');
+      assert.equal(fn('..'), 'attachment');
+      assert.equal(fn(''), 'attachment');
+      assert.equal(fn('###'), '___', 'a disallowed character is replaced with _, never stripped to empty');
+      assert.equal(fn('a'.repeat(200)), 'a'.repeat(128));
+      assert.equal(fn('photo.png'), 'photo.png');
+    });
+
+    it('refreshMasterAttachments renders a non-image chip alongside a raster-image thumbnail (#3218)', () => {
+      const fn = masterSection.slice(
+        masterSection.indexOf('async function refreshMasterAttachments'),
+        masterSection.indexOf('async function uploadMasterAttachment')
+      );
+      assert.match(fn, /isMasterAttachmentImage\(file\.filename\)/);
+      assert.match(fn, /master-attachment-chip/);
+      assert.match(fn, /master-attachment-name/);
+    });
+
+    // #3218 R-Gate R2 BLOCKING 2: must match lib/secure-clipboard.js's own
+    // IMAGE_TYPES exactly — png/jpg/jpeg/webp/gif only, NOT bmp or svg,
+    // which GET /api/master/attachments/:filename refuses with 415.
+    it('isMasterAttachmentImage accepts exactly the extensions the preview route serves, case-insensitively (#3218)', () => {
+      const isMasterAttachmentImage = new Function(`
+        ${liftDeclaration(js, 'function isMasterAttachmentImage(')}
+        return isMasterAttachmentImage;
+      `)();
+      for (const ext of ['png', 'PNG', 'jpg', 'JPEG', 'webp', 'gif']) {
+        assert.equal(isMasterAttachmentImage(`photo.${ext}`), true, ext);
+      }
+      for (const name of ['photo.bmp', 'diagram.svg', 'notes.md', 'report.pdf', 'data.json']) {
+        assert.equal(isMasterAttachmentImage(name), false, name);
+      }
     });
 
     it('deleting a thumbnail uses apiMutate\'s (url, method) signature, not a fetch-options object', () => {
@@ -262,6 +432,1182 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
       assert.match(css, /\.master-dot\.live \{/);
       assert.match(css, /\.master-dot\.pending \{/);
       assert.match(css, /\.master-dot\.down \{/);
+    });
+  });
+
+  // #3218 Req 1 — Admin Fleet's own V6-style chat workspace (stream,
+  // collapsible Under the Hood terminal, composer), mounted into
+  // #masterPanel right after addMasterAttachmentStrip() the same way that
+  // function and its siblings already inject plain DOM (no new file, no
+  // style.css dependency beyond the real V6 classes those already provide).
+  describe('Admin Fleet V6 chat workspace (#3218)', () => {
+    it('addMasterChatWorkspace injects the stream, Under the Hood bar and composer', () => {
+      assert.match(masterSection, /function addMasterChatWorkspace\(\)/);
+      assert.match(masterSection, /workspace\.id = 'masterChatWorkspace'/);
+      assert.match(masterSection, /id="masterChatStream"[^>]*role="log"[^>]*aria-label="Admin-PM Conversation Stream"/);
+      assert.match(masterSection, /id="masterUnderHoodToggle"[^>]*aria-expanded="true"[^>]*aria-controls="masterFrame"/);
+      assert.match(masterSection, /id="masterChatComposer"/);
+      assert.match(masterSection, /id="masterChatInput"/);
+      assert.match(masterSection, /id="masterChatAttachBtn"/);
+      assert.match(masterSection, /id="masterChatSendBtn"/);
+    });
+
+    it('is mounted right after addMasterAttachmentStrip() in the init sequence', () => {
+      assert.match(js, /addMasterAttachmentStrip\(\);\s*\n\s*addMasterChatWorkspace\(\);/);
+    });
+
+    it('the Under the Hood toggle hides/shows the already-attached #masterFrame, never re-pointing its src', () => {
+      const fn = masterSection.slice(
+        masterSection.indexOf('function addMasterChatWorkspace'),
+        masterSection.indexOf('── Advisor (Morpheus) panel')
+      );
+      assert.match(fn, /frame\.classList\.toggle\('hidden', !next\)/);
+      assert.doesNotMatch(fn, /frame\.src\s*=/, 'must not re-point #masterFrame — attachMasterFrame owns that');
+    });
+
+    it('sendMasterChatMessage appends the user turn and routes it to the terminal, not a new server route', () => {
+      assert.match(masterSection, /async function sendMasterChatMessage\(\)/);
+      assert.match(masterSection, /appendMasterChatTurn\('user', text\)/);
+      assert.match(masterSection, /term\.paste\(`\$\{text\}\\r`\)/);
+      assert.match(masterSection, /term\.input\(`\$\{text\}\\r`\)/);
+    });
+
+    it('Enter sends (without Shift); the attach button delegates to the shared bar\'s upload input', () => {
+      assert.match(masterSection, /e\.key === 'Enter' && !e\.shiftKey/);
+      assert.match(masterSection, /document\.getElementById\('masterPanelUploadInput'\)/);
+    });
+
+    // #3218 R-Gate R6 BLOCKING 1 — _partitionMasterTerminalDelta's own
+    // check-order fix, exercised DIRECTLY with a 2-turn array. The live
+    // app never actually calls it with more than one turn any more (the
+    // serialized send queue guarantees _masterActiveTurns never exceeds
+    // length 1 — see _dispatchNextQueuedMasterSend's own doc), but the
+    // function is still a general-purpose utility whose own correctness
+    // for a multi-turn input is worth pinning directly, independent of
+    // whether today's only caller happens to exercise that branch.
+    describe('_partitionMasterTerminalDelta — direct, multi-turn (#3218 R-Gate R6 BLOCKING 1)', () => {
+      /** Built lazily (not at describe-registration time, before the outer before() hook has read `js`). */
+      function partition(delta, turns) {
+        return new Function(`
+          const MASTER_TERMINAL_PROMPT_PREFIX = /^(?:.*?(?:Admin-PM|tangleclaw-master)\\s*[:>$❯#]|[\\s>$❯#%]+)\\s*/i;
+          ${liftDeclaration(js, 'function isMasterTerminalEchoLine(')}
+          ${liftDeclaration(js, 'function _partitionMasterTerminalDelta(')}
+          return _partitionMasterTerminalDelta;
+        `)()(delta, turns);
+      }
+
+      it('two turns with DIFFERENT sentText partition correctly', () => {
+        const turns = [{ sentText: 'first' }, { sentText: 'second' }];
+        const buckets = partition(['first', 'first-reply', 'second', 'second-reply'], turns);
+        assert.deepEqual(buckets, [['first-reply'], ['second-reply']]);
+      });
+
+      it('two turns with the SAME sentText still partition correctly — R5\'s bug checked the NEXT turn\'s echo before confirming the CURRENT turn\'s own echo was consumed', () => {
+        const turns = [{ sentText: 'status' }, { sentText: 'status' }];
+        const buckets = partition(['status', 'first-reply', 'status', 'second-reply'], turns);
+        assert.deepEqual(buckets, [['first-reply'], ['second-reply']],
+          'turn 1 must get its own reply and echo consumed BEFORE the identical "status" line is ever considered turn 2\'s echo');
+      });
+
+      // Documents a genuine, UNRESOLVED residual limitation at this
+      // function's own level: a line identical to the NEXT turn's
+      // sentText is indistinguishable from that turn's real echo once
+      // the CURRENT turn's own echo has already been consumed — a raw
+      // line buffer carries no sequence metadata telling "reply" apart
+      // from "echo" beyond text equality. This is exactly why the live
+      // app never actually calls this function with more than one turn
+      // any more (R6 BLOCKING 1's OTHER half): the serialized send queue
+      // (_dispatchNextQueuedMasterSend) never pastes a second turn's text
+      // into the terminal until the first has fully retired, so this
+      // ambiguity never arises in practice, even though fixing the check
+      // ORDER alone cannot make it vanish at the function level.
+      it('a turn\'s own reply line identical to the NEXT turn\'s sentText IS still mistaken for that turn\'s echo — a known, documented limit of this function alone', () => {
+        const turns = [{ sentText: 'foo' }, { sentText: 'bar' }];
+        const buckets = partition(['foo', 'bar', 'bar', 'bar-reply'], turns);
+        assert.deepEqual(buckets, [[], ['bar', 'bar-reply']],
+          'the ambiguity is real at this level; only the serialized send queue upstream prevents it from ever mattering');
+      });
+    });
+
+    // #3218 R-Gate R2 BLOCKING 3: a behavioral run of the whole send/readback
+    // path against a DOM harness + a fake xterm `term`, not a source regex —
+    // the dispatch's own ask. `.v6-conversation-event.is-user`/`is-assistant`
+    // are the REAL classes (public/style.css), not the `.v6-chat-turn--*`
+    // ones an earlier dispatch guessed and this car already corrected in R2;
+    // kept here rather than reintroduced.
+    describe('sendMasterChatMessage + terminal readback, run for real (#3218)', () => {
+      // #3218 R-Gate R7: retirement is driven by a REAL setTimeout now, not
+      // a second onWriteParsed/onRender callback — these globals (read by
+      // _masterTurnSettleMs/_masterTurnNoReplyMs, lifted into the sandbox's
+      // own `new Function` scope, which shares this process's REAL
+      // globalThis, unlike the vm-isolated sandboxes other test files use)
+      // keep both timeouts small so these tests stay fast.
+      let savedSettleMs;
+      let savedNoReplyMs;
+      before(() => {
+        savedSettleMs = globalThis.TC_MASTER_TURN_SETTLE_MS;
+        savedNoReplyMs = globalThis.TC_MASTER_TURN_NO_REPLY_MS;
+        // #3218 R-Gate R13: R10-R12's own 5ms/15ms pair left NO margin at
+        // all for CI jitter -- waitForSettle's fixed 20ms sleep was
+        // EXACTLY settleMs+noReplyMs (5+15), and waitForNoReply's fixed
+        // 30ms was EXACTLY noReplyMs*2 (15+15). Both are the real
+        // wall-clock windows a CHAINED retirement produces: turn 1 retires
+        // at its own timer, immediately dispatching turn 2, which arms ITS
+        // OWN fresh no-reply timer from that moment -- so a test waiting
+        // for turn 2's dispatch to become observable was racing turn 2's
+        // own timeout finishing FIRST on a loaded runner, with zero slack
+        // either way. Widened far enough apart that no fixed sleep anyone
+        // writes against these two constants can land on a knife-edge.
+        globalThis.TC_MASTER_TURN_SETTLE_MS = 10;
+        globalThis.TC_MASTER_TURN_NO_REPLY_MS = 200;
+      });
+      after(() => {
+        globalThis.TC_MASTER_TURN_SETTLE_MS = savedSettleMs;
+        globalThis.TC_MASTER_TURN_NO_REPLY_MS = savedNoReplyMs;
+      });
+      // A flat safety backstop for the polling loops below -- not tuned
+      // against settleMs/noReplyMs at all. Once a second turn's dispatch
+      // actually happens, term.pasted grows and the loop exits that same
+      // tick; this ceiling only bounds how long a GENUINE failure (growth
+      // that never happens) hangs the test, so it can be generous without
+      // needing to be computed relative to either timer.
+      const POLL_CEILING_MS = 2000;
+      /**
+       * Waits past the settle timeout, for a turn whose content has
+       * already stopped changing (#3218 R-Gate R13). Always sleeps at
+       * least settleMs+20ms first (comfortable margin to let the FIRST
+       * timer actually fire even under CI load), then — ONLY when
+       * `expectedPastedLen` is given, meaning a second turn is already
+       * queued and its dispatch is what retirement should trigger — polls
+       * `term.pasted.length` on a short interval instead of a further
+       * fixed sleep, so the wait ends the instant growth is observed
+       * rather than racing turn 2's OWN fresh no-reply timer to also fire
+       * first. A bare `await waitForSettle()` with no `term`/
+       * `expectedPastedLen` is for callers with no second turn queued
+       * yet, where there is nothing to poll for and the minimum sleep
+       * alone is the whole wait.
+       */
+      async function waitForSettle(term, expectedPastedLen) {
+        await new Promise((r) => setTimeout(r, globalThis.TC_MASTER_TURN_SETTLE_MS + 20));
+        if (term == null || expectedPastedLen == null) return;
+        const deadline = Date.now() + POLL_CEILING_MS;
+        while (term.pasted.length < expectedPastedLen && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 2));
+        }
+      }
+      /**
+       * Waits past the no-reply timeout, for a turn that never gets any
+       * content at all (#3218 R-Gate R13) — same shape as {@link
+       * waitForSettle}, but the window it waits past first is
+       * `noReplyMs` itself (the turn being waited on retires via
+       * no-reply, not settle).
+       */
+      async function waitForNoReply(term, expectedPastedLen) {
+        await new Promise((r) => setTimeout(r, globalThis.TC_MASTER_TURN_NO_REPLY_MS + 20));
+        if (term == null || expectedPastedLen == null) return;
+        const deadline = Date.now() + POLL_CEILING_MS;
+        while (term.pasted.length < expectedPastedLen && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 2));
+        }
+      }
+
+      /** A minimal fake xterm.js Terminal: a mutable line buffer, paste()/input() recorders, and one onWriteParsed hook. */
+      function makeFakeTerm(initialLines) {
+        let lines = (initialLines || []).slice();
+        const term = {
+          pasted: [],
+          paste(text) { term.pasted.push(text); },
+          buffer: {
+            active: {
+              get length() { return lines.length; },
+              getLine(i) {
+                const text = lines[i];
+                return text === undefined ? null : { translateToString: () => text };
+              }
+            }
+          },
+          setLines(next) { lines = next; },
+          _hooks: [],
+          onWriteParsed(fn) { term._hooks.push(fn); return { dispose() { term._hooks = term._hooks.filter((h) => h !== fn); } }; },
+          fireWrite() { term._hooks.slice().forEach((fn) => fn()); }
+        };
+        return term;
+      }
+
+      function mountChatWorkspace(frameTerm) {
+        const { doc, ids } = makeDocument(['masterPanel', 'masterFrame', 'masterUtilitySeatsRow', 'masterAttachmentStrip']);
+        withStyleAndInsertBeforeStub(doc, ids);
+        ids.masterFrame.contentWindow = frameTerm ? { term: frameTerm } : {};
+        const sandbox = new Function('document', `
+          ${liftDeclaration(js, 'function appendMasterChatTurn(')}
+          ${liftDeclaration(js, 'function readMasterTerminalSnapshot(')}
+          let _masterSendQueue = [];
+          let _masterActiveTurns = [];
+          let _masterActiveBaseline = [];
+          let _masterActiveDispose = null;
+          let _masterSettleTimer = null;
+          let _masterNoReplyTimer = null;
+          ${liftDeclaration(js, 'function _masterTurnSettleMs(')}
+          ${liftDeclaration(js, 'function _masterTurnNoReplyMs(')}
+          ${liftDeclaration(js, 'function _clearMasterTurnTimers(')}
+          ${liftDeclaration(js, 'function _retireOldestMasterTurn(')}
+          ${liftDeclaration(js, 'function _armMasterSettleTimer(')}
+          ${liftDeclaration(js, 'function _armMasterNoReplyTimer(')}
+          ${liftDeclaration(js, 'function _masterTerminalLineDelta(')}
+          const MASTER_TERMINAL_PROMPT_PREFIX = /^(?:.*?(?:Admin-PM|tangleclaw-master)\\s*[:>$❯›#]|[\\s>$❯›#%]+)\\s*/i;
+          ${liftDeclaration(js, 'function isMasterTerminalEchoLine(')}
+          ${liftDeclaration(js, 'function _isMasterPromptLine(')}
+          const MASTER_ENGINE_BUSY_SUBSTRINGS = ['esc to interrupt', 'esc to cancel'];
+          const MASTER_ENGINE_BUSY_EXACT_LINES = ['Working', 'Thinking'];
+          const MASTER_ENGINE_DIALOG_SUBSTRINGS = ['enter to confirm', '↑↓ to select'];
+          const MASTER_ENGINE_RADIO_DIALOG_RE = /^●\\s+\\S+.*\\s+○\\s+\\S+/;
+          ${liftDeclaration(js, 'function _isMasterEngineIdleMarkerLine(')}
+          ${liftDeclaration(js, 'function _isMasterComposerLine(')}
+          ${liftDeclaration(js, 'function _masterChromeStartIndex(')}
+          ${liftDeclaration(js, 'function _isMasterEngineBusy(')}
+          ${liftDeclaration(js, 'function _hasMasterNumberedDialogSignature(')}
+          ${liftDeclaration(js, 'function _hasMasterRadioDialogSignature(')}
+          ${liftDeclaration(js, 'function _isMasterEngineDialog(')}
+          ${liftDeclaration(js, 'function _isMasterEngineBlocking(')}
+          ${liftDeclaration(js, 'function _isMasterEngineIdle(')}
+          ${liftDeclaration(js, 'function _isMasterChromeLine(')}
+          ${liftDeclaration(js, 'function _partitionMasterTerminalDelta(')}
+          ${liftDeclaration(js, 'function syncMasterAssistantTurnsFromTerminal(')}
+          ${liftDeclaration(js, 'function _dispatchNextQueuedMasterSend(')}
+          ${liftDeclaration(js, 'async function sendMasterChatMessage(')}
+          ${liftDeclaration(js, 'function addMasterChatWorkspace(')}
+          return { addMasterChatWorkspace, sendMasterChatMessage };
+        `)(doc);
+        sandbox.addMasterChatWorkspace();
+        return { doc, ids, sandbox };
+      }
+
+      it('a) sends text + "\\r" to term.paste and renders a .is-user bubble', async () => {
+        const term = makeFakeTerm([]);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        doc.getElementById('masterChatInput').value = 'hello admin-pm';
+        await sandbox.sendMasterChatMessage();
+        assert.deepEqual(term.pasted, ['hello admin-pm\r']);
+        const stream = doc.getElementById('masterChatStream');
+        const userTurn = stream.childNodes.find((li) => li.classList.contains('is-user'));
+        assert.ok(userTurn, 'a .v6-conversation-event.is-user bubble must be rendered');
+        assert.equal(userTurn.querySelector('.v6-conversation-content').text, 'hello admin-pm');
+      });
+
+      it('b) a new line in term.buffer.active renders a .is-assistant bubble with the reply text', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        doc.getElementById('masterChatInput').value = 'status?';
+        await sandbox.sendMasterChatMessage();
+        // The pty echoes the sent line, then the real reply arrives — fired
+        // via the same onWriteParsed hook sendMasterChatMessage subscribed,
+        // never a poll.
+        term.setLines(['$ ', 'status?', 'All systems nominal.']);
+        term.fireWrite();
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 1, 'exactly one assistant bubble, not one per write event');
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'All systems nominal.');
+      });
+
+      it('c) with no attached terminal, renders the delivery-failure notice instead', async () => {
+        const { doc, sandbox } = mountChatWorkspace(null);
+        doc.getElementById('masterChatInput').value = 'hello?';
+        await sandbox.sendMasterChatMessage();
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 1);
+        assert.match(assistantTurns[0].querySelector('.v6-conversation-content').text, /Could not deliver/);
+      });
+
+      // #3218 R-Gate R4 BLOCKING 3 — a Set-based diff drops a genuinely new
+      // reply line the moment an identical string had EVER appeared earlier
+      // in scrollback. The multiset delta must not have that blind spot.
+      it('d) a reply line identical to one already in scrollback is still rendered as new (multiset diff, not Set)', async () => {
+        const term = makeFakeTerm(['OK', '$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        doc.getElementById('masterChatInput').value = 'check';
+        await sandbox.sendMasterChatMessage();
+        term.setLines(['OK', '$ ', 'check', 'OK']);
+        term.fireWrite();
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 1);
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'OK',
+          'the new "OK" must render even though an older "OK" already sat in scrollback');
+      });
+
+      it('e) a prompt-prefixed echo of the sent text is stripped; a later line is not mistaken for one', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        doc.getElementById('masterChatInput').value = 'status?';
+        await sandbox.sendMasterChatMessage();
+        term.setLines(['$ ', 'Admin-PM > status?', 'All systems green']);
+        term.fireWrite();
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 1);
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'All systems green',
+          'the echoed "Admin-PM > status?" prompt line must be stripped, leaving only the real reply');
+      });
+
+      it('f) rapid/overlapping sends finalize turn 1 into its own bubble and attribute turn 2 to a separate one', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'first';
+        await sandbox.sendMasterChatMessage();
+        // turn 1's reply lands, and the real terminal's own write event
+        // fires for it (#3218 R-Gate R6: a real terminal can't put bytes
+        // into the buffer without ALSO firing the write event that notifies
+        // this), before the operator sends a second message.
+        term.setLines(['$ ', 'first', 'first-reply']);
+        term.fireWrite();
+        // Content stopped changing; once the settle timer elapses, turn 1
+        // retires and turn 2 is dispatched to the terminal for real.
+        await waitForSettle();
+
+        input.value = 'second';
+        await sandbox.sendMasterChatMessage();
+        term.setLines(['$ ', 'first', 'first-reply', 'second', 'second-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 2, 'two separate assistant bubbles, one per send, never one shared bubble');
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply');
+        assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'second-reply');
+      });
+
+      // #3218 R-Gate R6 BLOCKING 1 — the delayed-overlapping-sends repro,
+      // updated for the serialized-queue model: a send made while another
+      // is still in flight queues rather than pasting into the terminal
+      // immediately, so there is never more than one turn's text actually
+      // sitting in the terminal's own input stream unresolved at once.
+      it('g) two sends before ANY output arrives still land in two separate bubbles, the second dispatched only once the first retires', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'first';
+        await sandbox.sendMasterChatMessage();
+        // The operator sends a second message before ANY output has
+        // arrived for the first — it queues rather than pasting immediately.
+        input.value = 'second';
+        await sandbox.sendMasterChatMessage();
+        assert.deepEqual(term.pasted, ['first\r'], 'the second send has not reached the terminal yet');
+
+        term.setLines(['$ ', 'first', 'first-reply']);
+        term.fireWrite();
+        await waitForSettle(term, 2); // turn 1 retires, turn 2 is dispatched for real
+        assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'turn 2 only reaches the terminal once turn 1 retires');
+
+        term.setLines(['$ ', 'first', 'first-reply', 'second', 'second-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 2, 'two separate assistant bubbles, neither echo leaked into either');
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply');
+        assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'second-reply');
+      });
+
+      it('h) a third overlapping send is also correctly attributed, not just the first two', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'one';
+        await sandbox.sendMasterChatMessage();
+        input.value = 'two';
+        await sandbox.sendMasterChatMessage();
+        input.value = 'three';
+        await sandbox.sendMasterChatMessage();
+        assert.deepEqual(term.pasted, ['one\r'], 'two and three are queued, not yet pasted');
+
+        term.setLines(['$ ', 'one', 'one-reply']);
+        term.fireWrite();
+        await waitForSettle(term, 2); // retires "one", dispatches "two"
+        assert.deepEqual(term.pasted, ['one\r', 'two\r']);
+
+        term.setLines(['$ ', 'one', 'one-reply', 'two', 'two-reply']);
+        term.fireWrite();
+        await waitForSettle(term, 3); // retires "two", dispatches "three"
+        assert.deepEqual(term.pasted, ['one\r', 'two\r', 'three\r']);
+
+        term.setLines(['$ ', 'one', 'one-reply', 'two', 'two-reply', 'three', 'three-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 3);
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'one-reply');
+        assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'two-reply');
+        assert.equal(assistantTurns[2].querySelector('.v6-conversation-content').text, 'three-reply');
+      });
+
+      // #3218 R-Gate R6 BLOCKING 1 — the exact repro named in the dispatch:
+      // two back-to-back IDENTICAL commands. R5's partition order checked
+      // the NEXT turn's echo before confirming the CURRENT turn's own echo
+      // had even been consumed, so the first "status" (turn 1's own echo)
+      // was mistaken for turn 2's, skipping turn 1's echo consumption
+      // entirely. Also exercises the serialized queue: turn 2's identical
+      // "status" is never pasted until turn 1 retires, so there is no
+      // actual overlap in the terminal stream for the fixed check order to
+      // even need to resolve.
+      it('i) two back-to-back IDENTICAL commands still produce two separate, correctly attributed bubbles', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'status';
+        await sandbox.sendMasterChatMessage();
+        term.setLines(['$ ', 'status', 'first-reply']);
+        term.fireWrite();
+        await waitForSettle(); // retires turn 1, dispatches turn 2
+
+        input.value = 'status';
+        await sandbox.sendMasterChatMessage();
+        term.setLines(['$ ', 'status', 'first-reply', 'status', 'second-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 2);
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply');
+        assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'second-reply');
+      });
+
+      // #3218 R-Gate R6 — the named architectural ambiguity: turn 1's own
+      // reply text happens to read EXACTLY the same as turn 2's about-to-
+      // be-sent command. A raw PTY stream genuinely cannot tell these
+      // apart if both turns were ever live in it at once; the serialized
+      // queue sidesteps the ambiguity by construction instead — turn 2's
+      // "bar" is never pasted until turn 1 (whose own reply happens to
+      // read "bar") has already retired, so there is only ever one turn's
+      // text in the stream to interpret at any moment.
+      it('j) turn 1\'s reply text equal to turn 2\'s command text is never cross-attributed', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'foo';
+        await sandbox.sendMasterChatMessage();
+        term.setLines(['$ ', 'foo', 'bar']);
+        term.fireWrite();
+        await waitForSettle(); // retires turn 1 before turn 2 is ever sent
+
+        input.value = 'bar';
+        await sandbox.sendMasterChatMessage();
+        term.setLines(['$ ', 'foo', 'bar', 'bar', 'bar-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 2);
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'bar',
+          'turn 1\'s own reply, unaffected by turn 2\'s later identical command text');
+        assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'bar-reply');
+      });
+
+      // #3218 R-Gate R6 BLOCKING 2 — turn retirement, baseline advancement
+      // and listener disposal: the shared listener must not keep listening
+      // forever once the conversation goes idle with nothing queued, and a
+      // LATER send must take a fresh baseline rather than reuse a stale one
+      // left over from a retired turn (what actually bounds memory and
+      // protects a later turn's delta from scrollback rollover corrupting
+      // it, since a retired turn's lines are baked into history and never
+      // recomputed again).
+      it('k) a retired turn disposes the shared listener; a later send re-arms it with a FRESH baseline', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'first';
+        await sandbox.sendMasterChatMessage();
+        assert.equal(term._hooks.length, 1, 'the first send arms the shared listener');
+        term.setLines(['$ ', 'first', 'first-reply']);
+        term.fireWrite();
+        await waitForSettle(); // turn 1 retires; queue is empty, so the listener disposes
+        assert.equal(term._hooks.length, 0, 'the shared listener disposes once idle with nothing queued');
+
+        // The buffer changes shape entirely while nothing is listening —
+        // scrollback rollover, or simply time passing.
+        term.setLines(['$ ']);
+
+        input.value = 'second';
+        await sandbox.sendMasterChatMessage();
+        assert.equal(term._hooks.length, 1, 'a new send re-arms a fresh listener');
+        term.setLines(['$ ', 'second', 'second-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 2);
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply');
+        assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'second-reply',
+          'the second turn\'s content came from the buffer AT SEND TIME, not a stale baseline left over from turn 1');
+      });
+
+      // #3218 R-Gate R7 BLOCKING 1 — the exact repro named in the
+      // dispatch: a SINGLE fireWrite() delivering echo+reply, then
+      // genuine silence (no second fireWrite() at all). R6's own
+      // retirement check needed a SECOND onWriteParsed/onRender callback
+      // to even notice the quiet round — a real terminal fires that
+      // event only on an actual write/render, so once the reply has
+      // landed and the terminal goes silent, no such follow-up is
+      // guaranteed, and R6's turn would never retire. The settle timer
+      // fires on its own, with no further terminal activity needed.
+      it('l) a single write delivering echo+reply, then silence with no second fireWrite(), still retires once the settle timer elapses', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'first';
+        await sandbox.sendMasterChatMessage();
+        input.value = 'second';
+        await sandbox.sendMasterChatMessage();
+        assert.deepEqual(term.pasted, ['first\r'], 'second is queued, not yet pasted');
+
+        term.setLines(['$ ', 'first', 'first-reply']);
+        term.fireWrite(); // the ONLY write event — no second call anywhere in this test
+        await waitForSettle(term, 2);
+        assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'the settle timer alone retired turn 1 and dispatched turn 2');
+
+        term.setLines(['$ ', 'first', 'first-reply', 'second', 'second-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 2);
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply');
+        assert.equal(assistantTurns[1].querySelector('.v6-conversation-content').text, 'second-reply');
+      });
+
+      // #3218 R-Gate R7 BLOCKING 1 — a same-line streaming update (the
+      // LAST line's own text keeps changing across writes, as a real
+      // streamed CLI reply would) must reset the settle timer each time,
+      // never retiring early just because the LINE COUNT stayed the same.
+      it('m) a same-line streaming update resets the settle timer on content change, not just on new lines', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'first';
+        await sandbox.sendMasterChatMessage();
+        input.value = 'second';
+        await sandbox.sendMasterChatMessage();
+
+        term.setLines(['$ ', 'first', 'Thinking']);
+        term.fireWrite();
+        // Still well inside the settle window: the SAME line's text grows.
+        await new Promise((r) => setTimeout(r, 2));
+        term.setLines(['$ ', 'first', 'Thinking about it']);
+        term.fireWrite();
+        assert.deepEqual(term.pasted, ['first\r'], 'turn 1 must NOT have retired yet -- content just changed again');
+
+        await new Promise((r) => setTimeout(r, 2));
+        term.setLines(['$ ', 'first', 'Final answer']);
+        term.fireWrite();
+        assert.deepEqual(term.pasted, ['first\r'], 'still not retired -- the line changed content yet again');
+
+        await waitForSettle(term, 2); // NOW it goes quiet for real
+        assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'retires only once the content genuinely stops changing');
+
+        const stream = doc.getElementById('masterChatStream');
+        const firstBubble = stream.childNodes.filter((li) => li.classList.contains('is-assistant'))[0];
+        assert.equal(firstBubble.querySelector('.v6-conversation-content').text, 'Final answer',
+          'the LAST version of the streamed content, not an earlier snapshot');
+      });
+
+      // #3218 R-Gate R7 BLOCKING 1 — an echo-only/no-reply turn (the CLI
+      // never prints anything back at all) must still retire eventually,
+      // via the independent no-reply timeout — the settle timer alone
+      // would never even START for a turn whose bucket never leaves empty.
+      it('n) an echo-only/no-reply turn retires after the no-reply timeout, without deadlocking the queue', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'quiet';
+        await sandbox.sendMasterChatMessage();
+        input.value = 'second';
+        await sandbox.sendMasterChatMessage();
+
+        // The pty echoes the sent text and then... nothing. No reply ever
+        // arrives for "quiet".
+        term.setLines(['$ ', 'quiet']);
+        term.fireWrite();
+        assert.deepEqual(term.pasted, ['quiet\r'], 'second is still queued');
+
+        await waitForNoReply(term, 2);
+        assert.deepEqual(term.pasted, ['quiet\r', 'second\r'],
+          'the no-reply timeout retired the echo-only turn and dispatched the next queued send, with no deadlock');
+
+        term.setLines(['$ ', 'quiet', 'second', 'second-reply']);
+        term.fireWrite();
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 1, 'the echo-only turn never got a bubble of its own -- it had no content');
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'second-reply');
+      });
+
+      // #3218 R-Gate R8 BLOCKING 1 — the two regressions both reviewers
+      // named. The settle/no-reply fallbacks are deliberately raised past
+      // this test's own waits (real model TTFT/inter-chunk pauses routinely
+      // exceed naive short windows) so ONLY the prompt-return signal can
+      // retire the turn here — proving it, not just the fallback.
+      it('o) delayed first output: a reply after an initial pause does not retire while generating -- only prompt-return does', async () => {
+        const savedSettle = globalThis.TC_MASTER_TURN_SETTLE_MS;
+        const savedNoReply = globalThis.TC_MASTER_TURN_NO_REPLY_MS;
+        globalThis.TC_MASTER_TURN_SETTLE_MS = 10000;
+        globalThis.TC_MASTER_TURN_NO_REPLY_MS = 10000;
+        try {
+          const term = makeFakeTerm(['$ ']);
+          const { doc, sandbox } = mountChatWorkspace(term);
+          const input = doc.getElementById('masterChatInput');
+
+          input.value = 'first';
+          await sandbox.sendMasterChatMessage();
+          input.value = 'second';
+          await sandbox.sendMasterChatMessage();
+
+          // First output arrives only after a real delay -- a model's own
+          // time-to-first-token, well past any naive short window.
+          await new Promise((r) => setTimeout(r, 20));
+          term.setLines(['$ ', 'first', 'first-reply-starting']);
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r'], 'still generating -- the delayed reply must not have retired it');
+
+          // Time passes with it quiet too -- still no retirement, since
+          // there is no prompt yet.
+          await new Promise((r) => setTimeout(r, 20));
+          assert.deepEqual(term.pasted, ['first\r'], 'quiet time passing alone must never retire -- only the prompt returning does');
+
+          // The reply finishes and the terminal returns to its prompt.
+          term.setLines(['$ ', 'first', 'first-reply-starting', '$ ']);
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'the prompt returning retires the turn and dispatches the next one immediately');
+
+          const stream = doc.getElementById('masterChatStream');
+          const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+          assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply-starting',
+            'the trailing prompt line itself is never rendered as part of the reply');
+
+          // Resolve "second" too, so nothing is left dangling: its own
+          // no-reply timer was armed at this test's (deliberately long)
+          // override and would otherwise sit pending for the rest of the
+          // suite's run.
+          term.setLines(['$ ', 'first', 'first-reply-starting', '$ ', 'second', 'second-reply', '$ ']);
+          term.fireWrite();
+        } finally {
+          globalThis.TC_MASTER_TURN_SETTLE_MS = savedSettle;
+          globalThis.TC_MASTER_TURN_NO_REPLY_MS = savedNoReply;
+        }
+      });
+
+      it('p) inter-chunk streaming pause: a pause between streamed chunks does not retire while generating -- only prompt-return does', async () => {
+        const savedSettle = globalThis.TC_MASTER_TURN_SETTLE_MS;
+        const savedNoReply = globalThis.TC_MASTER_TURN_NO_REPLY_MS;
+        globalThis.TC_MASTER_TURN_SETTLE_MS = 10000;
+        globalThis.TC_MASTER_TURN_NO_REPLY_MS = 10000;
+        try {
+          const term = makeFakeTerm(['$ ']);
+          const { doc, sandbox } = mountChatWorkspace(term);
+          const input = doc.getElementById('masterChatInput');
+
+          input.value = 'first';
+          await sandbox.sendMasterChatMessage();
+          input.value = 'second';
+          await sandbox.sendMasterChatMessage();
+
+          // Streamed chunk text deliberately avoids the bare words
+          // "Working"/"Thinking" -- those are Codex's OWN exact busy
+          // markers now (#3218 R-Gate R9), and a reply chunk that happened
+          // to BE one of those words alone would make _isMasterEngineBusy
+          // see it as busy forever, as real as that edge case is for an
+          // actual reply.
+          term.setLines(['$ ', 'first', 'Pondering']);
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r']);
+
+          // A pause between streamed chunks -- still generating.
+          await new Promise((r) => setTimeout(r, 20));
+          term.setLines(['$ ', 'first', 'Pondering', 'still working on it']);
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r'], 'a second chunk after a pause must not have retired the turn');
+
+          // Another pause -- still not done.
+          await new Promise((r) => setTimeout(r, 20));
+          assert.deepEqual(term.pasted, ['first\r'], 'quiet time passing alone must never retire mid-stream');
+
+          // It finally completes and returns to the prompt.
+          term.setLines(['$ ', 'first', 'Pondering', 'still working on it', '$ ']);
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r', 'second\r'], 'the prompt returning retires the turn for real');
+
+          const stream = doc.getElementById('masterChatStream');
+          const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+          assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'Pondering\nstill working on it');
+
+          // Resolve "second" too, so nothing is left dangling: its own
+          // no-reply timer was armed at this test's (deliberately long)
+          // override and would otherwise sit pending for the rest of the
+          // suite's run.
+          term.setLines(['$ ', 'first', 'Pondering', 'still working on it', '$ ', 'second', 'second-reply', '$ ']);
+          term.fireWrite();
+        } finally {
+          globalThis.TC_MASTER_TURN_SETTLE_MS = savedSettle;
+          globalThis.TC_MASTER_TURN_NO_REPLY_MS = savedNoReply;
+        }
+      });
+
+      // #3218 R-Gate R9 BLOCKING 1 — PRR-A's exact named repro: real
+      // xterm usage MUTATES the SAME row the idle prompt occupied when
+      // input is pasted into it (before = ['$'] becomes part of
+      // now = ['$ first', …], never a separate new row), so once the
+      // reply finishes and a FRESH trailing '$' row appears,
+      // _masterTerminalLineDelta's multiset count silently consumes it as
+      // "the same '$' already in before" — R8's bucket-based check could
+      // never see a prompt line that never reached the bucket at all.
+      // Checking the CURRENT SNAPSHOT's own tail directly (not the
+      // partitioned delta) is what actually fixes it.
+      it('q) positional idle return: before=["$"] -> now=["$ first","first-reply","$"] retires immediately, not via the fallback timer', async () => {
+        const term = makeFakeTerm(['$']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        const input = doc.getElementById('masterChatInput');
+
+        input.value = 'first';
+        await sandbox.sendMasterChatMessage();
+        input.value = 'second';
+        await sandbox.sendMasterChatMessage();
+        assert.deepEqual(term.pasted, ['first\r'], 'second is still queued');
+
+        // The SAME row "$" occupied gets overwritten with the echo, and a
+        // NEW trailing "$" appears once the reply finishes -- not a second
+        // copy of the ORIGINAL row.
+        term.setLines(['$ first', 'first-reply', '$']);
+        term.fireWrite();
+        assert.deepEqual(term.pasted, ['first\r', 'second\r'],
+          'retires on this VERY sync call -- the multiset delta consuming the trailing "$" must not hide it from the positional check');
+
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'first-reply');
+
+        term.setLines(['$ first', 'first-reply', '$ second', 'second-reply', '$']);
+        term.fireWrite();
+        const laterTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(laterTurns.length, 2);
+        assert.equal(laterTurns[1].querySelector('.v6-conversation-content').text, 'second-reply');
+      });
+
+      // #3218 R-Gate R9 BLOCKING 2 — real engine-TUI busy/idle pane
+      // shapes, measured in test/_wake-fixtures.js (shared with the wake
+      // gates — the exact bytes are the point, per that file's own doc
+      // comment). Claude and antigravity/Gemini-CLI both keep rendering
+      // their own bare prompt glyph throughout generation, so a busy pane
+      // must NOT retire just because SOMETHING looks like an idle prompt.
+      describe('real engine-TUI busy/idle pane shapes (#3218 R-Gate R9 BLOCKING 2)', () => {
+        const {
+          IDLE_PANE, BUSY_PANE, AG_IDLE_PANE, AG_BUSY_PANE, CX_IDLE_PANE, CX_BUSY_PANE, CX_THINKING_PANE
+        } = require('./_wake-fixtures');
+
+        /** Sends "first"+"second", fires `pane` as the FIRST (and only, unless `pane2` given) write, and reports whether "second" was ever dispatched. */
+        async function probeBusyIdle(pane, pane2) {
+          const term = makeFakeTerm(['$ ']);
+          const { doc, sandbox } = mountChatWorkspace(term);
+          const input = doc.getElementById('masterChatInput');
+          input.value = 'first';
+          await sandbox.sendMasterChatMessage();
+          input.value = 'second';
+          await sandbox.sendMasterChatMessage();
+          term.setLines(pane.slice());
+          term.fireWrite();
+          if (pane2) { term.setLines(pane2.slice()); term.fireWrite(); }
+          const dispatchedSecond = term.pasted.length > 1;
+
+          // A "does not retire" probe deliberately leaves the busy fixture
+          // showing forever -- without this drain, the no-reply/settle
+          // timer armed for it would recurse (busy -> re-arm) indefinitely,
+          // hanging the suite rather than merely slowing it down. Feeds a
+          // few genuinely-new, unambiguously idle snapshots so whichever
+          // turn(s) are still pending (one or both of "first"/"second")
+          // resolve before this probe returns.
+          term.setLines(['$ ', 'first', 'first-reply', '$ ']);
+          term.fireWrite();
+          term.setLines(['$ ', 'first', 'first-reply', '$ ', 'second', 'second-reply', '$ ', 'drain']);
+          term.fireWrite();
+          term.setLines(['$ ', 'first', 'first-reply', '$ ', 'second', 'second-reply', '$ ', 'drain', '$ ']);
+          term.fireWrite();
+
+          return dispatchedSecond;
+        }
+
+        it('a busy Claude pane does not retire', async () => {
+          assert.equal(await probeBusyIdle(BUSY_PANE), false, 'esc to interrupt is present -- must not dispatch "second" yet');
+        });
+
+        it('an idle Claude pane (bare prompt, no busy marker) retires', async () => {
+          assert.equal(await probeBusyIdle(IDLE_PANE), true);
+        });
+
+        it('a busy antigravity/Gemini-CLI pane does not retire', async () => {
+          assert.equal(await probeBusyIdle(AG_BUSY_PANE), false, 'esc to cancel is present -- must not dispatch "second" yet');
+        });
+
+        it('an idle antigravity/Gemini-CLI pane ("? for shortcuts") retires', async () => {
+          assert.equal(await probeBusyIdle(AG_IDLE_PANE), true);
+        });
+
+        it('a busy Codex pane ("Working" run-state) does not retire', async () => {
+          assert.equal(await probeBusyIdle(CX_BUSY_PANE), false, '"Working" is present -- must not dispatch "second" yet');
+        });
+
+        it('a Codex "Thinking" run-state does not retire either', async () => {
+          assert.equal(await probeBusyIdle(CX_THINKING_PANE), false);
+        });
+
+        it('an idle Codex pane ("Ready" run-state) retires', async () => {
+          assert.equal(await probeBusyIdle(CX_IDLE_PANE), true);
+        });
+
+        it('transitioning a busy Codex pane to its idle pane retires exactly then, not before', async () => {
+          assert.equal(await probeBusyIdle(CX_BUSY_PANE, CX_IDLE_PANE), true);
+        });
+
+        it('transitioning a busy Claude pane to its idle pane retires exactly then, not before', async () => {
+          assert.equal(await probeBusyIdle(BUSY_PANE, IDLE_PANE), true);
+        });
+
+        it('transitioning a busy antigravity/Gemini-CLI pane to its idle pane retires exactly then, not before', async () => {
+          assert.equal(await probeBusyIdle(AG_BUSY_PANE, AG_IDLE_PANE), true);
+        });
+
+        // #3218 R-Gate R10 BLOCKER B — the byte-IDENTICAL round trip: the
+        // SAME idle pane, before AND after the busy pane, at the exact
+        // same array position with the exact same content. The multiset
+        // delta between it and the turn's OWN baseline (the identical
+        // starting pane) is EMPTY -- oldest._sawBusy is what actually
+        // lets this retire once the engine returns to that exact state.
+        it('Claude: starting the session AT its own idle pane, going busy, then returning to the BYTE-IDENTICAL idle pane still retires', async () => {
+          const term = makeFakeTerm(IDLE_PANE.slice());
+          const { doc, sandbox } = mountChatWorkspace(term);
+          const input = doc.getElementById('masterChatInput');
+          input.value = 'first';
+          await sandbox.sendMasterChatMessage();
+          input.value = 'second';
+          await sandbox.sendMasterChatMessage();
+
+          term.setLines(BUSY_PANE.slice());
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r'], 'busy -- must not dispatch "second" yet');
+
+          term.setLines(IDLE_PANE.slice());
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r', 'second\r'],
+            'byte-identical return to the SAME idle pane the turn started from still retires, via sawBusy');
+        });
+
+        it('antigravity/Gemini-CLI: the same byte-identical idle round trip retires', async () => {
+          const term = makeFakeTerm(AG_IDLE_PANE.slice());
+          const { doc, sandbox } = mountChatWorkspace(term);
+          const input = doc.getElementById('masterChatInput');
+          input.value = 'first';
+          await sandbox.sendMasterChatMessage();
+          input.value = 'second';
+          await sandbox.sendMasterChatMessage();
+
+          term.setLines(AG_BUSY_PANE.slice());
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r']);
+
+          term.setLines(AG_IDLE_PANE.slice());
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r', 'second\r']);
+        });
+
+        it('Codex: the same byte-identical idle round trip retires', async () => {
+          const term = makeFakeTerm(CX_IDLE_PANE.slice());
+          const { doc, sandbox } = mountChatWorkspace(term);
+          const input = doc.getElementById('masterChatInput');
+          input.value = 'first';
+          await sandbox.sendMasterChatMessage();
+          input.value = 'second';
+          await sandbox.sendMasterChatMessage();
+
+          term.setLines(CX_BUSY_PANE.slice());
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r']);
+
+          term.setLines(CX_IDLE_PANE.slice());
+          term.fireWrite();
+          assert.deepEqual(term.pasted, ['first\r', 'second\r']);
+        });
+
+        // #3218 R-Gate R10 BLOCKER A — a reply whose OWN content is
+        // exactly one of the engine run-state words must render intact
+        // and must not be mistaken for the real chrome: no bare-prompt-
+        // or-composer anchor exists anywhere in these snapshots at all
+        // (the "chrome region" _masterChromeStartIndex finds is EMPTY),
+        // so _isMasterEngineIdle/_isMasterEngineBusy have nothing to
+        // scan, and the line is never stripped from the bucket either.
+        describe('a reply whose own content is exactly a run-state word renders intact, scoped away from chrome (#3218 R-Gate R10 BLOCKER A)', () => {
+          for (const word of ['Ready', 'Working', 'Thinking']) {
+            it(`a reply of exactly "${word}" (no chrome anchor at all) renders intact and does not retire/lock up`, async () => {
+              const term = makeFakeTerm(['$ ']);
+              const { doc, sandbox } = mountChatWorkspace(term);
+              const input = doc.getElementById('masterChatInput');
+              input.value = 'first';
+              await sandbox.sendMasterChatMessage();
+              input.value = 'second';
+              await sandbox.sendMasterChatMessage();
+
+              // No bare prompt, no Codex composer shimmer anywhere here --
+              // deliberately nothing for _masterChromeStartIndex to anchor
+              // on, simulating a reply that IS exactly this one word with
+              // no chrome redrawn yet.
+              term.setLines(['$ first', word]);
+              term.fireWrite();
+              assert.deepEqual(term.pasted, ['first\r'],
+                `a reply of exactly "${word}" with no chrome anchor must not be mistaken for the engine's real run-state row`);
+
+              const stream = doc.getElementById('masterChatStream');
+              const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+              assert.equal(assistantTurns.length, 1);
+              assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, word,
+                'the reply renders INTACT -- never stripped as chrome');
+
+              // Drain: now show the REAL chrome, so nothing lingers.
+              term.setLines(['$ first', word, '$ ']);
+              term.fireWrite();
+              assert.deepEqual(term.pasted, ['first\r', 'second\r']);
+              term.setLines(['$ first', word, '$ second', 'second-reply', '$ ']);
+              term.fireWrite();
+            });
+          }
+        });
+
+        // #3218 R-Gate R10 BLOCKER B — permission/confirmation dialogs
+        // must fail closed: neither the immediate positional check NOR
+        // the settle/no-reply fallback timers (once their window elapses)
+        // may retire the turn or paste the next queued send while a
+        // dialog is showing. Against these fixtures, busy is false AND
+        // idle is false -- the dialog check is what actually protects
+        // this, independent of either.
+        describe('active permission/confirmation dialogs fail closed, immediately and via the fallback timers (#3218 R-Gate R10 BLOCKER B)', () => {
+          const { DIALOG_PANE, AG_DIALOG_PANE, CX_DIALOG_PANE } = require('./_wake-fixtures');
+
+          // #3218 R-Gate R13: the outer before() hook widened settleMs/
+          // noReplyMs far apart (10ms/200ms) so no OTHER test's fixed
+          // sleep can land on the knife-edge R10-R12 left between them.
+          // This block's own fixed 30ms wait below needs the OPPOSITE
+          // property instead -- it must genuinely EXCEED noReplyMs to
+          // prove the fallback timers re-arm rather than retire once
+          // their own window has elapsed, which 200ms no longer does.
+          // Scoped back down locally, independent of the outer value.
+          let savedSettleMs;
+          let savedNoReplyMs;
+          before(() => {
+            savedSettleMs = globalThis.TC_MASTER_TURN_SETTLE_MS;
+            savedNoReplyMs = globalThis.TC_MASTER_TURN_NO_REPLY_MS;
+            globalThis.TC_MASTER_TURN_SETTLE_MS = 5;
+            globalThis.TC_MASTER_TURN_NO_REPLY_MS = 10;
+          });
+          after(() => {
+            globalThis.TC_MASTER_TURN_SETTLE_MS = savedSettleMs;
+            globalThis.TC_MASTER_TURN_NO_REPLY_MS = savedNoReplyMs;
+          });
+
+          for (const [label, dialogPane] of [['Claude', DIALOG_PANE], ['antigravity/Gemini-CLI', AG_DIALOG_PANE], ['Codex', CX_DIALOG_PANE]]) {
+            it(`${label}: an active dialog does not retire on the immediate sync, nor once the fallback timers elapse`, async () => {
+              const term = makeFakeTerm(['$ ']);
+              const { doc, sandbox } = mountChatWorkspace(term);
+              const input = doc.getElementById('masterChatInput');
+              input.value = 'first';
+              await sandbox.sendMasterChatMessage();
+              input.value = 'second';
+              await sandbox.sendMasterChatMessage();
+
+              term.setLines(dialogPane.slice());
+              term.fireWrite();
+              assert.deepEqual(term.pasted, ['first\r'], 'the immediate sync must not retire while a dialog is showing');
+
+              // The settle/no-reply fallback timers' own window elapses
+              // (this block's own before() hook above keeps both short,
+              // independent of the outer suite's widened values) while
+              // the dialog is STILL showing -- must re-arm, never retire.
+              await new Promise((r) => setTimeout(r, 30));
+              assert.deepEqual(term.pasted, ['first\r'],
+                'the fallback timers must also fail closed, not just the immediate check');
+
+              // Drain: resolve the dialog and give "first"/"second" a real
+              // completion, so nothing lingers into the next test.
+              term.setLines(['$ ', 'first', 'first-reply', '$ ']);
+              term.fireWrite();
+              term.setLines(['$ ', 'first', 'first-reply', '$ ', 'second', 'second-reply', '$ ', 'drain']);
+              term.fireWrite();
+              term.setLines(['$ ', 'first', 'first-reply', '$ ', 'second', 'second-reply', '$ ', 'drain', '$ ']);
+              term.fireWrite();
+            });
+          }
+        });
+
+        // #3218 R-Gate R11 BLOCKER 1 — R10's own dialog regex made the
+        // selector-cursor glyph OPTIONAL before a number, and matched a
+        // bare ●/○ glyph ANYWHERE in any line with no structure required
+        // at all. Both false-positived on ordinary reply content that
+        // merely happens to look similar, permanently blocking retirement
+        // (the fallback timers re-arm forever once a "dialog" is seen).
+        describe('ordinary numbered-list and radio-symbol prose replies are not mistaken for dialogs (#3218 R-Gate R11 BLOCKER 1)', () => {
+          it('a numbered-list reply (no selector cursor glyph) retires immediately at the trailing prompt and preserves the full list text', async () => {
+            const term = makeFakeTerm(['$ ']);
+            const { doc, sandbox } = mountChatWorkspace(term);
+            const input = doc.getElementById('masterChatInput');
+            input.value = 'first';
+            await sandbox.sendMasterChatMessage();
+            input.value = 'second';
+            await sandbox.sendMasterChatMessage();
+
+            term.setLines(['$ first', 'Here are the steps:', '1. Install dependencies', '2. Run tests', '$ ']);
+            term.fireWrite();
+            assert.deepEqual(term.pasted, ['first\r', 'second\r'],
+              'an ordinary numbered list -- no selector cursor glyph -- must not be mistaken for a dialog and block retirement');
+
+            const stream = doc.getElementById('masterChatStream');
+            const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+            assert.equal(assistantTurns.length, 1);
+            assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text,
+              'Here are the steps:\n1. Install dependencies\n2. Run tests',
+              'the full numbered list renders intact, only the trailing prompt stripped as chrome');
+
+            // Drain "second" so nothing lingers.
+            term.setLines(['$ first', 'Here are the steps:', '1. Install dependencies', '2. Run tests', '$ second', 'second-reply', '$ ']);
+            term.fireWrite();
+          });
+
+          it('a radio-symbol prose reply (no structural radio-choice row) retires immediately and preserves the full text', async () => {
+            const term = makeFakeTerm(['$ ']);
+            const { doc, sandbox } = mountChatWorkspace(term);
+            const input = doc.getElementById('masterChatInput');
+            input.value = 'first';
+            await sandbox.sendMasterChatMessage();
+            input.value = 'second';
+            await sandbox.sendMasterChatMessage();
+
+            term.setLines(['$ first', 'Status: ○ pending, ● complete', '$ ']);
+            term.fireWrite();
+            assert.deepEqual(term.pasted, ['first\r', 'second\r'],
+              'a bare ●/○ mention in prose -- no structural radio-choice row -- must not be mistaken for a dialog');
+
+            const stream = doc.getElementById('masterChatStream');
+            const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+            assert.equal(assistantTurns.length, 1);
+            assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'Status: ○ pending, ● complete');
+
+            term.setLines(['$ first', 'Status: ○ pending, ● complete', '$ second', 'second-reply', '$ ']);
+            term.fireWrite();
+          });
+        });
+
+        // #3218 R-Gate R11 BLOCKER 2 — the trailing chrome strip had no
+        // bound: a SINGLE write delivering echo + a genuine final reply
+        // of exactly "Ready" + the completion prompt all at once produced
+        // a bucket of ['Ready', '$ ']; the strip popped the trailing
+        // prompt, then ALSO popped "Ready" right after it, since
+        // _isMasterChromeLine cannot tell a real reply of exactly "Ready"
+        // apart from a second chrome line once the first is gone.
+        describe('a single write delivering echo + a reply of exactly "Ready" + completion chrome all at once (#3218 R-Gate R11 BLOCKER 2)', () => {
+          it('retires the turn and renders "Ready" intact, not stripped as a second chrome line', async () => {
+            const term = makeFakeTerm(['$ ']);
+            const { doc, sandbox } = mountChatWorkspace(term);
+            const input = doc.getElementById('masterChatInput');
+            input.value = 'first';
+            await sandbox.sendMasterChatMessage();
+            input.value = 'second';
+            await sandbox.sendMasterChatMessage();
+
+            term.setLines(['$ first', 'Ready', '$ ']);
+            term.fireWrite();
+            assert.deepEqual(term.pasted, ['first\r', 'second\r'],
+              'a single write delivering echo + reply + completion chrome together must still retire');
+
+            const stream = doc.getElementById('masterChatStream');
+            const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+            assert.equal(assistantTurns.length, 1);
+            assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'Ready',
+              'the reply "Ready" must survive -- only the trailing prompt is chrome, not the reply line above it');
+
+            term.setLines(['$ first', 'Ready', '$ second', 'second-reply', '$ ']);
+            term.fireWrite();
+          });
+        });
+
+        // #3218 R-Gate R12 BLOCKER 1 — R11 gave _hasMasterRadioDialogSignature
+        // its own "no chrome below" lifecycle guard but never gave
+        // _hasMasterNumberedDialogSignature the same one, reasoning the
+        // mandatory cursor glyph was specific enough alone. True for a
+        // FRESH false positive, but readMasterTerminalSnapshot reads the
+        // full active buffer including retained SCROLLBACK: once a real
+        // numbered dialog resolves, its own cursor/sibling rows stay
+        // sitting in `now` forever, with a fresh prompt/composer and a
+        // completed reply appearing below them -- permanently blocking
+        // retirement (both fallback timers re-arm forever once "dialog"
+        // sticks).
+        describe('a resolved numbered dialog retained in scrollback above a completed turn no longer blocks retirement (#3218 R-Gate R12 BLOCKER 1)', () => {
+          const { DIALOG_PANE, CX_DIALOG_PANE, CX_IDLE_PANE } = require('./_wake-fixtures');
+
+          it('Claude: DIALOG_PANE resolving with "first" completed below it retires and dispatches "second" immediately', async () => {
+            const term = makeFakeTerm(['$ ']);
+            const { doc, sandbox } = mountChatWorkspace(term);
+            const input = doc.getElementById('masterChatInput');
+            input.value = 'first';
+            await sandbox.sendMasterChatMessage();
+            input.value = 'second';
+            await sandbox.sendMasterChatMessage();
+
+            // The dialog is first active -- must fail closed (R10 BLOCKER
+            // B's own guarantee, reconfirmed here as the starting point).
+            term.setLines(DIALOG_PANE.slice());
+            term.fireWrite();
+            assert.deepEqual(term.pasted, ['first\r'], 'the active dialog must not retire while showing');
+
+            // The dialog resolves: its own rows stay in scrollback, with a
+            // completed "first" turn and a fresh trailing prompt below them.
+            term.setLines([...DIALOG_PANE, '$ first', 'first-reply', '$ ']);
+            term.fireWrite();
+            assert.deepEqual(term.pasted, ['first\r', 'second\r'],
+              'a resolved dialog retained in scrollback must not permanently block retirement once real chrome returns below it');
+
+            term.setLines([...DIALOG_PANE, '$ first', 'first-reply', '$ second', 'second-reply', '$ ']);
+            term.fireWrite();
+          });
+
+          it('Codex: CX_DIALOG_PANE resolving with "first" completed and CX_IDLE_PANE composer/idle chrome below it retires and dispatches "second" immediately', async () => {
+            const term = makeFakeTerm(['$ ']);
+            const { doc, sandbox } = mountChatWorkspace(term);
+            const input = doc.getElementById('masterChatInput');
+            input.value = 'first';
+            await sandbox.sendMasterChatMessage();
+            input.value = 'second';
+            await sandbox.sendMasterChatMessage();
+
+            term.setLines(CX_DIALOG_PANE.slice());
+            term.fireWrite();
+            assert.deepEqual(term.pasted, ['first\r'], 'the active dialog must not retire while showing');
+
+            term.setLines([...CX_DIALOG_PANE, '› first', 'first-reply', ...CX_IDLE_PANE]);
+            term.fireWrite();
+            assert.deepEqual(term.pasted, ['first\r', 'second\r'],
+              'a resolved Codex dialog retained in scrollback, with its own composer/idle chrome returned below it, must not permanently block retirement');
+
+            term.setLines([...CX_DIALOG_PANE, '› first', 'first-reply', '› second', 'second-reply', ...CX_IDLE_PANE]);
+            term.fireWrite();
+          });
+        });
+      });
     });
   });
 });
