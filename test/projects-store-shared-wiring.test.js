@@ -245,14 +245,49 @@ describe('#3196: _applyProjectUpdates wires migrateEngineStateOnRename', () => {
       migrated: [{ engine: 'claude', from: '/src', to: '/dst', status: 'failed', reason: 'target directory already exists' }],
       warnings: [WARNING]
     });
-    const result = await projects.updateProject(project.name, { name: 'mig-warn-renamed' });
+    // PRR-B R4 BLOCKING 1: `migrated` being non-empty must not, on its own,
+    // trigger the SUCCESS log -- every entry here is `status: 'failed'`.
+    const logger = require('../lib/logger');
+    let written = '';
+    logger.setLevel('info');
+    logger.setConsoleStream({ write: (chunk) => { written += chunk; } });
+    let result;
+    try {
+      result = await projects.updateProject(project.name, { name: 'mig-warn-renamed' });
+    } finally {
+      logger.setConsoleStream(null);
+      logger.setLevel('error');
+    }
     assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
     assert.ok((result.warnings || []).includes(WARNING), JSON.stringify(result.warnings));
+    assert.ok(!written.includes('Engine state directory migrated with project rename'),
+      `the success log must not fire when every migration entry failed:\n${written}`);
     // The directory rename itself already succeeded on disk -- a migration
     // warning reports that one piece did not complete, it never undoes the
     // rename or blocks the update as a whole.
     assert.equal(fs.existsSync(path.join(path.dirname(projDir), 'mig-warn-renamed')), true);
     assert.equal(fs.existsSync(projDir), false);
+  });
+
+  it('logs only the succeeded entries when migrated holds a mix of migrated and failed (#3196 R4, PRR-B BLOCKING 1)', async () => {
+    const projDir = fs.mkdtempSync(path.join(tmpDir, 'mig-mixed-'));
+    const project = store.projects.create({ name: 'mig-mixed', path: projDir, engine: 'claude' });
+    const succeeded = { engine: 'claude', from: '/a', to: '/b', status: 'migrated' };
+    const failed = { engine: 'codex', from: '/c', to: '/d', status: 'failed', reason: 'target directory already exists' };
+    workspaceRenameCheck.migrateEngineStateOnRename = () => ({ migrated: [succeeded, failed], warnings: ['some warning'] });
+    const logger = require('../lib/logger');
+    let written = '';
+    logger.setLevel('info');
+    logger.setConsoleStream({ write: (chunk) => { written += chunk; } });
+    try {
+      await projects.updateProject(project.name, { name: 'mig-mixed-renamed' });
+    } finally {
+      logger.setConsoleStream(null);
+      logger.setLevel('error');
+    }
+    const line = written.split('\n').find((l) => l.includes('Engine state directory migrated with project rename'));
+    assert.ok(line, `expected a migration log line among:\n${written}`);
+    assert.ok(line.includes(`migrated=${JSON.stringify([succeeded])}`), `must list only the succeeded entry, not the failed one: ${line}`);
   });
 
   it('logs every successful migration, keyed by the real old/new project paths', async () => {
