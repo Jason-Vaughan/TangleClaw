@@ -1960,9 +1960,27 @@
     // overflow-y: auto; }` — a `public/style.css` change outside this
     // car's file scope (`public/v6-shell.js`/`test/v6-b1-ui-shell.test.js`
     // only). Flagged in the PR rather than silently claimed as done.
+    // #3206/#3209 R3: delegate to the shared tcV6RenderEngineUsageCardMarkup
+    // (Car V6510-W1-D, public/api-helper.js) when it's loaded, rather than
+    // keeping two different card shapes once that car's branch merges. Its
+    // own signature is (providerKey, probeReading, tokenEstimate, opts) —
+    // never the single cardSpec object an earlier dispatch guessed — and
+    // its card has no slot for THIS app's own manual-calibration inputs
+    // (a generic shared component has no notion of them), so those are
+    // always appended separately, wrapped around whichever card markup —
+    // shared or this file's own fallback — actually rendered.
+    const sharedCardRenderer = typeof global.tcV6RenderEngineUsageCardMarkup === 'function' ? global.tcV6RenderEngineUsageCardMarkup : null;
     const engineCards = USAGE_ENGINES.map((engineMeta) => {
       const e = model.engines.find((m) => m.key === engineMeta.key);
       const probeResult = probeFor(engineMeta.key);
+      const calibrateMarkup = `<div class="v6-usage-engine-card-section" data-kind="manual-calibration">`
+        + `<p class="v6-usage-engine-card-kind-label">Set % left manually</p>`
+        + `<table class="v6-usage-table"><thead><tr><th scope="col">Engine</th><th scope="col">5h</th><th scope="col">Week</th><th scope="col">Sprint</th><th scope="col">Sessions</th><th scope="col">Left</th><th scope="col">Set % left</th></tr></thead>`
+        + `<tbody>${e ? row(e) : ''}</tbody></table></div>`;
+      if (sharedCardRenderer) {
+        const tokenEstimate = e ? { fiveHour: e.tokens.fiveHour, weekly: e.tokens.weekly, activeSessions: e.sessions } : null;
+        return `<div class="v6-usage-engine-card-wrap" data-engine="${engineMeta.key}">${sharedCardRenderer(engineMeta.key, probeResult, tokenEstimate, {})}${calibrateMarkup}</div>`;
+      }
       return `<div class="v6-usage-engine-card" data-engine="${engineMeta.key}">`
         + `<h4 class="v6-usage-engine-card-name">${escapeHtml(engineMeta.name)}</h4>`
         + `<div class="v6-usage-engine-card-section" data-kind="provider-probed">`
@@ -4523,21 +4541,35 @@
   const TRAILING_ELLIPSIS = /\s*(?:\.{1,3}|…)\s*$/;
 
   /**
-   * A context-specific, accessibly-animated loading indicator (#3207): a
-   * label (announced to assistive tech) plus the same CSS-driven `...`
-   * ellipsis `.v6-chat-activity-dots::after` already animates for the chat
-   * composer's busy line (#3057) — `public/style.css`'s existing keyframe
-   * and `prefers-reduced-motion: reduce` override apply here for free,
-   * with no new CSS and no JS timer of any kind. Any trailing dots already
-   * on `label` are stripped first (the same {@link TRAILING_ELLIPSIS} the
-   * busy line already normalizes), so a caller may pass either
-   * `"Loading chat"` or `"Loading chat..."` without ever doubling the dots.
+   * A context-specific, accessibly-animated loading indicator (#3207).
+   *
+   * #3206/#3209 R3: delegates to the shared `tcV6AnimatedEllipsisMarkup`
+   * (`public/api-helper.js`, Car V6510-W1-D) when it's loaded — the
+   * SAME `.v6-loading-indicator`/`.v6-loading-label`/`.v6-loading-ellipsis`
+   * markup every other caller of that helper now produces, so this file
+   * doesn't keep a second, slightly different shape once that car's
+   * branch merges. While it isn't present (that car is still on a
+   * sibling branch as of this fix), falls back to the original
+   * CSS-driven `...` `.v6-chat-activity-dots::after` already animates for
+   * the chat composer's busy line (#3057) — `public/style.css`'s existing
+   * keyframe and `prefers-reduced-motion: reduce` override apply here for
+   * free, with no new CSS and no JS timer of any kind. Any trailing dots
+   * already on `label` are stripped first (the same {@link
+   * TRAILING_ELLIPSIS} the busy line already normalizes), so a caller may
+   * pass either `"Loading chat"` or `"Loading chat..."` without ever
+   * doubling the dots.
    * @param {string} label - E.g. `"Loading chat"`, `"Retrieving history"`.
    * @param {string} [className] - Extra class on the wrapping `<span>`, for a caller's own layout.
    * @returns {string} HTML.
    */
   function v6EllipsisLoadingMarkup(label, className) {
     const text = String(label || '').replace(TRAILING_ELLIPSIS, '') || 'Loading';
+    if (typeof global.tcV6AnimatedEllipsisMarkup === 'function') {
+      // No caller of v6EllipsisLoadingMarkup passes `className` today —
+      // the shared helper's own `opts` has no such field to forward it
+      // to, so this path is exact only as long as that stays true.
+      return global.tcV6AnimatedEllipsisMarkup(text);
+    }
     return `<span class="v6-loading-indicator${className ? ` ${className}` : ''}" data-ellipsis-loading="true">`
       + `<span class="v6-chat-activity-label">${escapeHtml(text)}</span>`
       + `<span class="v6-chat-activity-dots" aria-hidden="true"></span></span>`;
@@ -6231,9 +6263,19 @@
       // inbox, this read marks nothing read and leaves the unread count
       // alone; while listening, the route also asks the Bridge for loops.
       const medusaUrl = `/api/sessions/${name}/medusa/status`;
-      const [status, peekEarly, medusaEarly] = await Promise.all([
-        api(`/api/sessions/${name}/status`), api(peekUrl()), api(medusaUrl)
-      ]);
+      // #3206 R3: fire all three REQUESTS immediately, but await status
+      // ALONE first — bundling it into the same Promise.all as peek/medusa
+      // (R2's own shape) reintroduced a serial barrier of its own: events/
+      // attestations below only need sessionId (from status), yet they'd
+      // still wait on peek/medusa's own, often-slower, resolution before
+      // they could even be requested. Firing the request is NOT the same
+      // as awaiting it — peekPromise/medusaPromise are already in flight
+      // the moment status resolves, so events/attestations' own round
+      // trip overlaps with whatever peek/medusa still has left, instead
+      // of starting only after all three are done.
+      const peekPromise = api(peekUrl());
+      const medusaPromise = api(medusaUrl);
+      const status = await api(`/api/sessions/${name}/status`);
       if (mine !== seq) return;
       const sessionId = status && status.active && status.sessionId != null ? status.sessionId : null;
       const chat = Object.assign({}, ctx, {
@@ -6293,12 +6335,15 @@
         return;
       }
       const base = `/api/v6/projects/${encodeURIComponent(project.id)}/sessions/${encodeURIComponent(sessionId)}`;
-      // #3206: events/attestations need `base`, which needs `sessionId`,
-      // which only status (above) resolves — peek/medusa don't, so they
-      // already fired alongside status and aren't repeated here.
-      const [events, attestations] = await Promise.all([
+      // #3206 R3: events/attestations need `base`, which needs `sessionId`,
+      // which only status (above) resolves — requested only now, but
+      // joined with peekPromise/medusaPromise (already in flight since
+      // before status even resolved), not sequenced after them.
+      const [events, attestations, peekEarly, medusaEarly] = await Promise.all([
         api(`${base}/conversation/events`),
-        api(`${base}/attestations`)
+        api(`${base}/attestations`),
+        peekPromise,
+        medusaPromise
       ]);
       if (mine !== seq) return;
       chat.peek = peekView(peekEarly);

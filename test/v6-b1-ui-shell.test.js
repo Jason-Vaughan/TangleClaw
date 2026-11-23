@@ -1090,6 +1090,29 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     while (pending.length) await pending.shift();
   });
 
+  // #3206 R3 — the OTHER half of the barrier: events/attestations must
+  // not wait on peek/medusa's own resolution either, even though they're
+  // requested only once status resolves (needing its sessionId). Proven
+  // with peek/medusa held unresolved: once status resolves, events and
+  // attestations must already have been FIRED, not stuck behind peek/
+  // medusa's own still-pending Promise.all slot.
+  it('loadConversation fires events/attestations as soon as status resolves, without waiting on peek/medusa', async () => {
+    let releasePeekMedusa;
+    const peekMedusa = new Promise((resolve) => { releasePeekMedusa = resolve; });
+    const map = baseMap({
+      '/api/sessions/TC-Lane-B/peek?lines=2000': () => peekMedusa.then(() => ({ lines: [] })),
+      '/api/sessions/TC-Lane-B/medusa/status': () => peekMedusa.then(() => ({ listening: false, unread: 0 }))
+    });
+    const { win, calls, settle, pending } = mountLive(map);
+    win.location.hash = '#/resources/11/conversation';
+    await new Promise((r) => setImmediate(r));
+    assert.ok(calls.includes('/api/v6/projects/11/sessions/501/conversation/events'), JSON.stringify(calls));
+    assert.ok(calls.includes('/api/v6/projects/11/sessions/501/attestations'), JSON.stringify(calls));
+    releasePeekMedusa();
+    await settle();
+    while (pending.length) await pending.shift();
+  });
+
   it('launching a template shows its plan preview', async () => {
     const plan = { templateId: 'small-4-seat', immediateSeats: [{ role: 'PM', seatId: 'pm' }], deferredSeats: [{ role: 'Builder', seatId: 'builder-a' }] };
     const { win, doc, root, mutateCalls, settle } = mountLive(baseMap(), { mutate: () => plan });
@@ -9102,6 +9125,55 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
     });
   });
 
+  // #3206/#3209 R3 — delegating to the shared tcV6RenderEngineUsageCardMarkup
+  // (Car V6510-W1-D, public/api-helper.js) when it's present on `global`,
+  // rather than this file's own fallback card shape.
+  describe('per-engine usage card delegation to the shared helper (#3209 R3)', () => {
+    /** loadV6Shell, but with fake tcV6* globals pre-set BEFORE the module runs. */
+    function loadV6ShellWithSharedHelpers(fakes) {
+      const sandbox = { console };
+      sandbox.window = sandbox;
+      sandbox.globalThis = sandbox;
+      Object.assign(sandbox, fakes);
+      vm.createContext(sandbox);
+      vm.runInContext(SRC, sandbox);
+      return sandbox;
+    }
+
+    it('calls tcV6RenderEngineUsageCardMarkup with (providerKey, probeReading, tokenEstimate, opts), never a single cardSpec object', () => {
+      const calls = [];
+      const Gd = loadV6ShellWithSharedHelpers({
+        tcV6RenderEngineUsageCardMarkup: (...args) => { calls.push(args); return '<section class="fake-shared-card"></section>'; }
+      });
+      const windowsFx = { resetSchedule: {}, byProviderModel: {}, calibration: {} };
+      const probe = { claude: { status: 'configured', weeklyRemainingPct: 50, fiveHourRemainingPct: 80 }, codex: null, antigravity: null };
+      Gd.tcV6UsageMeterMarkup(Gd.tcV6UsageMeterModel(windowsFx), { open: true, probe });
+      assert.equal(calls.length, 3, 'called once per engine');
+      const [providerKey, probeReading, tokenEstimate, opts] = calls[0];
+      assert.equal(providerKey, 'claude');
+      assert.equal(probeReading, probe.claude);
+      assert.deepEqual(plain(tokenEstimate), { fiveHour: 0, weekly: 0, activeSessions: 0 });
+      assert.deepEqual(plain(opts), {});
+    });
+
+    it('wraps the shared card markup AND still appends the manual-calibration inputs the shared helper has no slot for', () => {
+      const Gd = loadV6ShellWithSharedHelpers({
+        tcV6RenderEngineUsageCardMarkup: (providerKey) => `<section class="fake-shared-card" data-engine="${providerKey}"></section>`
+      });
+      const windowsFx = { resetSchedule: {}, byProviderModel: {}, calibration: {} };
+      const html = Gd.tcV6UsageMeterMarkup(Gd.tcV6UsageMeterModel(windowsFx), { open: true });
+      assert.match(html, /<section class="fake-shared-card" data-engine="claude"><\/section>/, 'the shared helper\'s own markup is used verbatim');
+      assert.match(html, /id="v6UsageWeekly-claude"/, 'the manual-calibration input still appears for claude');
+      assert.match(html, /id="v6UsageSave-claude"/);
+    });
+
+    it('falls back to this file\'s own card markup when the shared helper is not loaded', () => {
+      const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true });
+      assert.doesNotMatch(html, /fake-shared-card/);
+      assert.match(html, /<div class="v6-usage-engine-card" data-engine="claude">/);
+    });
+  });
+
   /** A shell with the meter, its calibrate action recorded. */
   function mountMeter(calibrate) {
     const { doc } = makeDocument([]);
@@ -9280,6 +9352,27 @@ describe('tcV6EllipsisLoadingMarkup — context-specific animated loading indica
   it('reuses the existing chat-activity dots animation and reduced-motion override — no new CSS', () => {
     assert.match(CSS, /\.v6-chat-activity-dots::after \{[\s\S]*?animation: v6-chat-dots 1\.2s steps\(4, end\) infinite;/);
     assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{\s*\.v6-chat-activity-dots::after \{ animation: none; width: auto; \}/);
+  });
+
+  // #3206/#3209 R3: delegates to the shared tcV6AnimatedEllipsisMarkup
+  // (Car V6510-W1-D, public/api-helper.js) when present on `global`.
+  it('delegates to the shared tcV6AnimatedEllipsisMarkup when it is loaded, stripping trailing dots first the same way', () => {
+    const calls = [];
+    const sandbox = { console };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    sandbox.tcV6AnimatedEllipsisMarkup = (label) => { calls.push(label); return `<span class="fake-shared-ellipsis">${label}</span>`; };
+    vm.createContext(sandbox);
+    vm.runInContext(SRC, sandbox);
+    const html = sandbox.tcV6EllipsisLoadingMarkup('Loading chat...');
+    assert.deepEqual(calls, ['Loading chat'], 'trailing dots stripped before handing the label to the shared helper');
+    assert.equal(html, '<span class="fake-shared-ellipsis">Loading chat</span>');
+  });
+
+  it('falls back to its own markup when the shared helper is not loaded', () => {
+    assert.equal(typeof G.tcV6AnimatedEllipsisMarkup, 'undefined', 'the shared helper really is absent in this sandbox');
+    const html = G.tcV6EllipsisLoadingMarkup('Loading chat');
+    assert.doesNotMatch(html, /fake-shared-ellipsis/);
   });
 });
 
