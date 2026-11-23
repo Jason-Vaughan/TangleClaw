@@ -8118,16 +8118,18 @@ const MASTER_ATTACHMENT_THUMB_CACHE = new Map(); // filename -> blob: URL, revok
  * `lib/secure-clipboard.js#listSecretFiles` (`GET /api/master/attachments`)
  * returns only `{filename, bytes, mtimeMs}` — no image/not-image flag — so
  * this is inferred client-side from the extension rather than branching on
- * a server field that does not exist. A false positive here costs nothing
- * worse than a thumbnail `<img>` that never gets a `src`:
- * `GET /api/master/attachments/:filename` only ever serves a real raster
- * image (`readImageFile`'s own contract), so `fetchMasterAttachmentThumb`
- * fails closed on anything else.
+ * a server field that does not exist. The extension set mirrors
+ * `lib/secure-clipboard.js#readImageFile`'s own `IMAGE_TYPES` exactly
+ * (R-Gate R2 BLOCKING 2): png/jpg/jpeg/webp/gif only — NOT bmp or svg,
+ * which that route refuses with 415. A false positive for an extension it
+ * DOES accept costs nothing worse than a thumbnail `<img>` that never gets
+ * a `src`; one for an extension it refuses would instead try to preview a
+ * file the server will never serve as an image.
  * @param {string} filename
  * @returns {boolean}
  */
 function isMasterAttachmentImage(filename) {
-  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(String(filename || ''));
+  return /\.(png|jpe?g|webp|gif)$/i.test(String(filename || ''));
 }
 
 /**
@@ -8204,6 +8206,27 @@ async function refreshMasterAttachments() {
 }
 
 /**
+ * A filename sanitizer equivalent to `tcSanitizeMasterAttachmentFilename`
+ * (`public/api-helper.js`) for when that module is absent (#3218 R-Gate R2
+ * WARNING 1) — the same character class, PLUS the two edge cases that
+ * class alone misses: `lib/secure-clipboard.js`'s `SAFE_FILENAME_RE`
+ * (`/^(?!\.{1,2}$)[A-Za-z0-9._-]{1,128}$/`) explicitly refuses a bare `.`
+ * or `..`, which surviving the character-class replace unchanged would
+ * otherwise send straight to the server; and a 128-character cap, since
+ * that regex refuses anything longer. Deliberately simpler than the real
+ * sanitizer (no stem/extension split, no batch dedup) — this is a
+ * fallback for when that one is not loaded, not a second implementation
+ * of it.
+ * @param {string} rawName
+ * @returns {string}
+ */
+function _tcMasterFallbackSanitizeFilename(rawName) {
+  let name = String(rawName || '').replace(/[^A-Za-z0-9._-]/g, '_');
+  if (!name || /^\.{1,2}$/.test(name)) name = 'attachment';
+  return name.slice(0, 128);
+}
+
+/**
  * Upload one file as an Admin-PM attachment (#3137): base64-encode it client
  * side and POST to `/api/master/attachments`, the same shape
  * `lib/secure-clipboard.js#writeSecretFile`'s `encoding: 'base64'` path takes.
@@ -8222,11 +8245,11 @@ async function uploadMasterAttachment(file) {
   if (!content) return;
   // #3218: sanitize via the shared helper when another car's module provides
   // one (feature-detected — this car does not add that module), falling back
-  // to the same character class inline so uploads work before it lands.
+  // to an equivalent inline sanitizer so uploads work before it lands.
   const rawName = (file && file.name) ? file.name : `attachment-${Date.now()}.png`;
   const filename = (typeof window.tcSanitizeMasterAttachmentFilename === 'function')
     ? window.tcSanitizeMasterAttachmentFilename(rawName)
-    : rawName.replace(/[^A-Za-z0-9._-]/g, '_');
+    : _tcMasterFallbackSanitizeFilename(rawName);
   const result = await apiMutate('/api/master/attachments', 'POST', { filename, content });
   if (result) refreshMasterAttachments();
 }
@@ -8254,39 +8277,40 @@ function addMasterAttachmentStrip() {
   const seatsRow = document.getElementById('masterUtilitySeatsRow');
   if (seatsRow && seatsRow.parentNode) seatsRow.parentNode.insertBefore(strip, seatsRow.nextSibling);
 
-  // #3218: the iframe-safe dropzone binder (another car's module) is wired
-  // when present — it can capture drag/drop and paste that happen over
-  // `#masterFrame` itself, which the iframe would otherwise swallow before
-  // these parent-document listeners ever fire. Feature-detected: this car
-  // does not add that module, and the listeners below keep working as the
-  // fallback regardless, both before it lands and after (belt and braces,
-  // not a replacement for it).
+  // #3218 R-Gate R2 BLOCKING 1: the iframe-safe dropzone binder (another
+  // car's module) already installs its OWN dragover/drop/paste listeners
+  // directly on this same `panel` element — running the fallback listeners
+  // below unconditionally alongside it meant a single paste or drop fired
+  // BOTH handlers, uploading every file twice. The fallback now only
+  // installs when the real binder is absent, so it is a genuine fallback
+  // (belt OR suspenders on this element, never both), not a permanent
+  // second listener.
   if (typeof window.tcBindMasterDropzone === 'function') {
     window.tcBindMasterDropzone({
       doc: document, panelEl: panel, frameEl: document.getElementById('masterFrame'),
       prefix: 'masterPanel', onUpload: uploadMasterAttachment
     });
-  }
-
-  panel.addEventListener('dragover', (e) => { e.preventDefault(); });
-  panel.addEventListener('drop', (e) => {
-    e.preventDefault();
-    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) uploadMasterAttachment(f);
-  });
-  panel.addEventListener('paste', (e) => {
-    const items = e.clipboardData && e.clipboardData.items;
-    if (!items) return;
-    for (const item of items) {
-      // #3218: any file, not just an image — the all-file upload support
-      // this car adds applies to paste too.
-      if (item.kind === 'file') {
-        const f = item.getAsFile();
-        if (f) uploadMasterAttachment(f);
-        break;
+  } else {
+    panel.addEventListener('dragover', (e) => { e.preventDefault(); });
+    panel.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) uploadMasterAttachment(f);
+    });
+    panel.addEventListener('paste', (e) => {
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      for (const item of items) {
+        // #3218: any file, not just an image — the all-file upload support
+        // this car adds applies to paste too.
+        if (item.kind === 'file') {
+          const f = item.getAsFile();
+          if (f) uploadMasterAttachment(f);
+          break;
+        }
       }
-    }
-  });
+    });
+  }
 
   refreshMasterAttachments();
 }
@@ -8315,7 +8339,88 @@ function appendMasterChatTurn(role, text) {
 }
 
 /**
- * Send the composer's text into the live Admin-PM terminal (#3218 Req 1).
+ * A snapshot of the terminal's current non-empty output lines (#3218
+ * R-Gate R2 BLOCKING 3), for diffing against a later snapshot to find new
+ * assistant output. Reads xterm.js's own buffer API first
+ * (`term.buffer.active`, one `getLine(i).translateToString(true)` per row,
+ * trimmed) — `term.getText()`/`term.lastOutput` are fallback seams for a
+ * build that wires the terminal differently. Never throws: any failure
+ * reading the buffer returns an empty snapshot rather than breaking the
+ * send this supports.
+ * @param {object} term
+ * @returns {string[]}
+ */
+function readMasterTerminalSnapshot(term) {
+  if (!term) return [];
+  try {
+    const buf = term.buffer && term.buffer.active;
+    if (buf && typeof buf.getLine === 'function' && typeof buf.length === 'number') {
+      const lines = [];
+      for (let i = 0; i < buf.length; i++) {
+        const line = buf.getLine(i);
+        const text = line && typeof line.translateToString === 'function' ? line.translateToString(true).trim() : '';
+        if (text) lines.push(text);
+      }
+      return lines;
+    }
+    if (typeof term.getText === 'function') {
+      return String(term.getText() || '').split('\n').map((l) => l.trim()).filter(Boolean);
+    }
+    if (typeof term.lastOutput === 'string') {
+      return term.lastOutput.split('\n').map((l) => l.trim()).filter(Boolean);
+    }
+  } catch (err) {
+    // Reading the buffer must never break the send it supports.
+  }
+  return [];
+}
+
+/**
+ * The listener disposable for the current send's assistant-output sync, so
+ * a second send tears down the first's listener instead of letting it pile
+ * up (#3218 R-Gate R2 BLOCKING 3).
+ * @type {{dispose: Function}|null}
+ */
+let _masterChatPendingSync = null;
+
+/**
+ * Diff the terminal's current output against a snapshot taken right before
+ * a send, and render (or update, as more output streams in) the assistant
+ * bubble for whatever new, non-echoed lines appeared (#3218 R-Gate R2
+ * BLOCKING 3). Diffing against the ORIGINAL pre-send snapshot each time
+ * (not the previous call's) means a later call's full new-lines set simply
+ * replaces the bubble's text, so streaming output never duplicates.
+ * @param {object} term
+ * @param {string[]} beforeLines
+ * @param {string} sentText - Excluded from the diff: the pty echoes what was typed.
+ * @returns {void}
+ */
+function syncMasterAssistantTurnFromTerminal(term, beforeLines, sentText) {
+  const now = readMasterTerminalSnapshot(term);
+  const before = new Set(beforeLines);
+  const sentTrim = String(sentText || '').trim();
+  const added = now.filter((line) => !before.has(line) && line !== sentTrim);
+  if (added.length === 0) return;
+  const stream = document.getElementById('masterChatStream');
+  if (!stream) return;
+  let bubble = stream.querySelector('[data-master-chat-pending="true"]');
+  if (!bubble) {
+    bubble = document.createElement('li');
+    bubble.className = 'v6-conversation-event is-assistant';
+    bubble.dataset.masterChatPending = 'true';
+    const content = document.createElement('span');
+    content.className = 'v6-conversation-content';
+    bubble.appendChild(content);
+    stream.appendChild(bubble);
+  }
+  bubble.querySelector('.v6-conversation-content').textContent = added.join('\n');
+  stream.scrollTop = stream.scrollHeight;
+}
+
+/**
+ * Send the composer's text into the live Admin-PM terminal (#3218 Req 1),
+ * and read its reply back into `#masterChatStream` (#3218 R-Gate R2
+ * BLOCKING 3).
  *
  * There is no `/api/master/*` route for injecting an arbitrary chat command
  * the way `/api/sessions/:project/command` does for an ordinary project's V6
@@ -8324,10 +8429,13 @@ function appendMasterChatTurn(role, text) {
  * route is outside this car's 2-file envelope. So this reaches into the
  * attached ttyd iframe's own terminal object directly, the only mechanism
  * available from here: `.paste()` is xterm.js's own documented API and the
- * one ttyd's bundle is expected to expose as `term`; `.input()` is a
- * fallback for a build that wires it differently. Not independently
- * verified against a live ttyd session in this environment — flagged in
- * the PR.
+ * one ttyd's bundle is expected to expose as `term` (`public/api-helper.js
+ * #getMasterTerm` already resolves it the same way, `win.term || win.terminal`);
+ * `.input()` is a fallback for a build that wires it differently. The
+ * reply readback listens via `term.onWriteParsed`/`term.onRender` (real
+ * xterm.js Terminal events) — an event subscription, one per send, never
+ * a repeating poll. None of this is independently verified against a
+ * live ttyd session in this environment — flagged in the PR.
  * @returns {Promise<void>}
  */
 async function sendMasterChatMessage() {
@@ -8341,6 +8449,7 @@ async function sendMasterChatMessage() {
   const frame = document.getElementById('masterFrame');
   const win = frame && frame.contentWindow;
   const term = win && (win.term || win.terminal);
+  const beforeLines = readMasterTerminalSnapshot(term);
   let delivered = false;
   if (term) {
     try {
@@ -8352,6 +8461,23 @@ async function sendMasterChatMessage() {
   }
   if (!delivered) {
     appendMasterChatTurn('assistant', 'Could not deliver that to the Admin-PM terminal — open Under the Hood and type it there directly.');
+    return;
+  }
+
+  // A fresh pending bubble per send: tear down the previous send's listener
+  // and un-mark its (now finished) bubble so this send's diff starts a new one.
+  if (_masterChatPendingSync && typeof _masterChatPendingSync.dispose === 'function') _masterChatPendingSync.dispose();
+  _masterChatPendingSync = null;
+  const stream = document.getElementById('masterChatStream');
+  const stale = stream && stream.querySelector('[data-master-chat-pending="true"]');
+  if (stale) delete stale.dataset.masterChatPending;
+
+  syncMasterAssistantTurnFromTerminal(term, beforeLines, text);
+  const hook = term && typeof term.onWriteParsed === 'function' ? term.onWriteParsed.bind(term)
+    : term && typeof term.onRender === 'function' ? term.onRender.bind(term) : null;
+  if (hook) {
+    const disposable = hook(() => syncMasterAssistantTurnFromTerminal(term, beforeLines, text));
+    _masterChatPendingSync = disposable && typeof disposable.dispose === 'function' ? disposable : null;
   }
 }
 

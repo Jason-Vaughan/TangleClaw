@@ -15,6 +15,9 @@ const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
+const { liftDeclaration } = require('./helpers/lift');
+const loadApiHelperGlobals = require('./_api-helper-globals');
 
 describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
   let html;
@@ -35,6 +38,44 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
     assert.ok(start > -1 && end > start, 'ui.js has a Project Master section before Event Bindings');
     masterSection = js.slice(start, end);
   });
+
+  /**
+   * `_mini-dom.js`'s `makeElement` carries no `.style` object, no
+   * `insertBefore`, and a plain string `innerHTML` with no parsing — and
+   * its `doc` carries no `querySelector` at all (only elements have one).
+   * ui.js's `addMasterAttachmentStrip`/`addMasterChatWorkspace` need all
+   * of these. Stubs each onto every element this `doc` creates, and
+   * `insertBefore`/`querySelector` onto `doc` itself/`doc.body`, and onto
+   * every pre-created id-element `makeDocument(ids)` handed back (those
+   * are never routed through `createElement`, so the wrap below would
+   * otherwise miss them).
+   * @param {object} doc
+   * @param {object} [ids] - The `ids` map `makeDocument` returned, if any.
+   */
+  function withStyleAndInsertBeforeStub(doc, ids) {
+    const addInsertBefore = (el) => {
+      el.insertBefore = (newNode, referenceNode) => {
+        newNode.parentNode = el;
+        const idx = referenceNode ? el.childNodes.indexOf(referenceNode) : -1;
+        if (idx === -1) el.childNodes.push(newNode); else el.childNodes.splice(idx, 0, newNode);
+        return newNode;
+      };
+    };
+    addInsertBefore(doc.body);
+    doc.querySelector = (sel) => doc.body.querySelector(sel);
+    for (const el of Object.values(ids || {})) {
+      el.style = el.style || {};
+      addInsertBefore(el);
+    }
+    const realCreateElement = doc.createElement.bind(doc);
+    doc.createElement = (tag) => {
+      const el = realCreateElement(tag);
+      el.style = {};
+      addInsertBefore(el);
+      withIdParsingInnerHTML(el, doc);
+      return el;
+    };
+  }
 
   describe('markup', () => {
     it('header has a Master toggle button wired to the panel with a status dot', () => {
@@ -218,22 +259,103 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
         'the image-only restriction on paste must be gone');
     });
 
-    it('binds the iframe-safe dropzone helper when another car provides it, keeping the fallback listeners regardless (#3218)', () => {
+    // #3218 R-Gate R2 BLOCKING 1: the fallback listeners must be the ELSE of
+    // the feature-detect, never installed alongside the real binder — both
+    // live on the same `panel` element, so a single paste or drop would
+    // otherwise fire both handlers and upload every file twice.
+    it('binds the iframe-safe dropzone helper when another car provides it; the fallback listeners are its else, not unconditional (#3218)', () => {
       assert.match(masterSection, /typeof window\.tcBindMasterDropzone === 'function'/);
       assert.match(masterSection, /window\.tcBindMasterDropzone\(\{/);
       assert.match(masterSection, /doc: document, panelEl: panel, frameEl: document\.getElementById\('masterFrame'\)/);
       assert.match(masterSection, /prefix: 'masterPanel', onUpload: uploadMasterAttachment/);
+      const fn = masterSection.slice(
+        masterSection.indexOf('function addMasterAttachmentStrip'),
+        masterSection.indexOf('function appendMasterChatTurn')
+      );
+      assert.match(fn, /\}\s*else\s*\{\s*\n\s*panel\.addEventListener\('dragover'/,
+        'the fallback dragover/drop/paste listeners must be the else branch of the tcBindMasterDropzone feature-detect');
     });
 
-    it('sanitizes the filename via the shared helper when present, falling back to the same character class inline (#3218)', () => {
+    it('BLOCKING 1 behavioral: with the real tcBindMasterDropzone present, a drop (or paste) uploads each file exactly once', () => {
+      const G = loadApiHelperGlobals();
+      const { doc, ids } = makeDocument(['masterPanel', 'masterFrame', 'masterUtilitySeatsRow']);
+      withStyleAndInsertBeforeStub(doc, ids);
+      const panelHandlers = {};
+      const realAdd = ids.masterPanel.addEventListener.bind(ids.masterPanel);
+      ids.masterPanel.addEventListener = (type, fn) => {
+        (panelHandlers[type] = panelHandlers[type] || []).push(fn);
+        realAdd(type, fn);
+      };
+      const uploaded = [];
+      const addMasterAttachmentStrip = new Function('document', 'window', 'uploadMasterAttachment', 'refreshMasterAttachments', `
+        ${liftDeclaration(js, 'function addMasterAttachmentStrip(')}
+        return addMasterAttachmentStrip;
+      `)(doc, G, (f) => uploaded.push(f), () => {});
+      addMasterAttachmentStrip();
+
+      assert.ok(panelHandlers.drop && panelHandlers.drop.length >= 1, 'tcBindMasterDropzone must have registered its own drop listener on the panel');
+      assert.equal(panelHandlers.drop.length, 1, 'ui.js must not ALSO register its own drop listener on the panel when the real binder is present');
+
+      // Fire every registered 'drop' listener once, the same way a browser
+      // fires every listener bound to the same element+type for one event.
+      const dropEvt = { preventDefault() {}, dataTransfer: { files: [{ name: 'a.png' }] } };
+      (panelHandlers.drop || []).forEach((fn) => fn(dropEvt));
+      assert.equal(uploaded.length, 1, 'exactly one upload for one dropped file, never two');
+
+      uploaded.length = 0;
+      const pasteEvt = { clipboardData: { items: [{ kind: 'file', type: 'text/plain', getAsFile: () => ({ name: 'notes.txt' }) }] } };
+      (panelHandlers.paste || []).forEach((fn) => fn(pasteEvt));
+      assert.equal(uploaded.length, 1, 'exactly one upload for one pasted file, never two');
+    });
+
+    it('BLOCKING 1 behavioral: without the real tcBindMasterDropzone, the fallback listeners still upload exactly once per file', () => {
+      const { doc, ids } = makeDocument(['masterPanel', 'masterFrame', 'masterUtilitySeatsRow']);
+      withStyleAndInsertBeforeStub(doc, ids);
+      const panelHandlers = {};
+      const realAdd = ids.masterPanel.addEventListener.bind(ids.masterPanel);
+      ids.masterPanel.addEventListener = (type, fn) => {
+        (panelHandlers[type] = panelHandlers[type] || []).push(fn);
+        realAdd(type, fn);
+      };
+      const uploaded = [];
+      const addMasterAttachmentStrip = new Function('document', 'window', 'uploadMasterAttachment', 'refreshMasterAttachments', `
+        ${liftDeclaration(js, 'function addMasterAttachmentStrip(')}
+        return addMasterAttachmentStrip;
+      `)(doc, {}, (f) => uploaded.push(f), () => {});
+      addMasterAttachmentStrip();
+
+      assert.equal(panelHandlers.drop.length, 1);
+      const dropEvt = { preventDefault() {}, dataTransfer: { files: [{ name: 'a.png' }] } };
+      (panelHandlers.drop || []).forEach((fn) => fn(dropEvt));
+      assert.equal(uploaded.length, 1, 'the fallback itself must still work when no other car has loaded');
+    });
+
+    it('sanitizes the filename via the shared helper when present, falling back to an equivalent inline sanitizer (#3218)', () => {
       const fn = masterSection.slice(
         masterSection.indexOf('async function uploadMasterAttachment'),
         masterSection.indexOf('function addMasterAttachmentStrip')
       );
       assert.match(fn, /typeof window\.tcSanitizeMasterAttachmentFilename === 'function'/);
       assert.match(fn, /window\.tcSanitizeMasterAttachmentFilename\(rawName\)/);
-      assert.match(fn, /rawName\.replace\(\/\[\^A-Za-z0-9\._-\]\/g, '_'\)/);
+      assert.match(fn, /_tcMasterFallbackSanitizeFilename\(rawName\)/);
       assert.match(fn, /apiMutate\('\/api\/master\/attachments', 'POST', \{ filename, content \}\)/);
+    });
+
+    // #3218 R-Gate R2 WARNING 1: the fallback must match
+    // tcSanitizeMasterAttachmentFilename's edge cases, not just its
+    // character class — lib/secure-clipboard.js's SAFE_FILENAME_RE
+    // explicitly refuses a bare "." or "..", and a name over 128 chars.
+    it('_tcMasterFallbackSanitizeFilename rejects dot-only names, empty stems and names over 128 chars (#3218)', () => {
+      const fn = new Function(`
+        ${liftDeclaration(js, 'function _tcMasterFallbackSanitizeFilename(')}
+        return _tcMasterFallbackSanitizeFilename;
+      `)();
+      assert.equal(fn('.'), 'attachment');
+      assert.equal(fn('..'), 'attachment');
+      assert.equal(fn(''), 'attachment');
+      assert.equal(fn('###'), '___', 'a disallowed character is replaced with _, never stripped to empty');
+      assert.equal(fn('a'.repeat(200)), 'a'.repeat(128));
+      assert.equal(fn('photo.png'), 'photo.png');
     });
 
     it('refreshMasterAttachments renders a non-image chip alongside a raster-image thumbnail (#3218)', () => {
@@ -244,6 +366,22 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
       assert.match(fn, /isMasterAttachmentImage\(file\.filename\)/);
       assert.match(fn, /master-attachment-chip/);
       assert.match(fn, /master-attachment-name/);
+    });
+
+    // #3218 R-Gate R2 BLOCKING 2: must match lib/secure-clipboard.js's own
+    // IMAGE_TYPES exactly — png/jpg/jpeg/webp/gif only, NOT bmp or svg,
+    // which GET /api/master/attachments/:filename refuses with 415.
+    it('isMasterAttachmentImage accepts exactly the extensions the preview route serves, case-insensitively (#3218)', () => {
+      const isMasterAttachmentImage = new Function(`
+        ${liftDeclaration(js, 'function isMasterAttachmentImage(')}
+        return isMasterAttachmentImage;
+      `)();
+      for (const ext of ['png', 'PNG', 'jpg', 'JPEG', 'webp', 'gif']) {
+        assert.equal(isMasterAttachmentImage(`photo.${ext}`), true, ext);
+      }
+      for (const name of ['photo.bmp', 'diagram.svg', 'notes.md', 'report.pdf', 'data.json']) {
+        assert.equal(isMasterAttachmentImage(name), false, name);
+      }
     });
 
     it('deleting a thumbnail uses apiMutate\'s (url, method) signature, not a fetch-options object', () => {
@@ -337,6 +475,92 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
     it('Enter sends (without Shift); the attach button delegates to the shared bar\'s upload input', () => {
       assert.match(masterSection, /e\.key === 'Enter' && !e\.shiftKey/);
       assert.match(masterSection, /document\.getElementById\('masterPanelUploadInput'\)/);
+    });
+
+    // #3218 R-Gate R2 BLOCKING 3: a behavioral run of the whole send/readback
+    // path against a DOM harness + a fake xterm `term`, not a source regex —
+    // the dispatch's own ask. `.v6-conversation-event.is-user`/`is-assistant`
+    // are the REAL classes (public/style.css), not the `.v6-chat-turn--*`
+    // ones an earlier dispatch guessed and this car already corrected in R2;
+    // kept here rather than reintroduced.
+    describe('sendMasterChatMessage + terminal readback, run for real (#3218)', () => {
+      /** A minimal fake xterm.js Terminal: a mutable line buffer, paste()/input() recorders, and one onWriteParsed hook. */
+      function makeFakeTerm(initialLines) {
+        let lines = (initialLines || []).slice();
+        const term = {
+          pasted: [],
+          paste(text) { term.pasted.push(text); },
+          buffer: {
+            active: {
+              get length() { return lines.length; },
+              getLine(i) {
+                const text = lines[i];
+                return text === undefined ? null : { translateToString: () => text };
+              }
+            }
+          },
+          setLines(next) { lines = next; },
+          _hooks: [],
+          onWriteParsed(fn) { term._hooks.push(fn); return { dispose() { term._hooks = term._hooks.filter((h) => h !== fn); } }; },
+          fireWrite() { term._hooks.slice().forEach((fn) => fn()); }
+        };
+        return term;
+      }
+
+      function mountChatWorkspace(frameTerm) {
+        const { doc, ids } = makeDocument(['masterPanel', 'masterFrame', 'masterUtilitySeatsRow', 'masterAttachmentStrip']);
+        withStyleAndInsertBeforeStub(doc, ids);
+        ids.masterFrame.contentWindow = frameTerm ? { term: frameTerm } : {};
+        const sandbox = new Function('document', `
+          ${liftDeclaration(js, 'function appendMasterChatTurn(')}
+          ${liftDeclaration(js, 'function readMasterTerminalSnapshot(')}
+          let _masterChatPendingSync = null;
+          ${liftDeclaration(js, 'function syncMasterAssistantTurnFromTerminal(')}
+          ${liftDeclaration(js, 'async function sendMasterChatMessage(')}
+          ${liftDeclaration(js, 'function addMasterChatWorkspace(')}
+          return { addMasterChatWorkspace, sendMasterChatMessage };
+        `)(doc);
+        sandbox.addMasterChatWorkspace();
+        return { doc, ids, sandbox };
+      }
+
+      it('a) sends text + "\\r" to term.paste and renders a .is-user bubble', async () => {
+        const term = makeFakeTerm([]);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        doc.getElementById('masterChatInput').value = 'hello admin-pm';
+        await sandbox.sendMasterChatMessage();
+        assert.deepEqual(term.pasted, ['hello admin-pm\r']);
+        const stream = doc.getElementById('masterChatStream');
+        const userTurn = stream.childNodes.find((li) => li.classList.contains('is-user'));
+        assert.ok(userTurn, 'a .v6-conversation-event.is-user bubble must be rendered');
+        assert.equal(userTurn.querySelector('.v6-conversation-content').text, 'hello admin-pm');
+      });
+
+      it('b) a new line in term.buffer.active renders a .is-assistant bubble with the reply text', async () => {
+        const term = makeFakeTerm(['$ ']);
+        const { doc, sandbox } = mountChatWorkspace(term);
+        doc.getElementById('masterChatInput').value = 'status?';
+        await sandbox.sendMasterChatMessage();
+        // The pty echoes the sent line, then the real reply arrives — fired
+        // via the same onWriteParsed hook sendMasterChatMessage subscribed,
+        // never a poll.
+        term.setLines(['$ ', 'status?', 'All systems nominal.']);
+        term.fireWrite();
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 1, 'exactly one assistant bubble, not one per write event');
+        assert.equal(assistantTurns[0].querySelector('.v6-conversation-content').text, 'All systems nominal.');
+      });
+
+      it('c) with no attached terminal, renders the delivery-failure notice instead', async () => {
+        const { doc, sandbox } = mountChatWorkspace(null);
+        doc.getElementById('masterChatInput').value = 'hello?';
+        await sandbox.sendMasterChatMessage();
+        const stream = doc.getElementById('masterChatStream');
+        const assistantTurns = stream.childNodes.filter((li) => li.classList.contains('is-assistant'));
+        assert.equal(assistantTurns.length, 1);
+        assert.match(assistantTurns[0].querySelector('.v6-conversation-content').text, /Could not deliver/);
+      });
     });
   });
 });
