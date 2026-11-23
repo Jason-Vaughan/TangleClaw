@@ -5575,6 +5575,8 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
     let tmux;
     let wrapRunRegistry;
     let controlGate;
+    let enginesModule;
+    let origDetectEngine;
     let projDir;
     let projectsDir;
 
@@ -5583,6 +5585,17 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       tmux = require('../lib/tmux');
       wrapRunRegistry = require('../lib/wrap-run-registry');
       controlGate = require('../lib/control-gate');
+      enginesModule = require('../lib/engines');
+      // Ubuntu CI (GitHub Actions check run 137499825988): ubuntu-latest
+      // runners have no real `claude`/`codex` CLI on PATH, so every test
+      // below that uses engine: 'claude' and means to exercise a LATER
+      // check hit ENGINE_BINARY_MISSING instead on that runner, never
+      // reaching the condition each test actually names. Stubbed for the
+      // whole block; the two tests that specifically target
+      // ENGINE_BINARY_MISSING use a nonexistent engine id instead, which
+      // fails earlier (no resolvable profile) and never reaches this stub.
+      origDetectEngine = enginesModule.detectEngine;
+      enginesModule.detectEngine = () => ({ available: true, path: '/fake/bin/engine' });
       // #3202's own describe sits after `describe('sessions', ...)` has
       // already closed, so its `projectsDir` local is out of scope — the
       // STORE it configured is still live (a file-scoped singleton), and
@@ -5593,6 +5606,10 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       projDir = path.join(projectsDir, 'preflight-test');
       fs.mkdirSync(projDir, { recursive: true });
       store.projects.create({ name: 'preflight-test', path: projDir, engine: 'claude' });
+    });
+
+    after(() => {
+      enginesModule.detectEngine = origDetectEngine;
     });
 
     it('the healthy project reads ok:true with every check recorded', () => {
@@ -5662,6 +5679,74 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       assert.equal(result.ok, false);
       assert.equal(result.code, 'ENGINE_BINARY_MISSING');
       assert.equal(result.category, 'engine_binary_missing');
+    });
+
+    it('engine_auth_or_config_invalid / ENGINE_AUTH_REQUIRED: the injected probeEngineAuth seam reports explicitly unauthenticated', () => {
+      const dir = path.join(projectsDir, 'preflight-not-authed');
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name: 'preflight-not-authed', path: dir, engine: 'claude' });
+      const result = sessions.preflightSessionLaunch('preflight-not-authed', {
+        probeEngineAuth: () => ({ authenticated: false, reason: 'Not logged in' })
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'ENGINE_AUTH_REQUIRED');
+      assert.equal(result.category, 'engine_auth_or_config_invalid');
+      assert.ok(result.retryable);
+      assert.match(result.message, /Not logged in/);
+    });
+
+    it('engine_auth_or_config_invalid: ENGINE_AUTH_REQUIRED and ENGINE_CONFIG_INVALID are distinct codes under the same category', () => {
+      const dir = path.join(projectsDir, 'preflight-authed-but-bad-config');
+      fs.mkdirSync(path.join(dir, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), '{ not valid json');
+      store.projects.create({ name: 'preflight-authed-but-bad-config', path: dir, engine: 'claude' });
+      // Explicitly authenticated (never the default — proves the auth
+      // check genuinely ran and passed, not merely that it was skipped).
+      const result = sessions.preflightSessionLaunch('preflight-authed-but-bad-config', {
+        probeEngineAuth: () => ({ authenticated: true })
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'ENGINE_CONFIG_INVALID');
+      assert.notEqual(result.code, 'ENGINE_AUTH_REQUIRED');
+    });
+
+    it('_defaultProbeEngineAuth has no known probe for a non-Codex engine: always authenticated:true', () => {
+      assert.deepEqual(sessions._defaultProbeEngineAuth({}, 'claude'), { authenticated: true });
+    });
+
+    it('_defaultProbeEngineAuth: fail-safe on an absent binary, a timeout, or unrecognized output — never flags unauthenticated', () => {
+      assert.deepEqual(
+        sessions._defaultProbeEngineAuth({}, 'codex', { spawnSyncFn: () => ({ error: new Error('ENOENT') }) }),
+        { authenticated: true }, 'a genuinely missing codex CLI (the real Linux CI shape) must read as unknown, not unauthenticated'
+      );
+      assert.deepEqual(
+        sessions._defaultProbeEngineAuth({}, 'codex', { spawnSyncFn: () => { throw new Error('spawn failed'); } }),
+        { authenticated: true }, 'a spawn that throws outright must also read as unknown'
+      );
+      assert.deepEqual(
+        sessions._defaultProbeEngineAuth({}, 'codex', { spawnSyncFn: () => ({ status: 0, stdout: 'something unrelated', stderr: '' }) }),
+        { authenticated: true }, 'output matching neither pattern must never be guessed as unauthenticated'
+      );
+    });
+
+    it('_defaultProbeEngineAuth: matches an explicit "not logged in" verdict on STDERR specifically — the real codex-preflight.js bug this avoids', () => {
+      // Confirmed empirically (escalated, ruled on): `codex login status`'s
+      // human-readable verdict prints to stderr, not stdout — the exact
+      // reason `codexPreflight.readCodexAuthMode` (stdout only) could not
+      // be reused as-is. stdout empty, stderr carrying the real verdict,
+      // mirrors the shape a real `codex login status` actually produces.
+      const result = sessions._defaultProbeEngineAuth({}, 'codex', {
+        spawnSyncFn: () => ({ status: 0, stdout: '', stderr: 'Not logged in\n' })
+      });
+      assert.equal(result.authenticated, false);
+      assert.match(result.reason, /Not logged in/);
+    });
+
+    it('_defaultProbeEngineAuth: a real, logged-in verdict ("Logged in using ChatGPT") never false-positives as unauthenticated', () => {
+      const result = sessions._defaultProbeEngineAuth({}, 'codex', {
+        spawnSyncFn: () => ({ status: 0, stdout: '', stderr: 'Logged in using ChatGPT\n' })
+      });
+      assert.equal(result.authenticated, true);
     });
 
     it('engine_auth_or_config_invalid / ENGINE_CONFIG_INVALID: malformed .tangleclaw/project.json', () => {
@@ -5743,6 +5828,100 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
         store.sessions.markCrashed(session.id, 'test cleanup');
       }
     });
+
+    describe('workspace readable by THIS process vs. by the tmux server that will actually host it (PRR-A R1 BLOCKING 1)', () => {
+      let origHomedir;
+      let n = 0;
+
+      // A real, genuinely-readable directory (the first check,
+      // _probeWorkspaceReadable, must pass) that ALSO resolves as "under a
+      // TCC-protected root" once os.homedir() is stubbed to treat
+      // projectsDir's parent as home — the exact split BLOCKING 1 is
+      // about: readable by this node process, but that says nothing about
+      // the tmux server that actually launches. Each call makes its own
+      // fresh name/path: nothing here is shared across tests.
+      function freshProtectedProject() {
+        n += 1;
+        const name = `blocking1-${n}-${Date.now()}`;
+        const dir = path.join(projectsDir, 'Documents', name);
+        fs.mkdirSync(dir, { recursive: true });
+        store.projects.create({ name, path: dir, engine: 'claude' });
+        return name;
+      }
+
+      beforeEach(() => {
+        origHomedir = os.homedir;
+        os.homedir = () => projectsDir;
+      });
+
+      afterEach(() => {
+        os.homedir = origHomedir;
+      });
+
+      it('reads ok:true when the TCC-authorized server itself reports readable', () => {
+        const origHealth = tmux.probeTccServerHealth;
+        tmux.probeTccServerHealth = () => ({ socket: 'x', running: true, anchorAlive: true, readable: true });
+        try {
+          const name = freshProtectedProject();
+          const result = sessions.preflightSessionLaunch(name);
+          assert.equal(result.ok, true);
+        } finally {
+          tmux.probeTccServerHealth = origHealth;
+        }
+      });
+
+      it('falls back to ok:true when the TCC-authorized server cannot read it but the default server can (#3148)', () => {
+        const origHealth = tmux.probeTccServerHealth;
+        const origReadable = tmux.probeTccReadable;
+        tmux.probeTccServerHealth = () => ({ socket: 'x', running: false, anchorAlive: false, readable: null });
+        tmux.probeTccReadable = (cwd, opts) => !opts || !opts.socket; // default server (no socket arg) reads fine
+        try {
+          const name = freshProtectedProject();
+          const result = sessions.preflightSessionLaunch(name);
+          assert.equal(result.ok, true);
+        } finally {
+          tmux.probeTccServerHealth = origHealth;
+          tmux.probeTccReadable = origReadable;
+        }
+      });
+
+      it('TCC_PERMISSION_DENIED when NEITHER tmux server can read a protected path, even though this node process can', () => {
+        const origHealth = tmux.probeTccServerHealth;
+        const origReadable = tmux.probeTccReadable;
+        tmux.probeTccServerHealth = () => ({ socket: 'x', running: true, anchorAlive: true, readable: false });
+        tmux.probeTccReadable = () => false;
+        try {
+          const name = freshProtectedProject();
+          const result = sessions.preflightSessionLaunch(name);
+          assert.equal(result.ok, false);
+          assert.equal(result.code, 'TCC_PERMISSION_DENIED');
+          assert.equal(result.category, 'filesystem_permission_denied');
+          const check = result.checks.find((c) => c.id === 'workspace_readable_by_tmux_server');
+          assert.ok(check && check.ok === false);
+        } finally {
+          tmux.probeTccServerHealth = origHealth;
+          tmux.probeTccReadable = origReadable;
+        }
+      });
+
+      it('never runs the extra tmux-server check for a path outside every protected root', () => {
+        const origHealth = tmux.probeTccServerHealth;
+        let healthCalls = 0;
+        tmux.probeTccServerHealth = () => { healthCalls += 1; return { socket: 'x', running: false, anchorAlive: false, readable: null }; };
+        try {
+          n += 1;
+          const name = `blocking1-unprotected-${n}-${Date.now()}`;
+          const dir = path.join(projectsDir, name);
+          fs.mkdirSync(dir, { recursive: true });
+          store.projects.create({ name, path: dir, engine: 'claude' });
+          const result = sessions.preflightSessionLaunch(name);
+          assert.equal(result.ok, true);
+          assert.equal(healthCalls, 0, 'an ordinary, non-protected path must never pay for the extra server probe');
+        } finally {
+          tmux.probeTccServerHealth = origHealth;
+        }
+      });
+    });
   });
 
   describe('GET /api/sessions/:project/preflight (#3202)', () => {
@@ -5750,6 +5929,8 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
     let http;
     let operatorHeaders;
     let projectsDir;
+    let enginesModule;
+    let origDetectEngine;
 
     function request(method, urlPath) {
       return new Promise((resolve, reject) => {
@@ -5774,6 +5955,11 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       http = require('node:http');
       ({ operatorHeaders } = require('./_shared-docs-callers'));
       const { createServer } = require('../server');
+      enginesModule = require('../lib/engines');
+      // Ubuntu CI (check run 137499825988): no real claude/codex CLI on
+      // PATH — see the identical note on `describe('preflightSessionLaunch')`.
+      origDetectEngine = enginesModule.detectEngine;
+      enginesModule.detectEngine = () => ({ available: true, path: '/fake/bin/engine' });
       projectsDir = path.join(store._getBasePath(), 'projects');
 
       const dir = path.join(projectsDir, 'preflight-route-test');
@@ -5785,6 +5971,7 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
     });
 
     after(async () => {
+      enginesModule.detectEngine = origDetectEngine;
       await new Promise((resolve) => server.close(resolve));
     });
 
@@ -5818,6 +6005,8 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
     let http;
     let operatorHeaders;
     let projectsDir;
+    let enginesModule;
+    let origDetectEngine;
 
     function request(method, urlPath, body) {
       return new Promise((resolve, reject) => {
@@ -5845,12 +6034,21 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       http = require('node:http');
       ({ operatorHeaders } = require('./_shared-docs-callers'));
       const { createServer } = require('../server');
+      enginesModule = require('../lib/engines');
+      // Ubuntu CI (check run 137499825988): no real claude/codex CLI on
+      // PATH — see the identical note on `describe('preflightSessionLaunch')`.
+      // Needed here specifically for the malformed-config test below, whose
+      // check sits after the engine checks in preflightSessionLaunch's own
+      // order.
+      origDetectEngine = enginesModule.detectEngine;
+      enginesModule.detectEngine = () => ({ available: true, path: '/fake/bin/engine' });
       projectsDir = path.join(store._getBasePath(), 'projects');
       server = createServer();
       await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     });
 
     after(async () => {
+      enginesModule.detectEngine = origDetectEngine;
       await new Promise((resolve) => server.close(resolve));
     });
 
@@ -5871,12 +6069,51 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       assert.equal(res.body.canEditProperties, true);
       assert.ok(res.body.remediation);
     });
-    // Model/effort-check and malformed-config enrichment (ENGINE_CONFIG_INVALID)
-    // are exercised directly against launchSession's own return objects, not
-    // over HTTP: they need a real engine CLI/tmux to reach that deep into the
-    // launch pipeline in this environment, which `preflightSessionLaunch`'s
-    // own unit tests above already cover for the identical underlying check
-    // without that dependency. This block proves the ROUTE's enrichment
-    // wiring (`_withDiagnostic`), not the check logic itself.
+
+    // PRR-A R1 BLOCKING 3 (#3202): the non-mutating preflight gate now runs
+    // in this route BEFORE launchSession is ever called, so a condition
+    // launchSession itself only warns about (a missing/unreadable path —
+    // #2401's pathHealthWarning, deliberately lenient for launchSession's
+    // own direct callers) instead refuses HERE, structurally — not just
+    // wired through launchSession's own enrichment. These three no longer
+    // need a real engine CLI/tmux to reach, unlike the comment this block
+    // used to carry: the gate catches them before any of that runs.
+    it('a launch against a missing workspace path refuses with 404 WORKSPACE_MISSING, never reaching launchSession', async () => {
+      const dir = path.join(projectsDir, 'preflight-launch-missing-path');
+      store.projects.create({ name: 'preflight-launch-missing-path', path: dir, engine: 'claude' });
+      const res = await request('POST', '/api/sessions/preflight-launch-missing-path');
+      assert.equal(res.status, 404);
+      assert.equal(res.body.code, 'WORKSPACE_MISSING');
+      assert.equal(res.body.diagnostic.category, 'workspace_missing');
+      assert.equal(store.sessions.getActive(store.projects.getByName('preflight-launch-missing-path').id), null,
+        'nothing was launched');
+    });
+
+    it('a launch against an unreadable workspace path refuses with 403 TCC_PERMISSION_DENIED, never reaching launchSession', async () => {
+      if (process.getuid && process.getuid() === 0) return; // chmod 0 doesn't block root
+      const dir = path.join(projectsDir, 'preflight-launch-blocked');
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name: 'preflight-launch-blocked', path: dir, engine: 'claude' });
+      fs.chmodSync(dir, 0o000);
+      try {
+        const res = await request('POST', '/api/sessions/preflight-launch-blocked');
+        assert.equal(res.status, 403);
+        assert.equal(res.body.code, 'TCC_PERMISSION_DENIED');
+        assert.equal(res.body.diagnostic.category, 'filesystem_permission_denied');
+      } finally {
+        fs.chmodSync(dir, 0o755);
+      }
+    });
+
+    it('a launch with a malformed project.json refuses with 409 ENGINE_CONFIG_INVALID, never reaching launchSession', async () => {
+      const dir = path.join(projectsDir, 'preflight-launch-malformed-config');
+      fs.mkdirSync(path.join(dir, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), '{ not valid json');
+      store.projects.create({ name: 'preflight-launch-malformed-config', path: dir, engine: 'claude' });
+      const res = await request('POST', '/api/sessions/preflight-launch-malformed-config');
+      assert.equal(res.status, 409);
+      assert.equal(res.body.code, 'ENGINE_CONFIG_INVALID');
+      assert.equal(res.body.diagnostic.category, 'engine_auth_or_config_invalid');
+    });
   });
 });
