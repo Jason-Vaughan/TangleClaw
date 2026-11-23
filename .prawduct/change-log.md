@@ -41,6 +41,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-22 — v6.5.8 release cut (Milestone #102), Car V658-W2-REL
+
+<!-- prawduct: type=internal | scope=v658-release -->
+
+- Compiled 4 accepted `changelog.d/` fragments (#3198 from PR #3221; #3199 and #3200 from PR
+  #3222, with a CSS/E2E follow-up for both in PR #3220; #3217 from PR #3219) into `CHANGELOG.md`
+  section `[6.5.8]` via `compileFragments`/`spliceIntoUnreleased`/`_promoteUnreleased`, target
+  version `6.5.8` (patch — the fragment set is `fixed` only). Bumped `version.json` (`6.5.7` →
+  `6.5.8`), updated README pins/banner (prose hand-written here, not generated) and the
+  released-section lock via `scripts/release-prepare.js`, and updated `FEATURES.md`,
+  `ROADMAP.md`, `docs/releases/index.md` and `docs/releases/v6.5.8.md`.
+- Dispatched by `TC-Lane-PM` via Medusa after all 4 Wave 1 cars true-merged to
+  `origin/main @ 8afc5e822d4fb5e40bdd7b4b37b5c28e26d806e0`, closing all 4 Milestone #102 issues
+  (#3198, #3199, #3200, #3217). Two of the four fragment filenames in the dispatch's own text
+  did not match the real files on disk (`3199.user-prompt-attribution.fixed.md` vs. the real
+  `3199.chat-prompt-attribution-dedup.fixed.md`; similarly for `3217`); operated on the real
+  filenames, flagged to PM before starting.
+- Branched `release/v6.5.8` explicitly from `origin/main` (`git checkout -b release/v6.5.8
+  origin/main`), confirmed via `git merge-base HEAD origin/main` equalling `HEAD` before any
+  edit — the lesson from Car V657-W2-REL's near-miss, applied again.
+- `node scripts/test-stage.js 2 --base origin/main` was not run locally for this car, on the
+  same PM guidance given for this sprint's prior release cars. Verified with `node
+  scripts/test-stage.js 1` and `node --test test/release-notes.test.js test/changelog*.test.js
+  test/version*.test.js test/features-index.test.js` (441/441 pass) plus the static repo-scan
+  pre-check.
+
 ## 2026-11-22 — v6.5.7 release cut (Milestone #93), Car V657-W2-REL
 
 <!-- prawduct: type=internal | scope=v657-release -->
