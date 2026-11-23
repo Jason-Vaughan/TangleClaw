@@ -122,11 +122,16 @@ describe('#2864: decideWorkspaceRename wired into the rename validator', () => {
     }
   });
 
-  it('decideWorkspaceRename itself is reachable from the validator table with real orphan risk, and confirmOrphanRisk lifts the refusal', () => {
+  it('decideWorkspaceRename itself is reachable from the validator table with real, NON-migratable orphan risk, and confirmOrphanRisk lifts the refusal', () => {
     // Exercises the validator function directly (the same
     // PROJECT_UPDATE_VALIDATORS entry updateProject runs), against a real
     // claudeHome override passed through `options` the same shape
     // lib/workspace-rename-check.js#decideWorkspaceRename itself accepts.
+    //
+    // #3196: a Claude-only state whose target encoded directory is still
+    // FREE is now auto-migratable (allowed outright, see the test right
+    // below) -- a target COLLISION is what keeps this genuinely
+    // non-migratable, so the target directory is created ahead of time here.
     const workspaceRenameCheck = require('../lib/workspace-rename-check');
     const claudeHome = path.join(tmpDir, 'claude-home-2');
     const oldPath = path.join(tmpDir, 'rename-src');
@@ -136,6 +141,8 @@ describe('#2864: decideWorkspaceRename wired into the rename validator', () => {
     const dir = path.join(claudeHome, 'projects', enc);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'sess.jsonl'), JSON.stringify({ type: 'message', cwd: oldPath }) + '\n');
+    const newEnc = newPath.replace(/[/.]/g, '-');
+    fs.mkdirSync(path.join(claudeHome, 'projects', newEnc), { recursive: true });
 
     const refused = workspaceRenameCheck.decideWorkspaceRename(oldPath, newPath, { claudeHome });
     assert.equal(refused.allowed, false);
@@ -144,6 +151,21 @@ describe('#2864: decideWorkspaceRename wired into the rename validator', () => {
     const confirmed = workspaceRenameCheck.decideWorkspaceRename(oldPath, newPath, { claudeHome, confirmOrphanRisk: true });
     assert.equal(confirmed.allowed, true);
     assert.equal(confirmed.requiresConfirmation, true);
+  });
+
+  it('decideWorkspaceRename allows outright, with autoMigratable: ["claude"], when the target encoded directory is free (#3196)', () => {
+    const workspaceRenameCheck = require('../lib/workspace-rename-check');
+    const claudeHome = path.join(tmpDir, 'claude-home-3');
+    const oldPath = path.join(tmpDir, 'rename-src-2');
+    const newPath = path.join(tmpDir, 'rename-dst-2');
+    fs.mkdirSync(oldPath, { recursive: true });
+    const enc = oldPath.replace(/[/.]/g, '-');
+    const dir = path.join(claudeHome, 'projects', enc);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'sess.jsonl'), JSON.stringify({ type: 'message', cwd: oldPath }) + '\n');
+
+    const decision = workspaceRenameCheck.decideWorkspaceRename(oldPath, newPath, { claudeHome });
+    assert.deepEqual(decision, { allowed: true, requiresConfirmation: false, warning: null, autoMigratable: ['claude'] });
   });
 
   it('a rename with no orphan risk at all is unaffected', async () => {
@@ -155,6 +177,120 @@ describe('#2864: decideWorkspaceRename wired into the rename validator', () => {
     const result = await projects.updateProject(project.name, { name: 'wr-safe-renamed' });
     assert.ok(result.project, 'an ordinary rename with no engine state at the old path still succeeds');
     assert.equal(result.project.name, 'wr-safe-renamed');
+  });
+});
+
+// #3196 (Car V659-W1-D): `_applyProjectUpdates`'s (`lib/projects.js`) own
+// automatic engine-state migration on project rename -- it wires
+// `migrateEngineStateOnRename` right after `fs.renameSync` succeeds,
+// folding its `warnings` into `updateProject`'s own return value and
+// logging every successful migration. `migrateEngineStateOnRename`'s own
+// logic (moving the right directory, collision/EACCES handling, Codex's
+// content-keyed warning) is already fully covered against real
+// `claudeHome`/`codexHome` fixtures in `test/workspace-rename-check.test.js`
+// -- this block's only job is the INTEGRATION seam, exactly this file's own
+// charter (proving `lib/projects.js` calls the module with the right data
+// at the right point). The real call site takes no `claudeHome`/
+// `codexHome` override (by design -- it reads the REAL `~/.claude`/
+// `~/.codex`, same as every other engine-state reader in this codebase),
+// so these tests stub `workspace-rename-check`'s own exported function for
+// the duration of each one that needs a specific migration result,
+// restoring it immediately after -- never touching the real filesystem's
+// `~/.claude` or `~/.codex`.
+describe('#3196: _applyProjectUpdates wires migrateEngineStateOnRename', () => {
+  let originalMigrate;
+  const workspaceRenameCheck = require('../lib/workspace-rename-check');
+
+  beforeEach(() => {
+    originalMigrate = workspaceRenameCheck.migrateEngineStateOnRename;
+  });
+
+  afterEach(() => {
+    // Restore the real implementation unconditionally, so a stub set by
+    // one test can never leak into the next.
+    workspaceRenameCheck.migrateEngineStateOnRename = originalMigrate;
+  });
+
+  it('calls migrateEngineStateOnRename with the exact old/new paths right after a successful rename', async () => {
+    const projDir = fs.mkdtempSync(path.join(tmpDir, 'mig-called-'));
+    const project = store.projects.create({ name: 'mig-called', path: projDir, engine: 'claude' });
+    let calledWith = null;
+    workspaceRenameCheck.migrateEngineStateOnRename = (oldPath, newPath) => {
+      calledWith = { oldPath, newPath };
+      return { migrated: [], warnings: [] };
+    };
+    const result = await projects.updateProject(project.name, { name: 'mig-called-renamed' });
+    assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+    assert.equal(calledWith.oldPath, projDir);
+    assert.equal(calledWith.newPath, path.join(path.dirname(projDir), 'mig-called-renamed'));
+  });
+
+  it('adds nothing to updateProject\'s own warnings on a clean migration with 0 warnings', async () => {
+    const projDir = fs.mkdtempSync(path.join(tmpDir, 'mig-clean-'));
+    const project = store.projects.create({ name: 'mig-clean', path: projDir, engine: 'claude' });
+    workspaceRenameCheck.migrateEngineStateOnRename = () => ({
+      migrated: [{ engine: 'claude', from: '/old/encoded', to: '/new/encoded', status: 'migrated' }],
+      warnings: []
+    });
+    const result = await projects.updateProject(project.name, { name: 'mig-clean-renamed' });
+    assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+    assert.deepEqual((result.warnings || []).filter((w) => w.includes('migrat')), []);
+  });
+
+  it('surfaces a migration warning (target collision / EACCES / Codex) onto updateProject\'s own warnings, without blocking the rename', async () => {
+    const projDir = fs.mkdtempSync(path.join(tmpDir, 'mig-warn-'));
+    const project = store.projects.create({ name: 'mig-warn', path: projDir, engine: 'claude' });
+    const WARNING = 'Claude Code engine state at /src was not migrated: /dst already exists. Resolve manually: mv /src /dst';
+    workspaceRenameCheck.migrateEngineStateOnRename = () => ({
+      migrated: [{ engine: 'claude', from: '/src', to: '/dst', status: 'failed', reason: 'target directory already exists' }],
+      warnings: [WARNING]
+    });
+    const result = await projects.updateProject(project.name, { name: 'mig-warn-renamed' });
+    assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+    assert.ok((result.warnings || []).includes(WARNING), JSON.stringify(result.warnings));
+    // The directory rename itself already succeeded on disk -- a migration
+    // warning reports that one piece did not complete, it never undoes the
+    // rename or blocks the update as a whole.
+    assert.equal(fs.existsSync(path.join(path.dirname(projDir), 'mig-warn-renamed')), true);
+    assert.equal(fs.existsSync(projDir), false);
+  });
+
+  it('logs every successful migration, keyed by the real old/new project paths', async () => {
+    const projDir = fs.mkdtempSync(path.join(tmpDir, 'mig-logged-'));
+    const project = store.projects.create({ name: 'mig-logged', path: projDir, engine: 'claude' });
+    const newPath = path.join(path.dirname(projDir), 'mig-logged-renamed');
+    const migratedEntry = { engine: 'claude', from: '/a', to: '/b', status: 'migrated' };
+    workspaceRenameCheck.migrateEngineStateOnRename = () => ({ migrated: [migratedEntry], warnings: [] });
+    // Every module's logger funnels through this one shared stream
+    // (lib/logger.js#_write); pinning it here is the one seam that lets a
+    // test read what `lib/projects.js`'s OWN (unexported) `log` instance
+    // actually wrote. This file suppresses below ERROR (`setLevel` above),
+    // so the level is raised for exactly this one call.
+    const logger = require('../lib/logger');
+    let written = '';
+    logger.setLevel('info');
+    logger.setConsoleStream({ write: (chunk) => { written += chunk; } });
+    try {
+      await projects.updateProject(project.name, { name: 'mig-logged-renamed' });
+    } finally {
+      logger.setConsoleStream(null);
+      logger.setLevel('error');
+    }
+    const line = written.split('\n').find((l) => l.includes('Engine state directory migrated with project rename'));
+    assert.ok(line, `expected a migration log line among:\n${written}`);
+    assert.ok(line.includes(`from=${projDir}`), line);
+    assert.ok(line.includes(`to=${newPath}`), line);
+    assert.ok(line.includes(`migrated=${JSON.stringify([migratedEntry])}`), line);
+  });
+
+  it('never calls migrateEngineStateOnRename when the update carries no rename', async () => {
+    const projDir = fs.mkdtempSync(path.join(tmpDir, 'mig-no-rename-'));
+    const project = store.projects.create({ name: 'mig-no-rename', path: projDir, engine: 'claude' });
+    let called = false;
+    workspaceRenameCheck.migrateEngineStateOnRename = () => { called = true; return { migrated: [], warnings: [] }; };
+    const result = await projects.updateProject(project.name, { tags: ['x'] });
+    assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+    assert.equal(called, false);
   });
 });
 
