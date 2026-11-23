@@ -226,6 +226,81 @@ describe('learnings-coverage.evaluate', () => {
       const abs = coverage._managedFallbackPath('/Users/x/Documents/Projects/my-proj', REL, { managedWorkspacesDir: '/mw' });
       assert.equal(abs, path.join('/mw', 'my-proj', REL));
     });
+
+    // PRR-A R-Gate R1 BLOCKING 1 (PR #3239): many registered projects have
+    // `project.name !== path.basename(project.path)` — the basename-only
+    // derivation misses the managed fallback entirely for those.
+    describe('canonical project name — path.basename(project.path) disagrees with project.name (#3216 R2)', () => {
+      it('_resolveProjectName: deps.projectName wins outright, no store lookup attempted', () => {
+        let storeCalled = false;
+        const name = coverage._resolveProjectName('/Users/x/Documents/Projects/checkout-dir', {
+          projectName: 'Registered-Name',
+          store: { projects: { getByPath: () => { storeCalled = true; return { name: 'ignored' }; } } }
+        });
+        assert.equal(name, 'Registered-Name');
+        assert.equal(storeCalled, false);
+      });
+
+      it('_resolveProjectName: falls back to a store.projects.getByPath lookup when no projectName is given', () => {
+        const name = coverage._resolveProjectName('/Users/x/Documents/Projects/checkout-dir', {
+          store: { projects: { getByPath: (p) => (p === '/Users/x/Documents/Projects/checkout-dir' ? { name: 'Registered-Name' } : null) } }
+        });
+        assert.equal(name, 'Registered-Name');
+      });
+
+      it('_resolveProjectName: null when neither projectName nor a store lookup resolves anything — caller falls back to basename', () => {
+        assert.equal(coverage._resolveProjectName('/Users/x/Documents/Projects/checkout-dir', {}), null);
+        assert.equal(coverage._resolveProjectName('/Users/x/Documents/Projects/checkout-dir', { store: { projects: { getByPath: () => null } } }), null);
+      });
+
+      it('_managedFallbackCandidatePaths: checks the canonical name FIRST, then path.basename too, when they differ', () => {
+        const paths = coverage._managedFallbackCandidatePaths('/Users/x/Documents/Projects/TangleClaw-PR-Reviewer', REL, {
+          managedWorkspacesDir: '/mw', projectName: 'TC-Lane-PRR-A'
+        });
+        assert.deepEqual(paths, [
+          path.join('/mw', 'TC-Lane-PRR-A', REL),
+          path.join('/mw', 'TangleClaw-PR-Reviewer', REL)
+        ]);
+      });
+
+      it('_managedFallbackCandidatePaths: a single candidate when the canonical name and the basename agree', () => {
+        const paths = coverage._managedFallbackCandidatePaths('/Users/x/Documents/Projects/my-proj', REL, {
+          managedWorkspacesDir: '/mw', projectName: 'my-proj'
+        });
+        assert.deepEqual(paths, [path.join('/mw', 'my-proj', REL)]);
+      });
+
+      it('evaluate(): checkout directory name disagrees with the registered project name — resolves coverage from the canonically-named managed fallback', () => {
+        // `root`'s own basename is whatever mkdtemp assigned it — this
+        // test's `projectName` override stands in for a project registered
+        // under a DIFFERENT name entirely (the real-world case PRR-A
+        // named: TC-Lane-PRR-A's checkout basename is
+        // "TangleClaw-PR-Reviewer", not its registered name) — proving
+        // the canonical name, not the basename, is what gets checked.
+        const canonicalDeps = { managedWorkspacesDir: managedRoot, projectName: 'Registered-Name' };
+        const abs = coverage._managedFallbackPath(root, REL, canonicalDeps);
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        fs.writeFileSync(abs, `# Learnings\n\n## ${today} — written under the canonical registered name\nBody.\n`);
+        fs.utimesSync(abs, (startedAtMs + 1000) / 1000, (startedAtMs + 1000) / 1000);
+        const r = coverage.evaluate(root, [REL], { startedAtMs }, canonicalDeps);
+        assert.equal(r.verdict, 'covered');
+        assert.equal(r.source, 'managed-fallback');
+      });
+    });
+
+    // PRR-A R-Gate R1 BLOCKING 2 (PR #3239): the exact regression the
+    // finding named — a readable-but-invalid fallback must never win over
+    // a readable, valid primary, even when it is fresher.
+    it('a FRESHER managed fallback with no entry for this session never displaces a readable, VALID primary', () => {
+      writeLearnings(root, `# Learnings\n\n## ${today} — valid entry on the primary path\nBody.\n`, startedAtMs + 1000);
+      // Fresher than the primary, readable, but carries no entry at all —
+      // readable-but-INVALID for this contract.
+      writeFallback('# Learnings\n\nno dated entries here.\n', startedAtMs + 5000);
+      const r = coverage.evaluate(root, [REL], { startedAtMs }, fallbackDeps());
+      assert.equal(r.verdict, 'covered');
+      assert.equal(r.source, 'primary', 'the invalid (no-entry) fallback must not win just for being fresher');
+      assert.equal(r.mirroredBack, undefined, 'no mirror-back — the primary won, not the fallback');
+    });
   });
 });
 

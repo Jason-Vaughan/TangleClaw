@@ -299,6 +299,70 @@ describe('wrap-step learnings-db-write (#466)', () => {
           step._internal.mkdirSync = realMkdirSync;
         }
       });
+
+      // PRR-A R-Gate R1 BLOCKING 2 (PR #3239): the exact regression the
+      // finding named — a readable-but-invalid fallback must never win
+      // over a readable, valid primary, even when it is fresher.
+      it('a FRESHER managed fallback with no today-entry never displaces a readable, VALID primary', async () => {
+        fs.writeFileSync(learningsPath, `# T\n\n## ${TODAY} — valid entry on the primary path\nbody.\n`);
+        const fallbackAbs = managedPath();
+        fs.mkdirSync(path.dirname(fallbackAbs), { recursive: true });
+        // Fresher than the primary, readable, but carries no today-entry —
+        // readable-but-INVALID for this step's own contract.
+        fs.writeFileSync(fallbackAbs, `# T\n\n## ${YESTERDAY} — no today entry here\nbody.\n`);
+
+        const r = await step.run({ project });
+        assert.equal(r.status, 'done', JSON.stringify(r));
+        const rows = store.learnings.list(project.id);
+        assert.equal(rows.length, 1);
+        assert.match(rows[0].content, /valid entry on the primary path/);
+        // No mirror-back happened — the primary won, not the fallback.
+        assert.equal(fs.readFileSync(learningsPath, 'utf8'), `# T\n\n## ${TODAY} — valid entry on the primary path\nbody.\n`);
+      });
+    });
+
+    // PRR-A R-Gate R1 BLOCKING 1 (PR #3239): many registered projects have
+    // `project.name !== path.basename(project.path)` (e.g. a checkout
+    // cloned under a different directory name than it was registered
+    // under) — the basename-only derivation missed the managed fallback
+    // entirely for those.
+    describe('canonical project.name, not path.basename(project.path) (#3216 R2)', () => {
+      let mismatchedProjectPath;
+      let mismatchedProject;
+
+      before(() => {
+        // The checkout's directory name ("checkout-dir-...") deliberately
+        // does NOT match the project's registered name ("Registered-Name-...").
+        mismatchedProjectPath = path.join(path.dirname(projectPath), `checkout-dir-${Date.now()}`);
+        fs.mkdirSync(mismatchedProjectPath, { recursive: true });
+        mismatchedProject = store.projects.create({
+          name: `Registered-Name-${Date.now()}`, path: mismatchedProjectPath, engine: 'claude'
+        });
+      });
+
+      beforeEach(() => { step._internal.todayIso = () => TODAY; });
+
+      it('resolves the managed fallback under the REGISTERED project name, not the checkout directory name', async () => {
+        const managedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-learnings-db-managed-mismatch-'));
+        step._internal.managedWorkspacesDir = managedRoot;
+        try {
+          // Written under the CANONICAL registered name, not the checkout
+          // directory's own basename.
+          const abs = coverage._managedFallbackPath(mismatchedProjectPath, step.LEARNINGS_RELPATH, {
+            managedWorkspacesDir: managedRoot, projectName: mismatchedProject.name
+          });
+          fs.mkdirSync(path.dirname(abs), { recursive: true });
+          fs.writeFileSync(abs, `# T\n\n## ${TODAY} — written under the canonical registered name\nbody.\n`);
+          const r = await step.run({ project: mismatchedProject });
+          assert.equal(r.status, 'done', JSON.stringify(r));
+          const rows = store.learnings.list(mismatchedProject.id);
+          assert.equal(rows.length, 1);
+          assert.match(rows[0].content, /written under the canonical registered name/);
+        } finally {
+          step._internal.managedWorkspacesDir = undefined;
+          fs.rmSync(managedRoot, { recursive: true, force: true });
+        }
+      });
     });
   });
 });
