@@ -177,30 +177,56 @@ describe('decideWorkspaceRename', () => {
     assert.deepEqual(wrc.decideWorkspaceRename('/a', '/b', { claudeHome, codexHome }), { allowed: true, requiresConfirmation: false, warning: null });
   });
 
-  it('refuses an at-risk rename without explicit confirmation (A1370 addendum §1.3)', () => {
+  // #3196: Claude's own state, with its target encoded directory still
+  // free, is exactly what migrateEngineStateOnRename will relocate right
+  // after the rename -- never truly orphaned, so this must auto-allow.
+  it('allows outright, with autoMigratable: ["claude"], when the only state is Claude\'s own and its target directory is free (#3196)', () => {
     const oldPath = path.join(tmp, 'old-name');
     const newPath = path.join(tmp, 'new-name');
     writeClaudeTranscript(oldPath);
+    const decision = wrc.decideWorkspaceRename(oldPath, newPath, { claudeHome, codexHome });
+    assert.deepEqual(decision, { allowed: true, requiresConfirmation: false, warning: null, autoMigratable: ['claude'] });
+  });
+
+  // Pre-#3196 behavior (A1370 addendum §1.3), now exercised with CONTENT-
+  // KEYED Codex state -- never auto-migratable, so it still must refuse.
+  it('refuses an at-risk rename without explicit confirmation when the state is NOT auto-migratable', () => {
+    const oldPath = path.join(tmp, 'old-name');
+    const newPath = path.join(tmp, 'new-name');
+    writeCodexRollout(oldPath);
     const decision = wrc.decideWorkspaceRename(oldPath, newPath, { claudeHome, codexHome });
     assert.equal(decision.allowed, false);
     assert.equal(decision.requiresConfirmation, true);
     assert.match(decision.warning, /WARNING/);
   });
 
-  it('never defaults confirmation to true implicitly -- only an explicit confirmOrphanRisk: true passes', () => {
+  // #3196: being Claude's own state is not enough on its own -- a target
+  // collision is exactly the case a human must resolve.
+  it('refuses when Claude state exists but its target encoded directory already exists (#3196)', () => {
     const oldPath = path.join(tmp, 'old-name');
     const newPath = path.join(tmp, 'new-name');
     writeClaudeTranscript(oldPath);
+    fs.mkdirSync(path.join(claudeHome, 'projects', transcript._encodeDir(newPath)), { recursive: true });
+    const decision = wrc.decideWorkspaceRename(oldPath, newPath, { claudeHome, codexHome });
+    assert.equal(decision.allowed, false);
+    assert.equal(decision.requiresConfirmation, true);
+    assert.equal(decision.autoMigratable, undefined);
+  });
+
+  it('never defaults confirmation to true implicitly -- only an explicit confirmOrphanRisk: true passes, for non-migratable state', () => {
+    const oldPath = path.join(tmp, 'old-name');
+    const newPath = path.join(tmp, 'new-name');
+    writeCodexRollout(oldPath);
     for (const bad of [undefined, null, false, 'true', 1]) {
       assert.equal(wrc.decideWorkspaceRename(oldPath, newPath, { claudeHome, codexHome, confirmOrphanRisk: bad }).allowed, false,
         `confirmOrphanRisk: ${JSON.stringify(bad)} must not pass as confirmation`);
     }
   });
 
-  it('allows an at-risk rename once explicitly confirmed, and still returns the warning for the caller to log', () => {
+  it('allows an at-risk (non-migratable) rename once explicitly confirmed, and still returns the warning for the caller to log', () => {
     const oldPath = path.join(tmp, 'old-name');
     const newPath = path.join(tmp, 'new-name');
-    writeClaudeTranscript(oldPath);
+    writeCodexRollout(oldPath);
     const decision = wrc.decideWorkspaceRename(oldPath, newPath, { claudeHome, codexHome, confirmOrphanRisk: true });
     assert.equal(decision.allowed, true);
     assert.equal(decision.requiresConfirmation, true);
@@ -214,11 +240,12 @@ describe('decideWorkspaceRename', () => {
   // parameter entirely: there is no longer a caller-reachable argument
   // position where a missing or mismatched report could be supplied, so
   // these regressions prove the fix by construction -- there is no way to
-  // ask this function to skip its own inspection anymore.
-  it('refuses a genuinely risky rename even when the caller never computed or saw any risk report itself', () => {
+  // ask this function to skip its own inspection anymore. Content-keyed
+  // Codex state keeps this genuinely non-migratable post-#3196.
+  it('refuses a genuinely risky (non-migratable) rename even when the caller never computed or saw any risk report itself', () => {
     const oldPath = path.join(tmp, 'risky-old');
     const newPath = path.join(tmp, 'new-name');
-    writeClaudeTranscript(oldPath);
+    writeCodexRollout(oldPath);
     // The caller supplies only oldPath/newPath/options -- exactly the
     // vulnerable repro from the review (`decideWorkspaceRename('/risky/old',
     // '/new', null)`), now structurally impossible to reproduce since the
@@ -226,6 +253,103 @@ describe('decideWorkspaceRename', () => {
     const decision = wrc.decideWorkspaceRename(oldPath, newPath, { claudeHome, codexHome });
     assert.equal(decision.allowed, false);
     assert.equal(decision.requiresConfirmation, true);
+  });
+
+  it('refuses when Claude state is auto-migratable but Codex state alongside it is not (#3196 -- mixed state)', () => {
+    const oldPath = path.join(tmp, 'old-name');
+    const newPath = path.join(tmp, 'new-name');
+    writeClaudeTranscript(oldPath);
+    writeCodexRollout(oldPath);
+    const decision = wrc.decideWorkspaceRename(oldPath, newPath, { claudeHome, codexHome });
+    assert.equal(decision.allowed, false);
+    assert.equal(decision.requiresConfirmation, true);
+  });
+});
+
+describe('migrateEngineStateOnRename (#3196)', () => {
+  it('moves Claude\'s encoded directory (and every file in it) when the target is free', () => {
+    const oldPath = path.join(tmp, 'old-name');
+    const newPath = path.join(tmp, 'new-name');
+    const file = writeClaudeTranscript(oldPath, 'sess-1');
+    const sourceDir = path.dirname(file);
+    const targetDir = path.join(claudeHome, 'projects', transcript._encodeDir(newPath));
+
+    const result = wrc.migrateEngineStateOnRename(oldPath, newPath, { claudeHome, codexHome });
+
+    assert.deepEqual(result, { migrated: [{ engine: 'claude', from: sourceDir, to: targetDir, status: 'migrated' }], warnings: [] });
+    assert.equal(fs.existsSync(sourceDir), false);
+    assert.equal(fs.existsSync(path.join(targetDir, 'sess-1.jsonl')), true);
+  });
+
+  it('does nothing and reports nothing when there is no engine state at all', () => {
+    const result = wrc.migrateEngineStateOnRename(path.join(tmp, 'a'), path.join(tmp, 'b'), { claudeHome, codexHome });
+    assert.deepEqual(result, { migrated: [], warnings: [] });
+  });
+
+  it('does not overwrite an existing target directory, and surfaces a warning with the manual mv fallback', () => {
+    const oldPath = path.join(tmp, 'old-name');
+    const newPath = path.join(tmp, 'new-name');
+    const file = writeClaudeTranscript(oldPath, 'sess-1');
+    const sourceDir = path.dirname(file);
+    const targetDir = path.join(claudeHome, 'projects', transcript._encodeDir(newPath));
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.writeFileSync(path.join(targetDir, 'existing-session.jsonl'), 'already here');
+
+    const result = wrc.migrateEngineStateOnRename(oldPath, newPath, { claudeHome, codexHome });
+
+    assert.equal(result.migrated.length, 1);
+    assert.equal(result.migrated[0].status, 'failed');
+    assert.equal(result.migrated[0].reason, 'target directory already exists');
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /already exists/);
+    assert.match(result.warnings[0], new RegExp(`mv ${shellWord(sourceDir).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    // Neither side was touched: the pre-existing target content survives,
+    // and the source was never moved out from under it.
+    assert.equal(fs.existsSync(path.join(targetDir, 'existing-session.jsonl')), true);
+    assert.equal(fs.existsSync(path.join(sourceDir, 'sess-1.jsonl')), true);
+  });
+
+  it('reports a failed migration (never throws) when fs.renameSync itself errors, e.g. EACCES', () => {
+    const oldPath = path.join(tmp, 'old-name');
+    const newPath = path.join(tmp, 'new-name');
+    const file = writeClaudeTranscript(oldPath, 'sess-1');
+    const sourceDir = path.dirname(file);
+    const projectsDir = path.join(claudeHome, 'projects');
+    fs.chmodSync(projectsDir, 0o555); // read+execute only: blocks the rename's own directory-entry rewrite
+    try {
+      assert.doesNotThrow(() => {
+        const result = wrc.migrateEngineStateOnRename(oldPath, newPath, { claudeHome, codexHome });
+        assert.equal(result.migrated[0].status, 'failed');
+        assert.ok(typeof result.migrated[0].reason === 'string' && result.migrated[0].reason.length > 0);
+        assert.equal(result.warnings.length, 1);
+        assert.match(result.warnings[0], /could not be migrated/);
+      });
+    } finally {
+      fs.chmodSync(projectsDir, 0o755); // restore so afterEach's rmSync can clean up
+    }
+    assert.equal(fs.existsSync(sourceDir), true, 'the source is left exactly where it was on a failed migration');
+  });
+
+  it('never attempts to move Codex state -- always a non-fatal warning, reusing the content-keyed explanation', () => {
+    const oldPath = path.join(tmp, 'old-name');
+    const newPath = path.join(tmp, 'new-name');
+    writeCodexRollout(oldPath);
+    const result = wrc.migrateEngineStateOnRename(oldPath, newPath, { claudeHome, codexHome });
+    assert.deepEqual(result.migrated, []);
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /cannot be relocated/);
+  });
+
+  it('migrates Claude and warns about Codex independently when both have state for the same path', () => {
+    const oldPath = path.join(tmp, 'old-name');
+    const newPath = path.join(tmp, 'new-name');
+    writeClaudeTranscript(oldPath);
+    writeCodexRollout(oldPath);
+    const result = wrc.migrateEngineStateOnRename(oldPath, newPath, { claudeHome, codexHome });
+    assert.equal(result.migrated.length, 1);
+    assert.equal(result.migrated[0].status, 'migrated');
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /cannot be relocated/);
   });
 });
 
