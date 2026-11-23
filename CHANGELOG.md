@@ -4,6 +4,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.5.7] - 2026-11-22
+
+### Fixed
+- The V6 chat's Under the Hood drawer surfaced every Medusa/switchboard message by default, drowning out the fleet chatter an operator actually wanted tucked away; added a "Hide Medusa & fleet chatter" checkbox (checked by default) that filters it out of the raw pane too, not just the tucked-away list. Its scrollable panes (and the main chat stream) also now stay pinned to the newest line across polls, link unfurls and reopening the drawer, instead of only on the very first load. A fleet filter chosen in one browser tab no longer leaks into another tab's sidebar once that tab is reloaded while deep-linked to a different fleet. Fixed in `public/v6-shell.js` (#3191).
+- Styled the Under the Hood "Hide Medusa & fleet chatter" toggle (`.v6-chat-verbosity-option--traffic`) as a distinct pill, set apart from the chat-reply verbosity checkboxes by a divider and a brand-accent tint, and added `.v6-chat-under-hood.is-traffic-hidden .v6-chat-tucked`/`.v6-chat-switchboard`/`.v6-chat-tucked-count` plus `.v6-chat-tucked[hidden]`/`.v6-chat-switchboard[hidden]` rules so hidden Medusa/fleet-chatter sections take zero vertical space inside Under the Hood rather than reserving a gap (#3192).
+
 ## [6.5.6] - 2026-11-22
 
 ### Fixed

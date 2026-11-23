@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.5.6 — Two-way Gobble & Fill chat pane resizers and a sticky Under the Hood toggle](v6.5.6.md)
+- [v6.5.7 — Under the Hood traffic filter, scroll pinning, and multi-tab fleet sync](v6.5.7.md)
 
 ## Recent releases
+
+- [v6.5.6 — Two-way Gobble & Fill chat pane resizers and a sticky Under the Hood toggle](v6.5.6.md)
 
 - [v6.5.5 — Eliminate false-positive V6 Working/busy indicators and fix TCC-proxy scrollback capture](v6.5.5.md)
 

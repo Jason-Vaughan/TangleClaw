@@ -41,6 +41,33 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-22 — v6.5.7 release cut (Milestone #93), Car V657-W2-REL
+
+<!-- prawduct: type=internal | scope=v657-release -->
+
+- Compiled 2 accepted `changelog.d/` fragments (#3191 from PR #3195; #3192 from PR #3193) into
+  `CHANGELOG.md` section `[6.5.7]` via `compileFragments`/`spliceIntoUnreleased`/
+  `_promoteUnreleased`, target version `6.5.7` (patch — the fragment set is `fixed` only).
+  Bumped `version.json` (`6.5.6` → `6.5.7`), updated README pins/banner (prose hand-written
+  here, not generated) and the released-section lock via `scripts/release-prepare.js`, and
+  updated `FEATURES.md`, `ROADMAP.md`, `docs/releases/index.md` and `docs/releases/v6.5.7.md`.
+- Dispatched by `TC-Lane-PM`/`TC-Lane-INT` via Medusa after both Wave 1 cars (PR #3195 @
+  15434930, PR #3193 @ cfefb412) true-merged to `origin/main @ 154349304c589739f88027df391e431ad01d37f9`,
+  closing both Milestone #93 issues (#3191, #3192). `LANE_QUEUE.md`'s `W2-REL (Car V657-W2-REL)`
+  row carries the matching file-scope grant.
+- The branch for this car (`chore/v657-w2-release-cut`) was initially mis-created from the
+  checked-out local branch of this lane's prior car (`chore/v656-w2-rel-release-6.5.6`, several
+  commits behind `origin/main`) instead of from `origin/main` directly, because `git checkout -b`
+  with no explicit start point branches from HEAD, not the fetched remote; caught via
+  `git merge-base HEAD origin/main` before anything was built on it, and the branch was deleted
+  and recreated from `origin/main` before any file edits.
+- `node scripts/test-stage.js 2 --base origin/main` was not run locally for this car either, on
+  the same PM guidance given for this sprint's prior cars. Verified with `node
+  scripts/test-stage.js 1` and `node --test test/repo-scan.test.js test/docs-parity-gate.test.js
+  test/changelog-fragment-gate.test.js test/release-mode.test.js
+  test/changelog-released-immutable.test.js test/release-prepare-script.test.js
+  test/changelog-structure.test.js`.
+
 ## 2026-11-22 — v6.5.6 release cut (Milestone #92), Car V656-W2-REL
 
 <!-- prawduct: type=internal | scope=v656-release -->

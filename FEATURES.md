@@ -17,6 +17,11 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.5.7 — Under the Hood traffic filter, scroll pinning, and multi-tab fleet sync
+
+- **UTH traffic filter, scroll pinning, multi-tab fleet sync** (#3191) — `public/v6-shell.js#filterPeekTrafficLines` (exported as `global.tcV6FilterPeekTrafficLines`), `#verbosityMarkup`/`#chatPeekMarkup` (`#v6ChatHideHoodTraffic`): a default-checked "Hide Medusa & fleet chatter" toggle filters switchboard/Medusa traffic out of the raw Under the Hood pane, not just the tucked-away list. `peekPinned` (mirroring `streamPinned`), `captureViewState`/`restoreViewState`: every scrollable chat pane stays pinned to its newest line across polls, redraws, and reopening instead of drifting from it. `#activeLogicalProjectId`: reconciles the Fleet sidebar's `selectedGroups` back to the active conversation's fleet so another tab's `tc_v6_selected_groups` write no longer strands this tab's sidebar on the wrong fleet after reload.
+- **UTH traffic toggle styling** (#3192) — `public/style.css` (`.v6-chat-verbosity-option--traffic`, `.v6-chat-under-hood.is-traffic-hidden`): the traffic-hide checkbox renders as a distinct pill set apart by a divider and brand-accent tint; a hidden Medusa/fleet-chatter section takes zero vertical space instead of reserving a gap.
+
 ## v6.5.6 — Two-way Gobble & Fill chat pane resizers and a sticky Under the Hood toggle
 
 - **Gobble & Fill chat pane resizers** (#3186) — `public/v6-shell.js#tradeChatPaneHeights`/`#chatPaneResizerMarkup`: 4 accessible drag/keyboard resizer bars at the Main Chat / Under the Hood / Composer boundaries trade height 1:1 and zero-sum between whichever panes are open, with a joint viewport budget so neither Under the Hood nor the composer can together push Main Chat or its own controls off-screen.
