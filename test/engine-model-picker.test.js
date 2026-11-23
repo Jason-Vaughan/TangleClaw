@@ -746,4 +746,26 @@ describe('#3214 Ruling A921 — Claude Code variant normalization in public/ui.j
       assert.match(uiSrc, /<select class="form-select" id="\$\{esc\(effortSelectId\)\}" disabled><option value="">Engine default \(CLI-managed\)<\/option><\/select>/);
     });
   });
+
+  describe('openSettings\' #settingsEngine change listener compares against the normalized stored engine', () => {
+    const openSettingsBody = require('./helpers/lift').liftBody(uiSrc, 'function openSettings(');
+
+    it('leavesStoredEngine/backToStoredEngine read initialSelection.engine, never the raw project.engine.id', () => {
+      // A project stored under a variant id (`claude-sonnet-reviewer`) renders
+      // the dropdown normalized to `claude` on open — if these comparisons
+      // still read the raw, un-normalized `project.engine.id`, switching the
+      // dropdown away and back to (normalized) `claude` would misread as
+      // "leaving the stored engine" and wrongly blank the model/effort
+      // selection `initialSelection` already carries.
+      assert.match(openSettingsBody, /leavesStoredEngine = e\.target\.value !== initialSelection\.engine/);
+      assert.match(openSettingsBody, /backToStoredEngine = e\.target\.value === initialSelection\.engine/);
+      assert.doesNotMatch(openSettingsBody, /leavesStoredEngine = e\.target\.value !== \(project\.engine/);
+      assert.doesNotMatch(openSettingsBody, /backToStoredEngine = e\.target\.value === \(project\.engine/);
+    });
+
+    it('backToStoredEngine restores initialSelection\'s (normalized) model/effort, not the raw project fields', () => {
+      assert.match(openSettingsBody, /backToStoredEngine \? initialSelection\.model : null/);
+      assert.match(openSettingsBody, /backToStoredEngine \? initialSelection\.effort : null/);
+    });
+  });
 });

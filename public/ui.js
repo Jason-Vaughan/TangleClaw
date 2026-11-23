@@ -2087,6 +2087,18 @@ function openSettings(name, options) {
 
   const engineOpts = buildEngineOptions(state.engines, project.engine ? project.engine.id : '');
 
+  // #3214 Ruling A921: computed once, reused everywhere this modal compares
+  // "the dropdown's current value" against "the project's stored engine" —
+  // a project stored under a Claude Code variant id (`claude-sonnet-reviewer`,
+  // `claude-fable-sprint`) is EFFECTIVELY `claude` once normalized, so every
+  // such comparison must use `initialSelection.engine`, never the raw
+  // `project.engine.id`, or switching the dropdown away and back to
+  // (normalized) `claude` would misread as "leaving the stored engine" and
+  // wrongly blank out the model/effort selection just rendered.
+  const initialSelection = normalizeLegacyEngineSelection(
+    project.engine ? project.engine.id : '', project.model || null, project.effort || null
+  );
+
   const hasSession = project.session && project.session.active;
 
   // Silent prime toggle (#103) — rendered into a stable container so we can
@@ -2346,12 +2358,9 @@ function openSettings(name, options) {
   // the rest of the modal on a network round-trip.
   // #3214 Ruling A921: a project stored under a Claude Code variant id shows
   // and saves through the plain `claude` 3-phase picker, not a blank one —
-  // `buildEngineOptions` above already normalizes the dropdown itself; this
-  // is the same normalization for the picker's OWN initial engine/model/effort.
-  const normalizedSelection = normalizeLegacyEngineSelection(
-    project.engine ? project.engine.id : '', project.model || null, project.effort || null
-  );
-  renderModelEffortPicker(normalizedSelection.engine, normalizedSelection.model, normalizedSelection.effort);
+  // `initialSelection` (computed once, above) already carries the normalized
+  // engine/model/effort for exactly this.
+  renderModelEffortPicker(initialSelection.engine, initialSelection.model, initialSelection.effort);
   // CC-6 (#381): populate the per-project rule lists (async) once the
   // modal markup is in the DOM. project.id is the DB id the API scopes on.
   loadProjectRules(project.id, project.name);
@@ -2401,7 +2410,7 @@ function openSettings(name, options) {
     // this project launches whichever engine runs.
     const showEl = document.getElementById('settingsShowLaunchPicker');
     const storedMode = project.defaultLaunchMode || 'default';
-    const leavesStoredEngine = e.target.value !== (project.engine ? project.engine.id : '');
+    const leavesStoredEngine = e.target.value !== initialSelection.engine;
     renderLaunchModeSettings(
       e.target.value,
       tcLaunchModeForEngine(project, e.target.value),
@@ -2419,10 +2428,10 @@ function openSettings(name, options) {
     // `modelAfterUpdate`/`effortAfterUpdate`'s own `changesEngine` check
     // server-side exactly: switching back to the project's STORED engine
     // (never having saved) still shows what is actually stored for it.
-    const backToStoredEngine = e.target.value === (project.engine ? project.engine.id : '');
+    const backToStoredEngine = e.target.value === initialSelection.engine;
     renderModelEffortPicker(e.target.value,
-      backToStoredEngine ? (project.model || null) : null,
-      backToStoredEngine ? (project.effort || null) : null);
+      backToStoredEngine ? initialSelection.model : null,
+      backToStoredEngine ? initialSelection.effort : null);
   });
 
   // Turning silent prime off costs the operator the index pointers too — the
