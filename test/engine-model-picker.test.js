@@ -25,6 +25,7 @@ const sessions = require('../lib/sessions');
 const store = require('../lib/store');
 const profileReconciler = require('../lib/profile-reconciler');
 const { setLevel } = require('../lib/logger');
+const { loadEsc } = require('./helpers/lift');
 
 setLevel('error');
 
@@ -575,5 +576,84 @@ describe('#2188 engine-model-picker — lib/projects.js wiring (effort persisten
       assert.equal(result.project, null);
       assert.ok(result.errors.some((e) => e.includes('not a model offered')));
     });
+  });
+});
+
+// #3214 R-Gate R1 BLOCKING 3 — `settingsCard`'s title is escaped once, by
+// `settingsCard` itself; a call site must pass plain text, never a
+// pre-encoded entity, or the real `esc()` double-escapes it into visible
+// `&amp;amp;` / `&amp;mdash;`. These run the SAME `esc()` the page ships
+// (lifted from its source, not re-implemented) against the exact title
+// strings `public/ui.js` passes to `settingsCard`, so a future call site
+// that creeps back to a pre-encoded title fails here.
+describe('#3214 Project Settings — settingsCard title escaping (R-Gate R1 BLOCKING 3)', () => {
+  const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+  const esc = loadEsc();
+
+  /** Every title string literal passed as settingsCard's first argument. */
+  function settingsCardTitles() {
+    const titles = [];
+    const re = /settingsCard\('((?:[^'\\]|\\.)*)'/g;
+    let m;
+    while ((m = re.exec(uiSrc))) titles.push(m[1]);
+    return titles;
+  }
+
+  it('public/ui.js calls settingsCard exactly 3 times, one per card', () => {
+    assert.equal(settingsCardTitles().length, 3);
+  });
+
+  it('no title call site carries a pre-encoded HTML entity', () => {
+    for (const title of settingsCardTitles()) {
+      assert.doesNotMatch(title, /&(amp|lt|gt|quot|#39|mdash|middot);/,
+        `"${title}" must be plain text — settingsCard already escapes it`);
+    }
+  });
+
+  it('escaping each real title once produces no double-escaped entity', () => {
+    for (const title of settingsCardTitles()) {
+      const rendered = esc(title);
+      assert.doesNotMatch(rendered, /&amp;(amp|lt|gt|quot|#39|mdash|middot);/,
+        `rendering "${title}" must not double-escape`);
+    }
+  });
+
+  it('the AI Engine card title renders its & and em dash correctly, once', () => {
+    const title = settingsCardTitles().find((t) => t.includes('AI Engine'));
+    assert.equal(esc(title), 'AI Engine, Model &amp; Effort — Launch Mode');
+  });
+});
+
+// #3214 R-Gate R1 BLOCKING 1 — the Identity & Workspace Paths card must
+// surface project.path, fleetCoordinator and decisionAuthorityPolicy
+// alongside name/tags/version-file-path, not just the fields that existed
+// before this car. Source-level: `openSettings` has too many top-level
+// dependencies (state, esc, apiMutate, DOM) to invoke directly, the same
+// constraint documented in test/settings-modal-silentprime.test.js.
+describe('#3214 Project Settings — Identity & Workspace card fields (R-Gate R1 BLOCKING 1)', () => {
+  const { liftBody } = require('./helpers/lift');
+  const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+  const openSettingsBody = liftBody(uiSrc, 'function openSettings(');
+
+  it('renders the project workspace path', () => {
+    assert.match(openSettingsBody, /project\.path/);
+  });
+
+  it('renders the Fleet Coordinator / decision authority role', () => {
+    assert.match(openSettingsBody, /project\.fleetCoordinator/);
+    assert.match(openSettingsBody, /project\.decisionAuthorityPolicy/);
+  });
+
+  it('the settings modal backdrop is a true full-viewport page, not a floating box', () => {
+    const htmlSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const modalIdx = htmlSrc.indexOf('id="settingsModal"');
+    assert.notEqual(modalIdx, -1, '#settingsModal must exist');
+    const contentIdx = htmlSrc.indexOf('modal-content settings-modal', modalIdx);
+    const styleEnd = htmlSrc.indexOf('>', contentIdx);
+    const styleAttr = htmlSrc.slice(contentIdx, styleEnd);
+    assert.match(styleAttr, /position:\s*fixed/);
+    assert.match(styleAttr, /inset:\s*0/);
+    assert.match(styleAttr, /width:\s*100vw/);
+    assert.match(styleAttr, /height:\s*100vh/);
   });
 });

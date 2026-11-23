@@ -2142,13 +2142,17 @@ function openSettings(name, options) {
 
   document.getElementById('settingsBody').innerHTML = `
     <div style="display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
-      ${settingsCard('Identity &amp; Workspace Paths', `
+      ${settingsCard('Identity & Workspace Paths', `
         <div class="form-group">
           <label class="form-label" for="settingsName">Name</label>
           <input type="text" class="form-input" id="settingsName" value="${esc(name)}"
                  autocomplete="off" autocorrect="off" autocapitalize="off"
                  ${hasSession ? 'disabled' : ''}>
           ${hasSession ? '<div class="form-hint" style="color:var(--danger)">Cannot rename while a session is active</div>' : ''}
+        </div>
+        <div class="form-group">
+          <label class="form-label">Workspace path</label>
+          <div class="form-hint" id="settingsPathBadge" style="font-family:monospace; word-break:break-all;">${esc(project.path || 'unknown')}</div>
         </div>
         <div class="form-group">
           <label class="form-label" for="settingsTags">Tags (comma-separated)</label>
@@ -2159,8 +2163,16 @@ function openSettings(name, options) {
           <label class="form-label" for="settingsVersionFilePath">Version file path</label>
           <input type="text" class="form-input" id="settingsVersionFilePath" placeholder="version.json" value="${esc(project.versionFilePath || '')}">
           <div class="form-hint">Leave blank to probe <code>version.json</code>, then <code>package.json</code>. Set this when the file has a different name or case (e.g. <code>VERSION.json</code>) — the probe only tests the lowercase name, so on a case-sensitive filesystem it would otherwise miss and bump <code>package.json</code> instead. Must be a relative path inside the project.</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Role &amp; authority</label>
+          <div class="form-hint" id="settingsRoleBadge">
+            ${project.fleetCoordinator ? 'Fleet Coordinator' : 'Standard project'}
+            ${project.decisionAuthorityPolicy ? ` &middot; decision authority: <code>${esc(project.decisionAuthorityPolicy)}</code>` : ''}
+            ${project.medusaEnabled ? ' &middot; Medusa comms enabled' : ''}
+          </div>
         </div>`)}
-      ${settingsCard('AI Engine, Model &amp; Effort &mdash; Launch Mode', `
+      ${settingsCard('AI Engine, Model & Effort — Launch Mode', `
         <div class="form-group">
           <label class="form-label" for="settingsEngine">Engine</label>
           <select class="form-select" id="settingsEngine">${engineOpts}</select>
@@ -2169,7 +2181,7 @@ function openSettings(name, options) {
         </div>
         <div id="settingsModelEffortContainer"></div>
         <div id="settingsLaunchModeContainer"></div>`)}
-      ${settingsCard('Switchboard, Wake &amp; Governance Controls', `
+      ${settingsCard('Switchboard, Wake & Governance Controls', `
         <div class="settings-toggles-grid">
           <div id="settingsSilentPrimeContainer"></div>
           <div id="settingsFeatureIndexContainer"></div>

@@ -482,20 +482,42 @@ describe('#2188 engine-models', () => {
       assert.equal(codex.models.flag, '--model');
     });
 
-    it('Antigravity offers no model selection until its running model can be observed', () => {
-      // No source has been measured that names the model of a completed turn
-      // and ties it to one launch. Until one is, offering a model here would be
-      // offering something TangleClaw cannot confirm it launched.
-      assert.deepEqual(models.selectionState(bundled('antigravity')), { state: 'none' });
-      assert.equal(models.checkSelection(bundled('antigravity'), 'gemini-3.1-pro-high', cache(LISTED)).code, 'ENGINE_HAS_NO_MODELS');
+    // #3214 R-Gate R2 (BLOCKING 2): Antigravity now offers a Phase-2 model
+    // axis, by explicit dispatch authority overriding the "cannot confirm it
+    // launched" ruling this test used to hold it to — flagged, not silently
+    // dropped, before this car implemented it (the underlying observability
+    // gap this comment described is unchanged; only the product decision
+    // about whether to offer a selector anyway is). It still carries no
+    // Phase-3 effort selector: `lib/engines.js`'s `ENGINE_EFFORT` comment
+    // explains why a parallel axis would double-apply what these ids already
+    // bake in as a tier suffix — that reasoning is independent of this one
+    // and this car leaves it untouched.
+    it('Antigravity offers its full live catalog as one flat model axis, effort baked into most ids', () => {
+      const antigravity = bundled('antigravity');
+      assert.deepEqual(models.selectionState(antigravity), { state: 'ok' });
+      assert.equal(antigravity.models.flag, '--model');
+      assert.equal(antigravity.models.roster.source, 'static-list');
+      assert.ok(antigravity.models.offered.includes('claude-opus-5-5-high'));
+      assert.ok(antigravity.models.offered.includes('gemini-pro-orchestrator'), 'a variant with no tier suffix at all must still be offered');
+      assert.equal(models.checkSelection(antigravity, 'claude-opus-5-5-high').ok, true);
+      assert.equal(models.checkSelection(antigravity, 'gemini-3.1-pro-high').ok, false, 'an id not in the verified live catalog is refused');
     });
 
-    // #3214: Claude now offers a static-list roster (its `--model` flag
-    // takes a fixed set of aliases/ids, not an account-queried one — see
-    // the dedicated describe block below), so it joins Codex as the second
-    // engine with an `ok` models block.
+    it('Aider offers a small curated model list, routed through LiteLLM rather than account-queried', () => {
+      const aider = bundled('aider');
+      assert.deepEqual(models.selectionState(aider), { state: 'ok' });
+      assert.deepEqual(aider.models.offered, ['gpt-5.6-sol', 'gpt-6-luna', 'claude-sonnet-5', 'claude-opus-5-5', 'claude-fable-5-1']);
+      assert.equal(aider.models.roster.source, 'static-list');
+    });
+
+    // #3214: Claude now offers a static-list roster too (its `--model` flag
+    // takes a fixed set of aliases/ids, not an account-queried one — see the
+    // dedicated describe block below). With Codex, Antigravity and Aider
+    // also populated above, every bundled engine but OpenClaw (a
+    // connection-backed template with no CLI `--model` flag of its own) now
+    // offers a models block.
     it('every other engine offers none either', () => {
-      for (const id of ids.filter((i) => i !== 'codex' && i !== 'claude')) {
+      for (const id of ids.filter((i) => !['codex', 'claude', 'antigravity', 'aider'].includes(i))) {
         assert.deepEqual(models.selectionState(bundled(id)), { state: 'none' }, id);
       }
     });
