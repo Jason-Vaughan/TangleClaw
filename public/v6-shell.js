@@ -304,7 +304,7 @@
           ${warn}
         </form>`;
     }
-    return `<button type="button" id="v6TreeRename-${idSuffix}" class="v6-sidebar-rename-btn" data-rename-node="${escapeHtml(nodeKey)}"
+    return `<button type="button" id="v6TreeRename-${idSuffix}" class="v6-sidebar-rename-btn v6-tree-action-btn" data-rename-node="${escapeHtml(nodeKey)}"
         title="Rename ${n}" aria-label="Rename ${n}"><span aria-hidden="true">✎</span></button>`;
   }
 
@@ -366,11 +366,44 @@
         const memberIdSuffix = `m${pi}-${fi}-${mi}`;
         const memberKey = memberNodeKey(m);
         if (rename.key === memberKey) return `<li class="v6-shell-member">${sidebarRenameControlMarkup(memberKey, m.role, memberIdSuffix, rename)}</li>`;
+        // #3205: every row's actions, regardless of lifecycle state — Rename
+        // (the existing control) and Edit Session Properties always;
+        // Start only while there's no live session to disturb (offline,
+        // starting already covers its own disabled state, and a failed
+        // launch is exactly when Retry matters most).
+        const canStart = _memberCanStart(info);
+        const actionsMarkup = `<div class="v6-tree-member-actions">
+          ${sidebarRenameControlMarkup(memberKey, m.role, memberIdSuffix, rename)}
+          <button type="button" id="v6TreeEditProps-${memberIdSuffix}" class="v6-tree-action-btn" data-open-settings="${escapeHtml(m.role)}"
+            title="Edit Session Properties" aria-label="Edit Session Properties for ${escapeHtml(m.role)}"><span aria-hidden="true">⚙</span></button>
+          ${canStart ? `<button type="button" id="v6TreeMemberStart-${memberIdSuffix}" class="v6-tree-action-btn" data-start-member="${escapeHtml(m.role)}"
+            title="Start" aria-label="Start ${escapeHtml(m.role)}"><span aria-hidden="true">▶</span></button>` : ''}
+        </div>`;
         return `<li class="v6-shell-member"><a class="v6-shell-member-link${stateClass}${memberActive ? ' is-active' : ''}"
           aria-current="${memberActive ? 'page' : 'false'}" id="v6TreeLink-m${pi}-${fi}-${mi}" data-rename-dblclick="${escapeHtml(memberKey)}"${title}
           href="${escapeHtml(memberHash)}" data-route="${escapeHtml(memberHash)}">${glyph}${label}</a>${info ? memberIndicatorsMarkup(info) : ''}
-          ${sidebarRenameControlMarkup(memberKey, m.role, memberIdSuffix, rename)}</li>`;
+          ${info ? statusPillMarkup(info) : ''}
+          ${actionsMarkup}</li>`;
       }).join('');
+      // #3215: a fleet's own one-click bulk launch — "Start Fleet (N)" when
+      // every member with a seat is offline, "Start Offline (N)" when
+      // only some are, nothing when none are (already running needs no
+      // action here). Counted the same way a member row decides whether
+      // it shows its own Start action (`info.state !== 'live'`) — a
+      // member with no known info (no matching project row yet) counts as
+      // offline, same default `memberItemsFor` already uses for `canStart`.
+      const fleetStartButtonMarkup = (fleet, fleetKey, btnIdSuffix) => {
+        const seated = fleet.members.filter((m) => m.seatId);
+        if (!seated.length) return '';
+        const offline = seated.filter((m) => {
+          const info = typeof options.memberInfo === 'function' ? options.memberInfo(m.seatId) : null;
+          return _memberCanStart(info);
+        });
+        if (!offline.length) return '';
+        const label = offline.length === seated.length ? `▶ Start Fleet (${seated.length})` : `▶ Start Offline (${offline.length})`;
+        return `<button type="button" id="v6TreeStartFleet-${btnIdSuffix}" class="btn btn-primary btn-small v6-tree-start-fleet-btn"
+          data-start-fleet="${escapeHtml(fleetKey)}">${label}</button>`;
+      };
       const fleetItems = projectFolded ? '' : (flattenFleet
         ? memberItemsFor(project.fleets[0], 0)
         : project.fleets.map((fleet, fi) => {
@@ -384,7 +417,7 @@
           return `<li>
             <div class="v6-tree-row">${fleetToggle}<a class="v6-shell-fleet${fleetActive ? ' is-active' : ''}" id="v6TreeLink-f${pi}-${fi}"
                aria-current="${fleetActive ? 'page' : 'false'}"
-               href="${escapeHtml(fleetHash)}" data-route="${escapeHtml(fleetHash)}">${escapeHtml(fleet.displayName)}</a></div>
+               href="${escapeHtml(fleetHash)}" data-route="${escapeHtml(fleetHash)}">${escapeHtml(fleet.displayName)}</a>${fleetStartButtonMarkup(fleet, fleetNodeKey(project, fleet), `f${pi}-${fi}`)}</div>
             ${memberItems ? `<ul class="v6-shell-members">${memberItems}</ul>` : ''}
           </li>`;
         }).join(''));
@@ -399,11 +432,19 @@
       // whole tree is synthesized from project name prefixes).
       const projectKey = projectNodeKey(project);
       const isFleet = project.id !== WORKSPACE_PROJECT_ID;
+      // #3215: the flattened case (a single fleet whose row never shows
+      // separately, #3117) has nowhere else to put that fleet's own
+      // start-fleet button — same `isFleet` gate as rename above, so the
+      // catch-all "Workspace Projects" bucket (not a fleet the operator
+      // made) gets neither.
+      const flattenedStartButton = isFleet && flattenFleet
+        ? fleetStartButtonMarkup(project.fleets[0], fleetNodeKey(project, project.fleets[0]), `p${pi}`)
+        : '';
       const projectRow = rename.key === projectKey
         ? sidebarRenameControlMarkup(projectKey, project.displayName, `p${pi}`, rename)
         : `${projectToggle}<a class="v6-shell-project${projectActive ? ' is-active' : ''}" id="v6TreeLink-p${pi}" data-rename-dblclick="${isFleet ? escapeHtml(projectKey) : ''}"
            aria-current="${projectActive ? 'page' : 'false'}"
-           href="${escapeHtml(projectHash)}" data-route="${escapeHtml(projectHash)}">${escapeHtml(project.displayName)}</a>${isFleet ? sidebarRenameControlMarkup(projectKey, project.displayName, `p${pi}`, rename) : ''}`;
+           href="${escapeHtml(projectHash)}" data-route="${escapeHtml(projectHash)}">${escapeHtml(project.displayName)}</a>${isFleet ? sidebarRenameControlMarkup(projectKey, project.displayName, `p${pi}`, rename) : ''}${flattenedStartButton}`;
       return `<li>
         <div class="v6-tree-row">${projectRow}</div>
         ${fleetItems ? `<ul class="${flattenFleet ? 'v6-shell-members' : 'v6-shell-fleets'}">${fleetItems}</ul>` : ''}
@@ -4667,8 +4708,44 @@
     attention: { glyph: '⚠', title: 'Needs attention' },
     starting: { glyph: '◐', title: 'Starting' },
     wrapping: { glyph: '◐', title: 'Wrapping' },
-    offline: { glyph: '○', title: 'No live session' }
+    offline: { glyph: '○', title: 'No live session' },
+    failed: { glyph: '✖', title: 'Launch failed' }
   });
+
+  /**
+   * #3205/#3215 R3: the FALLBACK eligibility list only, for an `info`
+   * object a test fixture built by hand without a `sessionActive` field
+   * (every real one, from `memberIndicators`, always carries one — see
+   * {@link _memberCanStart}). Deliberately excludes `attention`: that
+   * state alone can arise with NO active session at all (the LAST one
+   * merely crashed or left work), so this list can never be the one
+   * place that decides eligibility — only the explicit `sessionActive`
+   * check on the real path can tell "a live session is attention" apart
+   * from "no session, but something to look into".
+   */
+  const MEMBER_ALREADY_ACTIVE_STATES = Object.freeze(['live', 'wrapping', 'starting']);
+
+  /**
+   * Whether Start / Start Fleet may act on this member (#3205/#3215 R3).
+   * Prefers the real signal — `info.sessionActive` (set by
+   * `memberIndicators` from the row's own `session.active`) — over the
+   * coarser `state` alone: `state === 'attention'` can mean either "an
+   * active session needs a look" (not startable) or "the last session
+   * crashed/left work, nothing is running now" (startable, and exactly
+   * when Start matters most). `state === 'starting'` is excluded
+   * regardless of `sessionActive` — this file's OWN optimistic
+   * `launchStatus` override, set the instant a Start click fires, before
+   * the server has necessarily reported a live session at all.
+   * @param {{state: string, sessionActive?: boolean}|null} info
+   * @returns {boolean}
+   */
+  function _memberCanStart(info) {
+    if (!info) return true;
+    if (typeof info.sessionActive === 'boolean') {
+      return !info.sessionActive && info.state !== 'starting';
+    }
+    return !MEMBER_ALREADY_ACTIVE_STATES.includes(info.state);
+  }
 
   /** @param {*} v - A reason the server gave as text or as `{message}`. @returns {string} */
   function reasonText(v) {
@@ -4710,6 +4787,19 @@
     else if (wrap) state = 'wrapping';
     else if (readiness && readiness.state === 'starting') state = 'starting';
     else if (live) state = 'live';
+    // #3205/#3215: a launch THIS UI just attempted (the sidebar's own
+    // "▶ Start"/"Start Fleet", or the offline chat hero) outranks the
+    // session row's own derived state — `row` has no 'starting'/'failed'
+    // of its own until the server's next poll catches up, and a refusal
+    // (`launchStatus.status === 'failed'`) has no session-row signal at
+    // all; `memberIndicators` has no other native way to surface either.
+    const launchStatus = r.launchStatus || null;
+    let launchFailureMessage = '';
+    if (launchStatus && launchStatus.status === 'starting') state = 'starting';
+    else if (launchStatus && launchStatus.status === 'failed') {
+      state = 'failed';
+      launchFailureMessage = String(launchStatus.message || 'Launch failed');
+    }
     const medusa = r.medusaEnabled === true ? (r.medusaWake === true ? 'on' : 'wake-off') : 'off';
     // The engine the member is really on (#3094, Rulings A767/A768): its live
     // session's, else its last session's, else the one configured for it.
@@ -4731,7 +4821,13 @@
     let title = MEMBER_STATES[state].title;
     if (state === 'attention') title = `Needs attention: ${reason}`;
     else if (state === 'wrapping' && wrap.step) title = `Wrapping (${wrap.step})`;
-    return { state, glyph: MEMBER_STATES[state].glyph, title, medusa, engine };
+    else if (state === 'failed') title = launchFailureMessage;
+    // #3205/#3215 R3: the raw signal `state` alone cannot carry — `sh`
+    // (sessionHealth) can push `state` to 'attention' from a CRASHED or
+    // left-work LAST session even when there is no current one at all
+    // (`live` false), so excluding every 'attention' row from Start was
+    // over-broad: it also blocked the exact case Start/Retry exists for.
+    return { state, glyph: MEMBER_STATES[state].glyph, title, medusa, engine, sessionActive: live };
   }
 
   /** The Medusa link symbol's title, by state. */
@@ -4748,6 +4844,22 @@
       ? `<span class="v6-member-ai-status is-${info.engine.health}" title="${escapeHtml(info.engine.name)}${info.engine.model ? ` (${escapeHtml(info.engine.model)})` : ''}: ${info.engine.health === 'unknown' ? 'status unknown' : info.engine.health}">${escapeHtml(info.engine.code)}</span>`
       : '';
     return `<span class="v6-member-indicators">${link}${ai}</span>`;
+  }
+
+  /**
+   * One sidebar row's lifecycle status pill (#3205), in the sibling Car
+   * V659-W1-C CSS's own `.v6-status-pill--starting/--failed/--offline`
+   * scheme (`public/style.css`, PR #3226) — distinct from (and drawn
+   * alongside) {@link memberIndicatorsMarkup}'s existing link/engine
+   * badges, which it leaves untouched. Shown only for the 3 states that
+   * CSS actually styles; `live`/`attention`/`wrapping` already have their
+   * own indicators and draw nothing extra here.
+   * @param {{state: string, title: string}} info
+   * @returns {string} HTML, or '' for a state this pill does not cover.
+   */
+  function statusPillMarkup(info) {
+    if (!info || !['starting', 'failed', 'offline'].includes(info.state)) return '';
+    return `<span class="v6-status-pill--${info.state}" title="${escapeHtml(info.title)}">${escapeHtml(info.state)}</span>`;
   }
 
   /** The chat header's session pill text, by session state. */
@@ -5100,8 +5212,15 @@
       const memberItems = members.map((m) => overviewMemberMarkup(m, byId(m.seatId))).join('');
       const fleetHash = routeHash({ view: 'project', projectId: lp.id });
       const fleetIdSuffix = escapeHtml(String(lp.id));
+      // #3215: the card's own one-click bulk launch, over every member
+      // this card groups (Overview has no sub-fleet granularity of its
+      // own — one card per logical project is the whole of its grouping).
+      const seated = members.filter((m) => m.seatId);
+      const offline = seated.filter((m) => !(byId(m.seatId) && byId(m.seatId).session && byId(m.seatId).session.active === true));
+      const startFleetBtn = offline.length ? `<button type="button" id="v6OverviewStartFleet-${fleetIdSuffix}" class="btn btn-primary btn-small v6-tree-start-fleet-btn"
+          data-start-fleet="${escapeHtml(String(lp.id))}">${offline.length === seated.length ? `▶ Start Fleet (${seated.length})` : `▶ Start Offline (${offline.length})`}</button>` : '';
       return `<section class="v6-overview-card" aria-label="${escapeHtml(lp.displayName)}">
-        <h3><a id="v6OverviewFleetLink-${fleetIdSuffix}" href="${escapeHtml(fleetHash)}" data-route="${escapeHtml(fleetHash)}">${escapeHtml(lp.displayName)}</a></h3>
+        <h3><a id="v6OverviewFleetLink-${fleetIdSuffix}" href="${escapeHtml(fleetHash)}" data-route="${escapeHtml(fleetHash)}">${escapeHtml(lp.displayName)}</a>${startFleetBtn}</h3>
         <ul class="v6-overview-members">${memberItems}</ul>
       </section>`;
     }).join('');
@@ -6817,12 +6936,23 @@
      * Hand the loaded project rows to the shell: its sidebar tree, and the
      * rows its filters read (setProjects arrived with those filters, #3046;
      * an older shell handle without it just gets no engine filter data).
+     *
+     * #3205: each row carries this controller's own `launchState` for it
+     * (when any) as `row.launchStatus` — the shell's `memberIndicators`
+     * reads it to show "starting"/"failed" ahead of the session row's own
+     * (necessarily stale-until-the-next-poll) derived state. A shallow
+     * copy, never a mutation of the shared `projects` array other readers
+     * (filters, Overview) still hold.
      * @param {object} shell
      */
     function showProjects(shell) {
       if (!projects) return;
-      if (typeof shell.setProjects === 'function') shell.setProjects(projects);
-      shell.setTree(synthesizeTreeFromProjects(projects));
+      const withLaunchStatus = projects.map((p) => {
+        const launchStatus = p && p.name != null ? launchState.get(String(p.name)) : null;
+        return launchStatus ? Object.assign({}, p, { launchStatus }) : p;
+      });
+      if (typeof shell.setProjects === 'function') shell.setProjects(withLaunchStatus);
+      shell.setTree(synthesizeTreeFromProjects(withLaunchStatus));
     }
 
     /**
@@ -6879,7 +7009,12 @@
       const onThisChat = Boolean(chat) && String(chat.project.name || '') === name;
       if (onThisChat) showSend({ kind: 'pending', message: `Starting ${name}…` });
       launchState.set(name, { status: 'starting', message: null, diagnostic: null });
-      if (onThisChat) showChat(shell);
+      // #3205: the sidebar's own per-row status pill reads `launchState`
+      // through `showProjects`'s `row.launchStatus` enrichment — a start
+      // triggered from the sidebar/Overview (no chat on screen at all, so
+      // `onThisChat` is false and `showChat` is never reached) still needs
+      // this to see "starting" immediately, not just whichever chat is open.
+      if (onThisChat) showChat(shell); else showProjects(shell);
       const ok = await apiMutate(`/api/sessions/${encodeURIComponent(name)}`, 'POST', {});
       if (onThisChat && chat !== current) return;
       if (!ok) {
@@ -6888,10 +7023,45 @@
           && typeof api.lastBody.diagnostic === 'object' ? api.lastBody.diagnostic : null;
         if (onThisChat) showSend({ kind: 'error', message });
         launchState.set(name, { status: 'failed', message, diagnostic });
-        if (onThisChat) showChat(shell);
+        if (onThisChat) showChat(shell); else showProjects(shell);
         return;
       }
       launchState.delete(name);
+      await refresh();
+    }
+
+    /**
+     * One-click bulk launch for a fleet group (#3215): starts every named
+     * member sequentially, continuing past an individual refusal rather
+     * than aborting the batch — each one's own outcome lands in
+     * `launchState` exactly as a single {@link startSession} call would,
+     * so the sidebar's per-row pill and this fleet's own Start Fleet/
+     * Start Offline button both update after every member, not just at
+     * the end. The caller (`sidebarMarkup`'s own offline/total count) is
+     * what decided WHICH members are offline; this never re-checks a
+     * name's own live status, so it never restarts an already-running
+     * member the caller correctly left out.
+     * @param {Array<string>} memberNames - Project names to start, in order.
+     * @returns {Promise<void>}
+     */
+    async function startFleetMembers(memberNames) {
+      const shell = getShell();
+      const names = Array.isArray(memberNames) ? memberNames.filter((n) => typeof n === 'string' && n) : [];
+      if (!shell || !names.length) return;
+      names.forEach((name) => launchState.set(name, { status: 'starting', message: null, diagnostic: null }));
+      showProjects(shell);
+      for (const name of names) {
+        const ok = await apiMutate(`/api/sessions/${encodeURIComponent(name)}`, 'POST', {});
+        if (!ok) {
+          const message = `Not started: ${api.lastError || 'the server refused it'}`;
+          const diagnostic = api.lastBody && typeof api.lastBody === 'object' && api.lastBody.diagnostic
+            && typeof api.lastBody.diagnostic === 'object' ? api.lastBody.diagnostic : null;
+          launchState.set(name, { status: 'failed', message, diagnostic });
+        } else {
+          launchState.delete(name);
+        }
+        showProjects(shell);
+      }
       await refresh();
     }
 
@@ -7176,13 +7346,45 @@
     }
 
     /**
-     * Start every offline member of the group on screen, one at a time, then
-     * reload and report how many started and why any did not.
+     * Start every offline member of a fleet, one at a time.
+     *
+     * Two real callers share this one entry point (both reach it through
+     * the same `public/ui.js` production wiring, `onStartFleet() {
+     * v6Live.startFleet(); }`, zero-arg — found pre-existing here at
+     * #3215 R2's own review, serving a DIFFERENT, already-shipped
+     * feature than the one this function was first written to add):
+     * - The chat header's own armed "▶ Start Fleet" confirm click
+     *   (#3053-era): zero-arg, no pending stash either, so this falls
+     *   through to its original behavior — the open chat's own
+     *   `chat.ctx.members`, reported with a send-outcome line.
+     * - The sidebar's/Overview's own per-fleet Start Fleet/Start Offline
+     *   buttons (#3215): an explicit `memberNames` array when a caller
+     *   has one directly (tests, future callers), or — since the real
+     *   zero-arg wiring above drops any argument the click handler
+     *   passed — whichever names that handler stashed on the shell via
+     *   `_consumePendingStartFleetMembers()` just before calling
+     *   `onStartFleet`. Reusing {@link startFleetMembers}'s own
+     *   sequential per-member launch, continuing past an individual
+     *   refusal, rather than this function's own simpler loop.
+     *
+     * The stash is read-and-cleared unconditionally up front, even when
+     * an explicit `memberNames` wins instead — so a stray earlier sidebar
+     * click can never be replayed by a later, unrelated chat-header
+     * confirm click.
+     * @param {Array<string>} [memberNames]
      * @returns {Promise<void>}
      */
-    async function startFleet() {
+    async function startFleet(memberNames) {
+      const shell = getShell();
+      const pendingNames = shell && typeof shell._consumePendingStartFleetMembers === 'function'
+        ? shell._consumePendingStartFleetMembers() : null;
+      const targets = Array.isArray(memberNames) ? memberNames : pendingNames;
+      if (Array.isArray(targets)) {
+        await startFleetMembers(targets);
+        return;
+      }
       const chat = current;
-      if (!chat || !getShell()) return;
+      if (!chat || !shell) return;
       const offline = (chat.ctx && Array.isArray(chat.ctx.members) ? chat.ctx.members : []).filter((m) => m.live === false);
       if (!offline.length) return;
       showSend({ kind: 'pending', message: `Starting ${offline.length} session${offline.length === 1 ? '' : 's'}…` });
@@ -7479,7 +7681,7 @@
     return {
       handleRoute, launchTemplate, enterHash, sendChat, changeDelegate, refresh, attachFiles, removeAttachment,
       startSession, startFleet, treeLinkClicked, renameProject, changeEngine, loadHistory, openHistorySession,
-      viewOfflineHistory, returnToStartCard,
+      viewOfflineHistory, returnToStartCard, startFleetMembers,
       createWorkspaceProject, convertToFleet, provisionFleet, requestUnfurl,
       loadBundledFleetSpecs, requestValidateFleetSpec, applyFleetSpec, exportFleetSpec,
       getProjects() { return projects; }
@@ -7503,7 +7705,7 @@
    *   onRefreshChat?: () => void, onOpenProjectSettings?: (projectName: string) => void,
    *   onChangeEngine?: (projectName: string, engine: string) => void,
    *   onAttachFiles?: (files: Array<object>) => void, onRemoveAttachment?: (index: number) => void,
-   *   onStartSession?: (projectName?: string) => void, onStartFleet?: () => void, onTreeLinkClick?: (hash: string) => void,
+   *   onStartSession?: (projectName?: string) => void, onStartFleet?: (memberNames?: string[]) => void, onTreeLinkClick?: (hash: string) => void,
    *   onRenameProject?: (oldName: string, newName: string, opts?: {confirmOrphanRisk: boolean}) => void,
    *   onHistoryLoad?: (form: {scope: string, kind: string, q: string}) => void,
    *   onHistoryOpenSession?: (pick: {member: string, sid: string, q: string, kind: string}) => void,
@@ -7880,6 +8082,17 @@
     // `fleetRenameWait`, never rendered).
     let renameResultFor = 'header';
     let fleetRenameWait = null;
+    // #3215 R2: the real production wiring (public/ui.js's
+    // `onStartFleet() { v6Live.startFleet(); }`, zero-arg -- Car V659-W2-E
+    // owns that file, outside this car's envelope) never forwards the
+    // clicked fleet's member names through `options.onStartFleet` at all.
+    // Stashed here by the click handler just before calling
+    // `options.onStartFleet`, and drained by
+    // `_consumePendingStartFleetMembers()`, the controller's own escape
+    // hatch for recovering them across that dropped argument -- the same
+    // shape as `api.lastBody`'s "whole refusal body" side channel (#711),
+    // just carrying a request's own argument instead of a response's.
+    let pendingStartFleetMembers = null;
     // #3066: the history panel — open or not, its search form, and the last
     // results or snapshot the page handed back.
     let historyOpen = false;
@@ -8279,10 +8492,22 @@
      * bulk-renames its members via {@link renameFleetMembers}; a Fleet
      * Member or Solo Work row (the same member row either way) renames
      * through the single-project route a chat header rename already uses.
+     *
+     * #3205: also wires each member row's "⚙ Edit Session Properties" and
+     * "▶ Start" actions (`.v6-tree-member-actions`) to the SAME real
+     * callbacks the Overview screen's own per-row actions already use
+     * (`options.onOpenProjectSettings`/`options.onStartSession`,
+     * `wireOverview`'s own pattern) — no new controller methods needed
+     * for either. Start is absent from the markup entirely while a
+     * member's session is live, so there is nothing to wire in that case.
      */
     function wireSidebarRename() {
       shownTree.forEach((project, pi) => {
         const isFleet = project.id !== WORKSPACE_PROJECT_ID;
+        // #3215: the SAME flattened-single-fleet detection sidebarMarkup
+        // used to decide the button's own id (`p${pi}` on the project row
+        // vs `f${pi}-${fi}` on its own fleet row).
+        const flattenFleet = project.fleets.length === 1 && project.fleets[0].displayName === project.displayName;
         if (isFleet) {
           const pIdSuffix = `p${pi}`;
           const projectKey = projectNodeKey(project);
@@ -8299,6 +8524,31 @@
           }
         }
         project.fleets.forEach((fleet, fi) => {
+          const startFleetIdSuffix = isFleet && flattenFleet ? `p${pi}` : `f${pi}-${fi}`;
+          const startFleetBtn = doc.getElementById(`v6TreeStartFleet-${startFleetIdSuffix}`);
+          if (startFleetBtn && typeof options.onStartFleet === 'function') {
+            startFleetBtn.addEventListener('click', () => {
+              // `options.memberInfo` is not a real shell-level option — the
+              // markup's own callback (render()'s inline `memberInfo:`) is
+              // constructed fresh per render and passed only to
+              // `sidebarMarkup`, never stored here. Re-derive the same
+              // live/offline signal directly from `projectRows`/
+              // `engineHealth` instead (the exact pair `render()` closes
+              // over to build that callback in the first place).
+              const offlineNames = fleet.members.filter((m) => {
+                if (!m.seatId) return false;
+                const row = projectRows.get(String(m.seatId));
+                const info = row ? memberIndicators(row, engineHealth) : null;
+                return _memberCanStart(info);
+              }).map((m) => m.role);
+              // #3215 R2: stashed for `startFleet`'s own fallback — the
+              // real production wiring (`public/ui.js`'s
+              // `onStartFleet() { v6Live.startFleet(); }`) drops this
+              // argument entirely.
+              pendingStartFleetMembers = offlineNames;
+              options.onStartFleet(offlineNames);
+            });
+          }
           fleet.members.forEach((m, mi) => {
             if (!m.seatId) return;
             const idSuffix = `m${pi}-${fi}-${mi}`;
@@ -8314,6 +8564,14 @@
                 if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
                 openSidebarRename(memberKey, idSuffix);
               });
+            }
+            const editProps = doc.getElementById(`v6TreeEditProps-${idSuffix}`);
+            if (editProps && typeof options.onOpenProjectSettings === 'function') {
+              editProps.addEventListener('click', () => options.onOpenProjectSettings(m.role));
+            }
+            const start = doc.getElementById(`v6TreeMemberStart-${idSuffix}`);
+            if (start && typeof options.onStartSession === 'function') {
+              start.addEventListener('click', () => options.onStartSession(m.role));
             }
           });
         });
@@ -8608,6 +8866,22 @@
         if (fleetLink) fleetLink.addEventListener('click', () => {
           if (typeof options.onTreeLinkClick === 'function') options.onTreeLinkClick(fleetHash);
         });
+        // #3215: re-derives the same offline list the markup used (the
+        // same simple `session.active` check `overviewMemberMarkup`
+        // itself already uses for this screen) rather than trusting a
+        // stale list captured at render time.
+        const startFleetBtn = doc.getElementById(`v6OverviewStartFleet-${lp.id}`);
+        if (startFleetBtn && typeof options.onStartFleet === 'function') {
+          startFleetBtn.addEventListener('click', () => {
+            const offlineNames = (lp.fleets || []).flatMap((f) => f.members || [])
+              .filter((m) => m.seatId && !(byId(m.seatId) && byId(m.seatId).session && byId(m.seatId).session.active === true))
+              .map((m) => (byId(m.seatId) && byId(m.seatId).name) || m.role);
+            // #3215 R2: see the sidebar's own identical comment — the real
+            // production wiring drops this argument entirely.
+            pendingStartFleetMembers = offlineNames;
+            options.onStartFleet(offlineNames);
+          });
+        }
         (lp.fleets || []).flatMap((f) => f.members || []).forEach((m) => {
           const seatId = m.seatId;
           const row = byId(seatId);
@@ -10449,6 +10723,19 @@
         projectRows = new Map((Array.isArray(rows) ? rows : [])
           .filter((r) => r && r.id != null).map((r) => [String(r.id), r]));
         render();
+      },
+      /**
+       * #3215 R2: reads and clears the member names the sidebar/Overview's
+       * own Start Fleet button most recently stashed, for a controller
+       * whose only argument the real zero-arg production wiring drops
+       * (`onStartFleet() { v6Live.startFleet(); }`, `public/ui.js`). Never
+       * rendered, never read by anything else in this file.
+       * @returns {string[]|null}
+       */
+      _consumePendingStartFleetMembers() {
+        const v = pendingStartFleetMembers;
+        pendingStartFleetMembers = null;
+        return v;
       },
       setTree(nextTree) { tree = buildHierarchyTree(nextTree || []); render(); },
       setTelemetry(bar) { telemetry = bar || null; render(); },
