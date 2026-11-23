@@ -698,6 +698,23 @@ describe('lib/system-health (#345)', () => {
         assert.equal(c.state, 'fired');
         assert.equal(c.reading.usingManagedNode, true);
       });
+
+      // PRR-A R1 BLOCKING 2: every other test in this describe block
+      // overrides `tccSocketHealth` directly (as production code itself
+      // never could — the override IS the test), so none of them can
+      // prove the REAL, non-overridden probe actually measures readable in
+      // production rather than leaving it permanently null. A source
+      // check, not a probe override, is how the ACTUAL wiring is verified
+      // — the same style `server.js`'s own exec/execSync source-probe test
+      // at the end of this file already uses for the same reason.
+      it('the real (non-overridden) tccSocketHealth probe passes a cwd, so GET /api/system/health actually measures readable in production (source check)', () => {
+        const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'system-health.js'), 'utf8');
+        const line = src.split('\n').find((l) => l.includes('tccSocketHealth:') && l.includes('probeTccServerHealth('));
+        assert.ok(line, 'the default tccSocketHealth probe must call tmux.probeTccServerHealth');
+        assert.doesNotMatch(line, /probeTccServerHealth\(\)/, 'must not call it with no cwd — that is exactly the bug BLOCKING 2 found');
+        assert.match(line, /probeTccServerHealth\(\{\s*cwd:/, 'must pass a cwd so readable is actually measured');
+        assert.match(line, /os\.homedir\(\)/, 'the cwd must be rooted at the real home directory, not a placeholder');
+      });
     });
   });
 
@@ -1238,7 +1255,7 @@ describe('scripts/install-fda-anchor.sh (#3198)', () => {
     assert.doesNotMatch(out, /granted|authorized Full Disk Access/i, 'never claims to have performed the grant itself');
   });
 
-  it('--status never touches macOS TCC.db or any plist — read-only reporting only (source check)', () => {
+  it('never touches macOS TCC.db, from any subcommand (source check)', () => {
     const src = fs.readFileSync(SCRIPT, 'utf8');
     // The doc header names TCC.db once, as the thing never to touch — this
     // checks for an actual OPERATION against it (sqlite3/any command whose
@@ -1246,8 +1263,42 @@ describe('scripts/install-fda-anchor.sh (#3198)', () => {
     // this very assertion) must be free to say.
     assert.doesNotMatch(src, /\bTCC\.db\b[^\n]*(sqlite3|INSERT|UPDATE|DELETE)/i);
     assert.doesNotMatch(src, /sqlite3[^\n]*TCC\.db/i);
-    assert.doesNotMatch(src, /PlistBuddy -c ['"]?Set/, 'PlistBuddy is used only to Print, never to Set');
-    assert.doesNotMatch(src, /Set :ProgramArguments/, 'never writes the plist it only ever reads for --status');
+  });
+
+  // Extracts one named function's body out of the script source, so a
+  // source check can assert what a SPECIFIC subcommand does without a false
+  // positive/negative from a sibling function elsewhere in the same file.
+  function functionBody(src, name) {
+    const start = src.indexOf(`\n${name}() {`);
+    assert.ok(start >= 0, `function ${name}() not found in ${SCRIPT}`);
+    const bodyStart = src.indexOf('{', start) + 1;
+    let depth = 1;
+    let i = bodyStart;
+    while (depth > 0) {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}') depth--;
+      i++;
+    }
+    return src.slice(bodyStart, i - 1);
+  }
+
+  it('--stage and --status never write the plist (PRR-A R1 BLOCKING 3 — only --cutover may, source check)', () => {
+    const src = fs.readFileSync(SCRIPT, 'utf8');
+    for (const fn of ['stage', 'status']) {
+      const body = functionBody(src, fn);
+      assert.doesNotMatch(body, /PlistBuddy -c ['"]?Set/, `${fn}() must never Set the plist — only cutover() may`);
+      assert.doesNotMatch(body, /Set :ProgramArguments/, `${fn}() must never write ProgramArguments`);
+    }
+    // status() still only ever Prints — unchanged read-only contract.
+    assert.match(functionBody(src, 'plist_node_path'), /PlistBuddy -c ['"]Print/);
+  });
+
+  it('--cutover is the one place that writes ProgramArguments[0], and only there (source check)', () => {
+    const src = fs.readFileSync(SCRIPT, 'utf8');
+    const cutoverBody = functionBody(src, 'cutover');
+    assert.match(cutoverBody, /PlistBuddy -c "Set :ProgramArguments:0/);
+    const withoutCutover = src.replace(cutoverBody, '');
+    assert.doesNotMatch(withoutCutover, /Set :ProgramArguments/, 'ProgramArguments is written from exactly one place: cutover()');
   });
 
   it('rejects an unknown flag with a non-zero exit and the usage text, mutating nothing', () => {
@@ -1258,5 +1309,108 @@ describe('scripts/install-fda-anchor.sh (#3198)', () => {
   it('--help prints usage and exits 0', () => {
     const out = run(['--help']);
     assert.match(out, /Usage: install-fda-anchor\.sh/);
+  });
+
+  it('--stage prints the exact --cutover command to run once FDA is granted', () => {
+    const out = run(['--stage', '--base-dir', baseDir]);
+    assert.match(out, new RegExp(`--cutover --base-dir ${baseDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  });
+
+  describe('--cutover (PRR-A R1 BLOCKING 3)', () => {
+    let plistPath;
+
+    beforeEach(() => {
+      plistPath = path.join(baseDir, 'fake-server.plist');
+      fs.writeFileSync(plistPath, [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+        '<plist version="1.0"><dict>',
+        '<key>Label</key><string>com.tangleclaw.server</string>',
+        '<key>ProgramArguments</key><array><string>/opt/homebrew/bin/node</string><string>server.js</string></array>',
+        '</dict></plist>',
+        ''
+      ].join('\n'));
+    });
+
+    it('refuses when nothing is staged yet, and changes nothing', () => {
+      assert.throws(() => execFileSync(SCRIPT, ['--cutover', '--base-dir', baseDir, '--plist', plistPath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+      assert.match(fs.readFileSync(plistPath, 'utf8'), /\/opt\/homebrew\/bin\/node/, 'plist must be untouched');
+      assert.equal(fs.readdirSync(baseDir).filter((f) => f.startsWith('fake-server.plist')).length, 1, 'no backup must be made either');
+    });
+
+    it('refuses when the staged binary cannot run, and changes nothing', () => {
+      const binDir = path.join(baseDir, 'bin');
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.writeFileSync(path.join(binDir, 'node'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+      assert.throws(() => execFileSync(SCRIPT, ['--cutover', '--base-dir', baseDir, '--plist', plistPath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+      assert.match(fs.readFileSync(plistPath, 'utf8'), /\/opt\/homebrew\/bin\/node/);
+    });
+
+    it('refuses when the Full Disk Access check never answers in time (hang), and changes nothing', { timeout: 10000 }, () => {
+      run(['--stage', '--base-dir', baseDir]);
+      const managedNode = path.join(baseDir, 'bin', 'node');
+      // Replace the staged binary with a fake that behaves exactly like the
+      // real failure mode #3198 documents: --version returns instantly
+      // (so cutover's own run-check passes), but the FDA read itself
+      // (`-e ...`) never returns at all — the same shape a genuinely
+      // missing Full Disk Access grant produces (`lib/tcc-folders.js`'s
+      // own documented symptom), which is why check_fda must be killed
+      // from OUTSIDE rather than racing an in-process timer against it.
+      // `exec` replaces the sh process's own image with sleep's — sleep's
+      // pid IS this script's pid, with no separate child — so `kill -9`
+      // on the one pid run_with_timeout captured ends it outright. A
+      // plain backgrounded `sleep 999 &` would instead leave sleep as an
+      // orphaned grandchild still holding the test's stdout/stderr pipes
+      // open after the sh parent is killed, hanging execFileSync's own
+      // wait for EOF — not the behavior under test, just an artifact of
+      // faking the hang with a real subprocess.
+      fs.writeFileSync(managedNode, [
+        '#!/bin/sh',
+        'case "$1" in',
+        '  --version) echo "v99.0.0"; exit 0 ;;',
+        '  -e) exec sleep 999 ;;',
+        'esac'
+      ].join('\n'), { mode: 0o755 });
+
+      let threw = false;
+      let stderr = '';
+      try {
+        execFileSync(SCRIPT, ['--cutover', '--base-dir', baseDir, '--plist', plistPath], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, TANGLECLAW_FDA_CHECK_TIMEOUT_SECS: '1' }
+        });
+      } catch (err) {
+        threw = true;
+        stderr = String(err.stderr || '');
+      }
+      assert.ok(threw, 'a hanging FDA check must make --cutover fail, never hang the test itself');
+      assert.match(stderr, /could not read .* within/);
+      assert.match(fs.readFileSync(plistPath, 'utf8'), /\/opt\/homebrew\/bin\/node/, 'a timed-out FDA check must never reach the plist write');
+    });
+
+    it('stages, passes FDA (this test process can itself read ~/Documents), backs up the plist, and rewrites ProgramArguments[0]', () => {
+      run(['--stage', '--base-dir', baseDir]);
+      const managedNode = path.join(baseDir, 'bin', 'node');
+      const out = run(['--cutover', '--base-dir', baseDir, '--plist', plistPath]);
+      assert.match(out, /Full Disk Access confirmed/);
+      assert.match(out, /Backed up/);
+      assert.match(out, /VERIFY/);
+      assert.match(out, /launchctl kickstart/);
+      assert.match(out, /ROLLBACK/);
+      const updated = fs.readFileSync(plistPath, 'utf8');
+      assert.match(updated, new RegExp(managedNode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      assert.doesNotMatch(updated, /\/opt\/homebrew\/bin\/node/, 'the old path must be gone, not merely appended alongside');
+      const backups = fs.readdirSync(baseDir).filter((f) => f.startsWith('fake-server.plist.pre-fda-anchor-'));
+      assert.equal(backups.length, 1, 'exactly one backup must exist');
+      assert.match(fs.readFileSync(path.join(baseDir, backups[0]), 'utf8'), /\/opt\/homebrew\/bin\/node/, 'the backup preserves the pre-cutover content');
+    });
+
+    it('refuses when the named plist does not exist, and never fabricates one', () => {
+      run(['--stage', '--base-dir', baseDir]);
+      const missingPlist = path.join(baseDir, 'does-not-exist.plist');
+      assert.throws(() => execFileSync(SCRIPT, ['--cutover', '--base-dir', baseDir, '--plist', missingPlist], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+      assert.equal(fs.existsSync(missingPlist), false);
+    });
   });
 });

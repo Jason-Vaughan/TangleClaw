@@ -34,17 +34,23 @@
 # STRICT SECURITY BOUNDARY (Ruling A901) — this script, and everything it is
 # ever called from, must NEVER:
 #   - read or write macOS's TCC.db, or any other attempt to bypass SIP/TCC;
-#   - self-mutate ~/Library/LaunchAgents/com.tangleclaw.server.plist, from
-#     this script or from any HTTP request path. Pointing that plist's
-#     ProgramArguments[0] at the staged binary is a SEPARATE, Operator-led
-#     step this script only ever describes, never performs.
+#   - self-mutate ~/Library/LaunchAgents/com.tangleclaw.server.plist from an
+#     HTTP request path, or AUTOMATICALLY as a side effect of any other
+#     action. `--cutover` below DOES edit that plist — but only as its own
+#     explicit, named subcommand the Operator runs by hand from a terminal,
+#     never invoked by `--stage`/`--status`, by server.js, or by anything
+#     else on an HTTP request path, and only after `--cutover` has itself
+#     verified Full Disk Access on the staged binary (never skippable).
 # The one real permission change this whole fix depends on — granting Full
 # Disk Access to the staged binary — happens only in System Settings, by the
-# Operator's own hand. This script's `--stage` prints that instruction; it
-# never asks for or exercises System Settings access itself.
+# Operator's own hand; nothing here can make or simulate that grant. `--stage`
+# prints that instruction and the exact `--cutover` command to run once it is
+# done; `--cutover` itself refuses to proceed until it has independently
+# confirmed the grant actually took effect.
 #
 # Usage:
-#   install-fda-anchor.sh [--stage|--status] [--base-dir DIR] [--json]
+#   install-fda-anchor.sh [--stage|--status|--cutover] [--base-dir DIR]
+#                         [--plist PATH] [--json]
 #
 #   --stage      (default) Idempotently stage the active, verified node
 #                binary into <base-dir>/bin/node, with node.manifest.json
@@ -52,8 +58,19 @@
 #   --status     Report the staged binary's status against the CURRENT
 #                process's/PATH's own node, and the server plist's
 #                ProgramArguments[0] — never changes anything.
+#   --cutover    Operator-run only. Refuses unless the staged binary exists,
+#                runs, AND passes a real Full Disk Access read of ~/Documents
+#                (never skipped). Backs up the server plist, then points its
+#                ProgramArguments[0] at the staged binary, and prints the
+#                exact verification and rollback commands. Never restarts
+#                the service itself — that is the printed verification step,
+#                left for the Operator to run.
 #   --base-dir   Override the base directory (default: ~/.tangleclaw, or
 #                $TANGLECLAW_FDA_BASE_DIR when set).
+#   --plist      Override the server plist path (default:
+#                ~/Library/LaunchAgents/com.tangleclaw.server.plist) — for
+#                testing --status/--cutover against a scratch file, never
+#                the Operator's own live plist by accident.
 #   --json       With --status, print machine-readable JSON instead of the
 #                human report.
 #
@@ -67,17 +84,24 @@ set -euo pipefail
 BASE_DIR="${TANGLECLAW_FDA_BASE_DIR:-$HOME/.tangleclaw}"
 ACTION="stage"
 JSON_OUTPUT="false"
+SERVER_PLIST="$HOME/Library/LaunchAgents/com.tangleclaw.server.plist"
 
 usage() {
   cat <<'USAGE'
-Usage: install-fda-anchor.sh [--stage|--status] [--base-dir DIR] [--json]
+Usage: install-fda-anchor.sh [--stage|--status|--cutover] [--base-dir DIR] [--plist PATH] [--json]
 
   --stage      (default) Stage the active, verified node binary into
                <base-dir>/bin/node and write its manifest. Idempotent.
   --status     Report the staged binary's status against the current
                process's own node and the server plist's ProgramArguments[0].
                Read-only; never changes anything.
+  --cutover    Operator-run only: point the server plist at the staged node,
+               after verifying it is staged, runs, and actually has Full
+               Disk Access. Backs up the plist first; never restarts the
+               service itself.
   --base-dir   Override the base directory (default: ~/.tangleclaw).
+  --plist      Override the server plist path (default:
+               ~/Library/LaunchAgents/com.tangleclaw.server.plist).
   --json       With --status, print JSON instead of a human report.
 USAGE
 }
@@ -86,9 +110,12 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --stage) ACTION="stage"; shift ;;
     --status) ACTION="status"; shift ;;
+    --cutover) ACTION="cutover"; shift ;;
     --json) JSON_OUTPUT="true"; shift ;;
     --base-dir) BASE_DIR="$2"; shift 2 ;;
     --base-dir=*) BASE_DIR="${1#--base-dir=}"; shift ;;
+    --plist) SERVER_PLIST="$2"; shift 2 ;;
+    --plist=*) SERVER_PLIST="${1#--plist=}"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "install-fda-anchor.sh: unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -98,7 +125,6 @@ BIN_DIR="$BASE_DIR/bin"
 LIB_DIR="$BASE_DIR/lib"
 MANAGED_NODE="$BIN_DIR/node"
 MANIFEST="$BIN_DIR/node.manifest.json"
-SERVER_PLIST="$HOME/Library/LaunchAgents/com.tangleclaw.server.plist"
 
 # ---- helpers — plain functions, callable individually by a test harness ----
 
@@ -124,6 +150,50 @@ node_sha256() {
   else
     sha256sum "$1" | awk '{print $1}'
   fi
+}
+
+# Run a command in the background and give it at most `secs` seconds before
+# force-killing it — macOS ships no GNU `timeout(1)`. Needed because the
+# very FAILURE this checks for (no Full Disk Access) is a read that never
+# answers at all (`lib/tcc-folders.js`'s own documented symptom), not one
+# that errors quickly — an in-process `setTimeout` inside the node check
+# itself could never fire either, since the SAME blocking syscall that never
+# answers also blocks the event loop that timer would need. Polls every
+# 0.2s rather than a single `sleep $secs` so a check that finishes early
+# returns promptly instead of always paying the full budget.
+# @param $1 timeout in seconds, $2.. the command
+run_with_timeout() {
+  local secs="$1" pid i max
+  shift
+  "$@" &
+  pid=$!
+  i=0
+  max=$((secs * 5))
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 0.2
+    i=$((i + 1))
+    if [ "$i" -ge "$max" ]; then
+      kill -9 "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 124
+    fi
+  done
+  wait "$pid"
+}
+
+# Whether `$MANAGED_NODE` can actually read `~/Documents` right now — the
+# one check `--cutover` refuses to skip (PRR-A R1 BLOCKING 3): staging a
+# binary proves nothing about whether the Operator has granted it Full
+# Disk Access yet, and pointing the server plist at an unauthorized binary
+# would recreate the exact outage #3198 exists to prevent. 5s budget, same
+# order of magnitude as `lib/system-health.js`'s own `TCC_PROBE_TIMEOUT_MS` —
+# overridable via $TANGLECLAW_FDA_CHECK_TIMEOUT_SECS so a test can exercise
+# the hang-detection path itself without paying the full real-world budget.
+check_fda() {
+  run_with_timeout "${TANGLECLAW_FDA_CHECK_TIMEOUT_SECS:-5}" "$MANAGED_NODE" -e '
+    try { require("fs").readdirSync(process.argv[1]); process.exit(0); }
+    catch (e) { process.exit(1); }
+  ' "$HOME/Documents"
 }
 
 # The sibling `lib/` directory a Homebrew node binary's own `@rpath` load
@@ -274,12 +344,15 @@ stage() {
 print_operator_step() {
   echo
   echo "ONE-TIME OPERATOR STEP (this script never does it for you):"
-  echo "  Grant Full Disk Access to:"
-  echo "    $MANAGED_NODE"
-  echo "  in System Settings -> Privacy & Security -> Full Disk Access."
-  echo "  This path never changes across a 'brew upgrade node@22' patch bump,"
-  echo "  so the grant you make today keeps working after every future upgrade"
-  echo "  — unlike a grant made for the Homebrew symlink, which that upgrade breaks."
+  echo "  1. Grant Full Disk Access to:"
+  echo "       $MANAGED_NODE"
+  echo "     in System Settings -> Privacy & Security -> Full Disk Access."
+  echo "     This path never changes across a 'brew upgrade node@22' patch bump,"
+  echo "     so the grant you make today keeps working after every future upgrade"
+  echo "     — unlike a grant made for the Homebrew symlink, which that upgrade breaks."
+  echo "  2. Then point the server at it (verifies the grant actually took effect"
+  echo "     before changing anything; never done automatically by this step):"
+  echo "       $0 --cutover --base-dir $BASE_DIR"
 }
 
 status() {
@@ -343,7 +416,61 @@ STATUS_JSON
   fi
 }
 
+# Point the server plist's ProgramArguments[0] at the staged node — the
+# ONE place in this whole script that mutates the plist, and only ever as
+# this explicit, Operator-run subcommand (never from --stage/--status,
+# never automatically, never from an HTTP request path — see the file
+# header's own Ruling A901 note). Refuses outright, changing nothing, if
+# any one of its own preconditions does not hold.
+cutover() {
+  if [ ! -x "$MANAGED_NODE" ]; then
+    echo "install-fda-anchor.sh: $MANAGED_NODE is not staged yet — run --stage first; nothing was changed" >&2
+    exit 1
+  fi
+  if ! "$MANAGED_NODE" --version >/dev/null 2>&1; then
+    echo "install-fda-anchor.sh: the staged node at $MANAGED_NODE does not run; nothing was changed" >&2
+    exit 1
+  fi
+
+  echo "Checking Full Disk Access on $MANAGED_NODE (reading $HOME/Documents, up to 5s)..."
+  if ! check_fda; then
+    echo "install-fda-anchor.sh: $MANAGED_NODE could not read $HOME/Documents within 5s — Full Disk Access" >&2
+    echo "  has not been granted to it yet (or a protected read is genuinely hanging, which reads the" >&2
+    echo "  same way). Grant it in System Settings -> Privacy & Security -> Full Disk Access, then run" >&2
+    echo "  --cutover again. Nothing was changed." >&2
+    exit 1
+  fi
+  echo "Full Disk Access confirmed."
+
+  if [ ! -f "$SERVER_PLIST" ]; then
+    echo "install-fda-anchor.sh: $SERVER_PLIST does not exist; nothing to cut over" >&2
+    exit 1
+  fi
+  if ! command -v /usr/libexec/PlistBuddy >/dev/null 2>&1; then
+    echo "install-fda-anchor.sh: PlistBuddy is unavailable; refusing to hand-edit the plist" >&2
+    exit 1
+  fi
+
+  local backup
+  backup="$SERVER_PLIST.pre-fda-anchor-$(date -u +%Y%m%dT%H%M%SZ).bak"
+  cp "$SERVER_PLIST" "$backup"
+  echo "Backed up $SERVER_PLIST to $backup"
+
+  /usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 $MANAGED_NODE" "$SERVER_PLIST"
+  echo "Cut over: $SERVER_PLIST now names $MANAGED_NODE"
+
+  echo
+  echo "VERIFY (this script does not run these for you):"
+  echo "  launchctl kickstart -k gui/\$(id -u)/com.tangleclaw.server"
+  echo "  $0 --status --base-dir $BASE_DIR --plist $SERVER_PLIST"
+  echo
+  echo "ROLLBACK (if anything looks wrong after verifying):"
+  echo "  cp $backup $SERVER_PLIST"
+  echo "  launchctl kickstart -k gui/\$(id -u)/com.tangleclaw.server"
+}
+
 case "$ACTION" in
   stage) stage ;;
   status) status ;;
+  cutover) cutover ;;
 esac
