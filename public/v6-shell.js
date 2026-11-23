@@ -2721,21 +2721,28 @@
           // replies, marked so the recorded copy is not drawn again.
           const turn = echo ? { role: 'user', text: original(echo), recorded: true } : { role: 'user', text: said };
           turns.push(turn);
-          // #3199: a SHORT prompt could not have been cut off by the
-          // terminal's own column width — same signal `appendReplyLine`'s
-          // `WRAP_WIDTH_THRESHOLD` already uses for the identical problem
-          // on the REPLY side (#3167). Without this gate, a plain,
-          // unbulleted assistant reply line (ordinary for every engine —
-          // only Claude Code's own tool calls and Antigravity/Codex's own
-          // thinking recaps use a leading glyph) that happens to follow a
-          // short prompt would be misread as the prompt's own
-          // continuation instead of starting the reply — regressing every
-          // existing short-prompt fixture in this file. Only a prompt at
-          // least this long enables continuation tracking at all; later
-          // lines keep appending to THIS turn (the unrecorded branch
-          // below) until something that is not a continuation is seen —
-          // see the `block === 'prompt'` check further down.
-          if (said.length >= WRAP_WIDTH_THRESHOLD) {
+          // #3199 (R-Gate R1 BLOCKING 1): a RECORDED prompt's own
+          // continuation is already handled, correctly, by the `echo &&
+          // (...)` check immediately below this block (unchanged by this
+          // car) — matched against the actual recorded text, never
+          // swallowing unrelated prose. `block = 'prompt'` tracking below
+          // is for the UNRECORDED case only: a plain assistant reply line
+          // is ordinary across every engine, so there is no way to tell
+          // "the terminal is still echoing a typed prompt it hasn't
+          // recorded yet" apart from "the assistant has started replying"
+          // by content alone. A SHORT prompt could not have been cut off
+          // by the terminal's own column width in the first place — same
+          // signal `appendReplyLine`'s `WRAP_WIDTH_THRESHOLD` already uses
+          // for the identical problem on the REPLY side (#3167) — so only
+          // a prompt at least this long, and still unrecorded, enables
+          // continuation tracking at all; later lines keep appending to
+          // THIS turn until something that is not a continuation is seen
+          // — see the `block === 'prompt'` check further down, which ALSO
+          // requires the line to be indented (never plain unindented
+          // prose, bulleted or not), so a long prompt followed directly by
+          // ordinary unbulleted assistant text always starts its own
+          // `assistant` turn instead of being merged into the user's.
+          if (!echo && said.length >= WRAP_WIDTH_THRESHOLD) {
             block = 'prompt';
             promptTurn = turn;
           }
@@ -2814,24 +2821,28 @@
         appendReplyLine(text);
         return;
       }
-      // #3199: a line that reached here while still tracking a prompt's
-      // continuation matched none of the markers above (not another
-      // prompt, not a switchboard wake, not a tool/noise/busy/done/menu
-      // line) and does not start a genuine assistant reply (`LIVE_BULLET`)
-      // — it is the rest of a multi-line, or terminal-soft-wrapped,
-      // operator prompt. An unrecorded prompt's continuation is appended to
-      // the SAME turn (and tracked as the operator's own words, same as the
-      // first line was); a recorded prompt's stray continuation line is
-      // dropped rather than appended — its text already came from the
-      // record in full.
-      if (block === 'prompt' && promptTurn && !LIVE_BULLET.test(text)) {
-        if (!promptTurn.recorded) {
-          promptTurn.text += `\n${text}`;
-          const squashedLine = squash(text);
-          if (squashedLine) {
-            liveSent.push(squashedLine);
-            liveKnownLines.add(text.trim());
-          }
+      // #3199 (R-Gate R1 BLOCKING 1): a line that reached here while still
+      // tracking an UNRECORDED prompt's continuation (`promptTurn` is only
+      // ever set for the unrecorded case — see where `block = 'prompt'` is
+      // set above) matched none of the markers above, but plain unindented
+      // prose is ordinary for an assistant's OWN reply across every engine
+      // (Claude, Codex, Antigravity, Aider all reply in plain text most of
+      // the time — only tool calls and thinking recaps use a leading
+      // glyph), so bullet-presence alone cannot tell "the terminal is
+      // still echoing what was typed" apart from "the assistant has
+      // started replying." `indented` is the one signal this parser
+      // already trusts elsewhere for "this line belongs to whatever
+      // started the block above it" (the tool-output and reply-contination
+      // checks above both gate on it) — reused here: only an INDENTED line
+      // extends the prompt; a plain, column-0 line — bulleted or not —
+      // never does, and falls through to start its own `assistant` turn
+      // instead of ever being merged into the user's.
+      if (block === 'prompt' && promptTurn && indented) {
+        promptTurn.text += `\n${text}`;
+        const squashedLine = squash(text);
+        if (squashedLine) {
+          liveSent.push(squashedLine);
+          liveKnownLines.add(text.trim());
         }
         return;
       }
@@ -10374,6 +10385,7 @@
   global.tcV6UsageMeterMarkup = usageMeterMarkup;
   global.tcV6LongPromptCommand = longPromptCommand;
   global.tcV6RecordedText = recordedText;
+  global.tcV6ArrangeRecorded = arrangeRecorded;
   global.tcV6EventBodyBytes = eventBodyBytes;
   global.tcV6MedusaIndicatorMarkup = medusaIndicatorMarkup;
   global.tcV6SanitizeUploadName = sanitizeUploadName;

@@ -891,6 +891,76 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     assert.match(root.innerHTML, /ship it/);
   });
 
+  // R-Gate R1 BLOCKING 2 (PRRA-RGATE-V658-W1B-PR3222-3064F473-REVISE):
+  // `liveView`'s own optimistic-send feed, exercised through the REAL
+  // `createLiveController` + mounted-shell pipeline (#3199) — `beginSend`,
+  // `pendingSends`, `getShell().getPendingSends()`, `extractLiveTurns`'s
+  // own `recordedAs` matching, all actually running end to end, not
+  // stubbed. (`arrangeRecorded`'s own direct test below is what proves the
+  // `recorded` flag this produces actually matters — it is the ONE place
+  // in this file that flag changes anything observable; a single-poll
+  // snapshot of this scenario alone cannot show that on its own, since
+  // nothing here gives `arrangeRecorded` a matching recorded EVENT to
+  // dedupe against yet.)
+  it('an optimistic in-flight send (pendingSends) runs the whole liveView pipeline end to end without misreading the pane echo as a fresh assistant turn', async () => {
+    const longPrompt = 'please walk through the deploy checklist end to end and confirm every step before you ship it to production';
+    const map = baseMap({
+      '/api/v6/projects/11/sessions/501/conversation/events': { events: [] },
+      '/api/sessions/TC-Lane-B/peek?lines=2000': { lines: [`❯ ${longPrompt}`] }
+    });
+    const { win, root, shell, settle } = mountLive(map);
+    // The send is in flight — drawn at the bottom of the chat, not yet a
+    // recorded B2 event — exactly the window the peek poll can land in.
+    shell.beginSend(11, longPrompt, 'send-1');
+    win.location.hash = '#/resources/11/conversation';
+    await settle();
+    assert.doesNotMatch(root.innerHTML, /is-assistant/, 'the pane merely echoing what was just typed must never render as an assistant turn');
+    assert.match(root.innerHTML, new RegExp(longPrompt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'the in-flight send itself still shows, via the pending-send UI');
+  });
+
+  // The most recently RECORDED send (`lastSentByProject`, set once
+  // `sendChat` -> `deliverChat` records the B2 event) is the other half of
+  // the same `liveView` feed (`sent.full`) — exercised the same way,
+  // through the real send flow (`sendChat`, the mocked `command` and
+  // `conversation/events` POSTs), not stubbed.
+  it('the full send flow (sendChat -> deliverChat -> lastSentByProject) also runs through liveView end to end without misreading the pane echo', async () => {
+    const longPrompt = 'please walk through the deploy checklist end to end and confirm every step before you ship it to production';
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('');
+    const map = baseMap({
+      '/api/v6/projects/11/sessions/501/conversation/events': { events: [] },
+      '/api/v6/projects/11/sessions/501/conversation/events?includeDeleted=1': { events: [] },
+      '/api/sessions/TC-Lane-B/peek?lines=2000': { lines: [`❯ ${longPrompt}`] }
+    });
+    const { api } = makeApi(map);
+    const mutateCalls = [];
+    const apiMutate = async (url) => {
+      mutateCalls.push(url);
+      return (/\/command$/.test(url) || /\/conversation\/events$/.test(url)) ? true : null;
+    };
+    let shell = null;
+    const pending = [];
+    const liveCtl = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate });
+    shell = G.tcCreateV6Shell(doc, { root, window: win, onRender: (route) => pending.push(liveCtl.handleRoute(route)) });
+    pending.push(liveCtl.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    win.location.hash = '#/resources/11/conversation';
+    await settle();
+    await liveCtl.sendChat(longPrompt);
+    await settle();
+    // Nothing re-fetches the peek/events on its own in this harness (the
+    // real poll timer isn't armed) — re-entering the same route is what a
+    // fresh poll tick does: re-read the pane with `lastSentByProject` now set.
+    pending.push(liveCtl.handleRoute(shell.getRoute()));
+    await settle();
+    assert.ok(mutateCalls.includes('/api/sessions/TC-Lane-B/command'), 'the send actually went through the mocked route');
+    assert.doesNotMatch(root.innerHTML, /is-assistant/, 'the pane echoing the just-recorded send must never render as an assistant turn');
+  });
+
   it('#3154: the toggle\'s own landing route is the generic Overview, not any one member\'s conversation', async () => {
     const { live, win, root, settle } = mountLive(baseMap());
     const hash = await live.enterHash();
@@ -2706,12 +2776,50 @@ describe('tcV6ExtractLiveTurns: terminal-echoed/wrapped prompts never duplicate 
   // fixtures elsewhere in this file is unaffected.
   const LONG_PROMPT = 'please check the deploy script end to end before you ship it';
 
-  it('an unrecorded prompt long enough for the terminal to have wrapped it keeps its continuation line as part of the SAME user turn, not a fresh assistant reply', () => {
-    const lines = [`❯ ${LONG_PROMPT}`, 'and also update the README while you are at it', '⏺ Checked both.'];
+  it('an unrecorded prompt long enough for the terminal to have wrapped it keeps its INDENTED continuation line as part of the SAME user turn, not a fresh assistant reply', () => {
+    const lines = [`❯ ${LONG_PROMPT}`, '  and also update the README while you are at it', '⏺ Checked both.'];
     const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
     assert.deepEqual(out.turns, [
       { role: 'user', text: `${LONG_PROMPT}\nand also update the README while you are at it` },
       { role: 'assistant', text: 'Checked both.' }
+    ]);
+  });
+
+  // R-Gate R1 BLOCKING 1 (PRRA-RGATE-V658-W1B-PR3222-3064F473-REVISE): plain,
+  // unbulleted assistant prose is ORDINARY across every engine — only a
+  // bullet/glyph marks a tool call or thinking recap, never the reply
+  // itself — so a long (>=55 char) prompt followed directly by one must
+  // ALWAYS start its own `assistant` turn, never be merged into the user's,
+  // however little evidence there is to tell the two apart by content alone.
+  it('a long (90+ char) prompt followed directly by plain UNINDENTED, unbulleted assistant prose starts a real assistant turn, never swallowed into the user turn', () => {
+    const longPrompt = 'please walk through the deploy checklist end to end and confirm every step before you ship it to production';
+    assert.ok(longPrompt.length >= 90, `fixture must be >=90 chars, got ${longPrompt.length}`);
+    const lines = [`❯ ${longPrompt}`, 'Here is the fix for that issue.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: longPrompt },
+      { role: 'assistant', text: 'Here is the fix for that issue.' }
+    ]);
+  });
+
+  it('the same long-prompt-then-plain-reply shape holds for every engine (claude, codex, antigravity, aider)', () => {
+    const longPrompt = 'please walk through the deploy checklist end to end and confirm every step before you ship it to production';
+    for (const engine of ['claude', 'codex', 'antigravity', 'aider']) {
+      const lines = [`❯ ${longPrompt}`, 'Here is the fix for that issue.'];
+      const out = plain(G.tcV6ExtractLiveTurns(lines, engine, []));
+      assert.deepEqual(out.turns, [
+        { role: 'user', text: longPrompt },
+        { role: 'assistant', text: 'Here is the fix for that issue.' }
+      ], engine);
+    }
+  });
+
+  it('a long RECORDED prompt followed by plain UNINDENTED assistant prose also starts a real assistant turn (isOperatorEcho governs the recorded case, unaffected by this car)', () => {
+    const lines = [`❯ ${LONG_PROMPT}`, 'Here is the fix for that issue.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', [LONG_PROMPT]));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: LONG_PROMPT, recorded: true },
+      { role: 'assistant', text: 'Here is the fix for that issue.' }
     ]);
   });
 
@@ -2733,12 +2841,12 @@ describe('tcV6ExtractLiveTurns: terminal-echoed/wrapped prompts never duplicate 
     ]);
   });
 
-  it('a stray continuation line of a RECORDED long prompt is dropped, not appended or duplicated as a reply', () => {
+  it('a stray line after a RECORDED prompt that does not match it (isOperatorEcho) is never dropped silently — it surfaces as its own assistant turn', () => {
     const lines = [`❯ ${LONG_PROMPT}`, 'overflow-x', '⏺ Done.'];
     const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', [LONG_PROMPT]));
     assert.deepEqual(out.turns, [
       { role: 'user', text: LONG_PROMPT, recorded: true },
-      { role: 'assistant', text: 'Done.' }
+      { role: 'assistant', text: 'overflow-x\nDone.' }
     ]);
   });
 
@@ -2763,6 +2871,25 @@ describe('tcV6ExtractLiveTurns: terminal-echoed/wrapped prompts never duplicate 
     assert.equal(typeof G.tcV6IsOperatorEcho, 'function');
     assert.equal(G.tcV6IsOperatorEcho('> quoted', new Set(), []), true);
     assert.equal(G.tcV6IsOperatorEcho('totally new text', new Set(), []), false);
+  });
+
+  // R-Gate R1 BLOCKING 2: the `recorded` flag `liveView`'s own knownUserTexts
+  // feed (pendingSends, lastSentByProject.full) is what gets a live turn
+  // marked with has exactly one consumer in this file — `arrangeRecorded` —
+  // which is what actually prevents a recorded prompt from being drawn
+  // TWICE: once as its own recorded-event bubble, once as its live-pane
+  // echo. Proven directly here, since neither `liveTurnsMarkup` nor
+  // `pendingMarkup` read the flag at all; this is where feeding
+  // `knownUserTexts` from pendingSends/lastSent actually pays off, for the
+  // exact race #3199 names — an events fetch that has not yet caught up
+  // with a send `liveView`'s own in-memory state already knows about.
+  it('arrangeRecorded draws a recorded prompt once, as its live turn — the SAME matching event is excluded from the recorded-events list, never duplicated', () => {
+    const events = [{ seq: 1, role: 'user', content: 'please walk through the deploy checklist end to end' }];
+    const unmarked = G.tcV6ArrangeRecorded(events, [{ role: 'user', text: 'please walk through the deploy checklist end to end' }], null);
+    assert.deepEqual(unmarked.head, events, 'without the flag, the event still renders on its own — the duplicate this mechanism exists to prevent');
+    const marked = G.tcV6ArrangeRecorded(events, [{ role: 'user', text: 'please walk through the deploy checklist end to end', recorded: true }], null);
+    assert.deepEqual(marked.head, [], 'with the flag, the matching event is excluded — drawn once, via the live turn');
+    assert.equal(typeof G.tcV6ArrangeRecorded, 'function');
   });
 });
 
