@@ -959,6 +959,17 @@ html[data-tc-keyboard] body {
   max-height: 80vh;
   padding-top: 4px;
   padding-bottom: 12px;
+  /* #3218 R2: .master-chat-workspace (below) sits ABOVE .master-frame-wrap
+     inside this same panel (addMasterChatWorkspace, public/ui.js) — without
+     a flex column here, the workspace's own height budget has nothing to
+     share with #masterFrame's 60dvh, and the composer/terminal below it
+     clips against this panel's own 80vh ceiling. overflow-y: auto is a
+     last-resort safety net; .master-chat-workspace/.master-chat-stream's
+     own bounded heights below are what keep this from triggering in
+     practice. */
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
 }
 /* `?master=popout` (#2035): a window the Master bar's own Pop out button
    opened onto this same page, showing nothing but the Master panel. Hiding
@@ -6528,22 +6539,30 @@ p.v6-history-secret {
   overflow-wrap: anywhere;
 }
 
-/* ── Car V659-W2-C: Master Admin Fleet chat workspace & attachment chips
-   (#3218) — styling for the layout Car V659-W2-D mounts, once it lands.
-   Variable-driven (var(--text)/var(--border-color)/etc.), the same WCAG
-   AA approach every other v6-* surface in this file already relies on:
-   the theme blocks at the top of this file redefine those variables per
-   theme, so contrast holds in dark/light/high-contrast without a
-   per-component override here. */
+/* ── Car V659-W2-C/R2: Master Admin Fleet chat workspace & attachment
+   chips (#3218) — styling for the layout PR #3231 (Car V659-W2-E,
+   addMasterChatWorkspace in public/ui.js) mounts into #masterPanel,
+   directly above .master-frame-wrap. Variable-driven (var(--text)/
+   var(--border-color)/etc.), the same WCAG AA approach every other v6-*
+   surface in this file already relies on: the theme blocks at the top
+   of this file redefine those variables per theme, so contrast holds in
+   dark/light/high-contrast without a per-component override here. */
 .master-chat-workspace {
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-height: 0;
+  /* #3218 R2 BLOCKING 1: .master-panel.open is now a flex column (above)
+     sharing its 80vh with .master-frame-wrap's own 60dvh/min 280px — this
+     bounds the workspace's own share so the composer and #masterFrame
+     both stay reachable instead of one crowding the other out. */
+  max-height: 38vh;
+  flex: 0 1 auto;
 }
 .master-chat-stream {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 72px;
+  max-height: 24vh;
   overflow-y: auto;
   overflow-anchor: auto;
 }
@@ -6552,6 +6571,21 @@ p.v6-history-secret {
   flex-wrap: wrap;
   gap: 7px;
   align-items: flex-end;
+  /* #3218 R2 BLOCKING 2: #masterChatAttachBtn carries .v6-chat-attach-btn
+     directly (public/ui.js's addMasterChatWorkspace), not inside a
+     .v6-chat-input-wrap the way the main V6 composer's own attach button
+     is — .v6-chat-attach-btn's position: absolute (below) would otherwise
+     resolve against whichever ancestor is positioned, escaping this row
+     entirely instead of sitting inline in it. */
+  position: relative;
+  flex: 0 0 auto;
+}
+.master-chat-composer .v6-chat-attach-btn,
+.master-chat-composer #masterChatAttachBtn {
+  position: static;
+  inset: auto;
+  flex: 0 0 auto;
+  transform: none;
 }
 /* Mirrors .v6-chat-chip (#3053) — the same pill shape and ready/
    uploading/error states, for an attachment dropped/picked via

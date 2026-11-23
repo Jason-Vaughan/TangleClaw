@@ -1389,16 +1389,67 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
         '#masterFrame must sit inside a .master-frame-wrap, nested one level below #masterPanel — this is exactly the "frame\'s real parent is not panelEl" shape the mounted test below exercises');
     });
 
-    it('mounted against that real nesting, it positions both unpositioned ancestors (never #masterPanel\'s own position if it had one) and delivers a dropped file with its sanitized name', () => {
-      const G = loadApiHelperGlobals();
-      G.Blob = Blob;
-      G.File = File;
-      const { doc, ids } = makeDocument(['masterPanel', 'masterFrameWrap', 'masterFrame']);
-      ids.masterPanel.style = {};
-      ids.masterFrameWrap.style = {};
-      ids.masterFrame.style = {};
-      ids.masterPanel.appendChild(ids.masterFrameWrap);
-      ids.masterFrameWrap.appendChild(ids.masterFrame);
+    /**
+     * The exact `<div id="masterPanel" ...> ... </div>` fragment of
+     * `html`, depth-matched rather than a fixed-size window or the next
+     * literal `</div>` — this repo's own `liftBody`/`liftDeclaration`
+     * (test/helpers/lift.js) do the same for a JS function's braces;
+     * this is that technique for an HTML element's own nested divs.
+     * @param {string} html
+     * @returns {string}
+     */
+    function extractMasterPanelBlock(html) {
+      const openTag = /<div[^>]*\bid="masterPanel"[^>]*>/.exec(html);
+      assert.ok(openTag, '#masterPanel must exist');
+      let depth = 1;
+      const tagRe = /<div\b[^>]*>|<\/div>/g;
+      tagRe.lastIndex = openTag.index + openTag[0].length;
+      let tag;
+      while (depth > 0 && (tag = tagRe.exec(html))) {
+        depth += tag[0].startsWith('</') ? -1 : 1;
+      }
+      return html.slice(openTag.index, tagRe.lastIndex);
+    }
+
+    /**
+     * A minimal tag-stack HTML -> mini-DOM builder, bounded to exactly the
+     * shapes `public/index.html`'s own `#masterPanel` block uses (nested
+     * elements, every one explicitly closed, no scripts/styles) — not a
+     * general HTML parser. Comments are stripped first; only `id`/`class`
+     * attributes are read, which is all `tcBindMasterDropzone` itself
+     * reads off these elements (per `withIdParsingInnerHTML`'s own
+     * limitation, learned the hard way earlier this car: it builds FLAT
+     * id stand-ins, never real nesting, so it cannot stand in here).
+     * @param {object} doc
+     * @param {string} html
+     * @returns {object} The root element.
+     */
+    function buildTreeFromRealHtml(doc, html) {
+      const clean = html.replace(/<!--[\s\S]*?-->/g, '');
+      const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+      const stack = [];
+      let root = null;
+      let match;
+      while ((match = tagRe.exec(clean))) {
+        const [, closing, tag, attrs] = match;
+        if (closing) { stack.pop(); continue; }
+        const el = doc.createElement(tag);
+        el.style = {};
+        const idMatch = /\bid="([^"]*)"/.exec(attrs);
+        const classMatch = /\bclass="([^"]*)"/.exec(attrs);
+        if (idMatch) { el.id = idMatch[1]; doc._register(el); }
+        if (classMatch) el.className = classMatch[1];
+        if (stack.length) stack[stack.length - 1].appendChild(el);
+        else root = el;
+        stack.push(el);
+      }
+      return root;
+    }
+
+    it('mounted against the REAL #masterPanel markup (parsed from public/index.html, not a hand-built tree), it positions both unpositioned ancestors, survives a real bubbling drop delivering the file exactly once, and restores the frame\'s pointer-events', () => {
+      const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+      const block = extractMasterPanelBlock(indexHtml);
+      const { doc } = makeDocument([]);
       /** Captures every listener a target registers, by type. */
       function captureAddEventListener(target) {
         const handlers = {};
@@ -1410,19 +1461,54 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
         return handlers;
       }
       const docHandlers = captureAddEventListener(doc);
-      const panelHandlers = captureAddEventListener(ids.masterPanel);
+      // Build the real tree FIRST, consuming the createElement calls that
+      // parsing it needs, THEN wrap createElement to capture the NEXT one
+      // — the dropzone overlay tcBindMasterDropzone itself creates. Doing
+      // this in the other order would wrongly capture #masterPanel (the
+      // tree's own first element) as "the overlay" instead.
+      const panelEl = buildTreeFromRealHtml(doc, block);
+      assert.equal(panelEl.id, 'masterPanel', 'the parsed root must be the real #masterPanel element');
+      const panelHandlers = captureAddEventListener(panelEl);
+      const frameEl = doc.getElementById('masterFrame');
+      assert.ok(frameEl, '#masterFrame must have parsed out of the real markup');
+
+      let overlay = null;
+      let overlayHandlers = null;
+      const realCreateElement = doc.createElement.bind(doc);
+      doc.createElement = (tag) => {
+        const el = realCreateElement(tag);
+        if (!overlayHandlers) { overlay = el; overlayHandlers = captureAddEventListener(el); }
+        return el;
+      };
+
+      const G = loadApiHelperGlobals();
+      G.Blob = Blob;
+      G.File = File;
       const delivered = [];
-      G.tcBindMasterDropzone({ doc, panelEl: ids.masterPanel, prefix: 'masterPanel', onUpload: (f, sanitized) => delivered.push(sanitized) });
-      assert.equal(ids.masterPanel.style.position, 'relative', '#masterPanel has no position rule in public/style.css — it must get one, as the overlay\'s own containing block');
-      assert.equal(ids.masterFrameWrap.style.position, 'relative', '.master-frame-wrap has no position rule either, and it — not #masterPanel — is #masterFrame\'s REAL parent');
-      const overlay = ids.masterPanel.childNodes.find((c) => c.id === 'masterPanelDropzoneOverlay');
-      assert.ok(overlay, 'the overlay must mount as a direct child of #masterPanel, matching where tcBindMasterDropzone appends it');
+      G.tcBindMasterDropzone({ doc, panelEl, prefix: 'masterPanel', onUpload: (f, sanitized) => delivered.push(sanitized) });
+
+      assert.equal(panelEl.style.position, 'relative', '#masterPanel has no position rule in public/style.css — it must get one, as the overlay\'s own containing block');
+      assert.equal(doc.getElementById('masterPanelBar').parentNode, panelEl, 'sanity: the real nesting parsed correctly — .master-status-row is a direct child of #masterPanel');
+      const frameWrap = frameEl.parentNode;
+      assert.equal(frameWrap.className, 'master-frame-wrap', '#masterFrame\'s real parent, parsed from the real markup, is .master-frame-wrap — not #masterPanel directly');
+      assert.equal(frameWrap.style.position, 'relative', '.master-frame-wrap has no position rule either, and it — not #masterPanel — is #masterFrame\'s REAL parent');
+      assert.ok(overlay, 'the overlay must have been created');
+      assert.equal(overlay.parentNode, panelEl, 'the overlay must mount as a direct child of #masterPanel, matching where tcBindMasterDropzone appends it');
+
       docHandlers.dragenter[0]({ dataTransfer: { types: ['Files'] } });
       assert.equal(overlay.classList.contains('hidden'), false, 'revealed on a file drag over the real page');
-      assert.equal(ids.masterFrame.style.pointerEvents, 'none', 'the real #masterFrame iframe must stop intercepting pointer input while the drag is live');
+      assert.equal(frameEl.style.pointerEvents, 'none', 'the real #masterFrame iframe must stop intercepting pointer input while the drag is live');
+
+      // A real drop fires at the overlay (the actual target under the
+      // cursor) and then bubbles to the panel's own drop listener — the
+      // SAME event object reaching both, exactly as a real browser
+      // bubble would. Must deliver the one dropped file exactly once.
       const fileA = { name: 'Screenshot 2026-11-23 at 8.00.00 AM.png' };
-      panelHandlers.drop[0]({ preventDefault: () => {}, dataTransfer: { files: [fileA] } });
-      assert.deepEqual(delivered, ['Screenshot-2026-11-23-at-8.00.00-AM.png'], 'a file dropped on the real markup must be delivered with its sanitized name');
+      const evt = { preventDefault: () => {}, dataTransfer: { files: [fileA] } };
+      overlayHandlers.drop[0](evt);
+      panelHandlers.drop[0](evt);
+      assert.deepEqual(delivered, ['Screenshot-2026-11-23-at-8.00.00-AM.png'], 'exactly one delivery, sanitized, even though the real bubble reaches both drop listeners');
+      assert.equal(frameEl.style.pointerEvents, '', 'restored once the drop is handled, not left stuck at none');
     });
   });
 });
@@ -1737,5 +1823,60 @@ describe('Car V659-W1-C: mounted-DOM fixture coverage for the 4 offline/recovery
       return fired;
     });
     assert.deepEqual(wired, [true, true, true], 'all three per-row actions must be independently wireable');
+  });
+});
+
+/**
+ * Car V659-W2-C R2 (#3218, R-Gate R1 BLOCKING 1/2, WARNING 1): the Admin
+ * Fleet chat workspace PR #3231 (Car V659-W2-E, addMasterChatWorkspace in
+ * public/ui.js) mounts into #masterPanel needs a bounded height budget
+ * (BLOCKING 1) and the attach button override (BLOCKING 2) this car's own
+ * public/style.css additions provide — pinned here as a stylesheet
+ * contract, same pattern the other Car-named describes in this file
+ * already use for their own CSS.
+ */
+describe('Car V659-W2-C R2: Master chat workspace height budget and attach-button positioning (#3218)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  /**
+   * @param {string} selector @returns {string} the selector's own `{ ... }` body, or '' if not found.
+   * Escapes `^` too, unlike this file's other copies of this helper — the
+   * fleet-start-button selectors below are `[id^="..."]` attribute
+   * selectors, and an unescaped `^` outside a character class asserts
+   * "start of string" (no `m` flag here), which can never match mid-pattern
+   * and silently returns '' for every caller, not just this one.
+   */
+  const body = (selector) => {
+    const m = new RegExp(`(^|\\n)${selector.replace(/[.[\]>="^-]/g, '\\$&')} \\{([^}]*)\\}`).exec(css);
+    return m ? m[2] : '';
+  };
+
+  it('.master-panel.open becomes a flex column with a scroll safety net, so the chat workspace and #masterFrame can share its 80vh', () => {
+    const rule = body('.master-panel.open');
+    assert.match(rule, /display: flex;/);
+    assert.match(rule, /flex-direction: column;/);
+    assert.match(rule, /overflow-y: auto;/);
+  });
+
+  it('.master-chat-workspace and .master-chat-stream each get a bounded height budget, not an unbounded flex share', () => {
+    const workspace = body('.master-chat-workspace');
+    assert.match(workspace, /max-height: 38vh;/);
+    assert.match(workspace, /flex: 0 1 auto;/);
+    const stream = body('.master-chat-stream');
+    assert.match(stream, /flex: 1 1 auto;/);
+    assert.match(stream, /min-height: 72px;/);
+    assert.match(stream, /max-height: 24vh;/);
+    assert.match(stream, /overflow-y: auto;/, 'the stream must scroll internally rather than push the composer/terminal off-budget');
+  });
+
+  it('.master-chat-composer positions #masterChatAttachBtn/.v6-chat-attach-btn inline, not as an escaping absolute overlay', () => {
+    assert.match(body('.master-chat-composer'), /position: relative;/);
+    const override = body('.master-chat-composer .v6-chat-attach-btn,\n.master-chat-composer #masterChatAttachBtn');
+    assert.match(override, /position: static;/);
+    assert.match(override, /flex: 0 0 auto;/);
+  });
+
+  it('the per-row fleet-start buttons ([id^="v6TreeStartFleet-"]/[id^="v6OverviewStartFleet-"]) still carry their own styling', () => {
+    const rule = body('[id^="v6TreeStartFleet-"],\n[id^="v6OverviewStartFleet-"]');
+    assert.match(rule, /border-radius: var\(--radius-pill\);/);
   });
 });
