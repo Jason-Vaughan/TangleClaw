@@ -4,6 +4,86 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.5.9] - 2026-11-23
+
+### Added
+- Renaming a project now automatically migrates Claude Code's own encoded
+  session-state directory (`~/.claude/projects/<encoded-old-path>` ->
+  `<encoded-new-path>`) instead of refusing the rename or demanding manual
+  confirmation (#3196): `migrateEngineStateOnRename` moves it right after the
+  directory rename succeeds, and `decideWorkspaceRename` no longer blocks a
+  rename whose only engine state is auto-migratable this way. A target
+  collision, a filesystem error, or Codex's content-keyed rollout state (which
+  cannot be relocated by moving a file) still surface a clear warning with a
+  manual `mv` fallback, exactly as before.
+- Added `GET /api/sessions/:project/preflight` (#3202): fast, non-mutating
+  session launch readiness checks that classify a launch problem into 5
+  structured categories before the operator clicks Launch — `workspace_missing`
+  / `filesystem_permission_denied` (macOS Full Disk Access), `engine_binary_missing`,
+  `engine_auth_or_config_invalid`, and `launch_blocked_or_timeout` — each with a
+  `title`, `message`, `remediation`, `retryable`, and `canEditProperties: true`.
+  Failed `POST /api/sessions/:project` launches now also refuse early on a
+  missing/unreadable workspace path, an unreachable tmux server under a
+  TCC-protected folder, a malformed `.tangleclaw/project.json`, or explicit
+  Codex auth failure — each with the same structured `diagnostic` (plus
+  top-level `title`/`remediation`/`retryable`/`canEditProperties`) alongside
+  the existing `error`/`code` — never preempting a condition `launchSession`
+  itself already classifies with its own specific status (engine profile
+  identity, an unresponsive existing session), so every existing caller's
+  response is unchanged.
+- Added a centered offline startup hero to V6 Chat (#3203): a session that
+  is offline now shows a focused card with Start Session, View Previous
+  Conversation and Edit Session Properties actions, instead of a dead
+  stream and a disabled composer. Starting shows an animated "Starting…"
+  state; a refused launch shows the server's reason (and, once the server
+  sends one, a structured diagnostic's title/message/remediation steps)
+  with Retry Launch and Edit Session Properties. "View Previous
+  Conversation" loads the project's persisted B2 conversation events when
+  a past session recorded any, falling back to the continuity wrap-summary
+  sections the sidebar's history panel already reads otherwise, with a
+  compact Start/Return/Edit bar above and below it; "Return to Start Card"
+  exits back to the hero in place.
+- Added consistent per-row actions to every Fleet Sidebar member (#3205):
+  Rename, Edit Session Properties and Start now sit together in each
+  row's `.v6-tree-member-actions`, with Edit Session Properties and Start
+  reachable directly from the sidebar regardless of whether the session
+  is running, starting, offline or stopped — no chat needs to be open
+  first. Start is left off a running member's row, so a sidebar click can
+  never restart a live session. A new lifecycle status pill (starting/
+  failed/offline) surfaces a launch this UI just attempted — including
+  one started from the sidebar itself, not only from the chat's own
+  offline hero — ahead of the next status poll, with a failed launch's
+  own server message on the pill and Start still available to retry it.
+- Turned the Project Settings modal into a true full-viewport page (a sticky header with the session name and status badge, a scrollable body grouped into Identity & Workspace Paths / AI Engine, Model & Effort / Switchboard, Wake & Governance cards — the Identity card now also surfaces the workspace path with a path-existence/readability and git-repository badge, and the Fleet Coordinator / decision-authority role — and a persistent Cancel · Save Properties · Save & Launch / Restart Session action bar), and gave Claude Code a real model selector (Sonnet, Opus, Fable) alongside its existing reasoning-effort levels, joining Codex with a Phase-2 model axis via a new static-list roster reader. Antigravity and Aider show the same 3-phase card shape (a disabled "Engine default" placeholder for Model and Effort) without a live selection, since neither has a post-launch model-verification path yet. The Engine dropdown and this picker also normalize a project stored under an operator's own Claude Code profile variant (e.g. a custom reviewer/sprint profile) to plain Claude with a sensible model/effort default, rather than showing it as a separate, unpickable engine row (#3214).
+- Added a one-click "▶ Start Fleet (N)" / "▶ Start Offline (N)" button to
+  each fleet group, in both the Fleet Sidebar and the Fleet & Workspace
+  Overview screen's own card headers (#3215): shown whenever a fleet has
+  one or more offline members, naming the full fleet when every member
+  is offline or just the offline count when some are already running.
+  Clicking it launches only the offline members, sequentially, continuing
+  past an individual refusal rather than aborting the rest of the batch,
+  and never restarts a member that is already live. The button disappears
+  once every member of the fleet is running.
+
+### Fixed
+- Fixed the Fleet Sidebar showing stale lifecycle indicators for sessions
+  other than the one currently open (#3201): `GET /api/projects` and
+  `GET /api/models/status` previously refreshed only on initial route
+  entry. A consolidated refresh now also runs roughly every 12 seconds —
+  piggybacked on every 3rd tick of an open chat's existing 4-second poll,
+  or a standalone timer on routes with no chat poll of their own (Overview,
+  Settings) — and immediately after any Start/Start Fleet action, without
+  resetting the chat composer draft, focus, or scroll position.
+- Fixed the Global Fleet & Workspace Overview staying locked to whatever
+  fleet a previous conversation or project route last narrowed the sidebar
+  filter to (#3204): navigating to Overview now defaults the fleet filter
+  to "All Fleets". The fleet filter itself moved from shared `localStorage`
+  to tab-scoped `sessionStorage`, so two browser tabs open on different
+  fleets no longer read back each other's selection; the existing
+  owning-fleet sync for an active conversation/project/fleet route is
+  unaffected.
+- Fixed Admin Fleet (Admin-PM) file uploads being restricted to images only: the Master control bar's file picker no longer carries `accept="image/*"`, so standard documents (MD, TXT, JSON, PDF, logs) can be attached the same way V6 chat and Classic project upload already allow. A chosen, dropped, or pasted file's name is normalized in place to a `SAFE_FILENAME_RE`-compliant form (`lib/secure-clipboard.js` otherwise rejects a macOS screenshot name — "Screenshot 2026-11-22 at 9.15.00 PM.png" — or any name with spaces or parentheses outright), so an existing 1-argument uploader reading `file.name` directly gets the safe name automatically, with no call-site change of its own; `file.rawName`/`.sanitizedName` carry the original and the safe name explicitly too, and repeated names in one batch dedupe with `-2`/`-3`/... Added a shared, self-styled `tcBindMasterDropzone` iframe-safe drag-over dropzone overlay and clipboard-paste file intake for the Master panel, so dragging or pasting a file over the `ttyd` terminal view no longer gets swallowed by the iframe itself — guarded against the double-upload a real `drop` event bubbling from the overlay to the panel underneath it would otherwise cause. Wave 2 sibling Car V659-W2-D mounts `tcBindMasterDropzone` and the V6 Admin Fleet Chat workspace once PR #3224 and PR #3227 merge (#3218).
+
 ## [6.5.8] - 2026-11-22
 
 ### Fixed

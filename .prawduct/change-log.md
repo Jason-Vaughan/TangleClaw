@@ -41,6 +41,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-23 — v6.5.9 release cut (Milestone #103), Car V659-W3-REL
+
+<!-- prawduct: type=internal | scope=v659-release -->
+
+- Compiled 9 accepted `changelog.d/` fragments (#3196 from PR #3223; #3202 from PR #3225;
+  #3201/#3203/#3204 from PR #3227; #3205/#3215 from PR #3230; #3214 from PR #3224; #3218 from
+  PR #3229/PR #3231/PR #3232) into `CHANGELOG.md` section `[6.5.9]` via
+  `compileFragments`/`spliceIntoUnreleased`/`_promoteUnreleased`, target version `6.5.9`
+  (the fragment set is 6 `added` + 3 `fixed`, explicitly chartered as this sprint's Leg 2
+  release-train version rather than a derived bump level). Bumped `version.json` (`6.5.8` →
+  `6.5.9`), updated README pins/banner (prose hand-written here, not generated) and the
+  released-section lock via `scripts/release-prepare.js`, and updated `FEATURES.md`,
+  `ROADMAP.md`, `docs/releases/index.md` and `docs/releases/v6.5.9.md`.
+- Dispatched by `TC-Lane-Arc` via Medusa (Ruling A1004) after all 9 Wave 1/Wave 2 cars
+  true-merged to `origin/main @ c301696be5d0c8a848a47ac301655fbacb59498a`, closing all 9
+  Milestone #103 issues (#3196, #3201, #3202, #3203, #3204, #3205, #3214, #3215, #3218).
+- Branched `release/v6.5.9` explicitly from the named base commit (`git checkout -b
+  release/v6.5.9 c301696be5d0c8a848a47ac301655fbacb59498a`), confirmed via `git merge-base HEAD
+  origin/main` equalling that exact SHA before any edit.
+- Verified with `node --test test/release-notes.test.js test/changelog*.test.js
+  test/version*.test.js test/features-index.test.js` and `node scripts/test-stage.js 1`, per
+  the dispatch's own named verification commands.
+
 ## 2026-11-22 — v6.5.8 release cut (Milestone #102), Car V658-W2-REL
 
 <!-- prawduct: type=internal | scope=v658-release -->
