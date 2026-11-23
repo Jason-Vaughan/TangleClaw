@@ -1218,6 +1218,76 @@
   }
 
   /**
+   * This chat frame's single scroll-position coordinator (#3200), unifying
+   * `#v6ChatStream` and the Under the Hood group's
+   * (`#v6ChatPeek`/`#v6ChatSwitchboard`/`#v6ChatTucked`/`#v6ChatUnderHood`)
+   * own follow-bottom wiring with two behaviors neither one covered on its
+   * own:
+   *  - Toggling `#v6ChatUnderHood` open or closed resizes `#v6ChatStream`'s
+   *    own available height (#3173's grid-track stretch), which the
+   *    drawer's own `toggle` listener otherwise only ever re-arms the Under
+   *    the Hood GROUP's pin for — left alone, `#v6ChatStream` either jumped
+   *    or hid its newest message depending on which way the drawer moved.
+   *    Enforced here instead: re-pinned to the bottom (synchronously and,
+   *    since a thumbnail/unfurl can still be settling, once more next
+   *    frame) while pinned, or held at its own last scroll position while
+   *    not — never itself flipping the pinned flag, which only the
+   *    'scroll' listener `wireStreamPin` wires does.
+   *  - A `ResizeObserver` on `#v6ChatStream` catches every OTHER way its
+   *    available height can change — a Gobble & Fill pane resizer drag
+   *    (#3186), a window resize, or the docked header's own height
+   *    changing — none of which fire the drawer's own `toggle` event.
+   *
+   * A pure, dependency-injected factory — not a closure over any ONE
+   * mounted shell's own private state — so it is independently testable
+   * and reusable; `tcCreateV6Shell` calls it once per render (since
+   * `render` fully replaces the DOM, a fresh call disconnects whatever
+   * `ResizeObserver` the previous render's now-detached `#v6ChatStream`
+   * node held) handing it ITS OWN `streamPinned`/`pinStream`/
+   * `wireStreamPin`/`wirePeekPin`.
+   * @param {object} opts
+   * @param {Document} opts.doc
+   * @param {{ResizeObserver?: Function}|null} [opts.win]
+   * @param {Function|null} [opts.raf] - `requestAnimationFrame`, or null to skip the next-frame re-pin.
+   * @param {() => boolean} opts.isStreamPinned
+   * @param {(el: *) => void} opts.pinStream - Pins `#v6ChatStream` AND records its own last scroll position (closure-owned by the caller).
+   * @param {() => number} opts.lastStreamScrollTop
+   * @param {() => void} opts.wireStreamPin - Attaches `#v6ChatStream`'s own 'scroll'/jump-to-latest-pill listeners.
+   * @param {() => void} opts.wirePeekPin - Attaches `#v6ChatPeek`'s own 'scroll' listener and the drawer's `rearmPeekPin` on 'toggle'.
+   * @returns {{disconnect: function(): void}}
+   */
+  function createChatScrollCoordinator(opts) {
+    const doc = opts.doc;
+    const win = opts.win;
+    const raf = opts.raf;
+    opts.wireStreamPin();
+    opts.wirePeekPin();
+    const enforceStreamOnResize = () => {
+      const el = doc.getElementById('v6ChatStream');
+      if (!el) return;
+      if (opts.isStreamPinned()) {
+        opts.pinStream(el);
+        if (raf) raf(() => { if (opts.isStreamPinned()) opts.pinStream(doc.getElementById('v6ChatStream')); });
+      } else {
+        el.scrollTop = opts.lastStreamScrollTop();
+      }
+    };
+    const hood = doc.getElementById('v6ChatUnderHood');
+    if (hood) hood.addEventListener('toggle', enforceStreamOnResize);
+    let resizeObserver = null;
+    const ResizeObserverCtor = (win && typeof win.ResizeObserver === 'function') ? win.ResizeObserver
+      : (typeof ResizeObserver === 'function' ? ResizeObserver : null);
+    const streamEl = doc.getElementById('v6ChatStream');
+    if (ResizeObserverCtor && streamEl) {
+      resizeObserver = new ResizeObserverCtor(() => {
+        if (opts.isStreamPinned()) opts.pinStream(doc.getElementById('v6ChatStream'));
+      });
+      resizeObserver.observe(streamEl);
+    }
+    return { disconnect() { if (resizeObserver) resizeObserver.disconnect(); } };
+  }
+
+  /**
    * Drop a persisted chat draft once it is implausibly large to still be a
    * genuine in-progress message (#3133): a composer draft over 2KB is
    * either a stale leftover (an old session's abandoned paste) or an
@@ -2206,7 +2276,18 @@
     // chrome about the TUI, never the reply.
     /^Press up to edit queued messages\b/i,
     /\bnew task\?\s*\/clear to save\b/i,
-    /↑\/↓\s*Navigate\b/i
+    /↑\/↓\s*Navigate\b/i,
+    // #3199: a queued-prompt preview row in the TUI footer (what the
+    // operator just typed while the engine is still busy, shown back at
+    // them so they know it is queued) starts with the same `▸` glyph as
+    // Codex's/Antigravity's own "Thought for …" recap (`LIVE_ENGINE_NOISE`
+    // above) — excluded here so that one line keeps reading as chrome
+    // through its own per-engine rule, while every OTHER `▸`-prefixed line
+    // (the queued-prompt preview itself) is dropped before it can be
+    // mistaken for an assistant reply. The "send immediately" footer hint
+    // that accompanies it is dropped the same way.
+    /^▸\s+(?!Thought\b)/,
+    /\(alt\+m to send immediately\)/i
   ]);
 
   /**
@@ -2519,6 +2600,15 @@
     // Whether a wake, not the operator, set the session going (#3082): its
     // replies until the operator next speaks are switchboard-triggered.
     let woken = false;
+    // #3199: the turn `block === 'prompt'` is currently tracking continuation
+    // lines for — the just-pushed `{role: 'user', ...}` object itself, so a
+    // multi-line or terminal-soft-wrapped prompt's later lines append to the
+    // SAME turn's text instead of falling through to `block = 'reply'` and
+    // being misread as the assistant's own words. `null` once nothing is
+    // being continued (every other marker below that returns while
+    // `block === 'prompt'` is still true leaves this stale but harmless,
+    // since nothing reads it unless `block === 'prompt'` too).
+    let promptTurn = null;
     const flush = () => {
       if (reply.length) {
         lastReplyTrailingBlock = reply.slice(replyBlockStart).join('\n');
@@ -2578,6 +2668,11 @@
         // output, which is dropped before this point regardless.
         if (block === 'wake') block = null;
         if (block === 'reply') { replyBlockStart = reply.length; replyLineLen = 0; }
+        // #3199: a blank line ends a multi-line prompt's continuation too —
+        // genuine multi-PARAGRAPH operator echoes are still caught by the
+        // `echo`/`isOperatorEcho` machinery below, which neither reads nor
+        // sets `block`.
+        if (block === 'prompt') block = null;
         return;
       }
       const indented = /^\s/.test(line);
@@ -2624,7 +2719,33 @@
           echoCut = Boolean(echo) && /\[Full prompt \(\d+ chars\) saved to: /.test(original(echo));
           // #3079 item 6: a recorded prompt keeps its place among the
           // replies, marked so the recorded copy is not drawn again.
-          turns.push(echo ? { role: 'user', text: original(echo), recorded: true } : { role: 'user', text: said });
+          const turn = echo ? { role: 'user', text: original(echo), recorded: true } : { role: 'user', text: said };
+          turns.push(turn);
+          // #3199 (R-Gate R1 BLOCKING 1): a RECORDED prompt's own
+          // continuation is already handled, correctly, by the `echo &&
+          // (...)` check immediately below this block (unchanged by this
+          // car) — matched against the actual recorded text, never
+          // swallowing unrelated prose. `block = 'prompt'` tracking below
+          // is for the UNRECORDED case only: a plain assistant reply line
+          // is ordinary across every engine, so there is no way to tell
+          // "the terminal is still echoing a typed prompt it hasn't
+          // recorded yet" apart from "the assistant has started replying"
+          // by content alone. A SHORT prompt could not have been cut off
+          // by the terminal's own column width in the first place — same
+          // signal `appendReplyLine`'s `WRAP_WIDTH_THRESHOLD` already uses
+          // for the identical problem on the REPLY side (#3167) — so only
+          // a prompt at least this long, and still unrecorded, enables
+          // continuation tracking at all; later lines keep appending to
+          // THIS turn until something that is not a continuation is seen
+          // — see the `block === 'prompt'` check further down, which ALSO
+          // requires the line to be indented (never plain unindented
+          // prose, bulleted or not), so a long prompt followed directly by
+          // ordinary unbulleted assistant text always starts its own
+          // `assistant` turn instead of being merged into the user's.
+          if (!echo && said.length >= WRAP_WIDTH_THRESHOLD) {
+            block = 'prompt';
+            promptTurn = turn;
+          }
           // #3131 (PRR-B R1 blocking 3a): an unrecorded prompt is still the
           // operator's own words, from here on in this same read.
           if (!echo) {
@@ -2698,6 +2819,35 @@
       }
       if (indented && block === 'reply') {
         appendReplyLine(text);
+        return;
+      }
+      // #3199 (R-Gate R1 BLOCKING 1): a line that reached here while still
+      // tracking an UNRECORDED prompt's continuation (`promptTurn` is only
+      // ever set for the unrecorded case — see where `block = 'prompt'` is
+      // set above) matched none of the markers above, but plain unindented
+      // prose is ordinary for an assistant's OWN reply across every engine
+      // (Claude, Codex, Antigravity, Aider all reply in plain text most of
+      // the time — only tool calls and thinking recaps use a leading
+      // glyph), so bullet-presence alone cannot tell "the terminal is
+      // still echoing what was typed" apart from "the assistant has
+      // started replying." `indented` is the one signal this parser
+      // already trusts elsewhere for "this line belongs to whatever
+      // started the block above it" (the tool-output and reply-contination
+      // checks above both gate on it) — reused here: only an INDENTED line
+      // extends the prompt; a plain, column-0 line — bulleted or not —
+      // never does, and falls through to start its own `assistant` turn
+      // instead of ever being merged into the user's. #3057/R-Gate R2
+      // BLOCKING 1: NEVER on Antigravity, whose own normal reply prose is
+      // ITSELF indented by two spaces (the one engine this signal cannot
+      // tell apart from a genuine continuation) — excluded outright rather
+      // than risked.
+      if (block === 'prompt' && promptTurn && indented && engine !== 'antigravity') {
+        promptTurn.text += `\n${text}`;
+        const squashedLine = squash(text);
+        if (squashedLine) {
+          liveSent.push(squashedLine);
+          liveKnownLines.add(text.trim());
+        }
         return;
       }
       block = 'reply';
@@ -5346,6 +5496,19 @@
         const said = (Array.isArray(events) ? events : []).filter((e) => e && e.role === 'user').map((e) => e.content);
         // The whole of each long message sent, so its pane echo is known in full.
         said.push(...(sentWhole.get(key) || []));
+        // #3199: an optimistic send still in flight (drawn at the bottom of
+        // the chat until it settles — the shell's own `pendingSends`,
+        // read through `getShell()` since this controller does not hold
+        // that state itself) and the most recently recorded send this chat
+        // is still waiting to see echoed (`sent.full`) are both already
+        // the operator's own words; a peek poll landing before the B2
+        // `POST .../conversation/events` call settles must not read either
+        // one's own pane echo as a fresh assistant turn.
+        const sh = getShell();
+        if (sh && typeof sh.getPendingSends === 'function') {
+          said.push(...sh.getPendingSends().filter((p) => p && p.key === key).map((p) => p.text));
+        }
+        if (sent && sent.full) said.push(sent.full);
         live = extractLiveTurns(res.lines, engine, said);
         // #3105: the raw pane tail, for extractCliGates — the CLI gate text
         // itself is chrome extractLiveTurns throws away, so it needs the
@@ -7314,6 +7477,12 @@
     let peekPinned = true;
     let lastStreamScrollTop = 0;
     let lastPeekScrollTop = 0;
+    // #3200: this render's own `createChatScrollCoordinator()` handle —
+    // disconnected and replaced every time `wireChatScrollCoordinator` runs
+    // again (every render, via `wireControls`), since the `ResizeObserver`
+    // it may hold watches the CURRENT #v6ChatStream node, a brand new DOM
+    // node each time (`render` is a full `root.innerHTML = …` replace).
+    let chatScrollCoordinator = null;
     const raf = typeof options.requestAnimationFrame === 'function' ? options.requestAnimationFrame
       : (win && typeof win.requestAnimationFrame === 'function' ? (fn) => win.requestAnimationFrame(fn) : null);
     // #3106/#3152: persist the composer's and Under the Hood's own
@@ -7395,8 +7564,7 @@
       wireStart();
       wireRename();
       wireSidebarRename();
-      wireStreamPin();
-      wirePeekPin();
+      wireChatScrollCoordinator();
       wireTreeLinks();
       wireOverview();
       wireRichPreviews();
@@ -7853,6 +8021,32 @@
       }
       const hood = doc.getElementById('v6ChatUnderHood');
       if (hood) hood.addEventListener('toggle', rearmPeekPin);
+    }
+
+    /**
+     * Wires this mounted shell's own scroll-position coordinator (#3200):
+     * {@link createChatScrollCoordinator} (a pure, dependency-injected
+     * factory — not a closure over any ONE shell's state, so it is
+     * independently testable and exported as
+     * `global.tcV6CreateChatScrollCoordinator`) handed THIS shell's own
+     * `streamPinned`/`pinStream`/`wireStreamPin`/`wirePeekPin`. Called once
+     * per render (via `wireControls`, since `render` fully replaces the
+     * DOM — see `chatScrollCoordinator`'s own doc comment), so the
+     * PREVIOUS render's coordinator (and the `ResizeObserver` it may have
+     * attached to a now-detached `#v6ChatStream` node) is disconnected
+     * first — a detached node's own observer would otherwise never fire
+     * again, but would still leak.
+     */
+    function wireChatScrollCoordinator() {
+      if (chatScrollCoordinator) { chatScrollCoordinator.disconnect(); chatScrollCoordinator = null; }
+      chatScrollCoordinator = createChatScrollCoordinator({
+        doc, win, raf,
+        isStreamPinned: () => streamPinned,
+        pinStream,
+        lastStreamScrollTop: () => lastStreamScrollTop,
+        wireStreamPin,
+        wirePeekPin
+      });
     }
 
     /**
@@ -9745,6 +9939,14 @@
 
     return {
       getRoute() { return currentRoute; },
+      /**
+       * The optimistic sends still in flight (#3200), drawn at the bottom
+       * of their own chat until each one settles — read-only, for
+       * {@link createLiveController}'s own `liveView` to fold into the
+       * texts a peek poll must never misread as a fresh assistant turn.
+       * @returns {Array<{key: string, text: string, id: *}>}
+       */
+      getPendingSends() { return pendingSends; },
       navigate,
       toggleDrawer,
       isDrawerOpen() { return drawerOpen; },
@@ -10178,6 +10380,8 @@
   global.tcV6HoodKeyAction = hoodKeyAction;
   global.tcV6FormatElapsed = formatElapsed;
   global.tcV6ExtractLiveTurns = extractLiveTurns;
+  global.tcV6IsOperatorEcho = isOperatorEcho;
+  global.tcV6CreateChatScrollCoordinator = createChatScrollCoordinator;
   global.tcV6IsSessionStatusBusy = isSessionStatusBusy;
   global.tcV6ChatBusyLabel = chatBusyLabel;
   global.tcV6MessageMarkup = messageMarkup;
@@ -10185,6 +10389,7 @@
   global.tcV6UsageMeterMarkup = usageMeterMarkup;
   global.tcV6LongPromptCommand = longPromptCommand;
   global.tcV6RecordedText = recordedText;
+  global.tcV6ArrangeRecorded = arrangeRecorded;
   global.tcV6EventBodyBytes = eventBodyBytes;
   global.tcV6MedusaIndicatorMarkup = medusaIndicatorMarkup;
   global.tcV6SanitizeUploadName = sanitizeUploadName;

@@ -891,6 +891,78 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     assert.match(root.innerHTML, /ship it/);
   });
 
+  // R-Gate R2 BLOCKING 2 (PRRA-RGATE-V658-W1B-PR3222-35762E41-REVISE): the
+  // peek fixture now WRAPS the sent prompt across two pane lines, the
+  // second one carrying no prompt glyph at all — `extractLiveTurns`
+  // classifies that second line as USER only via `isOperatorEcho` finding
+  // it in `knownUserTexts`, which is exactly what `pendingSends`/
+  // `sent.full` feed into `liveView`. Without that feed this second line
+  // would fall straight through to become a bogus `assistant` turn; this
+  // is what actually isolates the feed's effect (R-Gate R1's version of
+  // this test used a single-line peek, which `extractLiveTurns` already
+  // classified as USER on its own, independent of `knownUserTexts`).
+  const WRAPPED_SENT_FIRST = 'First line of in-flight prompt';
+  const WRAPPED_SENT_SECOND = 'Second wrapped line without prompt glyph';
+  const WRAPPED_SENT_FULL = `${WRAPPED_SENT_FIRST}\n${WRAPPED_SENT_SECOND}`;
+
+  it('an optimistic in-flight send (pendingSends) runs the whole liveView pipeline end to end without misreading its own wrapped second line as a fresh assistant turn', async () => {
+    const map = baseMap({
+      '/api/v6/projects/11/sessions/501/conversation/events': { events: [] },
+      '/api/sessions/TC-Lane-B/peek?lines=2000': { lines: [`❯ ${WRAPPED_SENT_FIRST}`, WRAPPED_SENT_SECOND] }
+    });
+    const { win, root, shell, settle } = mountLive(map);
+    // The send is in flight — drawn at the bottom of the chat, not yet a
+    // recorded B2 event — exactly the window the peek poll can land in.
+    shell.beginSend(11, WRAPPED_SENT_FULL, 'send-1');
+    win.location.hash = '#/resources/11/conversation';
+    await settle();
+    assert.doesNotMatch(root.innerHTML, /is-assistant/, 'the wrapped second line, with no prompt glyph of its own, must never render as a fresh assistant turn');
+    assert.match(root.innerHTML, new RegExp(WRAPPED_SENT_FIRST.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'the in-flight send itself still shows, via the pending-send UI');
+  });
+
+  // The most recently RECORDED send (`lastSentByProject`, set once
+  // `sendChat` -> `deliverChat` records the B2 event) is the other half of
+  // the same `liveView` feed (`sent.full`) — exercised the same way,
+  // through the real send flow (`sendChat`, the mocked `command` and
+  // `conversation/events` POSTs), not stubbed, with the same wrapped,
+  // marker-less second line.
+  it('the full send flow (sendChat -> deliverChat -> lastSentByProject) also runs through liveView end to end without misreading its wrapped second line', async () => {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('');
+    const map = baseMap({
+      '/api/v6/projects/11/sessions/501/conversation/events': { events: [] },
+      '/api/v6/projects/11/sessions/501/conversation/events?includeDeleted=1': { events: [] },
+      '/api/sessions/TC-Lane-B/peek?lines=2000': { lines: [`❯ ${WRAPPED_SENT_FIRST}`, WRAPPED_SENT_SECOND] }
+    });
+    const { api } = makeApi(map);
+    const mutateCalls = [];
+    const apiMutate = async (url) => {
+      mutateCalls.push(url);
+      return (/\/command$/.test(url) || /\/conversation\/events$/.test(url)) ? true : null;
+    };
+    let shell = null;
+    const pending = [];
+    const liveCtl = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate });
+    shell = G.tcCreateV6Shell(doc, { root, window: win, onRender: (route) => pending.push(liveCtl.handleRoute(route)) });
+    pending.push(liveCtl.handleRoute(shell.getRoute()));
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    win.location.hash = '#/resources/11/conversation';
+    await settle();
+    await liveCtl.sendChat(WRAPPED_SENT_FULL);
+    await settle();
+    // Nothing re-fetches the peek/events on its own in this harness (the
+    // real poll timer isn't armed) — re-entering the same route is what a
+    // fresh poll tick does: re-read the pane with `lastSentByProject` now set.
+    pending.push(liveCtl.handleRoute(shell.getRoute()));
+    await settle();
+    assert.ok(mutateCalls.includes('/api/sessions/TC-Lane-B/command'), 'the send actually went through the mocked route');
+    assert.doesNotMatch(root.innerHTML, /is-assistant/, 'the wrapped second line, with no prompt glyph of its own, must never render as a fresh assistant turn');
+  });
+
   it('#3154: the toggle\'s own landing route is the generic Overview, not any one member\'s conversation', async () => {
     const { live, win, root, settle } = mountLive(baseMap());
     const hash = await live.enterHash();
@@ -2683,6 +2755,159 @@ describe('tcV6ExtractLiveTurns unwraps soft-wrapped terminal lines into flowing 
   });
 });
 
+describe('tcV6ExtractLiveTurns: terminal-echoed/wrapped prompts never duplicate as assistant turns (#3199)', () => {
+  const G = loadV6Shell();
+
+  it('drops a queued-prompt preview row and its send-immediately hint, never reading either as a reply', () => {
+    const lines = ['❯ do the next thing', '▸ fix the other bug too', '(alt+m to send immediately)'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.deepEqual(out.turns, [{ role: 'user', text: 'do the next thing' }]);
+    assert.equal(out.activity, null);
+  });
+
+  it('still reads Antigravity/Codex\'s own "▸ Thought for …" recap as chrome (the engine-specific rule), not the new queued-prompt exclusion', () => {
+    const out = plain(G.tcV6ExtractLiveTurns(['❯ go', '▸ Thought for 3s, 40 tokens', '⏺ Done.'], 'codex', []));
+    assert.deepEqual(out.turns, [{ role: 'user', text: 'go' }, { role: 'assistant', text: 'Done.' }]);
+  });
+
+  // At least WRAP_WIDTH_THRESHOLD (55) chars: only a prompt this long could
+  // plausibly have been cut off by the terminal's own column width — same
+  // signal `appendReplyLine`'s own soft-wrap merging already uses on the
+  // REPLY side (#3167). A short prompt like "go" or "do thing one" never
+  // enables continuation tracking at all, so every one of THOSE existing
+  // fixtures elsewhere in this file is unaffected.
+  const LONG_PROMPT = 'please check the deploy script end to end before you ship it';
+
+  it('an unrecorded prompt long enough for the terminal to have wrapped it keeps its INDENTED continuation line as part of the SAME user turn, not a fresh assistant reply', () => {
+    const lines = [`❯ ${LONG_PROMPT}`, '  and also update the README while you are at it', '⏺ Checked both.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: `${LONG_PROMPT}\nand also update the README while you are at it` },
+      { role: 'assistant', text: 'Checked both.' }
+    ]);
+  });
+
+  // R-Gate R1 BLOCKING 1 (PRRA-RGATE-V658-W1B-PR3222-3064F473-REVISE): plain,
+  // unbulleted assistant prose is ORDINARY across every engine — only a
+  // bullet/glyph marks a tool call or thinking recap, never the reply
+  // itself — so a long (>=55 char) prompt followed directly by one must
+  // ALWAYS start its own `assistant` turn, never be merged into the user's,
+  // however little evidence there is to tell the two apart by content alone.
+  it('a long (90+ char) prompt followed directly by plain UNINDENTED, unbulleted assistant prose starts a real assistant turn, never swallowed into the user turn', () => {
+    const longPrompt = 'please walk through the deploy checklist end to end and confirm every step before you ship it to production';
+    assert.ok(longPrompt.length >= 90, `fixture must be >=90 chars, got ${longPrompt.length}`);
+    const lines = [`❯ ${longPrompt}`, 'Here is the fix for that issue.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: longPrompt },
+      { role: 'assistant', text: 'Here is the fix for that issue.' }
+    ]);
+  });
+
+  // R-Gate R2 BLOCKING 1 (PRRA-RGATE-V658-W1B-PR3222-35762E41-REVISE):
+  // Antigravity's OWN normal reply prose is itself indented by two spaces
+  // (`LIVE_ENGINE_NOISE`'s own #3057 comment elsewhere in this file), so
+  // its fixture uses that real shape rather than the other 3 engines'
+  // plain, column-0 reply — the one case the indent signal cannot tell
+  // apart from a genuine continuation, which is exactly why `engine !==
+  // 'antigravity'` is required alongside `indented` in the source.
+  it('the same long-prompt-then-plain-reply shape holds for every engine (claude, codex, aider plain; antigravity\'s own 2-space-indented reply)', () => {
+    const longPrompt = 'please walk through the deploy checklist end to end and confirm every step before you ship it to production';
+    for (const engine of ['claude', 'codex', 'aider']) {
+      const lines = [`❯ ${longPrompt}`, 'Here is the fix for that issue.'];
+      const out = plain(G.tcV6ExtractLiveTurns(lines, engine, []));
+      assert.deepEqual(out.turns, [
+        { role: 'user', text: longPrompt },
+        { role: 'assistant', text: 'Here is the fix for that issue.' }
+      ], engine);
+    }
+    const antigravityLines = [`❯ ${longPrompt}`, '  Plain unbulleted assistant reply that must not be swallowed.'];
+    const antigravityOut = plain(G.tcV6ExtractLiveTurns(antigravityLines, 'antigravity', []));
+    assert.deepEqual(antigravityOut.turns, [
+      { role: 'user', text: longPrompt },
+      { role: 'assistant', text: 'Plain unbulleted assistant reply that must not be swallowed.' }
+    ]);
+  });
+
+  it('a long RECORDED prompt followed by plain UNINDENTED assistant prose also starts a real assistant turn (isOperatorEcho governs the recorded case, unaffected by this car)', () => {
+    const lines = [`❯ ${LONG_PROMPT}`, 'Here is the fix for that issue.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', [LONG_PROMPT]));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: LONG_PROMPT, recorded: true },
+      { role: 'assistant', text: 'Here is the fix for that issue.' }
+    ]);
+  });
+
+  it('a short prompt never enables continuation tracking at all, so its very next line always starts the reply, bulleted or not', () => {
+    const lines = ['❯ do thing one', 'Done with thing one.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'do thing one' },
+      { role: 'assistant', text: 'Done with thing one.' }
+    ]);
+  });
+
+  it('a blank line ends a long prompt\'s continuation tracking, so a later plain reply line is not swallowed into it', () => {
+    const lines = [`❯ ${LONG_PROMPT}`, '', 'Done with it.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: LONG_PROMPT },
+      { role: 'assistant', text: 'Done with it.' }
+    ]);
+  });
+
+  it('a stray line after a RECORDED prompt that does not match it (isOperatorEcho) is never dropped silently — it surfaces as its own assistant turn', () => {
+    const lines = [`❯ ${LONG_PROMPT}`, 'overflow-x', '⏺ Done.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', [LONG_PROMPT]));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: LONG_PROMPT, recorded: true },
+      { role: 'assistant', text: 'overflow-x\nDone.' }
+    ]);
+  });
+
+  it('a genuine BULLETED assistant reply line right after a long prompt starts a real reply, never a prompt continuation', () => {
+    const lines = [`❯ ${LONG_PROMPT}`, '⏺ Working on it now.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: LONG_PROMPT },
+      { role: 'assistant', text: 'Working on it now.' }
+    ]);
+  });
+
+  it('prose quoting the operator\'s own words INSIDE an active assistant reply (started by a bullet) is kept as reply prose, not treated as a stray prompt continuation', () => {
+    const lines = [`❯ ${LONG_PROMPT}`, `⏺ You said "${LONG_PROMPT}" — here is what I found:`, 'Resolved.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.equal(out.turns.length, 2);
+    assert.equal(out.turns[0].role, 'user');
+    assert.match(out.turns[1].text, /Resolved/);
+  });
+
+  it('exports isOperatorEcho for direct testing', () => {
+    assert.equal(typeof G.tcV6IsOperatorEcho, 'function');
+    assert.equal(G.tcV6IsOperatorEcho('> quoted', new Set(), []), true);
+    assert.equal(G.tcV6IsOperatorEcho('totally new text', new Set(), []), false);
+  });
+
+  // R-Gate R1 BLOCKING 2: the `recorded` flag `liveView`'s own knownUserTexts
+  // feed (pendingSends, lastSentByProject.full) is what gets a live turn
+  // marked with has exactly one consumer in this file — `arrangeRecorded` —
+  // which is what actually prevents a recorded prompt from being drawn
+  // TWICE: once as its own recorded-event bubble, once as its live-pane
+  // echo. Proven directly here, since neither `liveTurnsMarkup` nor
+  // `pendingMarkup` read the flag at all; this is where feeding
+  // `knownUserTexts` from pendingSends/lastSent actually pays off, for the
+  // exact race #3199 names — an events fetch that has not yet caught up
+  // with a send `liveView`'s own in-memory state already knows about.
+  it('arrangeRecorded draws a recorded prompt once, as its live turn — the SAME matching event is excluded from the recorded-events list, never duplicated', () => {
+    const events = [{ seq: 1, role: 'user', content: 'please walk through the deploy checklist end to end' }];
+    const unmarked = G.tcV6ArrangeRecorded(events, [{ role: 'user', text: 'please walk through the deploy checklist end to end' }], null);
+    assert.deepEqual(unmarked.head, events, 'without the flag, the event still renders on its own — the duplicate this mechanism exists to prevent');
+    const marked = G.tcV6ArrangeRecorded(events, [{ role: 'user', text: 'please walk through the deploy checklist end to end', recorded: true }], null);
+    assert.deepEqual(marked.head, [], 'with the flag, the matching event is excluded — drawn once, via the live turn');
+    assert.equal(typeof G.tcV6ArrangeRecorded, 'function');
+  });
+});
+
 describe('Above-the-Hood chat view (#3052)', () => {
   const G = loadV6Shell();
   const view = (chat, extra) => Object.assign({
@@ -2951,6 +3176,125 @@ describe('the chat stream stays pinned to its newest line (#3135)', () => {
       chat: { status: 'active', peek: { lines: ['y'] } } } });
     assert.equal(doc.getElementById('v6ChatStream').scrollTop, 900);
     assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true);
+  });
+});
+
+describe('the chat frame\'s scroll-position coordinator (#3200)', () => {
+  /** Same fixture as "the chat stream stays pinned to its newest line" above, with Under the Hood's own geometry too. */
+  function mountStream(winExtra, viewOverrides) {
+    const G = loadV6Shell();
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const realGet = doc.getElementById;
+    doc.getElementById = (id) => {
+      const el = realGet(id);
+      if (el && id === 'v6ChatStream' && el.scrollHeight === undefined) {
+        el.scrollHeight = 900; el.clientHeight = 300; el.scrollTop = 0;
+      }
+      return el;
+    };
+    const win = Object.assign(makeFakeWindow('#/projects/tc-lane'), winExtra || {});
+    const shell = G.tcCreateV6Shell(doc, { root, window: win, storage: null });
+    shell.setDetail({ kind: 'conversation', view: Object.assign({ project: { id: 12, name: 'TC-Lane-PM' }, sessionId: 1, events: [],
+      chat: { status: 'active', peek: { lines: ['x'] } } }, viewOverrides || {}) });
+    return { doc, root, shell, win };
+  }
+
+  it('exports createChatScrollCoordinator', () => {
+    assert.equal(typeof loadV6Shell().tcV6CreateChatScrollCoordinator, 'function');
+  });
+
+  it('toggling Under the Hood while the stream is pinned re-pins #v6ChatStream to the bottom, not wherever the resize left it', () => {
+    const { doc } = mountStream();
+    const stream = doc.getElementById('v6ChatStream');
+    // The drawer's own resize moved it, without the operator scrolling by
+    // hand (no 'scroll' dispatch), so `streamPinned` is still true.
+    stream.scrollTop = 300;
+    const hood = doc.getElementById('v6ChatUnderHood');
+    hood.open = true;
+    hood.dispatch('toggle');
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 900);
+  });
+
+  it('toggling Under the Hood while the stream is NOT pinned preserves its exact scroll position instead of jumping it', () => {
+    const { doc } = mountStream();
+    const stream = doc.getElementById('v6ChatStream');
+    stream.scrollTop = 500;
+    stream.dispatch('scroll'); // genuinely scrolled away by hand -> streamPinned = false
+    const hood = doc.getElementById('v6ChatUnderHood');
+    hood.open = true;
+    hood.dispatch('toggle');
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 500, 'held at its own last position, not reset or jumped to the bottom');
+  });
+
+  it('a ResizeObserver on #v6ChatStream re-pins it to bottom on any container height change while pinned', () => {
+    const observers = [];
+    class FakeResizeObserver {
+      constructor(cb) { this.cb = cb; this.observed = null; observers.push(this); }
+      observe(el) { this.observed = el; }
+      disconnect() { this.disconnected = true; }
+    }
+    const { doc } = mountStream({ ResizeObserver: FakeResizeObserver });
+    const stream = doc.getElementById('v6ChatStream');
+    assert.equal(observers.length, 1, 'one observer attached on mount');
+    assert.equal(observers[0].observed, stream);
+    // Simulate a Gobble & Fill resizer drag or a window resize shrinking the
+    // container, with no 'scroll' dispatch — streamPinned stays true.
+    stream.scrollTop = 300;
+    observers[0].cb();
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 900, 'still pinned, so the resize re-pinned it rather than reading the shrink as the operator having scrolled away');
+  });
+
+  it('a ResizeObserver callback while NOT pinned never re-pins (a shrink is never misread as an unpin either)', () => {
+    const observers = [];
+    class FakeResizeObserver {
+      constructor(cb) { observers.push({ cb }); }
+      observe() {}
+      disconnect() {}
+    }
+    const { doc } = mountStream({ ResizeObserver: FakeResizeObserver });
+    const stream = doc.getElementById('v6ChatStream');
+    stream.scrollTop = 500;
+    stream.dispatch('scroll'); // streamPinned = false
+    observers[0].cb();
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 500, 'left exactly where the operator scrolled it');
+  });
+
+  it('a full render (a new chat) disconnects the PREVIOUS render\'s ResizeObserver (the old #v6ChatStream node is detached)', () => {
+    const disconnected = [];
+    class FakeResizeObserver {
+      constructor() { }
+      observe() {}
+      disconnect() { disconnected.push(this); }
+    }
+    const { shell } = mountStream({ ResizeObserver: FakeResizeObserver });
+    // `setLive` targets specific sub-elements' innerHTML and never replaces
+    // #v6ChatStream itself, so only a FULL render (setDetail, a different
+    // chat) exercises `wireControls`'s own re-wiring.
+    shell.setDetail({ kind: 'conversation', view: { project: { id: 99, name: 'Other' }, sessionId: 2, events: [],
+      chat: { status: 'active', peek: { lines: ['y'] } } } });
+    assert.equal(disconnected.length, 1, 'the first render\'s observer was disconnected before the second render\'s was created');
+  });
+
+  it('opening, canceling, and completing a header rename preserves #v6ChatStream\'s exact scroll position and pinned state', () => {
+    // #3071's own offline/no-session shape — chat.rename only ever renders
+    // the form over a project the server will actually let the operator
+    // rename, same as every other rename test in this file.
+    const { doc, shell } = mountStream(null, { sessionId: null, chat: { mode: 'direct', status: 'offline', members: [], peek: { lines: ['x'] } } });
+    const stream = doc.getElementById('v6ChatStream');
+    stream.scrollTop = 500;
+    stream.dispatch('scroll'); // streamPinned = false, at a specific position
+    doc.getElementById('v6ChatRename').dispatch('click');
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 500, 'opening rename did not move the stream');
+    doc.getElementById('v6ChatRenameCancel').dispatch('click');
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 500, 'canceling rename did not move the stream either');
+    doc.getElementById('v6ChatRename').dispatch('click');
+    doc.getElementById('v6ChatRenameInput').value = 'TC-Lane-Renamed';
+    doc.getElementById('v6ChatRenameForm').dispatch('submit');
+    shell.renameResult({ ok: true });
+    assert.equal(doc.getElementById('v6ChatStream').scrollTop, 500, 'completing the rename did not move the stream');
   });
 });
 
