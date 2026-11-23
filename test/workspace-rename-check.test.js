@@ -7,18 +7,21 @@
 // home-directory stubbing needed, since every public function here takes
 // them directly.
 
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { setLevel } = require('../lib/logger');
+const logger = require('../lib/logger');
+const { setLevel } = logger;
 
 setLevel('error');
 
 const wrc = require('../lib/workspace-rename-check');
 const transcript = require('../lib/transcript');
 const { shellWord } = require('../lib/shell-word');
+const store = require('../lib/store');
+const projects = require('../lib/projects');
 
 let tmp;
 let claudeHome;
@@ -471,5 +474,129 @@ describe('orphanedSiblingWarningFor', () => {
     assert.match(note, /NOTE/);
     assert.ok(note.includes('old-name'));
     assert.match(note, /claude/);
+  });
+});
+
+// #3196 (Car V659-W1-D): `_applyProjectUpdates`'s (`lib/projects.js`)
+// automatic engine-state migration on project rename -- it wires
+// `migrateEngineStateOnRename` right after `fs.renameSync` succeeds,
+// folding its `warnings` into `updateProject`'s own return value and
+// logging every successful migration. `migrateEngineStateOnRename`'s own
+// logic is already fully covered above against real `claudeHome`/
+// `codexHome` fixtures; this block's only job is the INTEGRATION seam. The
+// real call site takes no `claudeHome`/`codexHome` override (by design --
+// it reads the REAL `~/.claude`/`~/.codex`, same as every other
+// engine-state reader in this codebase), so these tests stub
+// `workspace-rename-check`'s own exported function for the duration of
+// each one that needs a specific migration result, restoring it
+// immediately after -- never touching the real filesystem's `~/.claude` or
+// `~/.codex`. A separate `store`-backed project fixture, independent of
+// this file's top-level `claudeHome`/`codexHome` temp dirs above.
+describe('_applyProjectUpdates: automatic engine-state migration on rename (#3196)', () => {
+  let storeTmpDir;
+  let projectsDir;
+  let originalMigrate;
+
+  before(() => {
+    storeTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-rename-migrate-'));
+    projectsDir = path.join(storeTmpDir, 'projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    store._setBasePath(path.join(storeTmpDir, 'tangleclaw'));
+    store.init();
+    const config = store.config.load();
+    config.projectsDir = projectsDir;
+    store.config.save(config);
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(storeTmpDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    originalMigrate = wrc.migrateEngineStateOnRename;
+  });
+
+  afterEach(() => {
+    // Restore the real implementation unconditionally, so a stub set by
+    // one test can never leak into the next.
+    wrc.migrateEngineStateOnRename = originalMigrate;
+  });
+
+  it('calls migrateEngineStateOnRename with the exact old/new paths right after a successful rename', async () => {
+    projects.createProject({ name: 'mig-called' });
+    let calledWith = null;
+    wrc.migrateEngineStateOnRename = (oldPath, newPath) => {
+      calledWith = { oldPath, newPath };
+      return { migrated: [], warnings: [] };
+    };
+    const result = await projects.updateProject('mig-called', { name: 'mig-called-renamed' });
+    assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+    assert.equal(calledWith.oldPath, path.join(projectsDir, 'mig-called'));
+    assert.equal(calledWith.newPath, path.join(projectsDir, 'mig-called-renamed'));
+  });
+
+  it('adds nothing to updateProject\'s own warnings on a clean migration with 0 warnings', async () => {
+    projects.createProject({ name: 'mig-clean' });
+    wrc.migrateEngineStateOnRename = () => ({
+      migrated: [{ engine: 'claude', from: '/old/encoded', to: '/new/encoded', status: 'migrated' }],
+      warnings: []
+    });
+    const result = await projects.updateProject('mig-clean', { name: 'mig-clean-renamed' });
+    assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+    assert.deepEqual((result.warnings || []).filter((w) => w.includes('migrat')), []);
+  });
+
+  it('surfaces a migration warning (target collision / EACCES / Codex) onto updateProject\'s own warnings, without blocking the rename', async () => {
+    projects.createProject({ name: 'mig-warn' });
+    const WARNING = 'Claude Code engine state at /src was not migrated: /dst already exists. Resolve manually: mv /src /dst';
+    wrc.migrateEngineStateOnRename = () => ({
+      migrated: [{ engine: 'claude', from: '/src', to: '/dst', status: 'failed', reason: 'target directory already exists' }],
+      warnings: [WARNING]
+    });
+    const result = await projects.updateProject('mig-warn', { name: 'mig-warn-renamed' });
+    assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+    assert.ok((result.warnings || []).includes(WARNING), JSON.stringify(result.warnings));
+    // The directory rename itself already succeeded on disk -- a migration
+    // warning reports that one piece did not complete, it never undoes the
+    // rename or blocks the update as a whole.
+    assert.equal(fs.existsSync(path.join(projectsDir, 'mig-warn-renamed')), true);
+    assert.equal(fs.existsSync(path.join(projectsDir, 'mig-warn')), false);
+  });
+
+  it('logs every successful migration, keyed by the real old/new project paths', async () => {
+    projects.createProject({ name: 'mig-logged' });
+    const oldPath = path.join(projectsDir, 'mig-logged');
+    const newPath = path.join(projectsDir, 'mig-logged-renamed');
+    const migratedEntry = { engine: 'claude', from: '/a', to: '/b', status: 'migrated' };
+    wrc.migrateEngineStateOnRename = () => ({ migrated: [migratedEntry], warnings: [] });
+    // Every module's logger funnels through this one shared stream
+    // (lib/logger.js#_write); pinning it here is the one seam that lets a
+    // test read what `lib/projects.js`'s OWN (unexported) `log` instance
+    // actually wrote. The whole file suppresses below ERROR (`setLevel`
+    // above), so the level is raised for exactly this one call.
+    let written = '';
+    logger.setLevel('info');
+    logger.setConsoleStream({ write: (chunk) => { written += chunk; } });
+    try {
+      await projects.updateProject('mig-logged', { name: 'mig-logged-renamed' });
+    } finally {
+      logger.setConsoleStream(null);
+      logger.setLevel('error');
+    }
+    const line = written.split('\n').find((l) => l.includes('Engine state directory migrated with project rename'));
+    assert.ok(line, `expected a migration log line among:\n${written}`);
+    assert.ok(line.includes(`from=${oldPath}`), line);
+    assert.ok(line.includes(`to=${newPath}`), line);
+    assert.ok(line.includes(`migrated=${JSON.stringify([migratedEntry])}`), line);
+  });
+
+  it('never calls migrateEngineStateOnRename when the update carries no rename', async () => {
+    projects.createProject({ name: 'mig-no-rename' });
+    let called = false;
+    wrc.migrateEngineStateOnRename = () => { called = true; return { migrated: [], warnings: [] }; };
+    const result = await projects.updateProject('mig-no-rename', { tags: ['x'] });
+    assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+    assert.equal(called, false);
   });
 });

@@ -438,7 +438,6 @@
     "test/project-tags-shape.test.js",
     "test/projects-async-io.test.js",
     "test/projects-dir-upgrade.test.js",
-    "test/projects-update-validators.test.js",
     "test/recovery-default.test.js",
     "test/release-recommendation.test.js",
     "test/remote-ca-plan-route.test.js",
