@@ -18,7 +18,12 @@ All notable changes to TangleClaw are documented in this file.
   falling back to `projects.engine_id` only when a session is absent.
   `project.json`'s own `engine` field — previously only `projects.engine_id`
   was healed on a switch — is now kept in sync alongside `model` too, so a
-  project.json that already names an `engine` never goes stale.
+  project.json that already names an `engine` never goes stale. A switch
+  that fails partway through now also rolls back cleanly: if writing
+  `project.json` throws, both SQLite's `engine_id` and `project.json`'s own
+  raw on-disk bytes are restored to exactly what they were before the
+  attempt — never a half-written or truncated file, and never SQLite
+  naming the new engine while `project.json` still names the old one.
 - Fixed (#3216): macOS TCC permission restrictions on `~/Documents` could wedge
   a governed session wrap's `learnings-capture` gate and its DB mirroring
   (`lib/wrap-steps/learnings-coverage.js`, `lib/wrap-steps/learnings-db-write.js`)

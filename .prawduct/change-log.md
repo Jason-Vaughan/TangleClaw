@@ -76,6 +76,21 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 - Verified with `node --test test/readme-version-pins.test.js test/changelog*.test.js
   test/version*.test.js test/features-index.test.js` (446/446 pass) and
   `node scripts/test-stage.js 1`.
+- **Self-caught, before any reviewer flagged it**: the PM's GO-AHEAD message (which crossed in
+  transit with this PR already open) cited specific technical details for Pillar 3 —
+  "raw-byte rollback" — and #3247 — "`busyMarker` scoping" / "`copy-mode -q`". Checked each
+  rather than trusting the phrasing or dismissing it: `busyMarker` is a real field name
+  (`lib/medusa-wake.js`), confirmed already covered; the real tmux mechanism is
+  `send-keys -X cancel`, not `copy-mode -q` (so that phrase was NOT adopted into either doc);
+  but "raw-byte rollback" named a REAL, substantial PR #3237 mechanism
+  (`_captureProjectConfigSnapshot`/`_rollbackProjectConfig`, 5 PRR review rounds) that the
+  fragment itself never mentioned and my own first pass of `CHANGELOG.md`/`FEATURES.md` had
+  missed entirely — a project.json write failure mid-switch now rolls back to the exact raw
+  on-disk bytes captured before the attempt, not a lossy default-expanded reconstruction.
+  Added a third sentence to both docs' Pillar 3 entries. Recomputed the lock hash by hand again
+  (same `hashReleasedSections` method as the v6.5.11 R2 round) since `release-prepare.js`
+  correctly refused to relock an "already-released" section it had already locked once this
+  round. Re-verified: 446/446 still pass, stage 1 still green.
 
 ## 2026-11-23 — v6.5.11 release cut (Milestone #105), Car V6511-W2-REL
 
