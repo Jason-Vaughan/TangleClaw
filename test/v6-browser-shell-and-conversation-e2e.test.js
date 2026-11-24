@@ -2122,3 +2122,168 @@ describe('Car V6510-W1-C: shared loading indicator & per-engine usage card styli
     });
   });
 });
+
+/**
+ * Car V6511-W1-C (#3210 Deliverable 2 — the Section 3 design
+ * `docs/architecture/v6-five-tab-ux-audit-and-backlog.md`, Car
+ * V6511-W1-A, specified). Exclusive file scope: public/style.css and
+ * this file only.
+ */
+describe('Car V6511-W1-C: cohesive Sprint & Cars side-by-side layout (#3210 Deliverable 2)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  /** @param {string} selector @returns {string} the selector's own `{ ... }` body, or '' if not found. */
+  const body = (selector) => {
+    const m = new RegExp(`(^|\\n)${selector.replace(/[.[\]>="^-]/g, '\\$&')} \\{([^}]*)\\}`).exec(css);
+    return m ? m[2] : '';
+  };
+
+  it('#v6WorkspacePanel:has(> .sprint-wave-board) becomes a 2-column grid only at min-width: 1200px, with both the title and the (forward) summary line spanning full width', () => {
+    const m = /@media \(min-width: 1200px\) \{\s*#v6WorkspacePanel:has\(> \.sprint-wave-board\) \{([^}]*)\}/.exec(css);
+    assert.ok(m, 'the 2-column grid rule must live inside its own min-width: 1200px media query');
+    assert.match(m[1], /grid-template-columns: minmax\(0, 3fr\) minmax\(320px, 2fr\);/);
+    assert.match(css, /#v6WorkspacePanel:has\(> \.sprint-wave-board\) > \.v6-workspace-panel-title,\s*#v6WorkspacePanel:has\(> \.sprint-wave-board\) > \.v6-sprint-cars-summary \{\s*grid-column: 1 \/ -1;/);
+  });
+
+  it('does not touch the EXISTING @media (max-width: 900px) .sprint-wave-board rule — a different element, a non-overlapping viewport range, verified by exact-text match', () => {
+    assert.match(css, /@media \(max-width: 900px\) \{\s*\.sprint-wave-board \{\s*grid-template-columns: none;\s*grid-auto-flow: column;\s*grid-auto-columns: minmax\(160px, 220px\);\s*overflow-x: auto;\s*\}\s*\}/);
+  });
+
+  it('.v6-sprint-gate-badge does NOT copy .sprint-gate-pill\'s own solid-fill colors (white-on-#2ea043/white-on-#f85149 both measure under 4.5:1) — it reuses theme-aware var(--danger)/var(--warning), and a dedicated light override for "pass"', () => {
+    const badge = body('.v6-sprint-gate-badge.is-fail,\n.v6-sprint-gate-badge.is-blocked');
+    assert.match(badge, /color: var\(--danger\);/);
+    assert.match(body('.v6-sprint-gate-badge.is-in_progress'), /color: var\(--warning\);/);
+    assert.match(body('[data-theme="light"] .v6-sprint-gate-badge.is-pass'), /color: #1a7f37;/);
+  });
+
+  it('#3210 R2 BLOCKING 1: .v6-sprint-gate-badge carries its own opaque var(--card-bg) background, so every state\'s contrast holds regardless of whether it mounts on .v6-workspace-item or .sprint-wave-card (background: var(--tc-panel-surface), which [data-theme="light"] never overrides — verified directly)', () => {
+    assert.match(body('.v6-sprint-gate-badge'), /background: var\(--card-bg, #0d0d0d\);/);
+    assert.doesNotMatch(css, /\[data-theme="light"\]\s*\{[^}]*--tc-panel-surface/, 'confirms the real gap this fix exists for: light theme never redefines --tc-panel-surface');
+    assert.match(body('.v6-sprint-gate-badge.is-pending,\n.v6-sprint-gate-badge.is-unknown'), /color: var\(--text-muted\);/, 'var(--text-muted), not the pre-existing .sprint-gate-pill convention\'s unverified #8c959f + opacity dilution');
+  });
+
+  /**
+   * WCAG relative luminance / contrast ratio — the same algorithm this
+   * file's other WCAG describes already use, duplicated here since
+   * neither exports it.
+   * @param {string} hex @returns {number}
+   */
+  function luminance(hex) {
+    const h = hex.replace('#', '');
+    const [r, g, b] = [0, 2, 4].map((i) => {
+      const c = parseInt(h.slice(i, i + 2), 16) / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }
+  /** @param {string} hexA @param {string} hexB @returns {number} */
+  function contrastRatio(hexA, hexB) {
+    const [l1, l2] = [luminance(hexA), luminance(hexB)].sort((a, b) => b - a);
+    return (l1 + 0.05) / (l2 + 0.05);
+  }
+  /**
+   * The literal `--name: #hex` value a theme block (`:root` or
+   * `[data-theme="light"]`) declares for itself — read directly from
+   * `css`, never hardcoded, so this test stays correct if a token's
+   * real value ever changes (#3210 R2 BLOCKING 2's own ask: don't
+   * hardcode the hex literals the CSS already declares).
+   * @param {string} blockSelector - `:root` or `[data-theme="light"]`.
+   * @param {string} varName - Without the leading `--`.
+   * @returns {string}
+   */
+  function themeVar(blockSelector, varName) {
+    const blockRe = new RegExp(`${blockSelector.replace(/[[\]="]/g, '\\$&')}\\s*\\{([^}]*)\\}`);
+    const block = blockRe.exec(css);
+    assert.ok(block, `${blockSelector} block must exist`);
+    const varRe = new RegExp(`--${varName}:\\s*(#[0-9a-fA-F]{3,8})`);
+    const m = varRe.exec(block[1]);
+    assert.ok(m, `--${varName} must be declared in ${blockSelector}`);
+    return m[1];
+  }
+
+  it('#3210 R2 BLOCKING 2: every real .v6-sprint-gate-badge state clears WCAG AA (>= 4.5:1) against its own var(--card-bg), in BOTH themes — every token value read from the real CSS, not hardcoded', () => {
+    const dark = { cardBg: themeVar(':root', 'card-bg'), danger: themeVar(':root', 'danger'), warning: themeVar(':root', 'warning'), textMuted: themeVar(':root', 'text-muted') };
+    const light = { cardBg: themeVar('[data-theme="light"]', 'card-bg'), danger: themeVar('[data-theme="light"]', 'danger'), warning: themeVar('[data-theme="light"]', 'warning'), textMuted: themeVar('[data-theme="light"]', 'text-muted') };
+    const passDark = /color: (#[0-9a-fA-F]{6});/.exec(body('.v6-sprint-gate-badge.is-pass'));
+    assert.ok(passDark, 'the dark-theme (base) "pass" rule must declare its own literal color');
+    const passLight = /\[data-theme="light"\] \.v6-sprint-gate-badge\.is-pass \{\s*color: (#[0-9a-fA-F]{6});/.exec(css);
+    assert.ok(passLight, 'the light-theme "pass" override must declare its own literal color');
+    // is-pass (dark value; light override), is-fail/is-blocked (var(--danger)),
+    // is-in_progress (var(--warning)), is-pending/is-unknown (var(--text-muted)) — both themes.
+    const cases = [
+      ['is-pass (dark)', passDark[1], dark.cardBg],
+      ['is-pass (light override)', passLight[1], light.cardBg],
+      ['is-fail/is-blocked (dark var(--danger))', dark.danger, dark.cardBg],
+      ['is-fail/is-blocked (light var(--danger))', light.danger, light.cardBg],
+      ['is-in_progress (dark var(--warning))', dark.warning, dark.cardBg],
+      ['is-in_progress (light var(--warning))', light.warning, light.cardBg],
+      ['is-pending/is-unknown (dark var(--text-muted))', dark.textMuted, dark.cardBg],
+      ['is-pending/is-unknown (light var(--text-muted))', light.textMuted, light.cardBg]
+    ];
+    cases.forEach(([label, fg, bg]) => {
+      assert.ok(contrastRatio(fg, bg) >= 4.5, `${label}: ${fg} on ${bg} must clear 4.5:1 (measured ${contrastRatio(fg, bg).toFixed(2)}:1)`);
+    });
+  });
+
+  it('.v6-sprint-cars-summary uses the theme-aware var(--text-muted) token, not a hardcoded literal', () => {
+    assert.match(body('.v6-sprint-cars-summary'), /color: var\(--text-muted\);/);
+  });
+
+  describe('Mounted against the REAL production markup (tcV6WorkspacePanelContent + the real public/sprint-wave-ui.js, not a hand-written fixture)', () => {
+    // sprint-wave-ui.js is dual-usable (module.exports AND a browser
+    // global) — confirmed directly — so the REAL renderSprintWaveBoard
+    // is reachable with a plain require(), no vm sandbox needed for it.
+    const sprintWaveUi = require('../public/sprint-wave-ui.js');
+
+    /**
+     * A minimal tag-stack HTML -> mini-DOM builder — the same bounded
+     * technique (and the same reason: `withIdParsingInnerHTML` only
+     * extracts flat id stand-ins) the #3218/#3209 describes earlier in
+     * this file already use. Used here only to MOUNT the real HTML
+     * `tcV6WorkspacePanelContent` actually returns, never to invent it.
+     * @param {object} doc @param {string} html @returns {object}
+     */
+    function mountFixtureMarkup(doc, html) {
+      const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+      const stack = [];
+      let root = null;
+      let match;
+      while ((match = tagRe.exec(html))) {
+        const [, closing, tag, attrs] = match;
+        if (closing) { stack.pop(); continue; }
+        const el = doc.createElement(tag);
+        const idMatch = /\bid="([^"]*)"/.exec(attrs);
+        const classMatch = /\bclass="([^"]*)"/.exec(attrs);
+        if (idMatch) { el.id = idMatch[1]; doc._register(el); }
+        if (classMatch) el.className = classMatch[1];
+        if (stack.length) stack[stack.length - 1].appendChild(el);
+        else root = el;
+        stack.push(el);
+      }
+      return root;
+    }
+
+    it('#v6WorkspacePanel filled with the REAL tcV6WorkspacePanelContent(\'sprint\', ..., sprintWaveUi) output satisfies :has(> .sprint-wave-board), with the title as its own direct child', () => {
+      // tcV6WorkspacePanelContent IS real and exported (public/v6-shell.js:11411,
+      // checked directly) — tcV6WorkspacePanelMarkup, as an earlier review
+      // round named it, is NOT: workspacePanelMarkup (its real internal
+      // name) is never assigned to `global.*` at all. It is trivial
+      // (title `<h2>` then content, concatenated, nothing else) and
+      // already verified by reading it directly, so it is reproduced
+      // here rather than needed as an export.
+      const G = loadV6Shell();
+      const data = { dispatch: { 'V6511-W1-C': { stage: 'in-review', laneName: 'TC-Lane-C', openPrNumber: 3243 } } };
+      const content = G.tcV6WorkspacePanelContent('sprint', { ok: true, data }, sprintWaveUi);
+      assert.match(content, /class="sprint-wave-board"/, 'the REAL renderSprintWaveBoard must have actually run, not the built-in fallback <ul>');
+      assert.match(content, /class="sprint-gate-matrix"/);
+      const panelHtml = `<section id="v6WorkspacePanel"><h2 class="v6-workspace-panel-title">Sprint &amp; Cars</h2>${content}</section>`;
+      const { doc } = makeDocument([]);
+      const panel = mountFixtureMarkup(doc, panelHtml);
+      assert.equal(panel.id, 'v6WorkspacePanel');
+      const directChildClasses = panel.childNodes.map((c) => c.className);
+      assert.equal(directChildClasses[0], 'v6-workspace-panel-title');
+      assert.equal(directChildClasses[1], 'sprint-wave-board');
+      assert.equal(directChildClasses[2], 'sprint-gate-matrix');
+      assert.ok(panel.childNodes.some((c) => c.className === 'sprint-wave-board'), ':has(> .sprint-wave-board) only matches a panel whose DIRECT child carries this exact class — confirmed present in the REAL rendered output');
+    });
+  });
+});
