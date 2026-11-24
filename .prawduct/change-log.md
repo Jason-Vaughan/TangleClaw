@@ -92,6 +92,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   `test/fixtures/changelog-released-sections.lock.json` by hand, rather than bypassing the
   script's safety check any other way. `release-prepare.js` then reports "already current";
   the same combined 446/446 and stage 1 still green after.
+- **R4** (CI run `45302717641` on `PR #3246` R3 `c1ec402a511d15008b13ac1fc3be988f39c83c28`;
+  Architect co-sign Ruling A1023, widening this car's envelope from 10 to 11 files): a genuine
+  Wave 1 post-merge integration seam, not a false positive. `PR #3243` (CSS + Stage 2 browser
+  E2E, `Car V6511-W1-C`) was authored before `PR #3244` (`.v6-sprint-cars-summary` strip + inline
+  6-gate badges, `Car V6511-W1-B`) merged, so its mount test in
+  `test/v6-browser-shell-and-conversation-e2e.test.js:2281-2285` asserted only 3 flat direct
+  children of `#v6WorkspacePanel` (`v6-workspace-panel-title`, `sprint-wave-board`,
+  `sprint-gate-matrix`). Reproduced the real failure directly before fixing (ran the test,
+  confirmed `expected: 'sprint-wave-board'` / `actual: 'v6-sprint-cars-summary'` at line 2284;
+  temporarily logged `directChildClasses` to confirm the full real order is
+  `['v6-workspace-panel-title', 'v6-sprint-cars-summary', 'sprint-wave-board',
+  'sprint-gate-matrix']`, then reverted the diagnostic). The dispatch's cited PR-comment id
+  for Ruling A1023 (`7119205543`) 404'd; the real comment is `7119220775` — minor pointer
+  error, the ruling's substance matched my own independent reproduction exactly. Updated the
+  assertions to the 4 real direct children. `node --test
+  test/v6-browser-shell-and-conversation-e2e.test.js` (102/102), the combined release suite
+  (446/446), and `node scripts/test-stage.js 1` all green after. Envelope: the newly co-signed
+  11th file plus `.prawduct/change-log.md`.
 
 ## 2026-11-23 — v6.5.10 release cut (Milestone #104), Car V6510-W2-REL
 
