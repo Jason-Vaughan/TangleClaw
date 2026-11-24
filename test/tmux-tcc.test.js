@@ -1564,3 +1564,143 @@ describe('_cancelStrayCopyMode and sendKeys (#3130, PRR-A R1 BLOCKING 2d)', () =
     assert.ok(cancelIdx < clearIdx, 'must run before the prompt clear');
   });
 });
+
+describe('scrubSessionLaunchSecrets (#3212 Phase 1.2 — ephemeral launch-secret scrubbing)', () => {
+  it('removes the default key from a plain default-server session, leaving an unrelated var untouched', () => {
+    const name = uniqueSessionName('tcc_scrub_default');
+    createdDefault.push(name);
+    tmux.createSession(name, { cwd: os.tmpdir(), env: { TANGLECLAW_LAUNCH_SECRET: 'shh', TC_TEST_KEEP: 'keep' } });
+
+    const result = tmux.scrubSessionLaunchSecrets(name);
+
+    assert.deepEqual(result, { scrubbed: ['TANGLECLAW_LAUNCH_SECRET'], sockets: ['default'] });
+    assert.equal(tmux.readSessionEnv(name, 'TANGLECLAW_LAUNCH_SECRET').value, null);
+    assert.equal(tmux.readSessionEnv(name, 'TC_TEST_KEEP').value, 'keep', 'an unrelated var is never touched');
+  });
+
+  it('scrubs both the default-server attach proxy AND the real session on the TCC-authorized socket', () => {
+    const cwd = fakeProtectedCwd('Documents/scrub-tcc-proj');
+    withContentionRetry(() => {
+      const name = uniqueSessionName('tcc_scrub_tcc');
+      createdDefault.push(name);
+      startAuthorizedAnchor();
+      withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
+        assert.equal(
+          tmux.createSessionWithTccBootstrap(name, { cwd, env: { TANGLECLAW_LAUNCH_SECRET: 'shh' } }),
+          true
+        );
+      });
+
+      const result = tmux.scrubSessionLaunchSecrets(name);
+
+      assert.deepEqual(new Set(result.scrubbed), new Set(['TANGLECLAW_LAUNCH_SECRET']));
+      assert.deepEqual(new Set(result.sockets), new Set(['default', tmux.TCC_SOCKET]));
+      // `readSessionEnv` (no socket option) only ever asks the default server
+      // — the proxy — so this only passes if the proxy's own copy is gone.
+      assert.equal(tmux.readSessionEnv(name, 'TANGLECLAW_LAUNCH_SECRET').value, null);
+      // The REAL session's copy, on the TCC-authorized socket, needs its own read — a
+      // session-local var (never present in the global environment) that `-u` removes is gone
+      // from the table entirely, so tmux itself refuses a query for it by name, same as it would
+      // for a name that was never set at all.
+      assert.throws(
+        () => execFileSync(
+          'tmux', ['-L', tmux.TCC_SOCKET, 'show-environment', '-t', `=${name}:`, 'TANGLECLAW_LAUNCH_SECRET'],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+        ),
+        /unknown variable/,
+        'the real session on the TCC socket no longer has a value for it either'
+      );
+    });
+  });
+
+  it('accepts a caller-supplied key list instead of the default', () => {
+    const name = uniqueSessionName('tcc_scrub_custom_keys');
+    createdDefault.push(name);
+    // Neither key here is in EPHEMERAL_LAUNCH_SECRET_KEYS, so `createSession` does not
+    // auto-scrub either of them — this test is about the explicit `envKeys` argument, not
+    // automatic post-spawn scrubbing (covered separately below).
+    tmux.createSession(name, { cwd: os.tmpdir(), env: { TC_TEST_CUSTOM: 'also-shh', TC_TEST_KEEP: 'keep' } });
+
+    const result = tmux.scrubSessionLaunchSecrets(name, ['TC_TEST_CUSTOM']);
+
+    assert.deepEqual(result, { scrubbed: ['TC_TEST_CUSTOM'], sockets: ['default'] });
+    assert.equal(tmux.readSessionEnv(name, 'TC_TEST_CUSTOM').value, null);
+    // The key not passed in the explicit list is left alone.
+    assert.equal(tmux.readSessionEnv(name, 'TC_TEST_KEEP').value, 'keep');
+  });
+
+  it('createSession automatically scrubs a key from EPHEMERAL_LAUNCH_SECRET_KEYS right after spawn', () => {
+    const name = uniqueSessionName('tcc_auto_scrub_default');
+    createdDefault.push(name);
+
+    tmux.createSession(name, { cwd: os.tmpdir(), env: { TANGLECLAW_LAUNCH_SECRET: 'shh', TC_TEST_KEEP: 'keep' } });
+
+    // No manual scrubSessionLaunchSecrets call — createSession must have done it itself.
+    assert.equal(tmux.readSessionEnv(name, 'TANGLECLAW_LAUNCH_SECRET').value, null);
+    assert.equal(tmux.readSessionEnv(name, 'TC_TEST_KEEP').value, 'keep', 'an unrelated var is never touched');
+  });
+
+  it('createSession never scrubs anything when options.env carries no ephemeral-secret key', () => {
+    const name = uniqueSessionName('tcc_auto_scrub_ungated');
+    createdDefault.push(name);
+
+    tmux.createSession(name, { cwd: os.tmpdir(), env: { TC_TEST_KEEP: 'keep' } });
+
+    assert.equal(tmux.readSessionEnv(name, 'TC_TEST_KEEP').value, 'keep');
+  });
+
+  it('createSessionWithTccBootstrap automatically scrubs the real session AND the default-server proxy', () => {
+    const cwd = fakeProtectedCwd('Documents/auto-scrub-tcc-proj');
+    withContentionRetry(() => {
+      const name = uniqueSessionName('tcc_auto_scrub_tcc');
+      createdDefault.push(name);
+      startAuthorizedAnchor();
+      withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
+        assert.equal(
+          tmux.createSessionWithTccBootstrap(name, { cwd, env: { TANGLECLAW_LAUNCH_SECRET: 'shh' } }),
+          true
+        );
+      });
+
+      // No manual scrubSessionLaunchSecrets call — createSessionWithTccBootstrap must have done it.
+      assert.equal(tmux.readSessionEnv(name, 'TANGLECLAW_LAUNCH_SECRET').value, null);
+      assert.throws(
+        () => execFileSync(
+          'tmux', ['-L', tmux.TCC_SOCKET, 'show-environment', '-t', `=${name}:`, 'TANGLECLAW_LAUNCH_SECRET'],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+        ),
+        /unknown variable/,
+        'the real session on the TCC socket was scrubbed too'
+      );
+    });
+  });
+
+  it('_envCarriesEphemeralSecret recognizes a default key and ignores everything else', () => {
+    assert.equal(tmux._envCarriesEphemeralSecret({ TANGLECLAW_LAUNCH_SECRET: 'x' }), true);
+    assert.equal(tmux._envCarriesEphemeralSecret({ TC_TEST_KEEP: 'keep' }), false);
+    assert.equal(tmux._envCarriesEphemeralSecret(null), false);
+    assert.equal(tmux._envCarriesEphemeralSecret(undefined), false);
+  });
+
+  it('is a non-throwing no-op on a session that does not exist', () => {
+    const name = uniqueSessionName('tcc_scrub_missing');
+    let result;
+    assert.doesNotThrow(() => { result = tmux.scrubSessionLaunchSecrets(name); });
+    assert.deepEqual(result, { scrubbed: [], sockets: [] });
+  });
+
+  it('is a non-throwing no-op on an invalid session name', () => {
+    assert.deepEqual(tmux.scrubSessionLaunchSecrets('not a valid name!'), { scrubbed: [], sockets: [] });
+  });
+
+  it('drops a key that is not a valid environment-variable identifier rather than attempting it', () => {
+    const name = uniqueSessionName('tcc_scrub_bad_key');
+    createdDefault.push(name);
+    tmux.createSession(name, { cwd: os.tmpdir(), env: { TC_TEST_KEEP: 'keep' } });
+
+    const result = tmux.scrubSessionLaunchSecrets(name, ['not a key; rm -rf /']);
+
+    assert.deepEqual(result, { scrubbed: [], sockets: [] });
+    assert.equal(tmux.readSessionEnv(name, 'TC_TEST_KEEP').value, 'keep');
+  });
+});
