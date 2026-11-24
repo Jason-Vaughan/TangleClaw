@@ -18,7 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
+const { makeDocument, makeElement, withIdParsingInnerHTML } = require('./_mini-dom');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'v6-shell.js'), 'utf8');
 
@@ -1021,6 +1021,96 @@ describe('tcV6CreateLiveController (#3022 deliverables b–e)', () => {
     await settle();
     assert.match(root.innerHTML, /No live session/, 'the newer route\'s detail must survive');
     assert.doesNotMatch(root.innerHTML, /ship it/);
+  });
+
+  // #3206 (UI-003): a navigation to any route OTHER than the session's
+  // very first renders from whatever `projects` is already cached —
+  // synchronously, before the background loadProjects/loadEngineHealth
+  // refresh gets a chance to resolve — rather than blocking on a fresh
+  // sequential fetch the way every navigation used to.
+  it('a second, different route renders its own detail before the background projects refetch resolves', async () => {
+    let releaseSecondProjects;
+    const secondProjects = new Promise((resolve) => { releaseSecondProjects = resolve; });
+    let projectsCalls = 0;
+    const map = baseMap();
+    map['/api/projects'] = () => {
+      projectsCalls += 1;
+      return projectsCalls === 1 ? { projects: PROJECTS } : secondProjects.then(() => ({ projects: PROJECTS }));
+    };
+    const { win, doc, root, settle, pending } = mountLive(map);
+    win.location.hash = '#/resources/11/conversation';
+    await settle();
+    assert.match(root.innerHTML, /ship it/, 'the first route loaded normally');
+    assert.equal(projectsCalls, 1);
+    // TC-Lane-A (route 10, offline) was never visited yet — its own
+    // offline-hero start button cannot exist in the DOM from leftover
+    // sidebar markup the way a plain text match could be fooled by.
+    assert.equal(doc.getElementById('v6ChatStartHero'), null);
+
+    win.location.hash = '#/resources/10/conversation';
+    // Let every microtask that CAN settle do so — the chat/status/peek/
+    // medusa chain for route 10 depends on none of them — while the
+    // background projects refetch stays stuck on `secondProjects`,
+    // deliberately unreleased, since nothing here awaits that chain.
+    await new Promise((r) => setImmediate(r));
+    assert.equal(projectsCalls, 2, 'the background refetch must still have been FIRED, just not resolved');
+    assert.ok(doc.getElementById('v6ChatStartHero'),
+      'the second route\'s own offline-hero detail already rendered from the cached tree, with the refetch still pending');
+
+    releaseSecondProjects();
+    await settle();
+    while (pending.length) await pending.shift();
+  });
+
+  // #3206: loadConversation's own peek/medusa reads don't depend on
+  // sessionId, so they fire alongside status rather than waiting for it.
+  // Proven with a deferred status that never resolves during this test —
+  // a status-THEN-the-rest implementation could never even ISSUE the
+  // peek/medusa calls in that world, since it would still be awaiting
+  // status when the test's own assertions run.
+  it('loadConversation fires status, peek and medusa concurrently, not status-then-the-rest', async () => {
+    let releaseStatus;
+    const status = new Promise((resolve) => { releaseStatus = resolve; });
+    const map = baseMap({
+      '/api/sessions/TC-Lane-B/status': () => status.then(() => ({ active: true, sessionId: 501 })),
+      '/api/sessions/TC-Lane-B/peek?lines=2000': { lines: [] },
+      '/api/sessions/TC-Lane-B/medusa/status': { listening: false, unread: 0 }
+    });
+    const { win, calls, settle, pending } = mountLive(map);
+    win.location.hash = '#/resources/11/conversation';
+    await new Promise((r) => setImmediate(r));
+    assert.ok(calls.includes('/api/sessions/TC-Lane-B/status'), JSON.stringify(calls));
+    // peek/medusa must already have been FIRED even though status is
+    // still stuck, deliberately unreleased — a sequential
+    // status-then-Promise.all implementation could not have reached them yet.
+    assert.ok(calls.includes('/api/sessions/TC-Lane-B/peek?lines=2000'), JSON.stringify(calls));
+    assert.ok(calls.includes('/api/sessions/TC-Lane-B/medusa/status'), JSON.stringify(calls));
+    releaseStatus();
+    await settle();
+    while (pending.length) await pending.shift();
+  });
+
+  // #3206 R3 — the OTHER half of the barrier: events/attestations must
+  // not wait on peek/medusa's own resolution either, even though they're
+  // requested only once status resolves (needing its sessionId). Proven
+  // with peek/medusa held unresolved: once status resolves, events and
+  // attestations must already have been FIRED, not stuck behind peek/
+  // medusa's own still-pending Promise.all slot.
+  it('loadConversation fires events/attestations as soon as status resolves, without waiting on peek/medusa', async () => {
+    let releasePeekMedusa;
+    const peekMedusa = new Promise((resolve) => { releasePeekMedusa = resolve; });
+    const map = baseMap({
+      '/api/sessions/TC-Lane-B/peek?lines=2000': () => peekMedusa.then(() => ({ lines: [] })),
+      '/api/sessions/TC-Lane-B/medusa/status': () => peekMedusa.then(() => ({ listening: false, unread: 0 }))
+    });
+    const { win, calls, settle, pending } = mountLive(map);
+    win.location.hash = '#/resources/11/conversation';
+    await new Promise((r) => setImmediate(r));
+    assert.ok(calls.includes('/api/v6/projects/11/sessions/501/conversation/events'), JSON.stringify(calls));
+    assert.ok(calls.includes('/api/v6/projects/11/sessions/501/attestations'), JSON.stringify(calls));
+    releasePeekMedusa();
+    await settle();
+    while (pending.length) await pending.shift();
   });
 
   it('launching a template shows its plan preview', async () => {
@@ -5824,7 +5914,8 @@ describe('the history panel in the mounted shell (#3066)', () => {
     const m = mount();
     m.doc.getElementById('v6SidebarFutureSlot').dispatch('click');
     assert.deepEqual(m.loads, [{ scope: 'member', kind: 'summaries', q: '' }]);
-    assert.match(m.root.innerHTML, /role="status">Loading…</);
+    // #3207: context-specific animated ellipsis indicator, not static "Loading…" text.
+    assert.match(m.root.innerHTML, /role="status"><span class="v6-loading-indicator" data-ellipsis-loading="true"><span class="v6-chat-activity-label">Retrieving history<\/span><span class="v6-chat-activity-dots" aria-hidden="true"><\/span><\/span><\/p>/);
     m.doc.getElementById('v6HistoryScope').value = 'fleet';
     m.doc.getElementById('v6HistoryKind').value = 'transcripts';
     m.doc.getElementById('v6HistorySearch').value = '  deploy ';
@@ -8691,7 +8782,8 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     assert.deepEqual(asked, [], 'Chat needs no panel');
     doc.getElementById('v6WorkspaceMode-sprint').dispatch('click');
     assert.deepEqual(asked, ['sprint']);
-    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<p class="v6-workspace-empty" role="status">Loading…<\/p>/);
+    // #3207: context-specific animated ellipsis indicator, not static "Loading…" text.
+    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<p class="v6-workspace-empty" role="status" data-loading-text="Loading…"><span class="v6-loading-indicator" data-ellipsis-loading="true"><span class="v6-chat-activity-label">Loading<\/span><span class="v6-chat-activity-dots" aria-hidden="true"><\/span><\/span><\/p>/);
     shell.setWorkspacePanel('sprint', '<div>board</div>');
     assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /<h2 class="v6-workspace-panel-title">Sprint &amp; Cars<\/h2>\s*<div>board<\/div>/);
     shell.setWorkspacePanel('kaizen', '<div>report</div>');
@@ -8959,6 +9051,129 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
     assert.doesNotMatch(html, /<img src=x/);
   });
 
+  // #3207: a pending calibration/refresh message gets the animated ellipsis
+  // treatment, not plain escaped text — an "ok"/"error" message stays plain.
+  it('a pending status message renders the animated ellipsis indicator, escaped; ok/error stay plain text', () => {
+    const pending = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, status: { kind: 'pending', message: 'Refreshing usage probe…' } });
+    assert.match(pending, /<p id="v6EngineUsageStatus" class="v6-usage-status is-pending" role="status">/);
+    assert.match(pending, /<span class="v6-chat-activity-label">Refreshing usage probe<\/span><span class="v6-chat-activity-dots" aria-hidden="true"><\/span>/);
+    const ok = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, status: { kind: 'ok', message: 'Usage probe refreshed.' } });
+    assert.match(ok, /<p id="v6EngineUsageStatus" class="v6-usage-status is-ok" role="status">Usage probe refreshed\.<\/p>/);
+    assert.doesNotMatch(ok, /v6-chat-activity-dots/);
+  });
+
+  it('a pending status message with unsafe characters is still escaped through the ellipsis indicator', () => {
+    const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, status: { kind: 'pending', message: 'Setting auto-refresh to <b>15m</b>…' } });
+    assert.doesNotMatch(html, /<b>15m<\/b>/);
+    assert.match(html, /Setting auto-refresh to &lt;b&gt;15m&lt;\/b&gt;/);
+  });
+
+  // #3209 (UI-006): structured per-engine cards — grouping a provider's
+  // probed reading with that SAME engine's local transcript estimate,
+  // under one heading, each labelled by which kind of number it is.
+  describe('per-engine usage cards (#3209)', () => {
+    const probe = {
+      claude: { status: 'configured', weeklyRemainingPct: 62, fiveHourRemainingPct: 80, observedAt: '2026-11-22T13:05:00Z' },
+      codex: { status: 'not-configured', error: 'no recognizable quota item' },
+      antigravity: null
+    };
+
+    it('renders exactly one card per engine, in order, each carrying its own data-engine', () => {
+      const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, probe });
+      const cards = html.match(/<div class="v6-usage-engine-card" data-engine="[a-z]+">/g) || [];
+      assert.deepEqual(cards, [
+        '<div class="v6-usage-engine-card" data-engine="claude">',
+        '<div class="v6-usage-engine-card" data-engine="codex">',
+        '<div class="v6-usage-engine-card" data-engine="antigravity">'
+      ]);
+    });
+
+    it('each card carries both a "Provider-reported" and a "Local estimate" labelled section', () => {
+      const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, probe });
+      for (const engine of ['claude', 'codex', 'antigravity']) {
+        const card = new RegExp(`<div class="v6-usage-engine-card" data-engine="${engine}">([\\s\\S]*?)</table></div></div>`).exec(html);
+        assert.ok(card, `no card found for ${engine}`);
+        assert.match(card[1], /data-kind="provider-probed">\s*<p class="v6-usage-engine-card-kind-label">Provider-reported<\/p>/);
+        assert.match(card[1], /data-kind="local-estimate">\s*<p class="v6-usage-engine-card-kind-label">Local estimate \(from transcripts\)<\/p>/);
+      }
+    });
+
+    it('claude\'s card carries its own probe bars, footnote and manual-calibration inputs together', () => {
+      const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, probe });
+      const card = /<div class="v6-usage-engine-card" data-engine="claude">([\s\S]*?)<\/table><\/div><\/div>/.exec(html)[1];
+      assert.match(card, /62% left/);
+      assert.match(card, /80% left/);
+      assert.match(card, /Last probed 2026-11-22 13:05 UTC/);
+      assert.match(card, /id="v6UsageWeekly-claude"/);
+      assert.match(card, /id="v6UsageSave-claude"/);
+    });
+
+    it('codex\'s card surfaces its own probe error inside its own card, not claude\'s or antigravity\'s', () => {
+      const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, probe });
+      const claudeCard = /<div class="v6-usage-engine-card" data-engine="claude">([\s\S]*?)<\/table><\/div><\/div>/.exec(html)[1];
+      const codexCard = /<div class="v6-usage-engine-card" data-engine="codex">([\s\S]*?)<\/table><\/div><\/div>/.exec(html)[1];
+      assert.doesNotMatch(claudeCard, /no recognizable quota item/);
+      assert.match(codexCard, /no recognizable quota item/);
+    });
+
+    it('the refresh/interval controls are pinned once, above every card, not once per engine', () => {
+      const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true, probe, probeInterval: '1h' });
+      assert.equal((html.match(/id="v6UsageProbeRefresh"/g) || []).length, 1);
+      assert.equal((html.match(/id="v6UsageProbeInterval"/g) || []).length, 1);
+      assert.ok(html.indexOf('id="v6UsageProbeRefresh"') < html.indexOf('v6-usage-engine-card'),
+        'the controls sit above the first card');
+    });
+  });
+
+  // #3206/#3209 R3 — delegating to the shared tcV6RenderEngineUsageCardMarkup
+  // (Car V6510-W1-D, public/api-helper.js) when it's present on `global`,
+  // rather than this file's own fallback card shape.
+  describe('per-engine usage card delegation to the shared helper (#3209 R3)', () => {
+    /** loadV6Shell, but with fake tcV6* globals pre-set BEFORE the module runs. */
+    function loadV6ShellWithSharedHelpers(fakes) {
+      const sandbox = { console };
+      sandbox.window = sandbox;
+      sandbox.globalThis = sandbox;
+      Object.assign(sandbox, fakes);
+      vm.createContext(sandbox);
+      vm.runInContext(SRC, sandbox);
+      return sandbox;
+    }
+
+    it('calls tcV6RenderEngineUsageCardMarkup with (providerKey, probeReading, tokenEstimate, opts), never a single cardSpec object', () => {
+      const calls = [];
+      const Gd = loadV6ShellWithSharedHelpers({
+        tcV6RenderEngineUsageCardMarkup: (...args) => { calls.push(args); return '<section class="fake-shared-card"></section>'; }
+      });
+      const windowsFx = { resetSchedule: {}, byProviderModel: {}, calibration: {} };
+      const probe = { claude: { status: 'configured', weeklyRemainingPct: 50, fiveHourRemainingPct: 80 }, codex: null, antigravity: null };
+      Gd.tcV6UsageMeterMarkup(Gd.tcV6UsageMeterModel(windowsFx), { open: true, probe });
+      assert.equal(calls.length, 3, 'called once per engine');
+      const [providerKey, probeReading, tokenEstimate, opts] = calls[0];
+      assert.equal(providerKey, 'claude');
+      assert.equal(probeReading, probe.claude);
+      assert.deepEqual(plain(tokenEstimate), { fiveHour: 0, weekly: 0, activeSessions: 0 });
+      assert.deepEqual(plain(opts), {});
+    });
+
+    it('wraps the shared card markup AND still appends the manual-calibration inputs the shared helper has no slot for', () => {
+      const Gd = loadV6ShellWithSharedHelpers({
+        tcV6RenderEngineUsageCardMarkup: (providerKey) => `<section class="fake-shared-card" data-engine="${providerKey}"></section>`
+      });
+      const windowsFx = { resetSchedule: {}, byProviderModel: {}, calibration: {} };
+      const html = Gd.tcV6UsageMeterMarkup(Gd.tcV6UsageMeterModel(windowsFx), { open: true });
+      assert.match(html, /<section class="fake-shared-card" data-engine="claude"><\/section>/, 'the shared helper\'s own markup is used verbatim');
+      assert.match(html, /id="v6UsageWeekly-claude"/, 'the manual-calibration input still appears for claude');
+      assert.match(html, /id="v6UsageSave-claude"/);
+    });
+
+    it('falls back to this file\'s own card markup when the shared helper is not loaded', () => {
+      const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows()), { open: true });
+      assert.doesNotMatch(html, /fake-shared-card/);
+      assert.match(html, /<div class="v6-usage-engine-card" data-engine="claude">/);
+    });
+  });
+
   /** A shell with the meter, its calibrate action recorded. */
   function mountMeter(calibrate) {
     const { doc } = makeDocument([]);
@@ -9098,6 +9313,249 @@ describe('the 3-engine usage meter (#3085, Contract A753-1)', () => {
   });
 });
 
+// #3207 (Car V6510-W1-B, UI-004): a shared, context-labelled animated
+// loading indicator, replacing every static "Loading…" text this file's
+// own render functions used to emit.
+describe('tcV6EllipsisLoadingMarkup — context-specific animated loading indicator (#3207)', () => {
+  const G = loadV6Shell();
+  const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+
+  it('renders a label span (announced) and a CSS-animated dots span (hidden from assistive tech)', () => {
+    const html = G.tcV6EllipsisLoadingMarkup('Loading chat');
+    assert.match(html, /^<span class="v6-loading-indicator" data-ellipsis-loading="true"><span class="v6-chat-activity-label">Loading chat<\/span><span class="v6-chat-activity-dots" aria-hidden="true"><\/span><\/span>$/);
+  });
+
+  it('strips a trailing "..."/"…" from the label so the animated dots are never doubled', () => {
+    for (const label of ['Connecting...', 'Connecting..', 'Connecting.', 'Connecting…', 'Connecting']) {
+      const html = G.tcV6EllipsisLoadingMarkup(label);
+      assert.match(html, /v6-chat-activity-label">Connecting</, label);
+    }
+  });
+
+  it('falls back to "Loading" for an empty, null or non-string label', () => {
+    for (const label of ['', null, undefined, '...']) {
+      assert.match(G.tcV6EllipsisLoadingMarkup(label), /v6-chat-activity-label">Loading</, String(label));
+    }
+  });
+
+  it('escapes the label', () => {
+    const html = G.tcV6EllipsisLoadingMarkup('<img src=x onerror=alert(1)>');
+    assert.doesNotMatch(html, /<img src=x/);
+    assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  });
+
+  it('accepts an extra class for the caller\'s own layout', () => {
+    const html = G.tcV6EllipsisLoadingMarkup('Loading', 'my-extra-class');
+    assert.match(html, /class="v6-loading-indicator my-extra-class"/);
+  });
+
+  it('reuses the existing chat-activity dots animation and reduced-motion override — no new CSS', () => {
+    assert.match(CSS, /\.v6-chat-activity-dots::after \{[\s\S]*?animation: v6-chat-dots 1\.2s steps\(4, end\) infinite;/);
+    assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{\s*\.v6-chat-activity-dots::after \{ animation: none; width: auto; \}/);
+  });
+
+  // #3206/#3209 R3: delegates to the shared tcV6AnimatedEllipsisMarkup
+  // (Car V6510-W1-D, public/api-helper.js) when present on `global`.
+  it('delegates to the shared tcV6AnimatedEllipsisMarkup when it is loaded, stripping trailing dots first the same way', () => {
+    const calls = [];
+    const sandbox = { console };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    sandbox.tcV6AnimatedEllipsisMarkup = (label) => { calls.push(label); return `<span class="fake-shared-ellipsis">${label}</span>`; };
+    vm.createContext(sandbox);
+    vm.runInContext(SRC, sandbox);
+    const html = sandbox.tcV6EllipsisLoadingMarkup('Loading chat...');
+    assert.deepEqual(calls, ['Loading chat'], 'trailing dots stripped before handing the label to the shared helper');
+    assert.equal(html, '<span class="fake-shared-ellipsis">Loading chat</span>');
+  });
+
+  it('falls back to its own markup when the shared helper is not loaded', () => {
+    assert.equal(typeof G.tcV6AnimatedEllipsisMarkup, 'undefined', 'the shared helper really is absent in this sandbox');
+    const html = G.tcV6EllipsisLoadingMarkup('Loading chat');
+    assert.doesNotMatch(html, /fake-shared-ellipsis/);
+  });
+});
+
+// #3206/#3209 R4 — binding tcV6CreateAnimatedEllipsisController (Car
+// V6510-W1-D) to a mounted shared-helper ellipsis indicator, with
+// cleanup on re-render. A full tcCreateV6Shell mount, not just the
+// standalone markup function — the controller only matters once
+// something has actually MOUNTED the markup into a live DOM.
+describe('wireEllipsisLoaders — binding the shared animated-ellipsis controller (#3206/#3209 R4)', () => {
+  /** loadV6Shell, but with fake tcV6* globals pre-set BEFORE the module runs. */
+  function loadV6ShellWithSharedHelpers(fakes) {
+    const sandbox = { console };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    Object.assign(sandbox, fakes);
+    vm.createContext(sandbox);
+    vm.runInContext(SRC, sandbox);
+    return sandbox;
+  }
+
+  /** A fake tcV6AnimatedEllipsisMarkup that carries data-v6-loading-stem, same as the real helper. */
+  function fakeAnimatedEllipsisMarkup(label) {
+    return `<span class="v6-loading-indicator" data-v6-loading-stem="${label}" data-v6-loading-state="loading">${label}</span>`;
+  }
+
+  /**
+   * withIdParsingInnerHTML, extended to ALSO build a real, class-and-
+   * attribute-queryable child node for each `.v6-loading-indicator` the
+   * rendered markup string contains. The shared stub's own `innerHTML`
+   * setter only ever recognizes `id="..."` markers (all production code
+   * elsewhere needs) — `wireEllipsisLoaders` is the first thing here that
+   * finds an element by CLASS instead, so this test file extends it
+   * locally rather than widening the shared stub for one caller.
+   */
+  function withEllipsisParsingInnerHTML(el, doc) {
+    withIdParsingInnerHTML(el, doc);
+    const idDescriptor = Object.getOwnPropertyDescriptor(el, 'innerHTML');
+    Object.defineProperty(el, 'innerHTML', {
+      configurable: true,
+      get: idDescriptor.get,
+      set(v) {
+        idDescriptor.set.call(el, v);
+        const re = /<span class="v6-loading-indicator" data-v6-loading-stem="([^"]*)"[^>]*>/g;
+        let m;
+        while ((m = re.exec(String(v))) !== null) {
+          const node = makeElement('span', doc);
+          node.className = 'v6-loading-indicator';
+          node.setAttribute('data-v6-loading-stem', m[1]);
+          el.appendChild(node);
+        }
+      }
+    });
+    return el;
+  }
+
+  function mountWithFakeController() {
+    const calls = [];
+    const Gd = loadV6ShellWithSharedHelpers({
+      tcV6AnimatedEllipsisMarkup: fakeAnimatedEllipsisMarkup,
+      tcV6CreateAnimatedEllipsisController: (opts) => {
+        const stopped = { value: false };
+        calls.push({ opts, stopped });
+        return { setLabel() {}, stop() { stopped.value = true; }, fail() {} };
+      }
+    });
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withEllipsisParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('#/projects/tc-lane');
+    const shell = Gd.tcCreateV6Shell(doc, { root, window: win, storage: null });
+    // #3206/#3209 R5: setWorkspacePanel() sets #v6WorkspacePanel's OWN
+    // innerHTML directly, never root's — withIdParsingInnerHTML only ever
+    // makes the FIRST id it sees a real child of root (everything else is
+    // a floating, doc-registered node with no parentNode at all), so
+    // #v6WorkspacePanel needs the SAME extended parsing, and a real place
+    // in root's tree, for wireEllipsisLoaders's root.querySelectorAll scan
+    // to ever find anything rendered through this path.
+    const panel = doc.getElementById('v6WorkspacePanel');
+    if (panel) {
+      withEllipsisParsingInnerHTML(panel, doc);
+      root.appendChild(panel);
+    }
+    return { shell, doc, root, calls };
+  }
+
+  it('binds a controller to a mounted shared-helper ellipsis indicator', () => {
+    const { shell, calls } = mountWithFakeController();
+    shell.setDetail({ kind: 'loading', label: 'Loading chat' });
+    assert.equal(calls.length, 1, 'exactly one controller bound for the one mounted indicator');
+    assert.equal(calls[0].opts.label, 'Loading chat');
+    assert.equal(calls[0].stopped.value, false);
+  });
+
+  it('stops the PREVIOUS render\'s controller before binding a new one on re-render', () => {
+    const { shell, calls } = mountWithFakeController();
+    shell.setDetail({ kind: 'loading', label: 'Loading chat' });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].stopped.value, false);
+    shell.setDetail({ kind: 'loading', label: 'Loading settings' });
+    assert.equal(calls[0].stopped.value, true, 'the first render\'s controller is stopped once the DOM it ticked against is replaced');
+    assert.equal(calls.length, 2, 'a second controller is bound for the new render');
+    assert.equal(calls[1].opts.label, 'Loading settings');
+    assert.equal(calls[1].stopped.value, false);
+  });
+
+  it('stops every bound controller once the route no longer shows any ellipsis indicator at all', () => {
+    const { shell, calls } = mountWithFakeController();
+    shell.setDetail({ kind: 'loading', label: 'Loading chat' });
+    assert.equal(calls.length, 1);
+    shell.setDetail(null);
+    assert.equal(calls[0].stopped.value, true, 'no ellipsis indicator remains, so the stale controller must still be stopped');
+    assert.equal(calls.length, 1, 'nothing new to bind — no indicator is mounted');
+  });
+
+  // #3206/#3209 R5 — setWorkspacePanel() is a PARTIAL render (only
+  // #v6WorkspacePanel's own innerHTML) outside the full render()/
+  // wireControls() cycle wireEllipsisLoaders is otherwise only called
+  // from; fleet plan / bundled-template loading states render through
+  // THIS path, so a controller bound to the panel's previous content
+  // must be stopped, and a freshly-rendered one bound, here too.
+  it('setWorkspacePanel() stops the previous panel\'s controller and binds a fresh one for the new content', () => {
+    const { shell, calls } = mountWithFakeController();
+    shell.setWorkspaceMode('sprint');
+    shell.setWorkspacePanel('sprint', fakeAnimatedEllipsisMarkup('Loading plan'));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].opts.label, 'Loading plan');
+    assert.equal(calls[0].stopped.value, false);
+
+    shell.setWorkspacePanel('sprint', fakeAnimatedEllipsisMarkup('Loading bundled templates'));
+    assert.equal(calls[0].stopped.value, true, 'the previous panel content\'s controller must be stopped before the replace');
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].opts.label, 'Loading bundled templates');
+    assert.equal(calls[1].stopped.value, false);
+  });
+
+  it('destroy() stops every bound controller so none survives shell teardown', () => {
+    const { shell, calls } = mountWithFakeController();
+    shell.setDetail({ kind: 'loading', label: 'Loading chat' });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].stopped.value, false);
+    shell.destroy();
+    assert.equal(calls[0].stopped.value, true, 'no controller may keep ticking past shell teardown');
+  });
+
+  it('never attempts to bind when the shared controller helper is not loaded', () => {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('#/projects/tc-lane');
+    const shell = loadV6Shell().tcCreateV6Shell(doc, { root, window: win, storage: null });
+    // No crash, and this file's own CSS-driven fallback markup renders instead.
+    shell.setDetail({ kind: 'loading', label: 'Loading chat' });
+    assert.match(root.innerHTML, /v6-chat-activity-dots/);
+  });
+});
+
+// `detailMarkup`/`loadRouteDetail`/`handleRoute` are closure-private to
+// `createLiveController`, with no `global.tcV6*` export — same constraint
+// other source-level pins in this file already work around. The 2
+// call-site labels are pinned here; `detailMarkup`'s own rendering of
+// `detail.kind === 'loading'` is already exercised end to end by the
+// "the shell asks for a panel..." and "the charter panel never shows..."
+// mounted-shell tests above, which now assert the animated markup directly.
+describe('#3207 call sites — loadRouteDetail/handleRoute pass a context label for the loading detail state', () => {
+  it('the chat route sets { kind: "loading", label: "Loading chat" } before loadConversation', () => {
+    assert.match(SRC, /shell\.setDetail\(\{ kind: 'loading', label: 'Loading chat' \}\);\s*\n\s*await loadConversation\(/);
+  });
+
+  it('the settings route sets { kind: "loading", label: "Loading settings" } before loadSettings', () => {
+    // #3206: setDetail still fires synchronously, immediately — loadSettings
+    // itself now waits on `freshLoad` (the background projects/health
+    // refresh) first, so the loading label is not literally the next line,
+    // but it is still set before anything else in the settings branch.
+    assert.match(SRC, /shell\.setDetail\(\{ kind: 'loading', label: 'Loading settings' \}\);\s*\n\s*await freshLoad;\s*\n\s*if \(mine !== seq\) return;\s*\n\s*await loadSettings\(/);
+  });
+
+  it('detailMarkup falls back to plain "Loading" when no label is given', () => {
+    assert.match(SRC, /detail\.kind === 'loading'\) return `<p class="v6-detail-loading" role="status">\$\{v6EllipsisLoadingMarkup\(detail\.label \|\| 'Loading'\)\}<\/p>`;/);
+  });
+});
+
 // ── Car V651-W2-B (#3133, #3132, #3139): persisted layout, the automated
 // usage probe's own UI, and inline video previews ──
 
@@ -9208,6 +9666,36 @@ describe('Car V651-W2-B: the automated CLI usage probe\'s own UI (#3132)', () =>
     assert.match(html, /data-engine="antigravity"><span class="v6-usage-probe-name">Antigravity<\/span><span class="v6-usage-probe-badge is-unknown">Not probed yet<\/span>/);
     assert.match(html, /href="https:\/\/chatgpt\.com\/codex\/settings\/usage"/);
     assert.match(html, /href="https:\/\/antigravity\.google\/"/);
+    // #3208: a partial-failure row must surface ITS OWN error text, not a
+    // bare badge with no context.
+    assert.match(html, /is-not-present">Not present<\/span><span class="v6-usage-probe-footnote">claude: command not found<\/span>/);
+    assert.match(html, /is-not-configured">Not configured<\/span><span class="v6-usage-probe-footnote">no recognizable quota item<\/span>/);
+  });
+
+  // #3208: tcV6UsageProbeFootnote — the per-provider "last probed" timestamp
+  // and non-fatal note/error lib/usage-windows.js#_probeResult always
+  // carries, surfaced instead of silently dropped.
+  it('tcV6UsageProbeFootnote renders the last-probed timestamp and any note, escaped; nothing for a null result', () => {
+    assert.equal(G.tcV6UsageProbeFootnote(null), '');
+    assert.equal(G.tcV6UsageProbeFootnote({ observedAt: null, error: null }), '', 'nothing to show');
+    assert.equal(
+      G.tcV6UsageProbeFootnote({ observedAt: '2026-11-22T13:05:00Z', error: null }),
+      '<span class="v6-usage-probe-footnote">Last probed 2026-11-22 13:05 UTC</span>'
+    );
+    assert.equal(
+      G.tcV6UsageProbeFootnote({ observedAt: '2026-11-22T13:05:00Z', error: 'parsed but empty' }),
+      '<span class="v6-usage-probe-footnote">Last probed 2026-11-22 13:05 UTC · parsed but empty</span>'
+    );
+    assert.doesNotMatch(G.tcV6UsageProbeFootnote({ observedAt: null, error: '<b>unsafe</b>' }), /<b>unsafe<\/b>/);
+    assert.match(G.tcV6UsageProbeFootnote({ observedAt: null, error: '<b>unsafe</b>' }), /&lt;b&gt;unsafe&lt;\/b&gt;/);
+  });
+
+  it('a configured provider\'s row also carries its own last-probed footnote', () => {
+    const html = G.tcV6UsageProbeMarkup({
+      claude: { status: 'configured', weeklyRemainingPct: 62, fiveHourRemainingPct: 80, observedAt: '2026-11-22T13:05:00Z' },
+      codex: null, antigravity: null
+    }, '30m');
+    assert.match(html, /Last probed 2026-11-22 13:05 UTC/);
   });
 
   it('the refresh-cadence selector offers 15m/30m/1h/Manual, with the current one selected', () => {
@@ -9217,12 +9705,17 @@ describe('Car V651-W2-B: the automated CLI usage probe\'s own UI (#3132)', () =>
     assert.match(G.tcV6UsageProbeMarkup({}), /value="30m" selected/, 'defaults to 30m with no interval given');
   });
 
-  it('the probe section is appended inside the existing usage popover, below the manual calibration table', () => {
+  // #3209 (UI-006): the probe's reading and the manual calibration table
+  // live together inside ONE per-engine card now, not two separate
+  // top-level blocks — updated from the pre-#3209 "probe block follows
+  // the manual table" shape to the current per-engine grouping.
+  it('the probe reading and the manual calibration table live together inside claude\'s own engine card', () => {
     const windows = { resetSchedule: { nextWeeklyResetAt: 'x', hoursUntilWeeklyReset: 1 }, byProviderModel: {}, calibration: {} };
     const html = G.tcV6UsageMeterMarkup(G.tcV6UsageMeterModel(windows), {
       open: true, probe: { claude: { status: 'configured', weeklyRemainingPct: 50, fiveHourRemainingPct: 50 } }, probeInterval: '15m'
     });
-    assert.match(html, /<\/table>\s*<div class="v6-usage-probe"/, 'the probe block follows the manual table');
+    assert.match(html, /<div class="v6-usage-engine-card" data-engine="claude">[\s\S]*?v6-usage-probe-row" data-engine="claude"[\s\S]*?<\/table><\/div><\/div>/,
+      'claude\'s probe row and its manual table sit inside the SAME card');
     assert.match(html, /v6-usage-probe-row" data-engine="claude"/);
     assert.match(html, /<option value="15m" selected>15m<\/option>/);
   });
@@ -9236,19 +9729,9 @@ describe('Car V651-W2-B: the automated CLI usage probe\'s own UI (#3132)', () =>
     const timers = [];
     const live = G.tcV6CreateLiveController({
       getShell: () => shell,
-      api: async (url, init) => {
+      api: async (url) => {
         calls.push(url);
         if (url === '/api/usage/probe') return probeSnapshot;
-        if (url === '/api/usage/refresh') {
-          mutations.push({ url, method: init.method });
-          probeSnapshot = { usage: { claude: { status: 'configured', weeklyRemainingPct: 77, fiveHourRemainingPct: 90 }, codex: null, antigravity: null }, interval: probeSnapshot.interval };
-          return probeSnapshot;
-        }
-        if (url === '/api/usage/probe/interval') {
-          mutations.push({ url, method: init.method, body: JSON.parse(init.body) });
-          probeSnapshot = Object.assign({}, probeSnapshot, { interval: JSON.parse(init.body).interval });
-          return { interval: JSON.parse(init.body).interval };
-        }
         if (url === '/api/projects') return { projects: [{ id: 12, name: 'P', engine: { id: 'claude' } }] };
         if (/\/status$/.test(url)) return { active: true, sessionId: 1 };
         if (url === '/api/usage/windows') return { resetSchedule: { nextWeeklyResetAt: 'x', hoursUntilWeeklyReset: 1 }, byProviderModel: {}, calibration: {} };
@@ -9256,7 +9739,24 @@ describe('Car V651-W2-B: the automated CLI usage probe\'s own UI (#3132)', () =>
         if (/conversation\/events/.test(url)) return { events: [] };
         return null;
       },
-      apiMutate: async () => { throw new Error('the probe routes never go through apiMutate'); },
+      // #3208: "Refresh now" and the interval selector go through apiMutate
+      // now (it sets Content-Type: application/json, which the raw api()
+      // call these used to make never did — Express's body-parser refused
+      // the POST outright, so neither control worked at all). This stub
+      // records exactly what a real apiMutate call sends: (url, method, body
+      // as a PLAIN OBJECT, never a pre-stringified string).
+      apiMutate: async (url, method, body) => {
+        mutations.push({ url, method, body });
+        if (url === '/api/usage/refresh') {
+          probeSnapshot = { usage: { claude: { status: 'configured', weeklyRemainingPct: 77, fiveHourRemainingPct: 90 }, codex: null, antigravity: null }, interval: probeSnapshot.interval };
+          return probeSnapshot;
+        }
+        if (url === '/api/usage/probe/interval') {
+          probeSnapshot = Object.assign({}, probeSnapshot, { interval: body.interval });
+          return { interval: body.interval };
+        }
+        return null;
+      },
       storage: null, setInterval: (fn) => { timers.push(fn); return timers.length - 1; }, clearInterval: () => {}
     });
     const { doc } = makeDocument([]);
@@ -9271,12 +9771,12 @@ describe('Car V651-W2-B: the automated CLI usage probe\'s own UI (#3132)', () =>
     assert.match(doc.getElementById('v6EngineUsageSlot').innerHTML, /is-not-configured">Not configured/);
     doc.getElementById('v6UsageProbeRefresh').dispatch('click');
     await new Promise((r) => setImmediate(r));
-    assert.ok(mutations.some((m) => m.url === '/api/usage/refresh' && m.method === 'POST'));
+    assert.ok(mutations.some((m) => m.url === '/api/usage/refresh' && m.method === 'POST'), 'through apiMutate, which always carries Content-Type: application/json');
     assert.match(doc.getElementById('v6EngineUsageSlot').innerHTML, /77% left/, 'the refreshed snapshot redrew the probe section');
     doc.getElementById('v6UsageProbeInterval').value = '1h';
     doc.getElementById('v6UsageProbeInterval').dispatch('change');
     await new Promise((r) => setImmediate(r));
-    assert.deepEqual(mutations.filter((m) => m.url === '/api/usage/probe/interval'), [{ url: '/api/usage/probe/interval', method: 'POST', body: { interval: '1h' } }]);
+    assert.deepEqual(plain(mutations.filter((m) => m.url === '/api/usage/probe/interval')), [{ url: '/api/usage/probe/interval', method: 'POST', body: { interval: '1h' } }]);
     // Every 15th chat read (the same cadence #3085's own meter refreshes on) re-reads the probe too.
     const before = calls.filter((c) => c === '/api/usage/probe').length;
     const poll = timers[timers.length - 1];
@@ -10145,7 +10645,8 @@ describe('the charter panel never shows a project the operator has left (#3088, 
     withIdParsingInnerHTML(doc.getElementById('v6WorkspacePanel'), doc);
     doc.getElementById('v6WorkspaceMode-charter').dispatch('click');
     assert.doesNotMatch(doc.getElementById('v6WorkspacePanel').innerHTML, /charter of A/);
-    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /Loading…/);
+    // #3207: the animated ellipsis indicator's label is plain "Loading" — the dots span supplies the "…".
+    assert.match(doc.getElementById('v6WorkspacePanel').innerHTML, /v6-chat-activity-label">Loading</);
   });
 
   it('drops a charter read that finishes after the operator moved to another project', async () => {

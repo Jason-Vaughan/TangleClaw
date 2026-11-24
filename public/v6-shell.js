@@ -633,7 +633,7 @@
     const m = WORKSPACE_MODES.find((x) => x.key === mode);
     if (!m || mode === 'chat' || mode === 'wizard') return '';
     return `<h2 class="v6-workspace-panel-title">${escapeHtml(m.label)}</h2>
-      ${typeof content === 'string' && content ? content : '<p class="v6-workspace-empty" role="status">Loading…</p>'}${typeof extra === 'string' ? extra : ''}`;
+      ${typeof content === 'string' && content ? content : `<p class="v6-workspace-empty" role="status" data-loading-text="Loading…">${v6EllipsisLoadingMarkup('Loading')}</p>`}${typeof extra === 'string' ? extra : ''}`;
   }
 
   /** What a train launch status line can be (each is a CSS modifier). */
@@ -949,7 +949,7 @@
     const member = String(data.member || '');
     const fleet = data.fleet || { name: '', count: 1 };
     const option = (value, label, on) => `<option value="${value}"${on ? ' selected' : ''}>${label}</option>`;
-    const status = data.status === 'loading' ? 'Loading…'
+    const status = data.status === 'loading' ? v6EllipsisLoadingMarkup('Retrieving history')
       : data.status === 'error' ? `Could not load history: ${escapeHtml(data.error || 'the server refused it')}`
         : data.status === 'ready' ? historyCountLine(data) : '';
     const items = Array.isArray(data.items) ? data.items : [];
@@ -1625,7 +1625,7 @@
     const list = fleetWizardMarkup(templates);
     if (!templateId) return list;
     const engineOptions = WIZARD_ENGINES.map((e) => `<option value="${e}"${(f.engine || 'claude') === e ? ' selected' : ''}>${e}</option>`).join('');
-    const planHtml = plan ? fleetPlanMarkup(plan) : '<p class="v6-workspace-empty">Loading plan…</p>';
+    const planHtml = plan ? fleetPlanMarkup(plan) : `<p class="v6-workspace-empty">${v6EllipsisLoadingMarkup('Loading plan')}</p>`;
     return `${list}
       <form id="v6WizardProvisionForm" class="v6-wizard-form" aria-label="Provision this fleet">
         <label class="v6-wizard-field">Fleet name<input type="text" id="v6WizardFleetName" class="filter-input" value="${escapeHtml(f.fleetName || '')}" maxlength="48" required></label>
@@ -1659,7 +1659,7 @@
         <p class="v6-wizard-bundled-spec-desc">${escapeHtml(spec.metadata.description)}</p>
         <button type="button" id="v6WizardUseBundled-${escapeHtml(id)}" class="btn btn-secondary btn-small" data-bundled-id="${escapeHtml(id)}">Use this template</button>
       </div>`;
-    }).join('') : '<p class="v6-workspace-empty">Loading bundled templates…</p>';
+    }).join('') : `<p class="v6-workspace-empty">${v6EllipsisLoadingMarkup('Loading bundled templates')}</p>`;
     const banner = ecosystem
       ? `<p class="v6-wizard-marketplace-banner"><span aria-hidden="true">🌐</span> <a href="${escapeHtml(ecosystem.marketplaceUrl)}" target="_blank" rel="noopener noreferrer">Browse Community Fleet Templates on TangleClaw.com</a></p>`
       : '';
@@ -1943,14 +1943,63 @@
         + `<label><span class="sr-only">${e.name} 5-hour % left</span><input type="number" min="0" max="100" step="1" id="v6UsageFiveHour-${e.key}" class="filter-input v6-usage-input" placeholder="5h %"></label>`
         + `<button type="button" id="v6UsageSave-${e.key}" class="btn btn-secondary btn-small" data-engine="${e.key}">Set</button></span></td></tr>`;
     };
+    // #3209 (UI-006): one card per engine — grouping the provider-probed
+    // reading (`usageProbeRowMarkup`, unchanged, still independently
+    // exported/tested as `tcV6UsageProbeRowMarkup`) together with that
+    // SAME engine's local transcript-estimate row (`row(e)`, unchanged)
+    // under one heading, each labelled by WHICH kind of number it is —
+    // rather than the two kinds of reading living in two entirely
+    // separate blocks (one table, one list) with no visual link between
+    // a card and its own probe row below. The probe's own refresh/
+    // interval controls (`usageProbeControlsMarkup`) are pinned once, at
+    // the top, above every card, same as the manual calibration inputs
+    // stay pinned inside each card rather than in a separate table.
+    //
+    // NOTE (#3209 scope limit): the issue's own acceptance criteria also
+    // ask for `#v6EngineUsagePopover { max-height: min(75vh, 580px);
+    // overflow-y: auto; }` — a `public/style.css` change outside this
+    // car's file scope (`public/v6-shell.js`/`test/v6-b1-ui-shell.test.js`
+    // only). Flagged in the PR rather than silently claimed as done.
+    // #3206/#3209 R3: delegate to the shared tcV6RenderEngineUsageCardMarkup
+    // (Car V6510-W1-D, public/api-helper.js) when it's loaded, rather than
+    // keeping two different card shapes once that car's branch merges. Its
+    // own signature is (providerKey, probeReading, tokenEstimate, opts) —
+    // never the single cardSpec object an earlier dispatch guessed — and
+    // its card has no slot for THIS app's own manual-calibration inputs
+    // (a generic shared component has no notion of them), so those are
+    // always appended separately, wrapped around whichever card markup —
+    // shared or this file's own fallback — actually rendered.
+    const sharedCardRenderer = typeof global.tcV6RenderEngineUsageCardMarkup === 'function' ? global.tcV6RenderEngineUsageCardMarkup : null;
+    const engineCards = USAGE_ENGINES.map((engineMeta) => {
+      const e = model.engines.find((m) => m.key === engineMeta.key);
+      const probeResult = probeFor(engineMeta.key);
+      const calibrateMarkup = `<div class="v6-usage-engine-card-section" data-kind="manual-calibration">`
+        + `<p class="v6-usage-engine-card-kind-label">Set % left manually</p>`
+        + `<table class="v6-usage-table"><thead><tr><th scope="col">Engine</th><th scope="col">5h</th><th scope="col">Week</th><th scope="col">Sprint</th><th scope="col">Sessions</th><th scope="col">Left</th><th scope="col">Set % left</th></tr></thead>`
+        + `<tbody>${e ? row(e) : ''}</tbody></table></div>`;
+      if (sharedCardRenderer) {
+        const tokenEstimate = e ? { fiveHour: e.tokens.fiveHour, weekly: e.tokens.weekly, activeSessions: e.sessions } : null;
+        return `<div class="v6-usage-engine-card-wrap" data-engine="${engineMeta.key}">${sharedCardRenderer(engineMeta.key, probeResult, tokenEstimate, {})}${calibrateMarkup}</div>`;
+      }
+      return `<div class="v6-usage-engine-card" data-engine="${engineMeta.key}">`
+        + `<h4 class="v6-usage-engine-card-name">${escapeHtml(engineMeta.name)}</h4>`
+        + `<div class="v6-usage-engine-card-section" data-kind="provider-probed">`
+        + `<p class="v6-usage-engine-card-kind-label">Provider-reported</p>`
+        + `<ul class="v6-usage-probe-list">${usageProbeRowMarkup(engineMeta, probeResult)}</ul></div>`
+        + `<div class="v6-usage-engine-card-section" data-kind="local-estimate">`
+        + `<p class="v6-usage-engine-card-kind-label">Local estimate (from transcripts)</p>`
+        + `<table class="v6-usage-table"><thead><tr><th scope="col">Engine</th><th scope="col">5h</th><th scope="col">Week</th><th scope="col">Sprint</th><th scope="col">Sessions</th><th scope="col">Left</th><th scope="col">Set % left</th></tr></thead>`
+        + `<tbody>${e ? row(e) : ''}</tbody></table></div></div>`;
+    }).join('');
     return `<button type="button" id="v6EngineUsageMeter" class="v6-usage-meter" aria-expanded="${open ? 'true' : 'false'}" aria-controls="v6EngineUsagePopover"
         aria-label="${escapeHtml(`Engine usage: ${summary}. Open the breakdown.`)}">${model.engines.map(pill).join('<span class="v6-telemetry-divider" aria-hidden="true">|</span>')}</button>`
       + `<div id="v6EngineUsagePopover" class="v6-usage-popover" role="dialog" aria-label="Engine usage"${open ? '' : ' hidden'}>`
       + `<p class="v6-usage-reset">${escapeHtml(reset || 'Weekly reset time unknown')}</p>`
-      + `<table class="v6-usage-table"><thead><tr><th scope="col">Engine</th><th scope="col">5h</th><th scope="col">Week</th><th scope="col">Sprint</th><th scope="col">Sessions</th><th scope="col">Left</th><th scope="col">Set % left</th></tr></thead>`
-      + `<tbody>${model.engines.map(row).join('')}</tbody></table>`
-      + usageProbeMarkup(ui && ui.probe, ui && ui.probeInterval)
-      + `<p id="v6EngineUsageStatus" class="v6-usage-status${status ? ` is-${escapeHtml(status.kind)}` : ''}" role="status">${status ? escapeHtml(status.message) : ''}</p></div>`;
+      + usageProbeControlsMarkup(ui && ui.probeInterval)
+      + `<div class="v6-usage-engine-cards">${engineCards}</div>`
+      + `<p id="v6EngineUsageStatus" class="v6-usage-status${status ? ` is-${escapeHtml(status.kind)}` : ''}" role="status">${
+        status ? (status.kind === 'pending' ? v6EllipsisLoadingMarkup(status.message) : escapeHtml(status.message)) : ''
+      }</p></div>`;
   }
 
   /** Each engine's real account/usage page (#3132) — an external link, never fetched by this page. */
@@ -1967,6 +2016,36 @@
 
   /** A probe status that found nothing usable, worded for the operator (#3132) — `lib/usage-windows.js#USAGE_PROBE_STATUSES`'s other two values. */
   const USAGE_PROBE_STATUS_LABELS = Object.freeze({ 'not-present': 'Not present', 'not-configured': 'Not configured' });
+
+  /**
+   * "Last probed <timestamp> UTC" plus any non-fatal note or error a probe
+   * result carries (#3208 — surface a per-provider refresh error and its
+   * last reading's timestamp instead of a bare status badge with no
+   * context). `lib/usage-windows.js#_probeResult`'s own contract: `error`
+   * is set for a caught exception OR a parsed-but-empty read, on ANY
+   * status including `'configured'`, and `observedAt` is always a real
+   * timestamp (never null) once a probe has run at all.
+   *
+   * NOTE (#3208 scope limit): this renders whatever the server's `result`
+   * carries; it cannot make a FAILED probe attempt preserve a PRIOR
+   * successful reading, because `lib/usage-windows.js#_refreshUsageProbeUncached`
+   * unconditionally overwrites its own store with the latest result,
+   * success or not — fixing that is a `lib/usage-windows.js` change, outside
+   * this car's file scope (`public/v6-shell.js`/`test/v6-b1-ui-shell.test.js`
+   * only). Flagged in the PR rather than silently claimed as done.
+   * @param {object|null} result
+   * @returns {string} HTML, or `''` when there is nothing to show.
+   */
+  function usageProbeFootnote(result) {
+    if (!result) return '';
+    const parts = [];
+    if (result.observedAt) {
+      const ms = Date.parse(result.observedAt);
+      if (Number.isFinite(ms)) parts.push(`Last probed ${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`);
+    }
+    if (result.error) parts.push(escapeHtml(result.error));
+    return parts.length ? `<span class="v6-usage-probe-footnote">${parts.join(' · ')}</span>` : '';
+  }
 
   /**
    * One engine's row in the automated CLI usage probe section (#3132): a
@@ -1990,7 +2069,7 @@
     if (result.status !== 'configured') {
       const label = USAGE_PROBE_STATUS_LABELS[result.status] || result.status;
       return `<li class="v6-usage-probe-row" data-engine="${engine.key}"><span class="v6-usage-probe-name">${escapeHtml(engine.name)}</span>`
-        + `<span class="v6-usage-probe-badge is-${escapeHtml(result.status)}">${escapeHtml(label)}</span>${link}</li>`;
+        + `<span class="v6-usage-probe-badge is-${escapeHtml(result.status)}">${escapeHtml(label)}</span>${usageProbeFootnote(result)}${link}</li>`;
     }
     // #3174: each bar's own next-reset countdown + timestamp, when the probe
     // reported one for that window — clicking the usage indicator should
@@ -2016,7 +2095,7 @@
         + `<span class="v6-usage-probe-bars">${bar(sub.weeklyRemainingPct, 'Week', sub.weeklyResetAt)}${bar(sub.fiveHourRemainingPct, '5h', sub.fiveHourResetAt)}</span></li>`;
     }).join('');
     return `<li class="v6-usage-probe-row" data-engine="${engine.key}"><span class="v6-usage-probe-name">${escapeHtml(engine.name)}</span>`
-      + `<span class="v6-usage-probe-bars">${bar(result.weeklyRemainingPct, 'Week', result.weeklyResetAt)}${bar(result.fiveHourRemainingPct, '5h', result.fiveHourResetAt)}</span>${link}</li>${subTierRows}`;
+      + `<span class="v6-usage-probe-bars">${bar(result.weeklyRemainingPct, 'Week', result.weeklyResetAt)}${bar(result.fiveHourRemainingPct, '5h', result.fiveHourResetAt)}</span>${usageProbeFootnote(result)}${link}</li>${subTierRows}`;
   }
 
   /**
@@ -2031,15 +2110,27 @@
    * @param {string} [interval] - One of {@link USAGE_PROBE_INTERVAL_OPTIONS}'s own values; defaults to `'30m'`.
    * @returns {string} HTML.
    */
-  function usageProbeMarkup(probe, interval) {
-    const p = probe || {};
+  /**
+   * The probe's own refresh-cadence selector and "↻ Refresh now" button
+   * (#3132), split out from {@link usageProbeMarkup} (#3209, UI-006) so
+   * {@link usageMeterMarkup}'s per-engine cards can pin these at the top
+   * of the popover, above every card, rather than once per engine.
+   * @param {string} [interval]
+   * @returns {string} HTML.
+   */
+  function usageProbeControlsMarkup(interval) {
     const current = interval || '30m';
     const options = USAGE_PROBE_INTERVAL_OPTIONS.map(({ value, label }) => `<option value="${value}"${current === value ? ' selected' : ''}>${label}</option>`).join('');
-    return `<div class="v6-usage-probe" aria-label="Automated CLI usage probe">
-      <div class="v6-usage-probe-controls">
+    return `<div class="v6-usage-probe-controls">
         <label class="v6-usage-probe-interval">Auto-refresh<select id="v6UsageProbeInterval" class="filter-input">${options}</select></label>
         <button type="button" id="v6UsageProbeRefresh" class="btn btn-secondary btn-small">↻ Refresh now</button>
-      </div>
+      </div>`;
+  }
+
+  function usageProbeMarkup(probe, interval) {
+    const p = probe || {};
+    return `<div class="v6-usage-probe" aria-label="Automated CLI usage probe">
+      ${usageProbeControlsMarkup(interval)}
       <ul class="v6-usage-probe-list">${USAGE_ENGINES.map((e) => usageProbeRowMarkup(e, p[e.key])).join('')}</ul>
     </div>`;
   }
@@ -4450,6 +4541,41 @@
   const TRAILING_ELLIPSIS = /\s*(?:\.{1,3}|…)\s*$/;
 
   /**
+   * A context-specific, accessibly-animated loading indicator (#3207).
+   *
+   * #3206/#3209 R3: delegates to the shared `tcV6AnimatedEllipsisMarkup`
+   * (`public/api-helper.js`, Car V6510-W1-D) when it's loaded — the
+   * SAME `.v6-loading-indicator`/`.v6-loading-label`/`.v6-loading-ellipsis`
+   * markup every other caller of that helper now produces, so this file
+   * doesn't keep a second, slightly different shape once that car's
+   * branch merges. While it isn't present (that car is still on a
+   * sibling branch as of this fix), falls back to the original
+   * CSS-driven `...` `.v6-chat-activity-dots::after` already animates for
+   * the chat composer's busy line (#3057) — `public/style.css`'s existing
+   * keyframe and `prefers-reduced-motion: reduce` override apply here for
+   * free, with no new CSS and no JS timer of any kind. Any trailing dots
+   * already on `label` are stripped first (the same {@link
+   * TRAILING_ELLIPSIS} the busy line already normalizes), so a caller may
+   * pass either `"Loading chat"` or `"Loading chat..."` without ever
+   * doubling the dots.
+   * @param {string} label - E.g. `"Loading chat"`, `"Retrieving history"`.
+   * @param {string} [className] - Extra class on the wrapping `<span>`, for a caller's own layout.
+   * @returns {string} HTML.
+   */
+  function v6EllipsisLoadingMarkup(label, className) {
+    const text = String(label || '').replace(TRAILING_ELLIPSIS, '') || 'Loading';
+    if (typeof global.tcV6AnimatedEllipsisMarkup === 'function') {
+      // No caller of v6EllipsisLoadingMarkup passes `className` today —
+      // the shared helper's own `opts` has no such field to forward it
+      // to, so this path is exact only as long as that stays true.
+      return global.tcV6AnimatedEllipsisMarkup(text);
+    }
+    return `<span class="v6-loading-indicator${className ? ` ${className}` : ''}" data-ellipsis-loading="true">`
+      + `<span class="v6-chat-activity-label">${escapeHtml(text)}</span>`
+      + `<span class="v6-chat-activity-dots" aria-hidden="true"></span></span>`;
+  }
+
+  /**
    * Elapsed time for the busy indicator (#3057): `0s`, `59s`, `1m 12s`, `1h 2m`.
    * @param {number} ms
    * @returns {string}
@@ -5285,7 +5411,7 @@
     if (detail.kind === 'knowledge') return knowledgeBaseMarkup(detail.help);
     if (detail.kind === 'platform') return platformViewMarkup(detail.view);
     if (detail.kind === 'whatif') return whatIfMarkup(detail.view);
-    if (detail.kind === 'loading') return '<p class="v6-detail-loading" role="status">Loading…</p>';
+    if (detail.kind === 'loading') return `<p class="v6-detail-loading" role="status">${v6EllipsisLoadingMarkup(detail.label || 'Loading')}</p>`;
     if (detail.kind === 'error') return `<p class="v6-detail-error" role="alert">${escapeHtml(detail.message)}</p>`;
     return '';
   }
@@ -5580,9 +5706,6 @@
     // newer request was made is dropped, so a slow search never overwrites a
     // newer one and a late list never closes a snapshot just opened (#3066).
     let historyGen = 0;
-    // Set when a sidebar click leads to a different route (#3053), so that
-    // route reloads the project rows before it shows anything.
-    let freshNext = false;
     // #3053: files attached in each chat, by target project id, and the
     // means to read and upload them (injectable for tests).
     const attachments = new Map();
@@ -5685,7 +5808,12 @@
      * @returns {Promise<{ok: boolean, error?: string}>}
      */
     async function refreshUsageProbeAction() {
-      const res = await api('/api/usage/refresh', { method: 'POST', body: JSON.stringify({}) });
+      // #3208: was a raw api(url, {method, body}) call with no Content-Type
+      // header — Express's body-parser refuses a POST body lacking
+      // `application/json` outright, so "Refresh now" failed every time.
+      // apiMutate sets that header (and the operator proof when a route
+      // needs one) the same way every other mutation on this page already does.
+      const res = await apiMutate('/api/usage/refresh', 'POST', {});
       if (!res) return { ok: false, error: api.lastError || 'the server refused it' };
       const sh = getShell();
       if (sh && typeof sh.setUsageProbe === 'function') sh.setUsageProbe(res);
@@ -5706,7 +5834,8 @@
      * @returns {Promise<{ok: boolean, interval?: string, error?: string}>}
      */
     async function setUsageProbeIntervalAction(interval) {
-      const res = await api('/api/usage/probe/interval', { method: 'POST', body: JSON.stringify({ interval }) });
+      // #3208: same missing-Content-Type bug as refreshUsageProbeAction above.
+      const res = await apiMutate('/api/usage/probe/interval', 'POST', { interval });
       if (!res) return { ok: false, error: api.lastError || 'the server refused it' };
       await loadUsageProbe();
       return { ok: true, interval: res.interval };
@@ -6114,6 +6243,38 @@
       stopPolling();
       const shell = getShell();
       const name = encodeURIComponent(project.name);
+      // #3206 (UI-003): peek and medusa/status are both keyed on `name`
+      // alone, never on `sessionId` — unlike conversation/events and
+      // attestations below (built from `base`, which DOES need the
+      // sessionId status resolves) — so there is no real reason to wait
+      // on status before firing them too, the same way the ongoing poll
+      // a few lines down already fires all three together. An offline
+      // session discards the peek/medusa read it never asked for; that
+      // one wasted round trip, once per navigation, buys every live
+      // session one fewer round trip on its own initial load.
+      //
+      // #3166: always the deep depth, whether or not Under the Hood is
+      // open — a closed drawer used to read only the shallow depth
+      // (#3135), which silently truncated #v6ChatStream itself since
+      // extractLiveTurns parses chat turns from this same read, not just
+      // what the drawer's own raw panel shows.
+      const peekUrl = () => `/api/sessions/${name}/peek?lines=${PEEK_LINES_DEEP}`;
+      // #3076: the listener's state and unread count. Unlike opening the
+      // inbox, this read marks nothing read and leaves the unread count
+      // alone; while listening, the route also asks the Bridge for loops.
+      const medusaUrl = `/api/sessions/${name}/medusa/status`;
+      // #3206 R3: fire all three REQUESTS immediately, but await status
+      // ALONE first — bundling it into the same Promise.all as peek/medusa
+      // (R2's own shape) reintroduced a serial barrier of its own: events/
+      // attestations below only need sessionId (from status), yet they'd
+      // still wait on peek/medusa's own, often-slower, resolution before
+      // they could even be requested. Firing the request is NOT the same
+      // as awaiting it — peekPromise/medusaPromise are already in flight
+      // the moment status resolves, so events/attestations' own round
+      // trip overlaps with whatever peek/medusa still has left, instead
+      // of starting only after all three are done.
+      const peekPromise = api(peekUrl());
+      const medusaPromise = api(medusaUrl);
       const status = await api(`/api/sessions/${name}/status`);
       if (mine !== seq) return;
       const sessionId = status && status.active && status.sessionId != null ? status.sessionId : null;
@@ -6174,29 +6335,23 @@
         return;
       }
       const base = `/api/v6/projects/${encodeURIComponent(project.id)}/sessions/${encodeURIComponent(sessionId)}`;
-      // #3166: always the deep depth, whether or not Under the Hood is open
-      // — a closed drawer used to read only the shallow depth (#3135), which
-      // silently truncated #v6ChatStream itself since extractLiveTurns parses
-      // chat turns from this same read, not just what the drawer's own raw
-      // panel shows.
-      const peekUrl = () => `/api/sessions/${name}/peek?lines=${PEEK_LINES_DEEP}`;
-      // #3076: the listener's state and unread count. Unlike opening the
-      // inbox, this read marks nothing read and leaves the unread count
-      // alone; while listening, the route also asks the Bridge for loops.
-      const medusaUrl = `/api/sessions/${name}/medusa/status`;
-      const [events, attestations, peek, medusaStatus] = await Promise.all([
+      // #3206 R3: events/attestations need `base`, which needs `sessionId`,
+      // which only status (above) resolves — requested only now, but
+      // joined with peekPromise/medusaPromise (already in flight since
+      // before status even resolved), not sequenced after them.
+      const [events, attestations, peekEarly, medusaEarly] = await Promise.all([
         api(`${base}/conversation/events`),
         api(`${base}/attestations`),
-        api(peekUrl()),
-        api(medusaUrl)
+        peekPromise,
+        medusaPromise
       ]);
       if (mine !== seq) return;
-      chat.peek = peekView(peek);
-      chat.live = liveView(peek, project, events && events.events);
+      chat.peek = peekView(peekEarly);
+      chat.live = liveView(peekEarly, project, events && events.events);
       chat.lastSent = lastSentFor(project);
       releaseThumbs(String(project.id));
       chat.thumbs = thumbsFor(project, events && events.events, chat.live);
-      chat.medusa = medusaView(medusaStatus, chat.live, null);
+      chat.medusa = medusaView(medusaEarly, chat.live, null);
       current.view = events
         ? { project, sessionId, events: events.events, chat }
         : { project, sessionId, error: 'Could not load this session’s conversation events.', chat };
@@ -6734,37 +6889,63 @@
       stopSidebarPolling();
       current = null;
       if (!key) return;
-      if (entering || !projects || freshNext) {
-        freshNext = false;
-        await loadProjects();
-        if (mine !== seq) return;
+
+      // #3206 (UI-003): before this fix, a route reached via a sidebar
+      // click that led to a different route (the removed `freshNext`
+      // flag) ALWAYS re-ran a fresh, SEQUENTIAL loadProjects ->
+      // showProjects -> loadEngineHealth round trip before that route's
+      // own active highlight or loading state ever appeared — even though
+      // `projects` was usually already sitting there, seconds-fresh, from
+      // the previous click. Only a genuine cold start (`entering`, or
+      // `!projects` because nothing has loaded yet at all) has no cache to
+      // render from and must still block. Every other navigation is
+      // stale-while-revalidate: render the cached tree synchronously,
+      // right now, before any network call, and let loadProjects/
+      // loadEngineHealth refresh it in the BACKGROUND.
+      const mustBlockOnProjects = entering || !projects;
+      let freshLoad = Promise.resolve();
+      if (mustBlockOnProjects) {
+        freshLoad = (async () => {
+          await loadProjects();
+          if (mine !== seq) return;
+          showProjects(shell);
+          await loadEngineHealth(shell);
+        })();
+      } else {
         showProjects(shell);
-        await loadEngineHealth(shell);
-        if (mine !== seq) return;
+        loadProjects().then(() => { if (mine === seq) showProjects(shell); });
+        loadEngineHealth(shell);
       }
+
       if (entering) {
         const scopeId = encodeURIComponent(route.projectId || route.resourceId || 'global');
-        const bar = await api(`/api/v6/projects/${scopeId}/telemetry?scope=global`);
-        if (mine !== seq) return;
-        shell.setTelemetry(bar);
+        api(`/api/v6/projects/${scopeId}/telemetry?scope=global`).then((bar) => {
+          if (mine === seq) shell.setTelemetry(bar);
+        });
       }
       if (!templatesLoaded) {
-        const res = await api('/api/v6/fleet-templates');
-        if (mine !== seq) return;
-        if (res && Array.isArray(res.templates)) {
-          templatesLoaded = true;
-          shell.setTemplates(res.templates);
-        }
+        api('/api/v6/fleet-templates').then((res) => {
+          if (mine !== seq) return;
+          if (res && Array.isArray(res.templates)) {
+            templatesLoaded = true;
+            shell.setTemplates(res.templates);
+          }
+        });
       }
+
       if (route.view === 'settings') {
         shell.setAttestation(null);
-        shell.setDetail({ kind: 'loading' });
+        shell.setDetail({ kind: 'loading', label: 'Loading settings' });
+        await freshLoad;
+        if (mine !== seq) return;
         await loadSettings(route, mine);
         // #3201: Settings never resolves a chat, so it has no poll of its
         // own to piggyback the sidebar refresh on.
         startSidebarPolling(mine);
         return;
       }
+      await freshLoad;
+      if (mine !== seq) return;
       await loadRouteDetail(route, mine);
       // #3201: a route whose detail load did not end up starting a chat
       // poll (Overview, or "no project resolved") gets the standalone
@@ -6797,7 +6978,7 @@
           : null);
         return;
       }
-      shell.setDetail({ kind: 'loading' });
+      shell.setDetail({ kind: 'loading', label: 'Loading chat' });
       await loadConversation(project, mine, chatContext(route, project));
     }
 
@@ -6956,19 +7137,19 @@
     }
 
     /**
-     * A sidebar link was clicked (#3053): the same route refreshes now; any
-     * other reloads the project rows when its hashchange arrives.
+     * A sidebar link was clicked (#3053): the same route refreshes now. A
+     * DIFFERENT route needs nothing done here — its own hashchange already
+     * reaches `handleRoute` through the shell's normal routing, and (#3206)
+     * that no longer needs an advance signal to force a fresh `projects`
+     * load: it renders from whatever is already cached immediately and
+     * revalidates in the background regardless, on every route.
      * @param {string} hash
      * @returns {Promise<void>}
      */
     async function treeLinkClicked(hash) {
       const shell = getShell();
       if (!shell) return;
-      if (String(hash) === routeHash(shell.getRoute())) {
-        await refresh();
-        return;
-      }
-      freshNext = true;
+      if (String(hash) === routeHash(shell.getRoute())) await refresh();
     }
 
     /**
@@ -8125,6 +8306,15 @@
     // it may hold watches the CURRENT #v6ChatStream node, a brand new DOM
     // node each time (`render` is a full `root.innerHTML = …` replace).
     let chatScrollCoordinator = null;
+    // #3206/#3209 R4: this render's own bound `tcV6CreateAnimatedEllipsisController`
+    // handles (Car V6510-W1-D, public/api-helper.js) — stopped and replaced
+    // every time `wireEllipsisLoaders` runs again (every render, via
+    // `wireControls`), same reason as `chatScrollCoordinator` above: each
+    // controller's own interval timer ticks against the CURRENT DOM node it
+    // mounted into, a brand new one every render (`render` is a full
+    // `root.innerHTML = …` replace) — a controller left running from the
+    // PREVIOUS render would keep ticking against a now-detached node forever.
+    let ellipsisControllers = [];
     const raf = typeof options.requestAnimationFrame === 'function' ? options.requestAnimationFrame
       : (win && typeof win.requestAnimationFrame === 'function' ? (fn) => win.requestAnimationFrame(fn) : null);
     // #3106/#3152: persist the composer's and Under the Hood's own
@@ -8149,7 +8339,51 @@
       return win && win.location ? win.location.hash : '';
     }
 
+    /**
+     * (Re)bind `tcV6CreateAnimatedEllipsisController` (Car V6510-W1-D,
+     * public/api-helper.js) to every currently-mounted shared-helper
+     * ellipsis indicator (#3206/#3209 R4). `v6EllipsisLoadingMarkup`'s
+     * delegated path renders `tcV6AnimatedEllipsisMarkup`'s STATIC markup
+     * only (its own `data-v6-loading-stem` attribute is what tells it apart
+     * from this file's own CSS-driven `.v6-chat-activity-dots` fallback,
+     * which carries no such attribute and needs no JS binding at all — its
+     * animation is pure CSS) — the 1/2/3-dot CYCLE only exists once a
+     * controller is actually mounted on top of it, since PR #3241's own
+     * `.v6-loading-ellipsis` CSS is deliberately layout-only (see that
+     * car's own comment in `public/style.css`). Every PREVIOUS render's
+     * controllers are stopped first: `root.innerHTML` just replaced the
+     * nodes they were ticking against, but a controller's own
+     * `setInterval` never stops itself just because its DOM target was
+     * removed.
+     * @returns {void}
+     */
+    /**
+     * Stop every controller {@link wireEllipsisLoaders} currently has
+     * bound, and forget them (#3206/#3209 R5) — shared by `wireEllipsisLoaders`
+     * itself (before rebinding to fresh DOM) and `destroy()` (shell
+     * teardown, where nothing should be rebound afterward at all).
+     * @returns {void}
+     */
+    function stopEllipsisLoaders() {
+      ellipsisControllers.forEach((c) => { if (c && typeof c.stop === 'function') c.stop(); });
+      ellipsisControllers = [];
+    }
+
+    function wireEllipsisLoaders() {
+      stopEllipsisLoaders();
+      if (typeof global.tcV6CreateAnimatedEllipsisController !== 'function') return;
+      if (!root || typeof root.querySelectorAll !== 'function') return;
+      root.querySelectorAll('.v6-loading-indicator').forEach((el) => {
+        if (typeof el.getAttribute !== 'function' || el.getAttribute('data-v6-loading-stem') === null) return;
+        const containerEl = el.parentNode;
+        if (!containerEl) return;
+        const label = el.getAttribute('data-v6-loading-stem') || '';
+        ellipsisControllers.push(global.tcV6CreateAnimatedEllipsisController({ doc, containerEl, label, win }));
+      });
+    }
+
     function wireControls() {
+      wireEllipsisLoaders();
       wireWorkspaceModes();
       if (workspaceVisibility(workspaceMode, Boolean(detail && detail.kind === 'conversation')).panel) wireWorkspacePanel(workspaceMode);
       const skipLink = doc.getElementById('v6ShellSkipLink');
@@ -11100,6 +11334,16 @@
         if (panel && shownNow && workspaceMode === mode) {
           panel.innerHTML = panelMarkupNow(mode);
           wireWorkspacePanel(mode);
+          // #3206/#3209 R5: this is a PARTIAL render (only #v6WorkspacePanel's
+          // own innerHTML) outside the full render()/wireControls() cycle
+          // wireEllipsisLoaders is otherwise only ever called from — fleet
+          // plan / bundled-template loading states rendered through this
+          // path (both v6EllipsisLoadingMarkup call sites) would otherwise
+          // never get a controller bound at all, and whatever controller
+          // was bound to the panel's PREVIOUS content would leak (ticking
+          // against a now-detached node this innerHTML replace just
+          // removed) since nothing here ever stopped it.
+          wireEllipsisLoaders();
         }
       },
       destroy() {
@@ -11107,6 +11351,8 @@
         if (tickerId != null) { stopTicker(tickerId); tickerId = null; }
         busy = null;
         if (win && typeof win.removeEventListener === 'function') win.removeEventListener('hashchange', handleHashChange);
+        // #3206/#3209 R5: no controller may keep ticking past shell teardown.
+        stopEllipsisLoaders();
       }
     };
   }
@@ -11150,6 +11396,7 @@
   global.tcV6MessageMarkup = messageMarkup;
   global.tcV6UsageMeterModel = usageMeterModel;
   global.tcV6UsageMeterMarkup = usageMeterMarkup;
+  global.tcV6EllipsisLoadingMarkup = v6EllipsisLoadingMarkup;
   global.tcV6LongPromptCommand = longPromptCommand;
   global.tcV6RecordedText = recordedText;
   global.tcV6ArrangeRecorded = arrangeRecorded;
@@ -11175,6 +11422,7 @@
   global.tcV6PruneStaleChatDrafts = pruneStaleChatDrafts;
   global.tcV6IsAlwaysPreviewLink = isAlwaysPreviewLink;
   global.tcV6UsageProbeRowMarkup = usageProbeRowMarkup;
+  global.tcV6UsageProbeFootnote = usageProbeFootnote;
   global.tcV6UsageProbeMarkup = usageProbeMarkup;
   global.tcV6ExtractCliGates = extractCliGates;
   global.tcV6FilterPeekTrafficLines = filterPeekTrafficLines;
