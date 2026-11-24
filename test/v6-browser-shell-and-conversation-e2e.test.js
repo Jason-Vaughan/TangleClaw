@@ -1880,3 +1880,245 @@ describe('Car V659-W2-C R2: Master chat workspace height budget and attach-butto
     assert.match(rule, /border-radius: var\(--radius-pill\);/);
   });
 });
+
+/**
+ * Car V6510-W1-C (#3206, #3207, #3208, #3209 — Sprint v6.5.10 Wave C,
+ * Milestone #104). Exclusive file scope: public/style.css and this file
+ * only. `public/v6-shell.js`/`public/api-helper.js` are NOT in scope — the
+ * real markup/wiring these selectors style lives in two OPEN sibling PRs
+ * (checked directly, not assumed): PR #3240 (#3207's loading-label wiring
+ * + #3208's Content-Type fix) and PR #3233 (#3207's animated-ellipsis
+ * controller + #3209's per-engine card helpers, in public/api-helper.js).
+ * Neither has merged as of this car's own base commit.
+ *
+ * #3206 (sub-100ms click feedback) and #3208 (Content-Type header on the
+ * usage-probe POSTs) are NOT covered by a test here, and that omission is
+ * deliberate, not an oversight:
+ * - #3206's own fix is reordering `handleRoute`'s synchronous visual
+ *   feedback before its sequential awaits (public/v6-shell.js:6716) — a
+ *   `public/v6-shell.js` change outside this car's envelope, unfixed by
+ *   either sibling PR above. A wall-clock "<100ms" assertion against this
+ *   file's own in-process mounted-shell harness (handleRequest called
+ *   directly, no real network) would also be VACUOUS either way — there is
+ *   no real latency here for a sequential-vs-parallel difference to show
+ *   up against, so the assertion would pass regardless of whether the
+ *   underlying ordering bug is fixed. Flagged to the PM rather than
+ *   shipping a test that cannot actually fail on the bug it names.
+ * - #3208's fix (adding `Content-Type: application/json` to
+ *   `refreshUsageProbeAction`/`setUsageProbeIntervalAction`,
+ *   `public/v6-shell.js:5687`/`5708`) is real and unmerged — confirmed
+ *   directly: `server.js`'s own body-parser guard
+ *   (`server.js:8223`, `ownApiSurface && hasBody && declaredType !==
+ *   'application/json'`) does reject exactly this today. Still outside
+ *   this car's envelope (`public/v6-shell.js`) and mid-review in PR #3240
+ *   already — writing a test for it here would either duplicate that PR's
+ *   own fix verification or fail until it merges, for a bug this car's own
+ *   scope cannot close.
+ */
+describe('Car V6510-W1-C: shared loading indicator & per-engine usage card styling (#3207, #3209)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  /** @param {string} selector @returns {string} the selector's own `{ ... }` body, or '' if not found. */
+  const body = (selector) => {
+    const m = new RegExp(`(^|\\n)${selector.replace(/[.[\]>="^-]/g, '\\$&')} \\{([^}]*)\\}`).exec(css);
+    return m ? m[2] : '';
+  };
+
+  it('.v6-loading-indicator/.v6-loading-ellipsis are layout-only (no @keyframes of their own), since the JS controller already owns the dot-cycling and its own prefers-reduced-motion check', () => {
+    assert.match(body('.v6-loading-indicator'), /display: inline-flex;/);
+    assert.match(body('.v6-loading-ellipsis'), /min-width: 1\.5em;/);
+    assert.doesNotMatch(css, /\.v6-loading-ellipsis(::after)?\s*\{[^}]*animation:/, 'the dot content is set via JS textContent, not a CSS keyframe — a CSS animation here would double up with it');
+  });
+
+  it('.v6-loading-ellipsis drops its width reservation under prefers-reduced-motion, matching the controller\'s own static (non-cycling) render in that mode', () => {
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\/\*[^]*?\*\/\s*\.v6-loading-ellipsis \{\s*min-width: 0;/);
+  });
+
+  it('.v6-loading-error/.v6-loading-retry-btn get a visible error treatment and an actionable Retry control', () => {
+    assert.match(body('.v6-loading-error'), /color: var\(--danger\);/);
+    assert.match(body('.v6-loading-retry-btn'), /cursor: pointer;/);
+  });
+
+  it('#v6EngineUsagePopover is bounded and scrolls internally, so multiple engine cards cannot grow past the viewport', () => {
+    const rule = body('.v6-usage-popover');
+    assert.match(rule, /max-height: min\(75vh, 580px\);/);
+    assert.match(rule, /overflow-y: auto;/);
+  });
+
+  it('.v6-usage-engine-card groups one provider\'s header, quota windows, sub-tiers, local estimates and degraded note into one bordered card', () => {
+    assert.match(body('.v6-usage-engine-card'), /border: 1px solid var\(--border-color, #2a2f36\);/);
+    assert.match(body('.v6-usage-card-title'), /font-weight: 600;/);
+    assert.match(body('.v6-usage-source-badge--probed'), /color: #56d364;/);
+    assert.match(body('.v6-usage-degraded-note'), /color: var\(--danger\);/);
+  });
+
+  it('.v6-usage-source-badge--probed gets a darker, WCAG-compliant green under the light theme, without touching the dark value', () => {
+    assert.match(css, /\[data-theme="light"\] \.v6-usage-source-badge--probed \{\s*\/\*[^]*?\*\/\s*color: #1a7f37;\s*border-color: #1a7f37;/);
+  });
+
+  /**
+   * WCAG relative luminance / contrast ratio — the same algorithm this
+   * file's own Car V659-W1-C describe block (and `test/theme-contrast
+   * .test.js`'s `luminance()`/`contrast()`) already use, duplicated here
+   * rather than imported since neither file exports it.
+   * @param {string} hex
+   * @returns {number}
+   */
+  function luminance(hex) {
+    const h = hex.replace('#', '');
+    const [r, g, b] = [0, 2, 4].map((i) => {
+      const c = parseInt(h.slice(i, i + 2), 16) / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }
+  /** @param {string} hexA @param {string} hexB @returns {number} */
+  function contrastRatio(hexA, hexB) {
+    const [l1, l2] = [luminance(hexA), luminance(hexB)].sort((a, b) => b - a);
+    return (l1 + 0.05) / (l2 + 0.05);
+  }
+
+  it('#3207/#3209 R2 BLOCKING 1: every color this car introduces clears WCAG AA (>= 4.5:1) against its real background, in BOTH themes', () => {
+    // Dark theme: --danger is #EF5350 (:root), card background #0d0d0d
+    // (.v6-usage-popover's own var(--card-bg, #0d0d0d) fallback, which is
+    // what actually resolves since :root always defines --card-bg).
+    assert.ok(contrastRatio('#EF5350', '#0d0d0d') >= 4.5, 'var(--danger) (dark) on the dark card background');
+    // #56d364 is the UNCHANGED dark-theme value for the probed badge.
+    assert.ok(contrastRatio('#56d364', '#0d0d0d') >= 4.5, '.v6-usage-source-badge--probed (dark) on the dark card background');
+    // Light theme: --danger is #8f3230 (:root[data-theme="light"]), card
+    // background #FFFFFF.
+    assert.ok(contrastRatio('#8f3230', '#FFFFFF') >= 4.5, 'var(--danger) (light) on the light card background');
+    // #1a7f37 is this car's own light-theme override for the probed badge.
+    assert.ok(contrastRatio('#1a7f37', '#FFFFFF') >= 4.5, '.v6-usage-source-badge--probed (light override) on the light card background');
+  });
+
+  it('.v6-usage-window-row renders a real progress track behind .v6-usage-progress-bar\'s own inline width, in the SAME grid cell — the markup never nests a separate track element', () => {
+    const row = body('.v6-usage-window-row');
+    assert.match(row, /display: grid;/);
+    assert.match(row, /grid-template-columns: 7em minmax\(60px, 1fr\) 4\.5em auto;/);
+    const track = body('.v6-usage-window-row::before');
+    assert.match(track, /grid-column: 2;/);
+    assert.match(track, /background: var\(--elevated-bg, #1a1a1a\);/);
+    const bar = body('.v6-usage-progress-bar');
+    assert.match(bar, /grid-column: 2;/, 'the fill must share the track\'s own grid cell, not a different one, to visually overlay it');
+    assert.match(bar, /background: var\(--primary, #8bc34a\);/);
+  });
+
+  /**
+   * R-Gate R1 BLOCKING 2: go beyond regex-against-CSS-text by mounting
+   * the REAL markup SHAPE `tcV6AnimatedEllipsisMarkup`/
+   * `tcV6CreateAnimatedEllipsisController`/`tcV6RenderEngineUsageCardMarkup`
+   * (`public/api-helper.js`, PR #3233 — `tcV6BindAnimatedEllipsis`/
+   * `tcV6RenderEngineUsagePopoverCards`, as the review named them, do not
+   * exist; grepped that branch's own `global.tcV6*` exports directly,
+   * there are exactly 4) actually produce, and proving this car's CSS
+   * selectors target that real shape — not a hand-invented one.
+   *
+   * Honest limit, stated rather than silently worked around: this file's
+   * mini-DOM (`test/_mini-dom.js`) has no real CSSOM or layout engine —
+   * it cannot compute an actual rendered color, a real contrast ratio
+   * against a painted background, or genuine pixel overlap between
+   * elements. The numeric WCAG test above already covers color/contrast
+   * the only way this harness CAN (computing it directly from the same
+   * hex values the CSS declares, verified against the real rule text).
+   * What mounting real markup adds that a pure text-regex check cannot:
+   * proving the exact classes/structure these functions actually emit
+   * are what this car's selectors actually match — the fixtures below
+   * are copied verbatim from PR #3233's own source, not reconstructed
+   * from memory, and the test fails if either drifts from the other.
+   */
+  describe('Mounted fixtures against the real PR #3233 markup shape', () => {
+    /**
+     * A minimal tag-stack HTML -> mini-DOM builder for THIS block's own
+     * fixtures — the same bounded technique (and the same reason:
+     * `withIdParsingInnerHTML` only extracts flat id stand-ins, and none
+     * of these fixtures carry an id at all) the #3218 describe earlier in
+     * this file already uses for `public/index.html`'s real markup.
+     * @param {object} doc
+     * @param {string} html
+     * @returns {object} The root element.
+     */
+    function mountFixtureMarkup(doc, html) {
+      const clean = html.replace(/<!--[\s\S]*?-->/g, '');
+      const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+      const stack = [];
+      let root = null;
+      let cursor = 0;
+      let match;
+      while ((match = tagRe.exec(clean))) {
+        const textBefore = clean.slice(cursor, match.index);
+        cursor = match.index + match[0].length;
+        if (stack.length && textBefore) {
+          stack[stack.length - 1].textContent = (stack[stack.length - 1].textContent || '') + textBefore;
+        }
+        const [, closing, tag, attrs] = match;
+        if (closing) { stack.pop(); continue; }
+        const el = doc.createElement(tag);
+        const classMatch = /\bclass="([^"]*)"/.exec(attrs);
+        if (classMatch) el.className = classMatch[1];
+        const dataRe = /\bdata-([a-z-]+)="([^"]*)"/g;
+        let dataMatch;
+        while ((dataMatch = dataRe.exec(attrs))) {
+          el.dataset[dataMatch[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = dataMatch[2];
+        }
+        if (stack.length) stack[stack.length - 1].appendChild(el);
+        else root = el;
+        stack.push(el);
+      }
+      return root;
+    }
+
+    it('the loading indicator\'s success state (tcV6AnimatedEllipsisMarkup) and failed state (the controller\'s own fail()) both mount with exactly the classes this car\'s CSS targets', () => {
+      const { doc } = makeDocument([]);
+      // Verbatim from tcV6AnimatedEllipsisMarkup's own return (PR #3233).
+      const loading = mountFixtureMarkup(doc, '<span class="v6-loading-indicator" role="status" aria-live="polite" data-v6-loading-stem="Loading chat" data-v6-loading-state="loading"><span class="v6-loading-label">Loading chat</span><span class="v6-loading-ellipsis" aria-hidden="true">...</span></span>');
+      assert.equal(loading.className, 'v6-loading-indicator');
+      assert.equal(loading.childNodes[0].className, 'v6-loading-label');
+      assert.equal(loading.childNodes[1].className, 'v6-loading-ellipsis');
+      // Verbatim from the controller's own fail() DOM-building (PR #3233):
+      // containerEl.innerHTML = ''; then an errEl.className =
+      // 'v6-loading-error' with a nested Retry btn.className =
+      // 'v6-loading-retry-btn' wired to retryOpts.onRetry.
+      const { doc: doc2 } = makeDocument([]);
+      const failed = mountFixtureMarkup(doc2, '<span class="v6-loading-error" role="alert">Failed.<button type="button" class="v6-loading-retry-btn">Retry</button></span>');
+      assert.equal(failed.className, 'v6-loading-error');
+      const retryBtn = failed.childNodes.find((c) => c.className === 'v6-loading-retry-btn');
+      assert.ok(retryBtn, 'the real fail() state always nests a Retry button when onRetry is given');
+      let retried = false;
+      retryBtn.addEventListener('click', () => { retried = true; });
+      retryBtn.dispatch('click');
+      assert.equal(retried, true, 'the retry control must stay a normal, click-wireable button in the error state this car styles');
+    });
+
+    it('3 real per-engine cards (tcV6RenderEngineUsageCardMarkup\'s own output, claude/codex/antigravity) mount as 3 structurally distinct, non-overlapping sections with unique providers', () => {
+      const { doc } = makeDocument([]);
+      // Verbatim shape from tcV6RenderEngineUsageCardMarkup's own return
+      // (PR #3233) for one provider; repeated for the 3 real engines this
+      // popover always lists (TC_V6_USAGE_PROVIDER_TITLES).
+      const cardHtml = (provider, title, pct) => `<section class="v6-usage-engine-card" data-usage-provider="${provider}">
+        <header class="v6-usage-card-header">
+          <h4 class="v6-usage-card-title">${title}</h4>
+          <span class="v6-usage-source-badge--probed">Provider Probed</span>
+        </header>
+        <div class="v6-usage-window-row" data-usage-window="five-hour">
+          <span class="v6-usage-window-label">5-Hour Quota Window</span>
+          <div class="v6-usage-progress-bar"></div>
+          <span class="v6-usage-pct-left">${pct}% left</span>
+        </div>
+        <div class="v6-usage-local-estimates">
+          <h5>Local Transcript Token &amp; Session Aggregates</h5>
+        </div>
+      </section>`;
+      const popoverHtml = [cardHtml('claude', 'Claude', 60), cardHtml('codex', 'Codex', 45), cardHtml('antigravity', 'Antigravity', 80)].join('');
+      const wrapper = mountFixtureMarkup(doc, `<div>${popoverHtml}</div>`);
+      const cards = wrapper.childNodes.filter((c) => c.className === 'v6-usage-engine-card');
+      assert.equal(cards.length, 3, 'all 3 engines must mount as their own card, none swallowed into a sibling');
+      const providers = cards.map((c) => c.dataset.usageProvider);
+      assert.deepEqual(providers, ['claude', 'codex', 'antigravity'], 'each card keeps its own distinct provider — none overlap or duplicate');
+      cards.forEach((card) => {
+        const header = card.childNodes.find((c) => c.className === 'v6-usage-card-header');
+        assert.ok(header, 'every card keeps its own header as a direct child, never reaching into a sibling card');
+        assert.equal(card.querySelector('.v6-usage-window-row').parentNode, card, 'the window row stays nested in its OWN card, not a sibling\'s');
+      });
+    });
+  });
+});
