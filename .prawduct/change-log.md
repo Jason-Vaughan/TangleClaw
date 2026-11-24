@@ -41,6 +41,45 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-23 — v6.5.10 release cut (Milestone #104), Car V6510-W2-REL
+
+<!-- prawduct: type=internal | scope=v6510-release -->
+
+- Compiled 4 accepted `changelog.d/` fragments (#3206 from PR #3240; #3207 from PR #3233/PR
+  #3240/PR #3241; #3208 from PR #3235/PR #3240; #3209 from PR #3233/PR #3240/PR #3241) into
+  `CHANGELOG.md` section `[6.5.10]`, target version `6.5.10` (minor — the fragment set is 3
+  `added` + 1 `fixed`). Ran `compileFragments`/`spliceIntoUnreleased` first to see the
+  mechanical output before writing anything: the `3206.v6-navigation-sub100ms-cache.added.md`
+  fragment's own 4 bullets already read as a consolidated, user-facing summary of ALL 4 issues
+  (including the #3208 fix), while `3207`/`3208`/`3209`'s own fragments restate the same 4
+  changes in a more implementation-level voice — compiling all 8 bullets verbatim would have
+  published each change twice. The fragment contract (`docs/changelog-fragments.md`) says
+  explicitly that deduplication is never automatic ("a fragment and a direct entry that say the
+  same thing are two entries, and the reviewer's job") — hand-wrote the `[6.5.10]` section from
+  the 4 `3206` bullets (moving the #3208 bullet to `### Fixed`, where Keep a Changelog convention
+  and its own fragment's type both place it, rather than leaving it under `### Added` where its
+  file happened to sit), and used the richer implementation-level prose from `3207`/`3208`/`3209`
+  in `docs/releases/v6.5.10.md` instead, where that level of detail fits. Bumped `version.json`
+  (`6.5.9` -> `6.5.10`), updated README pins/banner (prose hand-written here, not generated) and
+  the released-section lock via `scripts/release-prepare.js`, and updated `FEATURES.md`,
+  `ROADMAP.md`, `docs/releases/index.md` and `docs/releases/v6.5.10.md`.
+- Dispatched by `TC-Lane-Arc` via Medusa (Ruling A1009) after all 4 Wave 1 cars true-merged to
+  `origin/main @ fff69d90063c27d020b94bc82cd273642acf0a66`, closing all 4 Milestone #104 issues
+  (#3206, #3207, #3208, #3209). Verified the dispatch's base commit, the 4 PR merges, the 4
+  issue closures, and every PR-to-issue association it cited directly (`gh issue view`, `gh pr
+  view --json body`) before branching — all checked out exactly as stated, no discrepancy this
+  round.
+- Branched `release/v6.5.10` explicitly from the named base commit (`git checkout -b
+  release/v6.5.10 fff69d90063c27d020b94bc82cd273642acf0a66`).
+- FEATURES.md entries cite verified anchors (`public/v6-shell.js#handleRoute`,
+  `public/api-helper.js#tcV6AnimatedEllipsisMarkup`/`#tcV6CreateAnimatedEllipsisController`/
+  `#tcV6RenderEngineUsageCardMarkup`/`#tcV6FormatResetCountdown`,
+  `lib/usage-windows.js#refreshAllUsageProbes`) grepped against the real merged code, not copied
+  from the dispatch or the fragments.
+- Verified with `node --test test/release-notes.test.js test/changelog*.test.js
+  test/version*.test.js test/features-index.test.js` and `node scripts/test-stage.js 1`, per
+  the dispatch's own named verification commands.
+
 ## 2026-11-23 — v6.5.9 release cut (Milestone #103), Car V659-W3-REL
 
 <!-- prawduct: type=internal | scope=v659-release -->

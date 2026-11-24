@@ -18,7 +18,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
 
-**Latest release:** `v6.5.9` — “a session launch preflight check and structured failure diagnostics catch a bad workspace path, missing engine binary, or auth problem before you click Launch, a centered offline startup hero replaces the dead chat stream with Start/Resume/Edit actions, the Fleet Sidebar now polls lifecycle status consolidated with per-row Rename/Edit/Start actions on every member, Fleet Overview defaults to All Fleets per browser tab, a one-click Start Fleet button launches every offline member at once, Project Settings is now a full-page view with a real 3-phase model picker, and Admin Fleet V6 Chat gains file uploads beyond images plus a drag/paste dropzone” ([release status](docs/releases/v6.5.9.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.5.9` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.5.9/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
+**Latest release:** `v6.5.10` — “clicking a fleet member, fleet, or workspace tab in V6 Shell now updates the active selection and shows the target route's loading state immediately from whatever is already cached, instead of blocking on a fresh sequential reload on every click, every static Loading… text gains a shared, accessibly-animated ellipsis indicator with context-specific labels, the Engine Usage pop-up's Refresh now button and auto-refresh interval control actually work again, a provider probe that fails on one refresh no longer loses its last-known-good reading, and the pop-up now groups each engine's quota into one clearly labelled card” ([release status](docs/releases/v6.5.10.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.5.10` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.5.10/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
 
 One AI coding agent is easy. Five are not. They forget what the last session decided, edit the same files, fight over the same ports, and wait silently for an answer you did not know they needed. You end up watching terminals.
 
@@ -52,7 +52,7 @@ TangleClaw is developed with TangleClaw. Its own Builder, Project Manager and re
 
 ```bash
 # macOS. What the installer does, and what you need first: Quick Start, below
-git clone --branch v6.5.9 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.5.10 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw && ./deploy/install.sh
 ```
 
@@ -186,7 +186,7 @@ Most importantly, TangleClaw enforces strict safety boundaries, ensuring that wh
 ## Quick Start
 
 ```bash
-git clone --branch v6.5.9 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.5.10 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw
 ./deploy/install.sh
 ```
