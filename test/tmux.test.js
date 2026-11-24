@@ -1894,7 +1894,13 @@ describe('tmux', () => {
       // geometry when a narrow client shrank it. Both go through `_target()`,
       // and it checks the session exists first, for the reason
       // `paneCurrentPath`/`visiblePane` do.
-      assert.equal(targets.length, 39, `expected 39 -t sites in lib/tmux.js, found ${targets.length}`);
+      // 40 since `_cancelStrayCopyMode` (#3247) added one: a second
+      // `send-keys -X cancel`, on the inner `TCC_SOCKET` pane, for a
+      // TCC-bootstrapped session whose default-server pane is only the
+      // thin attach-proxy the first (pre-existing) send already clears —
+      // the real pane the operator actually types into never got this
+      // clear before. Goes through `_target()` too, like the first send.
+      assert.equal(targets.length, 40, `expected 40 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,
@@ -1906,6 +1912,103 @@ describe('tmux', () => {
       // must stay bare, or tmux would create a session literally called "=x:".
       assert.match(src, /new-session[^\n]*-s \$\{_escapeArg\(name\)\}/,
         'new-session -s names a new session and must NOT be exact-match wrapped');
+    });
+
+    describe('_cancelStrayCopyMode also clears the inner TCC_SOCKET pane for a TCC-bootstrapped session (#3247)', () => {
+      /**
+       * A fully fake `tmux` on PATH: `has-session` always succeeds, the
+       * default-server `display-message` always reports the attach-proxy
+       * shape `_isTccAttachProxyPane` recognizes (`1,tmux`), and every
+       * `send-keys -X cancel` — with or without a leading `-L <socket>` —
+       * is appended, one line per call, to `logFile`. No real TCC-authorized
+       * server is ever involved; this exercises exactly the branching
+       * `_cancelStrayCopyMode`/`_resolveCapturePaneTarget` do.
+       * @param {string} binDir
+       * @param {string} logFile
+       */
+      function writeTccProxyCopyModeShim(binDir, logFile) {
+        fs.writeFileSync(path.join(binDir, 'tmux'), [
+          '#!/bin/sh',
+          'case "$*" in',
+          '  *has-session*) exit 0 ;;',
+          '  *pane_current_command*) printf "1,tmux\\n"; exit 0 ;;',
+          `  *send-keys*-X*cancel*) echo "$*" >> '${logFile}'; exit 0 ;;`,
+          '  *) exit 0 ;;',
+          'esac',
+        ].join('\n'), { mode: 0o755 });
+      }
+
+      it('sends -X cancel on both the default socket and the inner TCC_SOCKET', () => {
+        const os = require('node:os');
+        const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-copymode-tcc-'));
+        const logFile = path.join(binDir, 'send-keys.log');
+        writeTccProxyCopyModeShim(binDir, logFile);
+        const realPath = process.env.PATH;
+        process.env.PATH = `${binDir}:${realPath}`;
+        try {
+          tmux._cancelStrayCopyMode('some-session');
+          const calls = fs.readFileSync(logFile, 'utf8').trim().split('\n');
+          assert.equal(calls.length, 2, 'exactly one default-socket send and one inner-socket send');
+          assert.ok(!calls[0].includes('-L'), 'the first (default-socket) send carries no -L flag');
+          assert.ok(calls[1].includes(`-L ${tmux.TCC_SOCKET}`), 'the second send targets the inner TCC_SOCKET');
+        } finally {
+          process.env.PATH = realPath;
+          fs.rmSync(binDir, { recursive: true, force: true });
+        }
+      });
+
+      it('still clears the default socket even when the inner send itself fails', () => {
+        const os = require('node:os');
+        const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-copymode-tcc-fail-'));
+        const logFile = path.join(binDir, 'send-keys.log');
+        fs.writeFileSync(path.join(binDir, 'tmux'), [
+          '#!/bin/sh',
+          'case "$*" in',
+          '  *has-session*) exit 0 ;;',
+          '  *pane_current_command*) printf "1,tmux\\n"; exit 0 ;;',
+          `  *-L*send-keys*-X*cancel*) echo "$*" >> '${logFile}'; exit 1 ;;`,
+          `  *send-keys*-X*cancel*) echo "$*" >> '${logFile}'; exit 0 ;;`,
+          '  *) exit 0 ;;',
+          'esac',
+        ].join('\n'), { mode: 0o755 });
+        const realPath = process.env.PATH;
+        process.env.PATH = `${binDir}:${realPath}`;
+        try {
+          assert.doesNotThrow(() => tmux._cancelStrayCopyMode('some-session'));
+          const calls = fs.readFileSync(logFile, 'utf8').trim().split('\n');
+          assert.equal(calls.length, 2, 'both sends were still attempted despite the inner one failing');
+        } finally {
+          process.env.PATH = realPath;
+          fs.rmSync(binDir, { recursive: true, force: true });
+        }
+      });
+
+      it('sends -X cancel only once, with no -L flag, for an ordinary (non-TCC) session', () => {
+        const os = require('node:os');
+        const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-copymode-plain-'));
+        const logFile = path.join(binDir, 'send-keys.log');
+        fs.writeFileSync(path.join(binDir, 'tmux'), [
+          '#!/bin/sh',
+          'case "$*" in',
+          '  *has-session*) exit 0 ;;',
+          // The ordinary (non-proxy) shape: alternate_on=0, an interactive shell.
+          '  *pane_current_command*) printf "0,zsh\\n"; exit 0 ;;',
+          `  *send-keys*-X*cancel*) echo "$*" >> '${logFile}'; exit 0 ;;`,
+          '  *) exit 0 ;;',
+          'esac',
+        ].join('\n'), { mode: 0o755 });
+        const realPath = process.env.PATH;
+        process.env.PATH = `${binDir}:${realPath}`;
+        try {
+          tmux._cancelStrayCopyMode('some-session');
+          const calls = fs.readFileSync(logFile, 'utf8').trim().split('\n');
+          assert.equal(calls.length, 1, 'no second (inner-socket) send for an ordinary session');
+          assert.ok(!calls[0].includes('-L'));
+        } finally {
+          process.env.PATH = realPath;
+          fs.rmSync(binDir, { recursive: true, force: true });
+        }
+      });
     });
 
     // These four verbs reject a bare `=name` and are the ones whose failure is

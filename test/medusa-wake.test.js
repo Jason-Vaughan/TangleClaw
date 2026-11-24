@@ -40,7 +40,8 @@ const AIDER = wake.ENGINE_WAKE_PROFILES.aider;
 // so the two cannot drift on the exact bytes (`test/_wake-fixtures.js`).
 const {
   IDLE_PANE, BUSY_PANE, DIALOG_PANE, TYPING_PANE,
-  AG_IDLE_PANE, AG_BUSY_PANE, AG_DIALOG_PANE, AG_TYPING_PANE
+  AG_IDLE_PANE, AG_BUSY_PANE, AG_DIALOG_PANE, AG_TYPING_PANE,
+  CX_COMPOSER, CX_TRANSCRIPT_PROSE_PANE
 } = require('./_wake-fixtures');
 
 /** A live tmux Claude session record. */
@@ -339,6 +340,192 @@ describe('medusa-wake — placeholder styling is declared per engine (#1105)', (
       'SGR 2 is not antigravity\'s placeholder marker');
     assert.deepEqual(CLAUDE.placeholderSgr, [2]);
     assert.deepEqual(AG.placeholderSgr, [90]);
+  });
+});
+
+describe('medusa-wake — busyMarker/idleMarker scoped to the trailing status chrome, not arbitrary transcript prose (#3247)', () => {
+  // A long reply (far past the 8-row trailing window) whose own prose
+  // happens to quote the exact busy-marker/idle-marker phrases -- e.g. an
+  // engine summarizing TangleClaw's own wake-nudge detection back to the
+  // operator, or reading this project's own documentation out loud.
+  const TRANSCRIPT_MENTIONING_CLAUDE_MARKER = [
+    '⏺ Here is what I found about the wake monitor:',
+    '  The switchboard nudges a session only while it reads at rest, and the',
+    '  gate it uses treats "esc to interrupt" as proof a turn is still in',
+    '  flight. I confirmed this by reading lib/medusa-wake.js directly.',
+    '  None of this means a turn is actually in flight right now in THIS',
+    '  pane -- it is simply discussing the phrase itself, from several lines',
+    '  back, not showing it live. The rest of this reply has nothing more',
+    '  to add on the topic.',
+    '',
+    ''
+  ];
+  const TRANSCRIPT_MENTIONING_AG_MARKER = [
+    '• Here is a summary of the busy/idle detection this project uses:',
+    '  Antigravity panes are read for the literal substring "esc to cancel"',
+    '  to decide whether a turn is in flight, and "? for shortcuts" as the',
+    '  positive at-rest signal. Both strings are quoted here only to',
+    '  describe how the gate works, from several lines back in this reply,',
+    '  not because either condition is true of this pane right now.',
+    ''
+  ];
+
+  it('Claude: an idle pane whose transcript body quotes "esc to interrupt" is still at-rest', () => {
+    const lines = [...TRANSCRIPT_MENTIONING_CLAUDE_MARKER, ...IDLE_PANE];
+    assert.deepEqual(wake._assessActivity(lines, CLAUDE), { working: false, reason: null });
+    assert.deepEqual(wake._assessPane(lines, CLAUDE, null), { idle: true, reason: 'at-prompt' });
+  });
+
+  it('Claude: the SAME transcript with a genuinely busy chrome row is still turn-in-flight', () => {
+    const lines = [...TRANSCRIPT_MENTIONING_CLAUDE_MARKER, ...BUSY_PANE];
+    assert.deepEqual(wake._assessActivity(lines, CLAUDE), { working: true, reason: 'turn-in-flight' });
+  });
+
+  it('Antigravity: an idle pane whose transcript body quotes "esc to cancel"/"? for shortcuts" is still at-rest', () => {
+    const lines = [...TRANSCRIPT_MENTIONING_AG_MARKER, ...AG_IDLE_PANE];
+    assert.deepEqual(wake._assessActivity(lines, ANTIGRAVITY), { working: false, reason: null });
+    assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, null), { idle: true, reason: 'at-prompt' });
+  });
+
+  it('Antigravity: the SAME transcript with a genuinely busy chrome row is still turn-in-flight', () => {
+    const lines = [...TRANSCRIPT_MENTIONING_AG_MARKER, ...AG_BUSY_PANE];
+    assert.deepEqual(wake._assessActivity(lines, ANTIGRAVITY), { working: true, reason: 'turn-in-flight' });
+  });
+
+  it('the trailing window is exactly 8 rows: the 8th-from-end row is scanned, the 9th-from-end is not', () => {
+    const inside8 = ['esc to interrupt', ...Array(7).fill('filler')];
+    const outside9 = ['esc to interrupt', ...Array(8).fill('filler')];
+    assert.deepEqual(wake._assessActivity(inside8, CLAUDE), { working: true, reason: 'turn-in-flight' },
+      'exactly 8 rows: the marker is the first (oldest) row of the trailing window');
+    assert.deepEqual(wake._assessActivity(outside9, CLAUDE), { working: false, reason: null },
+      'one row older than the window: the marker is now one row short of it');
+  });
+
+  // #3247 R3 (PRR-A R-Gate R2) — _assessActivity is EXPORTED and already
+  // had two external callers besides this file's own two internal ones:
+  // lib/wrap-delivery-receipt.js and test/activity-observer.test.js, both
+  // predating this scoping fix, both passing the pane as a single joined
+  // string rather than rows. Must accept both shapes identically, not just
+  // the array shape this file's own two callers happen to use.
+  it('accepts both a rows array and a single joined string, with identical status-chrome scoping', () => {
+    const lines = [...TRANSCRIPT_MENTIONING_CLAUDE_MARKER, ...BUSY_PANE];
+    const asString = lines.join('\n');
+    assert.deepEqual(wake._assessActivity(lines, CLAUDE), wake._assessActivity(asString, CLAUDE));
+    assert.deepEqual(wake._assessActivity(asString, CLAUDE), { working: true, reason: 'turn-in-flight' });
+
+    const idleLines = [...TRANSCRIPT_MENTIONING_CLAUDE_MARKER, ...IDLE_PANE];
+    const idleAsString = idleLines.join('\n');
+    assert.deepEqual(wake._assessActivity(idleLines, CLAUDE), wake._assessActivity(idleAsString, CLAUDE));
+    assert.deepEqual(wake._assessActivity(idleAsString, CLAUDE), { working: false, reason: null },
+      'the trailing-window scoping excludes the same transcript mention whether the pane arrives as rows or as one string');
+  });
+
+  // #3247 R4 (PRR-B R-Gate R3) — a FIXED 8-row trailing window is a
+  // knife-edge against a short fixture: a single-line reply immediately
+  // above IDLE_PANE/AG_IDLE_PANE/AG_DIALOG_PANE (each well under 8 rows)
+  // still falls INSIDE that window. On AG_DIALOG_PANE specifically, a
+  // quoted "? for shortcuts" one line above it made _assessPane read a
+  // LIVE permission dialog as idle/at-prompt. _statusChromeFor's
+  // structural divider/glyph anchor holds regardless of how short the
+  // transcript above the real chrome is.
+  describe('structural chrome isolation holds even for a single-line reply immediately above a short pane (#3247 R4)', () => {
+    it('Claude: a reply quoting "esc to interrupt" immediately above IDLE_PANE is still at-rest', () => {
+      const lines = ['Reply: the marker is "esc to interrupt".', ...IDLE_PANE];
+      assert.deepEqual(wake._assessActivity(lines, CLAUDE), { working: false, reason: null });
+      assert.deepEqual(wake._assessPane(lines, CLAUDE, null), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('Antigravity: a reply quoting "esc to cancel" immediately above AG_IDLE_PANE is still at-rest', () => {
+      const lines = ['Reply: the marker is "esc to cancel".', ...AG_IDLE_PANE];
+      assert.deepEqual(wake._assessActivity(lines, ANTIGRAVITY), { working: false, reason: null });
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, null), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('Antigravity: a reply quoting "? for shortcuts" immediately above an ACTIVE dialog (AG_DIALOG_PANE) still refuses as not-at-rest, never at-prompt', () => {
+      const lines = ['Reply: "? for shortcuts" is the idle marker.', ...AG_DIALOG_PANE];
+      assert.deepEqual(wake._assessActivity(lines, ANTIGRAVITY), { working: true, reason: 'not-at-rest' });
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, null), { idle: false, reason: 'not-at-rest' });
+    });
+  });
+
+  // #3247 R5 (PRR-A R-Gate R4) — R4's unbordered (Codex/Aider) branch added
+  // the one non-blank row above the composer/prompt glyph to busyRows
+  // UNCONDITIONALLY. An idle pane whose transcript's own last line merely
+  // mentions the busy phrase mid-sentence — not a real busy status row —
+  // still matched, since nothing checked the row's actual SHAPE.
+  describe('the row above an unbordered composer/prompt only counts as busy when it has the measured busy-status-row shape (#3247 R5)', () => {
+    const CODEX = wake.ENGINE_WAKE_PROFILES.codex;
+
+    it('Codex: a transcript line merely mentioning "esc to interrupt" (not the real "• Working (...)" row) above an idle composer is still at-rest', () => {
+      const lines = ['The phrase "esc to interrupt" is only documentation.', '› Ask Codex to do anything', '', '  GPT-6-Astra default · Ready · Ask for approval'];
+      assert.deepEqual(wake._assessActivity(lines, CODEX), { working: false, reason: null });
+      assert.deepEqual(wake._assessPane(lines, CODEX, null), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('Aider: a transcript line merely mentioning "Waiting for model" (not starting with the real busyMarker) above an idle prompt is still at-rest', () => {
+      const lines = ['The phrase "Waiting for model" is only documentation.', '> '];
+      assert.deepEqual(wake._assessActivity(lines, AIDER), { working: false, reason: null });
+      assert.deepEqual(wake._assessPane(lines, AIDER, null), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('Codex: the GENUINE "• Working (...)" busy row above the composer is still detected', () => {
+      const lines = ['• Working (3s • esc to interrupt)', '› Ask Codex to do anything', '', '  GPT-6-Astra default · Working · Ask for approval'];
+      assert.deepEqual(wake._assessActivity(lines, CODEX), { working: true, reason: 'turn-in-flight' });
+    });
+
+    it('Aider: the GENUINE "Waiting for <model>" busy row above the prompt is still detected', () => {
+      const lines = ['Waiting for ollama_chat/gpt-oss:120b', '> '];
+      assert.deepEqual(wake._assessActivity(lines, AIDER), { working: true, reason: 'turn-in-flight' });
+    });
+  });
+
+  // #3247 R6 (PRR-B R-Gate R5) — R5's shape check still accepted a
+  // `startsWith(profile.busyMarker)` prefix, so a multi-word transcript
+  // sentence that happens to BEGIN with the marker still matched ("esc to
+  // interrupt is only documentation.", "Waiting for model is ordinary
+  // transcript prose." — the latter genuinely starts with Aider's own
+  // "Waiting for "). The full-row-shape regexes require nothing else on
+  // the row at all.
+  describe('a leading-prose sentence starting with the marker itself is still excluded, not just mid-sentence prose (#3247 R6)', () => {
+    const CODEX = wake.ENGINE_WAKE_PROFILES.codex;
+
+    it('Codex: "esc to interrupt is only documentation." above the composer is still at-rest', () => {
+      const lines = ['esc to interrupt is only documentation.', CX_COMPOSER, '  · Ready ·'];
+      assert.deepEqual(wake._assessActivity(lines, CODEX), { working: false, reason: null });
+      assert.deepEqual(wake._assessPane(lines, CODEX, null), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('Aider: "Waiting for model is ordinary transcript prose." above the prompt is still at-rest', () => {
+      const lines = ['Waiting for model is ordinary transcript prose.', '> '];
+      assert.deepEqual(wake._assessActivity(lines, AIDER), { working: false, reason: null });
+      assert.deepEqual(wake._assessPane(lines, AIDER, null), { idle: true, reason: 'at-prompt' });
+    });
+  });
+
+  // #3247 R7 — a full-repo CI run (not this car's own two sibling test
+  // files, which were caught only by the full suite) found two more gaps
+  // R4-R6 introduced:
+  //   (a) unbordered idleRows got scoped to rows.slice(lastGlyph+1), but
+  //       Codex has no reliable composer anchor for the IDLE marker at
+  //       all (its composer draws identically idle or mid-turn) -- a
+  //       SEPARATE mechanism (the engine-channel hold, ledger 5030) is
+  //       what actually catches a Codex pane quoting its idle marker in
+  //       prose, not this gate, and test/medusa-wake-engine-activity.test.js
+  //       asserts that precondition explicitly.
+  //   (b) divider-bordered busyRows was scoped to belowDivider only, but
+  //       Claude draws its own live-turn spinner ABOVE the divider, not
+  //       in the status footer below it.
+  describe('unbordered idleRows stays unscoped (a separate mechanism, not this gate, catches Codex prose-quoting-its-idle-marker) and the divider-bordered busy spinner above the divider is still detected (#3247 R7)', () => {
+    it('Codex: _assessPane alone still reads CX_TRANSCRIPT_PROSE_PANE as idle -- the precondition a separate engine-channel hold exists to catch (ledger 5030)', () => {
+      const CODEX = wake.ENGINE_WAKE_PROFILES.codex;
+      assert.equal(wake._assessPane(CX_TRANSCRIPT_PROSE_PANE, CODEX, null).idle, true);
+    });
+
+    it('Claude: a live-turn spinner row above the divider ("✻ Churning… (12s · esc to interrupt)") is still turn-in-flight', () => {
+      const lines = ['✻ Churning… (12s · esc to interrupt)', ...IDLE_PANE];
+      assert.deepEqual(wake._assessActivity(lines, CLAUDE), { working: true, reason: 'turn-in-flight' });
+      assert.equal(wake._assessPane(lines, CLAUDE, null).idle, false);
+    });
   });
 });
 
