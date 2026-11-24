@@ -6750,13 +6750,26 @@ p.v6-history-secret {
    var(--danger) (theme-aware) and var(--warning) (theme-aware) for
    fail/blocked and in_progress; "pass" gets the same dedicated
    [data-theme="light"] override pattern .v6-usage-source-badge--probed
-   above already uses, since no theme-aware "success" token exists yet. */
+   above already uses, since no theme-aware "success" token exists yet.
+   #3210 R2 BLOCKING 1: an explicit var(--card-bg, #0d0d0d) background —
+   this badge can mount inside .sprint-wave-card (background:
+   var(--tc-panel-surface), which [data-theme="light"] never overrides,
+   so it stays #101713 even in light theme) as well as .v6-workspace-item
+   (background: var(--card-bg)) — verified directly that EVERY light-
+   theme text color below measured well under 4.5:1 against #101713
+   specifically (#1a7f37: 3.58:1, var(--danger) #8f3230: 2.31:1,
+   var(--warning) #7A4F00: 2.55:1), even though each already clears
+   4.5:1 against var(--card-bg) on its own. Giving the badge its own
+   opaque surface means every color only ever has to clear contrast
+   against ONE background it controls, regardless of what it is mounted
+   on top of. */
 .v6-sprint-gate-badge {
   display: inline-block;
   min-width: 1.6em;
   padding: 0 4px;
   border: 1px solid currentColor;
   border-radius: 999px;
+  background: var(--card-bg, #0d0d0d);
   font-size: 0.72em;
   font-weight: 600;
   text-align: center;
@@ -6767,8 +6780,24 @@ p.v6-history-secret {
 .v6-sprint-gate-badge.is-fail,
 .v6-sprint-gate-badge.is-blocked { color: var(--danger); }
 .v6-sprint-gate-badge.is-in_progress { color: var(--warning); }
+/* #3210 R2 BLOCKING 1: var(--text-muted), not the pre-existing
+   .sprint-gate-pill convention's #8c959f + opacity: 0.8 — that literal
+   is unverified against this badge's own var(--card-bg) background in
+   either theme, and the opacity dilution would undermine whatever
+   margin it has anyway; var(--text-muted) is already the token this
+   file's own theme blocks keep >= 4.5:1 against --card-bg in both
+   themes, with no opacity needed. */
 .v6-sprint-gate-badge.is-pending,
-.v6-sprint-gate-badge.is-unknown { color: inherit; border-color: #8c959f; opacity: 0.8; }
+.v6-sprint-gate-badge.is-unknown { color: var(--text-muted); }
+/* Forward styling only — PR #3244 (Car V6511-W1-B)'s real
+   sprintCarGateBadgesMarkup emits only is-${status} today (checked its
+   actual diff directly), never these two compound modifiers the
+   existing .sprint-gate-pill convention uses for the same concepts
+   (is-${status} + is-inferred when source==='stage', + is-stale when
+   bound to a different head) — may go unused until/unless a future
+   round of that car (or another) adds them; harmless either way. */
+.v6-sprint-gate-badge.is-inferred { border-style: dashed; }
+.v6-sprint-gate-badge.is-stale { text-decoration: line-through; }
 
 /* #3088: the charter versions and the train launch controls under Charter & Roadmap. */
 .v6-workspace-panel-subtitle {
