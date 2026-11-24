@@ -4,6 +4,46 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.5.12] - 2026-11-23
+
+### Added
+- Added a Mechanical Maximum Fleet Parallelization Guard to the Wave Scheduler (`lib/v6/c3-wave-scheduler.js`): `planParallelWaveShards` mechanically shards a flat list of issues into file-disjoint, lane-capacity-bounded parallel waves (one Car per available Builder lane, `dependsOn` set only when an issue is pushed past Wave 1 by a real file-scope conflict or by every lane being taken), and `validateParallelWavePlan` rejects a plan that collapses multiple issues into a single Wave 1 Car — single-stream drift — unless an explicit `serialReason` is attested or every later Car genuinely, pairwise conflicts with Wave 1's one Car. `WaveScheduler#createRun` enforces the guard inline when `metadata.enforceParallelSharding` is set, before persisting anything; existing callers that never set it keep today's behavior exactly (#3213, #3216).
+- Added a non-blocking async session launch option (#3216 Pillar 2): `launchSessionAsync` in `lib/sessions.js` returns an accepted `"starting"` receipt immediately after its synchronous admission checks (project exists, not archived/stopped, no existing active session), deferring the real launch to `setImmediate` so a slow tmux probe or spawn never blocks the request. `POST /api/sessions/:project` now supports `?async=true` / `body.async === true`, reusing the synchronous path's existing error classification unchanged when omitted. A single-flight claim holds through the full launch, including a WebUI continuation's own promise, so a concurrent launch request for the same project is refused `409` rather than racing it. For a model-override launch specifically, `lib/profile-reconciler.js#snapshotExistingSessionIdsAsync` scans the engine's session-history files for prior session ids the same way the existing synchronous scan does, just yielding to the event loop every 20 files, so a scan that can take several seconds on a machine with heavy session history no longer blocks the process solid while it runs.
+
+### Fixed
+- `tc model switch` no longer misclassifies a cross-provider switch as a
+  same-provider live reconcile when SQLite's `projects.engine_id` has
+  drifted from the actually-running session's own engine (#3216, Pillar
+  3): `sameProvider` is now decided from the live session's `engineId`,
+  falling back to `projects.engine_id` only when a session is absent.
+  `project.json`'s own `engine` field — previously only `projects.engine_id`
+  was healed on a switch — is now kept in sync alongside `model` too, so a
+  project.json that already names an `engine` never goes stale.
+- Fixed (#3216): macOS TCC permission restrictions on `~/Documents` could wedge
+  a governed session wrap's `learnings-capture` gate and its DB mirroring
+  (`lib/wrap-steps/learnings-coverage.js`, `lib/wrap-steps/learnings-db-write.js`)
+  when a project's `.tangleclaw/memories/learnings.md` is EPERM/EACCES at
+  `<project.path>` — both steps now also check the TCC-exempt managed workspace
+  mirror `~/.tangleclaw/workspaces/<project>/.tangleclaw/memories/learnings.md`,
+  judging whichever of the two readable candidates is fresher. Whenever the
+  managed fallback is the chosen candidate, a best-effort control-plane mirror
+  sync writes its content back to the primary path, so a later read converges
+  once TCC allows writing there again.
+- Fixed the Medusa wake monitor permanently reading a Claude or Antigravity
+  session as mid-turn after a reply merely quoted the engine's own busy/idle
+  marker phrases ("esc to interrupt", "esc to cancel", "? for shortcuts") in
+  prose — a session summarizing this project's own wake-detection logic (or
+  the wake nudge's own instructional text) back to the operator could lock
+  itself out of further nudges, since nothing ever removes a transcript line
+  once it has scrolled into the read. `_assessActivity` now scans only the
+  pane's trailing status/composer chrome for these markers, not the whole
+  captured transcript. Also fixed a wake nudge never clearing a stray
+  tmux copy-mode overlay on a TCC-bootstrapped session's real pane — only
+  the thin attach-proxy on the default socket was ever cleared before, so
+  a frozen scrollback viewport on the inner TCC-authorized socket could
+  still swallow the nudge's keystrokes; `_cancelStrayCopyMode` now clears
+  both (#3247).
+
 ## [6.5.11] - 2026-11-23
 
 ### Added

@@ -41,6 +41,42 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-23 — v6.5.12 release cut (Milestone #106), Car V6512-W2-REL
+
+<!-- prawduct: type=internal | scope=v6512-release -->
+
+- Compiled the 4 accepted `changelog.d/` fragments (#3213 from PR #3236; #3216 Pillar 3 from
+  PR #3237; #3216 Pillar 4 from PR #3239; #3247 from PR #3249) into `CHANGELOG.md` section
+  `[6.5.12]` via `compileFragments`/`spliceIntoUnreleased`/`_promoteUnreleased`, target version
+  `6.5.12` (minor — 1 `added` + 3 `fixed`, no duplication to resolve this round). Bumped
+  `version.json` (`6.5.11` -> `6.5.12`), updated README pins/banner (prose hand-written here)
+  and the released-section lock via `scripts/release-prepare.js`, and updated `FEATURES.md`,
+  `ROADMAP.md`, `docs/releases/index.md` and `docs/releases/v6.5.12.md`.
+- **Filled a real gap the dispatch flagged**: PR #3238 (`#3216` Pillar 2, non-blocking async
+  session launch) merged with no `changelog.d/` fragment of its own — its own PR body's
+  `Changelog: none` escape line claimed `changelog.d/3216.runtime-engine-hardening.added.md`
+  "lands in sibling Car V6512-W1-A", but that fragment never existed anywhere in git history and
+  no such sibling car ever merged (checked `git log --all` for both before writing anything).
+  Hand-wrote a `### Added` entry for PR #3238's real deliverables in `CHANGELOG.md` and
+  `FEATURES.md`, verifying the final merged symbol names directly against `origin/main`
+  (`lib/sessions.js#launchSessionAsync`, `lib/profile-reconciler.js#snapshotExistingSessionIdsAsync`)
+  rather than copying from memory or the PR body.
+- Verified before branching: base commit `14539df06105a5a8cc4e796a271b1b3ec71c27e5` (PRs #3236,
+  #3237, #3238, #3239, #3249 all true-merged, in that order), issues #3213/#3216/#3247 all
+  closed, milestone #106 at 0 open / 3 closed — all checked directly against `gh`, not assumed
+  from the dispatch (which this round named only real, existing tooling and test files, unlike
+  the prior round's pre-dispatch).
+- `FEATURES.md` entries cite anchors grepped against the real merged code
+  (`lib/v6/c3-wave-scheduler.js#planParallelWaveShards`/`#validateParallelWavePlan`,
+  `lib/model-switch.js#switchSessionModel`, `lib/wrap-steps/learnings-coverage.js`/
+  `learnings-db-write.js`, `lib/medusa-wake.js#_assessActivity`, `lib/tmux.js#_cancelStrayCopyMode`),
+  not copied from the fragments or PR titles.
+- Branched `release/v6.5.12` explicitly from the named base commit (`git checkout -b
+  release/v6.5.12 14539df06105a5a8cc4e796a271b1b3ec71c27e5`).
+- Verified with `node --test test/readme-version-pins.test.js test/changelog*.test.js
+  test/version*.test.js test/features-index.test.js` (446/446 pass) and
+  `node scripts/test-stage.js 1`.
+
 ## 2026-11-23 — v6.5.11 release cut (Milestone #105), Car V6511-W2-REL
 
 <!-- prawduct: type=internal | scope=v6511-release -->
