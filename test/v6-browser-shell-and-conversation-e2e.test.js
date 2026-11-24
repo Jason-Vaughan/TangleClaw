@@ -2281,8 +2281,14 @@ describe('Car V6511-W1-C: cohesive Sprint & Cars side-by-side layout (#3210 Deli
       assert.equal(panel.id, 'v6WorkspacePanel');
       const directChildClasses = panel.childNodes.map((c) => c.className);
       assert.equal(directChildClasses[0], 'v6-workspace-panel-title');
-      assert.equal(directChildClasses[1], 'sprint-wave-board');
-      assert.equal(directChildClasses[2], 'sprint-gate-matrix');
+      // #3210 Wave 1 integration seam (PR #3243 was authored before PR #3244
+      // merged): the real public/v6-shell.js now prepends a
+      // `.v6-sprint-cars-summary` strip (from #3244) as a sibling direct
+      // child before `.sprint-wave-board`, so the integrated main has 4
+      // flat direct children, not 3.
+      assert.equal(directChildClasses[1], 'v6-sprint-cars-summary');
+      assert.equal(directChildClasses[2], 'sprint-wave-board');
+      assert.equal(directChildClasses[3], 'sprint-gate-matrix');
       assert.ok(panel.childNodes.some((c) => c.className === 'sprint-wave-board'), ':has(> .sprint-wave-board) only matches a panel whose DIRECT child carries this exact class — confirmed present in the REAL rendered output');
     });
   });

@@ -41,6 +41,76 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-23 — v6.5.11 release cut (Milestone #105), Car V6511-W2-REL
+
+<!-- prawduct: type=internal | scope=v6511-release -->
+
+- Compiled the 1 accepted `changelog.d/` fragment (#3210 from PR #3234/PR #3243/PR #3244) into
+  `CHANGELOG.md` section `[6.5.11]` via `compileFragments`/`spliceIntoUnreleased`/
+  `_promoteUnreleased`, target version `6.5.11` (minor — single `added` fragment, no
+  duplication this round since it's one fragment). Bumped `version.json` (`6.5.10` ->
+  `6.5.11`), updated README pins/banner (prose hand-written here, not generated) and the
+  released-section lock via `scripts/release-prepare.js`, and updated `FEATURES.md`,
+  `ROADMAP.md`, `docs/releases/index.md` and `docs/releases/v6.5.11.md`.
+- Dispatched by `TC-Lane-Arc` via Medusa, pre-dispatched before the 3 Wave 1 PRs merged and
+  confirmed actionable once `TC-Lane-INT` reported all 3 true-merged to
+  `origin/main @ 766d68b75c00541b087cd402affdf85fc961308a`, closing Milestone #105's 1 issue
+  (#3210). Verified the base commit, all 3 PR merges, the issue closure, and the milestone's
+  0-open/1-closed count directly against `gh` before branching.
+- The pre-dispatch named a release-compile script (`scripts/release-build-changelog.js`) and 3
+  test files (`test/release-notes-6-5.test.js`, `test/doc-version-parity.test.js`,
+  `test/prawduct-badge-sync.test.js`) that do not exist in this repo, and a release date
+  (`2026-04-20`) in the past relative to today — flagged all 4 to `TC-Lane-Arc` before acting;
+  Arc confirmed falling back to the verified v6.5.10 workflow (`lib/changelog-fragments.js` +
+  `scripts/release-prepare.js` + the real test files) and today's actual date.
+- Separately caught, while preparing this round's verification command, that the prior
+  v6.5.10 entry's (and that PR's) claimed verification command named `test/release-notes.test.js`
+  — that file does not exist either. `node --test` with multiple file arguments silently drops
+  a missing explicit filename when the other glob arguments still match real files, with no
+  error printed, so the earlier 441/441 claim was real (the OTHER files did run) but the
+  citation of that one filename was not. The actual README/banner coverage for that release was
+  genuinely exercised, just by `test/readme-version-pins.test.js`, run separately — substance was
+  never wrong, only the citation. Used the real filename for this round's verification instead.
+- Branched `release/v6.5.11` explicitly from the named base commit (`git checkout -b
+  release/v6.5.11 766d68b75c00541b087cd402affdf85fc961308a`).
+- Verified with `node --test test/readme-version-pins.test.js test/changelog*.test.js
+  test/version*.test.js test/features-index.test.js` (446/446 pass — `test/changelog*.test.js`
+  already matches `test/changelog-fragment-gate.test.js`, so naming it again in the same
+  command would be redundant, not an additional 26) and `node scripts/test-stage.js 1`.
+- **R2** (`TC-Lane-PRR-A`, on `PR #3246` R1 `caacc00300fb4b83f04e62f967ba5ae1f3d9ae58`): the
+  compiled `[6.5.11]` section only recorded publishing the audit/layout-spec/backlog
+  (`changelog.d/3210...md` was written in the docs car, `PR #3234`) without recording that the
+  actual Deliverable 2 UI implementation shipped in `PR #3243`/`PR #3244` — unlike
+  `README.md`, `FEATURES.md` and `docs/releases/v6.5.11.md`, which already recorded both.
+  Verified the cited selectors (`@media (min-width: 1200px)`, `.v6-sprint-gate-badge`,
+  `.v6-sprint-cars-summary`) directly against `public/style.css` before writing them, then added
+  a second `### Added` bullet in `CHANGELOG.md` recording the shipped layout. Re-running
+  `scripts/release-prepare.js` refused ("already-released CHANGELOG sections changed since they
+  were locked") since `6.5.11` was already in the lock from R1 — not a real release-drift case
+  (the PR hasn't merged or been tagged), so computed the new hash directly via the script's own
+  exported `hashReleasedSections(text)` and wrote it into
+  `test/fixtures/changelog-released-sections.lock.json` by hand, rather than bypassing the
+  script's safety check any other way. `release-prepare.js` then reports "already current";
+  the same combined 446/446 and stage 1 still green after.
+- **R4** (CI run `45302717641` on `PR #3246` R3 `c1ec402a511d15008b13ac1fc3be988f39c83c28`;
+  Architect co-sign Ruling A1023, widening this car's envelope from 10 to 11 files): a genuine
+  Wave 1 post-merge integration seam, not a false positive. `PR #3243` (CSS + Stage 2 browser
+  E2E, `Car V6511-W1-C`) was authored before `PR #3244` (`.v6-sprint-cars-summary` strip + inline
+  6-gate badges, `Car V6511-W1-B`) merged, so its mount test in
+  `test/v6-browser-shell-and-conversation-e2e.test.js:2281-2285` asserted only 3 flat direct
+  children of `#v6WorkspacePanel` (`v6-workspace-panel-title`, `sprint-wave-board`,
+  `sprint-gate-matrix`). Reproduced the real failure directly before fixing (ran the test,
+  confirmed `expected: 'sprint-wave-board'` / `actual: 'v6-sprint-cars-summary'` at line 2284;
+  temporarily logged `directChildClasses` to confirm the full real order is
+  `['v6-workspace-panel-title', 'v6-sprint-cars-summary', 'sprint-wave-board',
+  'sprint-gate-matrix']`, then reverted the diagnostic). The dispatch's cited PR-comment id
+  for Ruling A1023 (`7119205543`) 404'd; the real comment is `7119220775` — minor pointer
+  error, the ruling's substance matched my own independent reproduction exactly. Updated the
+  assertions to the 4 real direct children. `node --test
+  test/v6-browser-shell-and-conversation-e2e.test.js` (102/102), the combined release suite
+  (446/446), and `node scripts/test-stage.js 1` all green after. Envelope: the newly co-signed
+  11th file plus `.prawduct/change-log.md`.
+
 ## 2026-11-23 — v6.5.10 release cut (Milestone #104), Car V6510-W2-REL
 
 <!-- prawduct: type=internal | scope=v6510-release -->
