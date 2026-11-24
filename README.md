@@ -18,7 +18,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
 
-**Latest release:** `v6.5.11` — “publishes the standalone V6 Workspace Five-Tab Functional & UX Architecture Audit, benchmarking Chat as the reference experience across all five tabs, evaluating each tab's real responsibility and its one real server-side governance interlock, a verified FleetPack v1alpha1 compatibility comparison for the Wizard, and a ranked P0/P1/P2 design backlog — and ships the audit's own first recommendation: a cohesive side-by-side Sprint & Cars layout joining the Kanban board and 6-gate receipt matrix, with a summary strip and inline 6-gate badges” ([release status](docs/releases/v6.5.11.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.5.11` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.5.11/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
+**Latest release:** `v6.5.12` — “the Wave Scheduler gets a Mechanical Maximum Fleet Parallelization Guard against single-stream drift, session launches can now run non-blocking with a single-flight claim held through the full launch, tc model switch no longer misclassifies a cross-provider switch when the stored engine id has drifted, a governed session wrap's learnings-capture gate no longer wedges under macOS TCC restrictions, and the Medusa wake monitor no longer misreads a session quoting its own busy/idle marker phrases in prose as mid-turn” ([release status](docs/releases/v6.5.12.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.5.12` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.5.12/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
 
 One AI coding agent is easy. Five are not. They forget what the last session decided, edit the same files, fight over the same ports, and wait silently for an answer you did not know they needed. You end up watching terminals.
 
@@ -52,7 +52,7 @@ TangleClaw is developed with TangleClaw. Its own Builder, Project Manager and re
 
 ```bash
 # macOS. What the installer does, and what you need first: Quick Start, below
-git clone --branch v6.5.11 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.5.12 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw && ./deploy/install.sh
 ```
 
@@ -186,7 +186,7 @@ Most importantly, TangleClaw enforces strict safety boundaries, ensuring that wh
 ## Quick Start
 
 ```bash
-git clone --branch v6.5.11 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.5.12 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw
 ./deploy/install.sh
 ```

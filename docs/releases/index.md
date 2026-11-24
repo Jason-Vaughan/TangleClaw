@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.5.11 — V6 Workspace Five-Tab UX Architecture Audit and a cohesive Sprint & Cars layout](v6.5.11.md)
+- [v6.5.12 — Mechanical fleet parallelization, non-blocking async session launch, engine state convergence, and Medusa wake fixes](v6.5.12.md)
 
 ## Recent releases
+
+- [v6.5.11 — V6 Workspace Five-Tab UX Architecture Audit and a cohesive Sprint & Cars layout](v6.5.11.md)
 
 - [v6.5.10 — Sub-100ms V6 navigation caching, animated ellipsis loading indicators, and Engine Usage pop-up fixes & card layout](v6.5.10.md)
 
