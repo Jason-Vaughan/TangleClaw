@@ -2203,13 +2203,14 @@ describe('Car V6511-W1-C: cohesive Sprint & Cars side-by-side layout (#3210 Deli
   it('#3210 R2 BLOCKING 2: every real .v6-sprint-gate-badge state clears WCAG AA (>= 4.5:1) against its own var(--card-bg), in BOTH themes — every token value read from the real CSS, not hardcoded', () => {
     const dark = { cardBg: themeVar(':root', 'card-bg'), danger: themeVar(':root', 'danger'), warning: themeVar(':root', 'warning'), textMuted: themeVar(':root', 'text-muted') };
     const light = { cardBg: themeVar('[data-theme="light"]', 'card-bg'), danger: themeVar('[data-theme="light"]', 'danger'), warning: themeVar('[data-theme="light"]', 'warning'), textMuted: themeVar('[data-theme="light"]', 'text-muted') };
-    const passDark = '#56d364';
+    const passDark = /color: (#[0-9a-fA-F]{6});/.exec(body('.v6-sprint-gate-badge.is-pass'));
+    assert.ok(passDark, 'the dark-theme (base) "pass" rule must declare its own literal color');
     const passLight = /\[data-theme="light"\] \.v6-sprint-gate-badge\.is-pass \{\s*color: (#[0-9a-fA-F]{6});/.exec(css);
     assert.ok(passLight, 'the light-theme "pass" override must declare its own literal color');
     // is-pass (dark value; light override), is-fail/is-blocked (var(--danger)),
     // is-in_progress (var(--warning)), is-pending/is-unknown (var(--text-muted)) — both themes.
     const cases = [
-      ['is-pass (dark)', passDark, dark.cardBg],
+      ['is-pass (dark)', passDark[1], dark.cardBg],
       ['is-pass (light override)', passLight[1], light.cardBg],
       ['is-fail/is-blocked (dark var(--danger))', dark.danger, dark.cardBg],
       ['is-fail/is-blocked (light var(--danger))', light.danger, light.cardBg],
