@@ -17,6 +17,11 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.5.11 — V6 Workspace Five-Tab UX Architecture Audit and a cohesive Sprint & Cars layout
+
+- **V6 Workspace Five-Tab UX Architecture Audit & design backlog** (#3210) — `docs/architecture/v6-five-tab-ux-audit-and-backlog.md`: benchmarks Chat as the reference experience across all five tabs (Chat, Sprint & Cars, Charter & Roadmap, Kaizen & Reports, Wizard), evaluates each tab's real responsibility, direct operator actions vs. the one real server-side governance interlock found (a STOPPED assignment's launch refusal), a current-vs.-proposed `FleetPack v1alpha1` (#3194) compatibility comparison for the Wizard, and a ranked P0/P1/P2 design backlog. Registered in the SSOT Master Document Registry as `V6_FIVE_TAB_UX_AUDIT_AND_BACKLOG`.
+- **Cohesive Sprint & Cars layout** (#3210 Deliverable 2) — `public/v6-shell.js#sprintCarsSummaryMarkup`/`#sprintCarGateBadgesMarkup`/`#sprintCarGateBadgeMarkup`: a side-by-side layout joining the Kanban board and 6-gate receipt matrix, with a summary strip and inline 6-gate badges on each car.
+
 ## v6.5.10 — Sub-100ms V6 navigation caching, animated ellipsis loading indicators, and Engine Usage pop-up fixes & card layout
 
 - **Sub-100ms V6 navigation caching & parallelized chat bootstrap** (#3206) — `public/v6-shell.js#handleRoute`: a navigation that isn't a cold start renders the cached project tree synchronously, before any network call, instead of blocking on a fresh sequential `loadProjects` → `showProjects` → `loadEngineHealth` round trip; `loadProjects`/`loadEngineHealth` then refresh it in the background. Opening a live chat now fires its status, output-peek and Medusa-listener reads together via `Promise.all` rather than serially.

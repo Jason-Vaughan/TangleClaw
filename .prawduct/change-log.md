@@ -41,6 +41,42 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-23 — v6.5.11 release cut (Milestone #105), Car V6511-W2-REL
+
+<!-- prawduct: type=internal | scope=v6511-release -->
+
+- Compiled the 1 accepted `changelog.d/` fragment (#3210 from PR #3234/PR #3243/PR #3244) into
+  `CHANGELOG.md` section `[6.5.11]` via `compileFragments`/`spliceIntoUnreleased`/
+  `_promoteUnreleased`, target version `6.5.11` (minor — single `added` fragment, no
+  duplication this round since it's one fragment). Bumped `version.json` (`6.5.10` ->
+  `6.5.11`), updated README pins/banner (prose hand-written here, not generated) and the
+  released-section lock via `scripts/release-prepare.js`, and updated `FEATURES.md`,
+  `ROADMAP.md`, `docs/releases/index.md` and `docs/releases/v6.5.11.md`.
+- Dispatched by `TC-Lane-Arc` via Medusa, pre-dispatched before the 3 Wave 1 PRs merged and
+  confirmed actionable once `TC-Lane-INT` reported all 3 true-merged to
+  `origin/main @ 766d68b75c00541b087cd402affdf85fc961308a`, closing Milestone #105's 1 issue
+  (#3210). Verified the base commit, all 3 PR merges, the issue closure, and the milestone's
+  0-open/1-closed count directly against `gh` before branching.
+- The pre-dispatch named a release-compile script (`scripts/release-build-changelog.js`) and 3
+  test files (`test/release-notes-6-5.test.js`, `test/doc-version-parity.test.js`,
+  `test/prawduct-badge-sync.test.js`) that do not exist in this repo, and a release date
+  (`2026-04-20`) in the past relative to today — flagged all 4 to `TC-Lane-Arc` before acting;
+  Arc confirmed falling back to the verified v6.5.10 workflow (`lib/changelog-fragments.js` +
+  `scripts/release-prepare.js` + the real test files) and today's actual date.
+- Separately caught, while preparing this round's verification command, that the prior
+  v6.5.10 entry's (and that PR's) claimed verification command named `test/release-notes.test.js`
+  — that file does not exist either. `node --test` with multiple file arguments silently drops
+  a missing explicit filename when the other glob arguments still match real files, with no
+  error printed, so the earlier 441/441 claim was real (the OTHER files did run) but the
+  citation of that one filename was not. The actual README/banner coverage for that release was
+  genuinely exercised, just by `test/readme-version-pins.test.js`, run separately — substance was
+  never wrong, only the citation. Used the real filename for this round's verification instead.
+- Branched `release/v6.5.11` explicitly from the named base commit (`git checkout -b
+  release/v6.5.11 766d68b75c00541b087cd402affdf85fc961308a`).
+- Verified with `node --test test/readme-version-pins.test.js test/changelog*.test.js
+  test/version*.test.js test/features-index.test.js test/changelog-fragment-gate.test.js`
+  (446 + 26 pass) and `node scripts/test-stage.js 1`.
+
 ## 2026-11-23 — v6.5.10 release cut (Milestone #104), Car V6510-W2-REL
 
 <!-- prawduct: type=internal | scope=v6510-release -->
