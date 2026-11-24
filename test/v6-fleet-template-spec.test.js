@@ -473,11 +473,19 @@ describe('PG-1 — symbolic seatId addressing on a "1.1" spec (#3194)', () => {
     assert.equal(spec.validateFleetSpec(s).ok, true);
   });
 
-  it('does not false-positive on a seatId whose 8-character tail is purely numeric (Critic WARNING finding, #3194) — digits are valid hex, but a date or sequence number is not a Medusa workspace suffix', () => {
-    for (const okId of ['sprint-20261124', 'node-00000012']) {
+  it('rejects a seatId whose 8-character tail is purely numeric too (PRR-B R2 BLOCKING, #3194) — a real random 8-hex Medusa suffix can itself be all-digit, so an all-numeric tail is not proof of a human-chosen sequence number', () => {
+    for (const badId of ['seat-80246642', 'sprint-20261124', 'node-00000012']) {
+      const s = validSpecV11();
+      s.seats[0].seatId = badId;
+      assert.ok(spec.validateFleetSpec(s).errors.some((e) => e.path === 'seats[0].seatId' && /PG-1/.test(e.message)), `expected "${badId}" to be rejected as a potential Medusa suffix`);
+    }
+  });
+
+  it('still accepts a short, genuinely symbolic numeric suffix that never reaches the 8-character length this guardrail checks', () => {
+    for (const okId of ['builder-1', 'lane-02', 'observer-z']) {
       const s = validSpecV11();
       s.seats[0].seatId = okId;
-      assert.equal(spec.validateFleetSpec(s).ok, true, `expected "${okId}" to be accepted, not mistaken for a Medusa suffix`);
+      assert.equal(spec.validateFleetSpec(s).ok, true, `expected "${okId}" to be accepted`);
     }
   });
 });
