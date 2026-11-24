@@ -418,6 +418,34 @@ describe('medusa-wake — busyMarker/idleMarker scoped to the trailing status ch
     assert.deepEqual(wake._assessActivity(idleAsString, CLAUDE), { working: false, reason: null },
       'the trailing-window scoping excludes the same transcript mention whether the pane arrives as rows or as one string');
   });
+
+  // #3247 R4 (PRR-B R-Gate R3) — a FIXED 8-row trailing window is a
+  // knife-edge against a short fixture: a single-line reply immediately
+  // above IDLE_PANE/AG_IDLE_PANE/AG_DIALOG_PANE (each well under 8 rows)
+  // still falls INSIDE that window. On AG_DIALOG_PANE specifically, a
+  // quoted "? for shortcuts" one line above it made _assessPane read a
+  // LIVE permission dialog as idle/at-prompt. _statusChromeFor's
+  // structural divider/glyph anchor holds regardless of how short the
+  // transcript above the real chrome is.
+  describe('structural chrome isolation holds even for a single-line reply immediately above a short pane (#3247 R4)', () => {
+    it('Claude: a reply quoting "esc to interrupt" immediately above IDLE_PANE is still at-rest', () => {
+      const lines = ['Reply: the marker is "esc to interrupt".', ...IDLE_PANE];
+      assert.deepEqual(wake._assessActivity(lines, CLAUDE), { working: false, reason: null });
+      assert.deepEqual(wake._assessPane(lines, CLAUDE, null), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('Antigravity: a reply quoting "esc to cancel" immediately above AG_IDLE_PANE is still at-rest', () => {
+      const lines = ['Reply: the marker is "esc to cancel".', ...AG_IDLE_PANE];
+      assert.deepEqual(wake._assessActivity(lines, ANTIGRAVITY), { working: false, reason: null });
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, null), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('Antigravity: a reply quoting "? for shortcuts" immediately above an ACTIVE dialog (AG_DIALOG_PANE) still refuses as not-at-rest, never at-prompt', () => {
+      const lines = ['Reply: "? for shortcuts" is the idle marker.', ...AG_DIALOG_PANE];
+      assert.deepEqual(wake._assessActivity(lines, ANTIGRAVITY), { working: true, reason: 'not-at-rest' });
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, null), { idle: false, reason: 'not-at-rest' });
+    });
+  });
 });
 
 describe('medusa-wake — Aider 0.86.2 measured pane profile (#2961)', () => {
