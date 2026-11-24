@@ -472,6 +472,14 @@ describe('PG-1 — symbolic seatId addressing on a "1.1" spec (#3194)', () => {
     s.seats[0].seatId = 'pm';
     assert.equal(spec.validateFleetSpec(s).ok, true);
   });
+
+  it('does not false-positive on a seatId whose 8-character tail is purely numeric (Critic WARNING finding, #3194) — digits are valid hex, but a date or sequence number is not a Medusa workspace suffix', () => {
+    for (const okId of ['sprint-20261124', 'node-00000012']) {
+      const s = validSpecV11();
+      s.seats[0].seatId = okId;
+      assert.equal(spec.validateFleetSpec(s).ok, true, `expected "${okId}" to be accepted, not mistaken for a Medusa suffix`);
+    }
+  });
 });
 
 describe('PG-3 — explicit authorityClass declarations on a "1.1" spec (#3194)', () => {
@@ -603,6 +611,26 @@ describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-ru
     assert.equal(result.ok, true);
     assert.doesNotMatch(result.blueprint.seats[0].primingPrompt, /~\//);
     assert.match(result.blueprint.seats[0].primingPrompt, /<path-redacted>/);
+  });
+
+  it('never leaks a directory\'s real suffix when it merely shares a PREFIX with the configured fleetSharedDir/seatWorkspaceDir (Critic BLOCKING finding, #3194)', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].primingPrompt = 'see /Users/jasonvaughan/Documents/Projects/SharedArchive-2026/secretproject for details';
+    const result = spec.exportFleetPackBlueprint(fleetState, { fleetSharedDir: '/Users/jasonvaughan/Documents/Projects/Shared' });
+    assert.equal(result.ok, true);
+    const prompt = result.blueprint.seats[0].primingPrompt;
+    // The false-prefix match must fall through to the generic redaction, never a tokenized leak of the real suffix.
+    assert.doesNotMatch(prompt, /secretproject/, 'the unrelated directory\'s real name must never survive in the exported blueprint');
+    assert.doesNotMatch(prompt, /SharedArchive/, 'a directory that only shares a PREFIX with fleetSharedDir must not be treated as a match');
+    assert.match(prompt, /<path-redacted>/);
+  });
+
+  it('still substitutes the configured dir when it is immediately followed by a path separator, not just end-of-string', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].primingPrompt = 'docs at /Users/jasonvaughan/Documents/Projects/Shared/README.md';
+    const result = spec.exportFleetPackBlueprint(fleetState, { fleetSharedDir: '/Users/jasonvaughan/Documents/Projects/Shared' });
+    assert.equal(result.ok, true);
+    assert.equal(result.blueprint.seats[0].primingPrompt, 'docs at ${FLEET_SHARED_DIR}/README.md');
   });
 
   it('refuses a fleetState whose live seatId trips PG-1, rather than exporting a leaking blueprint', () => {
