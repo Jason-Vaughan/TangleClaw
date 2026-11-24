@@ -399,3 +399,280 @@ describe('getEcosystemDirectoryInfo (#3115)', () => {
     assert.ok(info.description.length > 0);
   });
 });
+
+// v6.6.0 Wave 1 (#3194, Car V660-W1-A, Ruling A1042): the "1.1" Fleet Pack
+// (Plane A) schema and its four portability guardrails (PG-1..PG-4).
+
+/** A minimal, otherwise-valid "1.1" spec: validSpec() plus authorityClass per seat and symbolic seatIds. */
+function validSpecV11() {
+  const s = validSpec();
+  s.schemaVersion = spec.FLEETPACK_SCHEMA_VERSION;
+  s.seats[0].authorityClass = 'coordinator';
+  s.seats[1].authorityClass = 'builder';
+  return s;
+}
+
+describe('validateFleetSpec — schemaVersion "1.1" and backward compatibility (#3194)', () => {
+  it('accepts a minimal, well-formed "1.1" spec', () => {
+    assert.deepEqual(spec.validateFleetSpec(validSpecV11()), { ok: true, errors: [] });
+  });
+
+  it('exposes SUPPORTED_SCHEMA_VERSIONS as exactly ["1.0", "1.1"]', () => {
+    assert.deepEqual(spec.SUPPORTED_SCHEMA_VERSIONS, ['1.0', '1.1']);
+    assert.equal(spec.FLEETPACK_SCHEMA_VERSION, '1.1');
+  });
+
+  it('still rejects a schemaVersion outside the supported set, naming both', () => {
+    const s = validSpec();
+    s.schemaVersion = '2.0';
+    const result = spec.validateFleetSpec(s);
+    assert.equal(result.ok, false);
+    const err = result.errors.find((e) => e.path === 'schemaVersion');
+    assert.ok(err && /1\.0/.test(err.message) && /1\.1/.test(err.message));
+  });
+
+  it('a "1.0" spec with a numeric or Medusa-suffixed seatId still validates (PG-1 is additive to "1.1" only)', () => {
+    const s = validSpec();
+    s.seats[0].seatId = '42';
+    s.seats[1].seatId = 'tc-lane-pm-80246dee';
+    assert.equal(spec.validateFleetSpec(s).ok, true, 'PG-1 must not retroactively tighten "1.0"');
+  });
+
+  it('a "1.0" spec needs no authorityClass at all (PG-3 is additive to "1.1" only)', () => {
+    assert.equal(spec.validateFleetSpec(validSpec()).ok, true);
+  });
+
+  it('every existing BUNDLED_FLEET_SPECS entry still validates unchanged', () => {
+    for (const [id, bundled] of Object.entries(spec.BUNDLED_FLEET_SPECS)) {
+      assert.equal(bundled.schemaVersion, '1.0', `${id} must still declare "1.0"`);
+      assert.equal(spec.validateFleetSpec(bundled).ok, true, id);
+    }
+  });
+});
+
+describe('PG-1 — symbolic seatId addressing on a "1.1" spec (#3194)', () => {
+  it('rejects a raw numeric seatId', () => {
+    const s = validSpecV11();
+    s.seats[0].seatId = '42';
+    const result = spec.validateFleetSpec(s);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.path === 'seats[0].seatId' && /PG-1/.test(e.message)));
+  });
+
+  it('rejects a seatId carrying a runtime Medusa workspace suffix', () => {
+    for (const badId of ['tc-lane-pm-80246dee', 'tc-lane-pm-3cc41bf8', 'observer-DEADBEEF']) {
+      const s = validSpecV11();
+      s.seats[0].seatId = badId;
+      assert.ok(spec.validateFleetSpec(s).errors.some((e) => e.path === 'seats[0].seatId' && /PG-1/.test(e.message)), `expected "${badId}" to be rejected`);
+    }
+  });
+
+  it('accepts an ordinary symbolic seatId', () => {
+    const s = validSpecV11();
+    s.seats[0].seatId = 'pm';
+    assert.equal(spec.validateFleetSpec(s).ok, true);
+  });
+});
+
+describe('PG-3 — explicit authorityClass declarations on a "1.1" spec (#3194)', () => {
+  it('requires a recognized authorityClass per seat', () => {
+    const missing = validSpecV11();
+    delete missing.seats[0].authorityClass;
+    assert.ok(spec.validateFleetSpec(missing).errors.some((e) => e.path === 'seats[0].authorityClass' && /PG-3/.test(e.message)));
+
+    const unrecognized = validSpecV11();
+    unrecognized.seats[0].authorityClass = 'overlord';
+    assert.ok(spec.validateFleetSpec(unrecognized).errors.some((e) => e.path === 'seats[0].authorityClass'));
+  });
+
+  it('exposes AUTHORITY_CLASSES as exactly the six named classes', () => {
+    assert.deepEqual(spec.AUTHORITY_CLASSES.slice().sort(), ['architect', 'builder', 'coordinator', 'integrator', 'observer', 'reviewer']);
+  });
+
+  it('accepts every declared authority class', () => {
+    for (const authorityClass of spec.AUTHORITY_CLASSES) {
+      const s = validSpecV11();
+      s.seats[0].authorityClass = authorityClass;
+      assert.equal(spec.validateFleetSpec(s).ok, true, authorityClass);
+    }
+  });
+});
+
+describe('PG-4 — Plane A / Plane B separation (#3194)', () => {
+  it('rejects a "1.1" spec carrying a top-level instanceBinding or instanceBindings key', () => {
+    for (const key of ['instanceBinding', 'instanceBindings']) {
+      const s = validSpecV11();
+      s[key] = { anything: true };
+      const result = spec.validateFleetSpec(s);
+      assert.equal(result.ok, false, key);
+      assert.ok(result.errors.some((e) => e.path === 'instanceBinding' && /PG-4/.test(e.message)), key);
+    }
+  });
+
+  it('a "1.0" spec is not checked for instanceBinding (PG-4 is additive to "1.1" only)', () => {
+    const s = validSpec();
+    s.instanceBinding = { anything: true };
+    assert.equal(spec.validateFleetSpec(s).ok, true);
+  });
+
+  describe('validateInstanceBindingRecord — the Plane B counterpart', () => {
+    function validBinding() {
+      return { seatId: 'pm', projectId: '111', host: 'cursatory.tail123678.ts.net', boundAt: '2026-11-24T06:00:00.000Z' };
+    }
+
+    it('accepts a well-formed binding record', () => {
+      assert.deepEqual(spec.validateInstanceBindingRecord(validBinding()), { ok: true, errors: [] });
+    });
+
+    it('a raw numeric/Medusa-suffixed projectId is fine here — PG-1 governs Plane A, not Plane B', () => {
+      const b = validBinding();
+      b.projectId = '111';
+      b.seatId = 'tc-lane-pm-80246dee';
+      assert.equal(spec.validateInstanceBindingRecord(b).ok, true);
+    });
+
+    it('rejects a non-object record without throwing', () => {
+      for (const bad of [null, undefined, 'nope', 42, []]) {
+        const result = spec.validateInstanceBindingRecord(bad);
+        assert.equal(result.ok, false);
+        assert.ok(result.errors.length >= 1);
+      }
+    });
+
+    it('requires every field, by name', () => {
+      const result = spec.validateInstanceBindingRecord({});
+      assert.equal(result.ok, false);
+      for (const field of ['seatId', 'projectId', 'host', 'boundAt']) {
+        assert.ok(result.errors.some((e) => e.path === field), `expected an error for "${field}"`);
+      }
+    });
+
+    it('rejects a boundAt that is not a parseable date string', () => {
+      const b = validBinding();
+      b.boundAt = 'not-a-date';
+      assert.ok(spec.validateInstanceBindingRecord(b).errors.some((e) => e.path === 'boundAt'));
+    });
+  });
+});
+
+describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-run export (#3194)', () => {
+  /** A fleetState input shaped like exportFleetSpec's own parameter, carrying a live seatId, host paths, and a secret — everything a Plane A blueprint must either rewrite or drop. */
+  function v11FleetState() {
+    return {
+      metadata: validSpec().metadata,
+      seats: [
+        {
+          seatId: 'pm', displayNameSuffix: '', role: 'PM', supervisory: true, launchPolicy: 'immediate',
+          recommendedEngine: 'claude', authorityClass: 'coordinator',
+          primingPrompt: 'shared docs live at /Users/jasonvaughan/Documents/Projects/Shared and your own workspace is ~/.tangleclaw/workspaces/pm',
+          sessionToken: 'shouldnotleak'
+        },
+        {
+          seatId: 'builder-a', displayNameSuffix: 'Builder A', role: 'Builder', supervisory: false, launchPolicy: 'on-demand',
+          recommendedEngine: 'codex', authorityClass: 'builder'
+        }
+      ],
+      rules: [],
+      charterTemplate: null,
+      sharedDocuments: []
+    };
+  }
+
+  it('stamps schemaVersion "1.1" and sanitizes like exportFleetSpec (secret keys dropped)', () => {
+    const result = spec.exportFleetPackBlueprint(v11FleetState());
+    assert.equal(result.ok, true);
+    assert.equal(result.blueprint.schemaVersion, spec.FLEETPACK_SCHEMA_VERSION);
+    assert.equal(result.blueprint.seats[0].sessionToken, undefined);
+  });
+
+  it('substitutes a recognized fleetSharedDir/seatWorkspaceDir with their logical tokens', () => {
+    const result = spec.exportFleetPackBlueprint(v11FleetState(), {
+      fleetSharedDir: '/Users/jasonvaughan/Documents/Projects/Shared',
+      seatWorkspaceDir: '~/.tangleclaw/workspaces/pm'
+    });
+    assert.equal(result.ok, true);
+    const prompt = result.blueprint.seats[0].primingPrompt;
+    assert.match(prompt, /\$\{FLEET_SHARED_DIR\}/);
+    assert.match(prompt, /\$\{SEAT_WORKSPACE_DIR\}/);
+    assert.doesNotMatch(prompt, /\/Users\//);
+    assert.doesNotMatch(prompt, /~\//);
+  });
+
+  it('strips a ~-relative home path even with no logical-token options given', () => {
+    const result = spec.exportFleetPackBlueprint(v11FleetState());
+    assert.equal(result.ok, true);
+    assert.doesNotMatch(result.blueprint.seats[0].primingPrompt, /~\//);
+    assert.match(result.blueprint.seats[0].primingPrompt, /<path-redacted>/);
+  });
+
+  it('refuses a fleetState whose live seatId trips PG-1, rather than exporting a leaking blueprint', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].seatId = 'tc-lane-pm-80246dee';
+    const result = spec.exportFleetPackBlueprint(fleetState);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => /PG-1/.test(e.message)));
+  });
+
+  it('refuses a fleetState missing authorityClass (PG-3)', () => {
+    const fleetState = v11FleetState();
+    delete fleetState.seats[1].authorityClass;
+    const result = spec.exportFleetPackBlueprint(fleetState);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => /PG-3/.test(e.message)));
+  });
+});
+
+describe('Round-trip: TC-Lane-* (10-seat SDLC) and TV-* (8-seat Creative Studio) through Plane A export + import (#3194)', () => {
+  /** The 10-seat TC-Lane-* shape, as a pre-export fleetState (mirrors BUNDLED_FLEET_SPECS['software-factory-10-role'] but with authorityClass per seat, "1.1"-ready). */
+  function tcLaneFleetState() {
+    const base = structuredClone(spec.BUNDLED_FLEET_SPECS['software-factory-10-role']);
+    const authorityByRole = { PM: 'coordinator', Architect: 'architect', Builder: 'builder', PRR: 'reviewer', Integrator: 'integrator', Observer: 'observer' };
+    base.seats.forEach((s) => { s.authorityClass = authorityByRole[s.role]; });
+    return base;
+  }
+
+  /** The 8-seat TV-* (TangleVision) shape, as a pre-export fleetState (mirrors BUNDLED_FLEET_SPECS['ai-design-agency']); custom roles (ArtDir, Critic) map onto the closest standing authority class. */
+  function tvFleetState() {
+    const base = structuredClone(spec.BUNDLED_FLEET_SPECS['ai-design-agency']);
+    const authorityByRole = { PM: 'coordinator', ArtDir: 'architect', Builder: 'builder', Critic: 'reviewer', Integrator: 'integrator', Observer: 'observer' };
+    base.seats.forEach((s) => { s.authorityClass = authorityByRole[s.role]; });
+    return base;
+  }
+
+  for (const [label, buildFleetState, expectedSeatCount] of [['TC-Lane-* (10-seat SDLC)', tcLaneFleetState, 10], ['TV-* (8-seat Creative Studio)', tvFleetState, 8]]) {
+    it(`${label}: exports a guardrail-clean "1.1" blueprint and round-trips through preview + apply`, () => {
+      const exported = spec.exportFleetPackBlueprint(buildFleetState());
+      assert.equal(exported.ok, true, JSON.stringify(exported.errors));
+      assert.equal(exported.blueprint.schemaVersion, '1.1');
+      assert.equal(exported.blueprint.seats.length, expectedSeatCount);
+
+      // Guardrail contract: every seat survives export with a recognized authorityClass and a seatId PG-1 still accepts.
+      for (const seat of exported.blueprint.seats) {
+        assert.ok(spec.AUTHORITY_CLASSES.includes(seat.authorityClass), `${seat.seatId}: authorityClass`);
+        assert.doesNotMatch(seat.seatId, /^\d+$/, `${seat.seatId}: must not be numeric`);
+        assert.doesNotMatch(seat.seatId, /-[0-9a-f]{8}$/i, `${seat.seatId}: must not carry a Medusa suffix`);
+      }
+
+      const preview = spec.previewFleetSpecImport(exported.blueprint);
+      assert.equal(preview.ok, true);
+      assert.equal(preview.preview.seatCount, expectedSeatCount);
+
+      const applied = spec.applyFleetSpecImport(exported.blueprint);
+      assert.equal(applied.ok, true);
+      assert.equal(applied.plan.seats.length, expectedSeatCount);
+      // Semantic equivalence: role/authorityClass/supervisory topology survives the full round-trip untouched.
+      assert.deepEqual(
+        applied.plan.seats.map((s) => ({ role: s.role, authorityClass: s.authorityClass, supervisory: s.supervisory })),
+        exported.blueprint.seats.map((s) => ({ role: s.role, authorityClass: s.authorityClass, supervisory: s.supervisory }))
+      );
+    });
+  }
+
+  it('does not mutate production fixtures: BUNDLED_FLEET_SPECS stays "1.0" and frozen after building both "1.1" fleetStates', () => {
+    tcLaneFleetState();
+    tvFleetState();
+    assert.equal(spec.BUNDLED_FLEET_SPECS['software-factory-10-role'].schemaVersion, '1.0');
+    assert.ok(Object.isFrozen(spec.BUNDLED_FLEET_SPECS['software-factory-10-role']));
+    assert.equal(spec.BUNDLED_FLEET_SPECS['software-factory-10-role'].seats[0].authorityClass, undefined, 'the frozen fixture itself must never gain a field a structuredClone-based copy added');
+  });
+});
