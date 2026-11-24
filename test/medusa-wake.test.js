@@ -342,6 +342,65 @@ describe('medusa-wake — placeholder styling is declared per engine (#1105)', (
   });
 });
 
+describe('medusa-wake — busyMarker/idleMarker scoped to the trailing status chrome, not arbitrary transcript prose (#3247)', () => {
+  // A long reply (far past the 8-row trailing window) whose own prose
+  // happens to quote the exact busy-marker/idle-marker phrases -- e.g. an
+  // engine summarizing TangleClaw's own wake-nudge detection back to the
+  // operator, or reading this project's own documentation out loud.
+  const TRANSCRIPT_MENTIONING_CLAUDE_MARKER = [
+    '⏺ Here is what I found about the wake monitor:',
+    '  The switchboard nudges a session only while it reads at rest, and the',
+    '  gate it uses treats "esc to interrupt" as proof a turn is still in',
+    '  flight. I confirmed this by reading lib/medusa-wake.js directly.',
+    '  None of this means a turn is actually in flight right now in THIS',
+    '  pane -- it is simply discussing the phrase itself, from several lines',
+    '  back, not showing it live. The rest of this reply has nothing more',
+    '  to add on the topic.',
+    '',
+    ''
+  ];
+  const TRANSCRIPT_MENTIONING_AG_MARKER = [
+    '• Here is a summary of the busy/idle detection this project uses:',
+    '  Antigravity panes are read for the literal substring "esc to cancel"',
+    '  to decide whether a turn is in flight, and "? for shortcuts" as the',
+    '  positive at-rest signal. Both strings are quoted here only to',
+    '  describe how the gate works, from several lines back in this reply,',
+    '  not because either condition is true of this pane right now.',
+    ''
+  ];
+
+  it('Claude: an idle pane whose transcript body quotes "esc to interrupt" is still at-rest', () => {
+    const lines = [...TRANSCRIPT_MENTIONING_CLAUDE_MARKER, ...IDLE_PANE];
+    assert.deepEqual(wake._assessActivity(lines, CLAUDE), { working: false, reason: null });
+    assert.deepEqual(wake._assessPane(lines, CLAUDE, null), { idle: true, reason: 'at-prompt' });
+  });
+
+  it('Claude: the SAME transcript with a genuinely busy chrome row is still turn-in-flight', () => {
+    const lines = [...TRANSCRIPT_MENTIONING_CLAUDE_MARKER, ...BUSY_PANE];
+    assert.deepEqual(wake._assessActivity(lines, CLAUDE), { working: true, reason: 'turn-in-flight' });
+  });
+
+  it('Antigravity: an idle pane whose transcript body quotes "esc to cancel"/"? for shortcuts" is still at-rest', () => {
+    const lines = [...TRANSCRIPT_MENTIONING_AG_MARKER, ...AG_IDLE_PANE];
+    assert.deepEqual(wake._assessActivity(lines, ANTIGRAVITY), { working: false, reason: null });
+    assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, null), { idle: true, reason: 'at-prompt' });
+  });
+
+  it('Antigravity: the SAME transcript with a genuinely busy chrome row is still turn-in-flight', () => {
+    const lines = [...TRANSCRIPT_MENTIONING_AG_MARKER, ...AG_BUSY_PANE];
+    assert.deepEqual(wake._assessActivity(lines, ANTIGRAVITY), { working: true, reason: 'turn-in-flight' });
+  });
+
+  it('the trailing window is exactly 8 rows: the 8th-from-end row is scanned, the 9th-from-end is not', () => {
+    const inside8 = ['esc to interrupt', ...Array(7).fill('filler')];
+    const outside9 = ['esc to interrupt', ...Array(8).fill('filler')];
+    assert.deepEqual(wake._assessActivity(inside8, CLAUDE), { working: true, reason: 'turn-in-flight' },
+      'exactly 8 rows: the marker is the first (oldest) row of the trailing window');
+    assert.deepEqual(wake._assessActivity(outside9, CLAUDE), { working: false, reason: null },
+      'one row older than the window: the marker is now one row short of it');
+  });
+});
+
 describe('medusa-wake — Aider 0.86.2 measured pane profile (#2961)', () => {
   it('loads the bundled profile with its measured prompt and busy marker', () => {
     assert.ok(AIDER, 'Aider must no longer be skipped as no-wake-profile');
