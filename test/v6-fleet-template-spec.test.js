@@ -576,6 +576,18 @@ describe('PG-4 — Plane A / Plane B separation (#3194)', () => {
         assert.ok(spec.validateInstanceBindingRecord(b).errors.some((e) => e.path === 'boundAt'), `expected "${nonIso}" to be rejected despite Date.parse accepting it`);
       }
     });
+
+    it('rejects an impossible calendar date that Date.parse silently normalizes instead of rejecting (R-Gate R4 WARNING, PRR-A, #3194)', () => {
+      for (const impossible of ['2024-02-30T00:00:00Z', '2026-13-01T00:00:00Z', '2026-02-29T00:00:00Z']) {
+        const b = validBinding();
+        b.boundAt = impossible;
+        assert.ok(spec.validateInstanceBindingRecord(b).errors.some((e) => e.path === 'boundAt'), `expected "${impossible}" to be rejected (2026 is not a leap year; Feb 30 and month 13 do not exist)`);
+      }
+      // A REAL leap day must still be accepted.
+      const b = validBinding();
+      b.boundAt = '2024-02-29T00:00:00Z';
+      assert.equal(spec.validateInstanceBindingRecord(b).ok, true, '2024 is a leap year; Feb 29 is valid');
+    });
   });
 });
 
@@ -638,6 +650,26 @@ describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-ru
       assert.doesNotMatch(result.blueprint.seats[0].primingPrompt, new RegExp(leak.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')), `expected "${leak}" to be redacted`);
       assert.match(result.blueprint.seats[0].primingPrompt, /<path-redacted>/, leak);
     }
+  });
+
+  it('strips ANY absolute multi-segment path, not just an enumerated root allowlist (R-Gate R4 BLOCKING, PRR-A/PRR-B/Architect, #3194) -- /root and an arbitrary custom root were missed by the R2 allowlist', () => {
+    for (const leak of ['/root/.ssh/id_ed25519', '/root/.ssh/id_rsa', '/srv/custom/secret', '/data/secret/file']) {
+      const fleetState = v11FleetState();
+      fleetState.seats[0].primingPrompt = `see ${leak} for details`;
+      const result = spec.exportFleetPackBlueprint(fleetState);
+      assert.equal(result.ok, true, leak);
+      assert.doesNotMatch(result.blueprint.seats[0].primingPrompt, new RegExp(leak.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')), `expected "${leak}" to be redacted`);
+      assert.match(result.blueprint.seats[0].primingPrompt, /<path-redacted>/, leak);
+    }
+  });
+
+  it('never redacts a URL or an already-substituted logical path token, only a real boundary-anchored absolute path', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].primingPrompt = 'see https://example.com/a/b for details, and the shared doc at /Users/jasonvaughan/Documents/Projects/Shared/README.md';
+    const result = spec.exportFleetPackBlueprint(fleetState, { fleetSharedDir: '/Users/jasonvaughan/Documents/Projects/Shared' });
+    assert.equal(result.ok, true);
+    assert.match(result.blueprint.seats[0].primingPrompt, /https:\/\/example\.com\/a\/b/, 'a URL must never be redacted');
+    assert.match(result.blueprint.seats[0].primingPrompt, /\$\{FLEET_SHARED_DIR\}\/README\.md/, 'a logical token substitution must survive intact, not get re-redacted');
   });
 
   it('never leaks a directory\'s real suffix when it merely shares a PREFIX with the configured fleetSharedDir/seatWorkspaceDir (Critic BLOCKING finding, #3194)', () => {
