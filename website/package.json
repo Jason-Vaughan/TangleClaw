@@ -9,7 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "next": "^16.4.3",
+    "next": "^16.4.5",
     "posthog-js": "^1.434.2",
     "react": "19.2.8",
     "react-dom": "19.2.8"
@@ -23,5 +23,10 @@
     "eslint-config-next": "16.3.6",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.1"
+    }
   }
 }

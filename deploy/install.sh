@@ -19,6 +19,32 @@ red() { printf '\033[0;31m%s\033[0m\n' "$1"; }
 green() { printf '\033[0;32m%s\033[0m\n' "$1"; }
 yellow() { printf '\033[0;33m%s\033[0m\n' "$1"; }
 
+# ── PATH hygiene (#3211 SEC-01) ──
+# The server never invokes java, so an openjdk bin dir inherited from the
+# installer's shell PATH widens what the launchd service's PATH exposes for
+# no runtime benefit. Strips any `.../opt/openjdk/bin` segment from a
+# colon-separated PATH string, leaving everything else untouched.
+#
+# `for seg in $input` after `IFS=:` splits on colons, but an unquoted
+# expansion is ALSO subject to pathname (glob) expansion: a PATH component
+# like `/tmp/*` would silently expand against whatever files happen to exist
+# in the current directory at install time. `set -f` disables that for the
+# duration of the loop (restored unconditionally, success or failure, via
+# the trap below — nothing else in this function can fail under `set -e`).
+strip_openjdk_path() {
+  local input="$1" seg new_path=""
+  local IFS=:
+  set -f
+  trap 'set +f' RETURN
+  for seg in $input; do
+    case "$seg" in
+      */opt/openjdk/bin) ;; # drop
+      *) new_path="${new_path:+${new_path}:}${seg}" ;;
+    esac
+  done
+  printf '%s' "$new_path"
+}
+
 # ── Platform guard ──
 # macOS services are launchd agents with a Homebrew dependency bootstrap;
 # Linux services are systemd --user units with a native package-manager
@@ -376,7 +402,7 @@ ensure_dep caddy caddy
 # Build PATH for launchd plists — start from the user's current PATH so that
 # engine binaries installed in non-standard locations (e.g. ~/.local/bin,
 # ~/.npm-global/bin) are discoverable at runtime for engine detection.
-LAUNCHD_PATH="$PATH"
+LAUNCHD_PATH="$(strip_openjdk_path "$PATH")"
 # Ensure system essentials are present
 for sys_path in /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
   case ":${LAUNCHD_PATH}:" in
