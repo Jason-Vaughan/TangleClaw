@@ -690,6 +690,22 @@ describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-ru
     assert.match(result.blueprint.seats[0].primingPrompt, /https:\/\/example\.com\/a\/b/);
   });
 
+  it('preserves a MULTI-segment relative suffix after a logical path token intact (R-Gate R6 WARNING, PRR-A/PRR-B, #3194) -- dropping the boundary requirement in R6 made the suffix itself look like a 2+-segment absolute path', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].primingPrompt = 'docs at /Users/jasonvaughan/Documents/Projects/Shared/docs/architecture/README.md';
+    const result = spec.exportFleetPackBlueprint(fleetState, { fleetSharedDir: '/Users/jasonvaughan/Documents/Projects/Shared' });
+    assert.equal(result.ok, true);
+    assert.equal(result.blueprint.seats[0].primingPrompt, 'docs at ${FLEET_SHARED_DIR}/docs/architecture/README.md');
+  });
+
+  it('preserves a multi-segment suffix after seatWorkspaceDir too, and still redacts an UNRELATED absolute path in the same string', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].primingPrompt = 'workspace at ~/.tangleclaw/workspaces/pm/logs/today.log, unrelated leak at /opt/private/secret';
+    const result = spec.exportFleetPackBlueprint(fleetState, { seatWorkspaceDir: '~/.tangleclaw/workspaces/pm' });
+    assert.equal(result.ok, true);
+    assert.equal(result.blueprint.seats[0].primingPrompt, 'workspace at ${SEAT_WORKSPACE_DIR}/logs/today.log, unrelated leak at <path-redacted>');
+  });
+
   it('never leaks a directory\'s real suffix when it merely shares a PREFIX with the configured fleetSharedDir/seatWorkspaceDir (Critic BLOCKING finding, #3194)', () => {
     const fleetState = v11FleetState();
     fleetState.seats[0].primingPrompt = 'see /Users/jasonvaughan/Documents/Projects/SharedArchive-2026/secretproject for details';
