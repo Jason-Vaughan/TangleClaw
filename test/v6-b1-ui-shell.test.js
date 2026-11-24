@@ -8582,7 +8582,10 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
       renderCharterReadinessPanel: (...a) => { calls.push(['charter', ...a]); return '<div>charter</div>'; },
       renderKaizenLedgerPanel: (...a) => { calls.push(['kaizen', ...a]); return '<div>kaizen</div>'; }
     };
-    assert.equal(content('sprint', { ok: true, data: waves }, ui), '<div>board</div>');
+    assert.equal(content('sprint', { ok: true, data: waves }, ui),
+      '<div class="v6-sprint-cars-summary" data-sprint-renderer="board"><span class="v6-sprint-cars-summary-total">2 cars</span>'
+      + '<span class="v6-sprint-cars-summary-stages"><span class="v6-sprint-cars-summary-stage" data-stage="in-review">In Review: 1</span>'
+      + '<span class="v6-sprint-cars-summary-stage" data-stage="other">Other: 1</span></span></div><div>board</div>');
     // Restated by #3088: the charter builder draws a charter ({charter, activeVersion}), not the waves payload,
     // so the waves are always the built-in list and the charter builder is fed by charterPanelContent instead.
     assert.match(content('charter', { ok: true, data: waves }, ui), /Wave 1<\/span> <span class="v6-workspace-item-stage">2 cars/);
@@ -8617,6 +8620,98 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     assert.doesNotMatch(html, /Guardrail G2/);
     assert.equal(content('kaizen', { ok: true, data: {} }, null), '<p class="v6-workspace-empty">No report for the current sprint yet.</p>');
   });
+
+  describe('the active milestone/sprint summary strip above Sprint & Cars (#3210 Deliverable 2)', () => {
+    it('prepends the summary, as sibling markup never a wrapper, for both the board and fallback paths', () => {
+      const board = content('sprint', { ok: true, data: waves }, { renderSprintWaveBoard: () => '<div class="sprint-wave-board">x</div><table class="sprint-gate-matrix"></table>' });
+      assert.match(board, /^<div class="v6-sprint-cars-summary" data-sprint-renderer="board">/);
+      assert.match(board, /<\/div><div class="sprint-wave-board">x<\/div><table class="sprint-gate-matrix"><\/table>$/,
+        'the board/matrix markup follows immediately as a SIBLING, never wrapped, so #v6WorkspacePanel keeps them as direct children');
+
+      const fallback = content('sprint', { ok: true, data: waves }, null);
+      assert.match(fallback, /^<div class="v6-sprint-cars-summary" data-sprint-renderer="fallback">/);
+      assert.match(fallback, /<\/div><ul class="v6-workspace-list">/);
+    });
+
+    it('shows no summary at all when the board has no cars', () => {
+      assert.doesNotMatch(content('sprint', { ok: true, data: { dispatch: {} } }, null), /v6-sprint-cars-summary/);
+    });
+
+    it('counts the total and the per-stage distribution, naming an unmapped stage as "Other"', () => {
+      const html = content('sprint', { ok: true, data: waves }, null);
+      assert.match(html, /<span class="v6-sprint-cars-summary-total">2 cars<\/span>/);
+      assert.match(html, /<span class="v6-sprint-cars-summary-stage" data-stage="in-review">In Review: 1<\/span>/);
+      assert.match(html, /<span class="v6-sprint-cars-summary-stage" data-stage="other">Other: 1<\/span>/);
+      // A stage with zero cars is never listed at all.
+      assert.doesNotMatch(html, /data-stage="unassigned"/);
+
+      const single = G.tcV6SprintCarsSummaryMarkup({}, { a: { stage: 'claimed' } }, ['a'], 'fallback');
+      assert.match(single, /<span class="v6-sprint-cars-summary-total">1 car<\/span>/, 'singular for exactly one car');
+    });
+
+    it('names the active milestone/sprint/version, preferring milestone, then sprint, then version, in that order', () => {
+      assert.match(
+        G.tcV6SprintCarsSummaryMarkup({ milestone: 'Milestone #105', sprint: 'ignored', version: 'ignored' }, { a: { stage: 'claimed' } }, ['a'], 'board'),
+        /<span class="v6-sprint-cars-summary-label">Milestone #105<\/span>/
+      );
+      assert.match(
+        G.tcV6SprintCarsSummaryMarkup({ sprint: 'v6.5.11', version: 'ignored' }, { a: { stage: 'claimed' } }, ['a'], 'board'),
+        /<span class="v6-sprint-cars-summary-label">v6\.5\.11<\/span>/
+      );
+      assert.match(
+        G.tcV6SprintCarsSummaryMarkup({ version: '6.5.11<' }, { a: { stage: 'claimed' } }, ['a'], 'board'),
+        /<span class="v6-sprint-cars-summary-label">6\.5\.11&lt;<\/span>/,
+        'escaped, and a non-identifier-safe string is still accepted'
+      );
+      assert.doesNotMatch(
+        G.tcV6SprintCarsSummaryMarkup({}, { a: { stage: 'claimed' } }, ['a'], 'board'),
+        /v6-sprint-cars-summary-label/,
+        'no label element at all when none of the three fields is present'
+      );
+      assert.doesNotMatch(
+        G.tcV6SprintCarsSummaryMarkup({ milestone: '   ' }, { a: { stage: 'claimed' } }, ['a'], 'board'),
+        /v6-sprint-cars-summary-label/,
+        'a blank string does not count as present either'
+      );
+    });
+  });
+
+  describe('compact inline 6-gate review receipt badges in the fallback list (#3210 Deliverable 2)', () => {
+    const carGatesUi = {
+      carGates: (row) => [
+        { key: 'g0', label: 'G0', name: 'Gate 0 (charter & disjointness)', status: 'pass' },
+        { key: 'aGate', label: 'A', name: 'A-Gate (architect, exact head)', status: row.gates && row.gates.aGate === 'fail' ? 'fail' : 'in_progress' }
+      ]
+    };
+
+    it('renders a badge per gate ui.carGates(row) returns, only when the row itself carries a gates object', () => {
+      const html = content('sprint', { ok: true, data: { dispatch: { A1: { stage: 'in-review', gates: { aGate: 'pass' } } } } }, carGatesUi);
+      assert.match(html, /<span class="v6-sprint-gate-strip"><span class="v6-sprint-gate-badge is-pass" title="Gate 0 \(charter &amp; disjointness\): pass">G0<\/span><span class="v6-sprint-gate-badge is-in_progress" title="A-Gate \(architect, exact head\): in_progress">A<\/span><\/span>/);
+    });
+
+    it('renders no gate badges at all for a row with no gates object, even when ui.carGates is available', () => {
+      const html = content('sprint', { ok: true, data: { dispatch: { A1: { stage: 'in-review' } } } }, carGatesUi);
+      assert.doesNotMatch(html, /v6-sprint-gate-strip/);
+    });
+
+    it('renders no gate badges when the sprint UI is not loaded or lacks carGates, even for a row with a gates object', () => {
+      for (const ui of [null, {}, { carGates: 'not a function' }]) {
+        const html = content('sprint', { ok: true, data: { dispatch: { A1: { stage: 'in-review', gates: { aGate: 'pass' } } } } }, ui);
+        assert.doesNotMatch(html, /v6-sprint-gate-strip/);
+      }
+    });
+
+    it('fails closed to no badges, not a thrown error, when ui.carGates itself throws', () => {
+      const throwing = { carGates: () => { throw new Error('bad'); } };
+      const html = content('sprint', { ok: true, data: { dispatch: { A1: { stage: 'in-review', gates: { aGate: 'pass' } } } } }, throwing);
+      assert.doesNotMatch(html, /v6-sprint-gate-strip/);
+      assert.match(html, /<span class="v6-workspace-item-id">A1<\/span>/, 'the row itself still renders');
+    });
+  });
+
+  /** The #3210 summary strip's own exact markup for `{ C1: { stage: 'claimed' } }` (1 car), reused below. */
+  const ONE_CLAIMED_CAR_SUMMARY = '<div class="v6-sprint-cars-summary" data-sprint-renderer="board"><span class="v6-sprint-cars-summary-total">1 car</span>'
+    + '<span class="v6-sprint-cars-summary-stages"><span class="v6-sprint-cars-summary-stage" data-stage="claimed">Claimed: 1</span></span></div>';
 
   /**
    * A live controller over a fake page: a shell stand-in, a script-tag recorder and a stubbed api.
@@ -8672,7 +8767,7 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     c.scripts[0].fire('load');
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    assert.deepEqual(c.panels[0], ['sprint', '<div>board C1</div>']);
+    assert.deepEqual(c.panels[0], ['sprint', ONE_CLAIMED_CAR_SUMMARY + '<div>board C1</div>']);
     assert.match(c.panels[1][1], /No waves are planned yet\./, 'a builder the loaded UI lacks falls back');
     assert.deepEqual(c.urls, ['/api/sprint-waves', '/api/sprint-waves']);
     // Loaded: later panels use it straight away.
@@ -8680,7 +8775,7 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     assert.equal(c.scripts.length, 1);
-    assert.deepEqual(c.panels[2], ['sprint', '<div>board C1</div>']);
+    assert.deepEqual(c.panels[2], ['sprint', ONE_CLAIMED_CAR_SUMMARY + '<div>board C1</div>']);
   });
 
   it('waits on a script already in the page rather than adding another, and after a failed load draws its own list at once (cumulative review W-1)', async () => {
@@ -8724,7 +8819,7 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
     c.load('sprint');
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    assert.deepEqual(c.panels[2], ['sprint', '<div>late</div>']);
+    assert.deepEqual(c.panels[2], ['sprint', ONE_CLAIMED_CAR_SUMMARY + '<div>late</div>']);
   });
 
   it('finds a script the page already has by its data-tc-sprint-wave-ui mark (A760)', async () => {
