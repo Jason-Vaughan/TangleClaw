@@ -663,13 +663,31 @@ describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-ru
     }
   });
 
-  it('never redacts a URL or an already-substituted logical path token, only a real boundary-anchored absolute path', () => {
+  it('never redacts a URL (masked out before path matching, restored after) or an already-substituted logical path token', () => {
     const fleetState = v11FleetState();
     fleetState.seats[0].primingPrompt = 'see https://example.com/a/b for details, and the shared doc at /Users/jasonvaughan/Documents/Projects/Shared/README.md';
     const result = spec.exportFleetPackBlueprint(fleetState, { fleetSharedDir: '/Users/jasonvaughan/Documents/Projects/Shared' });
     assert.equal(result.ok, true);
     assert.match(result.blueprint.seats[0].primingPrompt, /https:\/\/example\.com\/a\/b/, 'a URL must never be redacted');
     assert.match(result.blueprint.seats[0].primingPrompt, /\$\{FLEET_SHARED_DIR\}\/README\.md/, 'a logical token substitution must survive intact, not get re-redacted');
+  });
+
+  it('redacts an absolute path embedded with no whitespace/quote boundary before it (R-Gate R5 BLOCKING, PRR-A/PRR-B, #3194) -- the boundary-character approach from R5 missed exactly this shape', () => {
+    for (const embedded of ['config=/root/.ssh/id_ed25519', 'path:/opt/secret/file', 'KEY=/var/lib/tangleclaw,other=1']) {
+      const fleetState = v11FleetState();
+      fleetState.seats[0].primingPrompt = embedded;
+      const result = spec.exportFleetPackBlueprint(fleetState);
+      assert.equal(result.ok, true, embedded);
+      assert.match(result.blueprint.seats[0].primingPrompt, /<path-redacted>/, `expected "${embedded}" to redact its embedded path`);
+    }
+  });
+
+  it('still never redacts a URL even when it has no whitespace/quote before it either (the fix that closes the R5 gap must not reopen the URL exclusion)', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].primingPrompt = 'see(https://example.com/a/b)for details';
+    const result = spec.exportFleetPackBlueprint(fleetState);
+    assert.equal(result.ok, true);
+    assert.match(result.blueprint.seats[0].primingPrompt, /https:\/\/example\.com\/a\/b/);
   });
 
   it('never leaks a directory\'s real suffix when it merely shares a PREFIX with the configured fleetSharedDir/seatWorkspaceDir (Critic BLOCKING finding, #3194)', () => {
