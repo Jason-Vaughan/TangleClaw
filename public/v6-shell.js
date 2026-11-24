@@ -826,6 +826,16 @@
     blocked: 'Blocked', closed: 'Closed'
   });
 
+  /**
+   * What each gate status word means, for the gate badge tooltip (#3210
+   * Deliverable 2, R-Gate R2) — mirrors `public/sprint-wave-ui.js`'s own
+   * (unexported) `GATE_STATUS_LABELS` exactly, since `ui.carGates(row)`'s
+   * `status` field is always one of these six keys.
+   */
+  const WORKSPACE_GATE_STATUS_LABELS = Object.freeze({
+    pass: 'passed', fail: 'failed', in_progress: 'in progress', pending: 'pending', blocked: 'blocked', unknown: 'unknown'
+  });
+
   /** The sprint report's hero figures, in the order the built-in Kaizen & Reports panel lists them. */
   const WORKSPACE_KPI_LABELS = Object.freeze([
     ['issuesClosed', 'Issues closed'], ['builderPRs', 'Builder PRs'], ['waves', 'Waves'],
@@ -859,9 +869,36 @@
       return '';
     }
     if (!Array.isArray(gates) || !gates.length) return '';
-    return ` <span class="v6-sprint-gate-strip">${gates.map((g) => (
-      `<span class="v6-sprint-gate-badge is-${escapeHtml(g.status)}" title="${escapeHtml(g.name)}: ${escapeHtml(g.status)}">${escapeHtml(g.label)}</span>`
-    )).join('')}</span>`;
+    return ` <span class="v6-sprint-gate-strip">${gates.map((g) => sprintCarGateBadgeMarkup(g)).join('')}</span>`;
+  }
+
+  /**
+   * One gate badge (#3210 Deliverable 2, R-Gate R2 BLOCKING: R1 emitted only
+   * `is-${status}`/`title="name: status"`, losing `ui.carGates(row)`'s own
+   * `source`/`stale`/`sha`/`token` fields entirely — a stale recorded CI
+   * pass bound to an outdated head SHA rendered as an ordinary green "pass"
+   * badge, indistinguishable from a genuinely current one, and a
+   * stage-inferred gate was indistinguishable from a recorded one). Mirrors
+   * `public/sprint-wave-ui.js`'s own `_gatePill(gate)` semantics exactly —
+   * same modifier classes, same tooltip wording and punctuation, same
+   * `role="img"` (what actually makes a screen reader announce the tooltip
+   * rather than just the bare glyph) — with one deliberate ADDITION:
+   * `_gatePill` marks an inferred gate with the `is-inferred` CSS class
+   * alone, relying on a stylesheet rule this compact list's own CSS (a
+   * SEPARATE car, `public/style.css`) does not define yet; a trailing `~`
+   * on the visible label keeps that distinction perceptible to a sighted
+   * user even before that stylesheet lands.
+   * @param {{key: string, label: string, name: string, status: string,
+   *   source: string, sha: (string|null), token: (string|null), stale: boolean}} g
+   * @returns {string} HTML.
+   */
+  function sprintCarGateBadgeMarkup(g) {
+    const from = g.source === 'stage' ? ' (from stage)' : g.source === 'unknown' ? ' (not recorded)' : '';
+    const tip = `${g.name}: ${WORKSPACE_GATE_STATUS_LABELS[g.status] || g.status}${from}`
+      + (g.sha ? ` @ ${g.sha}` : '') + (g.token ? ` · ${g.token}` : '')
+      + (g.stale ? ' — bound to a different head' : '');
+    return `<span class="v6-sprint-gate-badge is-${escapeHtml(g.status)}${g.source === 'stage' ? ' is-inferred' : ''}${g.stale ? ' is-stale' : ''}"`
+      + ` role="img" title="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}">${escapeHtml(g.label)}${g.source === 'stage' ? '~' : ''}</span>`;
   }
 
   /**
@@ -11504,6 +11541,7 @@
   global.tcV6WorkspacePanelContent = workspacePanelContent;
   global.tcV6SprintCarsSummaryMarkup = sprintCarsSummaryMarkup;
   global.tcV6SprintCarGateBadgesMarkup = sprintCarGateBadgesMarkup;
+  global.tcV6SprintCarGateBadgeMarkup = sprintCarGateBadgeMarkup;
   global.tcV6CharterPanelContent = charterPanelContent;
   global.tcV6ParseTrainCars = parseTrainCars;
   global.tcV6TrainResultMarkup = trainResultMarkup;

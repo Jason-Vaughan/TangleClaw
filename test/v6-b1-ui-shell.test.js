@@ -8686,7 +8686,7 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
 
     it('renders a badge per gate ui.carGates(row) returns, only when the row itself carries a gates object', () => {
       const html = content('sprint', { ok: true, data: { dispatch: { A1: { stage: 'in-review', gates: { aGate: 'pass' } } } } }, carGatesUi);
-      assert.match(html, /<span class="v6-sprint-gate-strip"><span class="v6-sprint-gate-badge is-pass" title="Gate 0 \(charter &amp; disjointness\): pass">G0<\/span><span class="v6-sprint-gate-badge is-in_progress" title="A-Gate \(architect, exact head\): in_progress">A<\/span><\/span>/);
+      assert.match(html, /<span class="v6-sprint-gate-strip"><span class="v6-sprint-gate-badge is-pass" role="img" title="Gate 0 \(charter &amp; disjointness\): passed" aria-label="Gate 0 \(charter &amp; disjointness\): passed">G0<\/span><span class="v6-sprint-gate-badge is-in_progress" role="img" title="A-Gate \(architect, exact head\): in progress" aria-label="A-Gate \(architect, exact head\): in progress">A<\/span><\/span>/);
     });
 
     it('renders no gate badges at all for a row with no gates object, even when ui.carGates is available', () => {
@@ -8706,6 +8706,43 @@ describe('the workspace data panels (#3086, Rulings A760, A761, A774)', () => {
       const html = content('sprint', { ok: true, data: { dispatch: { A1: { stage: 'in-review', gates: { aGate: 'pass' } } } } }, throwing);
       assert.doesNotMatch(html, /v6-sprint-gate-strip/);
       assert.match(html, /<span class="v6-workspace-item-id">A1<\/span>/, 'the row itself still renders');
+    });
+
+    // #3210 R-Gate R2 BLOCKING: R1 lost ui.carGates(row)'s own source/stale/
+    // sha/token fields entirely, so a stale recorded CI pass bound to an
+    // outdated head SHA rendered as an ordinary green "pass" badge
+    // indistinguishable from a current one, and a stage-inferred gate was
+    // indistinguishable from a recorded one.
+    it('marks a stale recorded receipt (bound to a different head SHA) with is-stale and names it in the tooltip', () => {
+      const html = G.tcV6SprintCarGateBadgeMarkup({
+        key: 'ci', label: 'CI', name: 'CI receipt', status: 'pass', source: 'recorded', sha: 'bbbbbbbb', token: null, stale: true
+      });
+      assert.equal(html,
+        '<span class="v6-sprint-gate-badge is-pass is-stale" role="img" title="CI receipt: passed @ bbbbbbbb — bound to a different head" aria-label="CI receipt: passed @ bbbbbbbb — bound to a different head">CI</span>');
+    });
+
+    it('marks a stage-inferred gate (no recorded receipt) with is-inferred, a trailing ~, and "(from stage)" in the tooltip', () => {
+      const html = G.tcV6SprintCarGateBadgeMarkup({
+        key: 'prr', label: 'PRR', name: 'PRR-Gate (adversarial review)', status: 'pending', source: 'stage', sha: null, token: null, stale: false
+      });
+      assert.equal(html,
+        '<span class="v6-sprint-gate-badge is-pending is-inferred" role="img" title="PRR-Gate (adversarial review): pending (from stage)" aria-label="PRR-Gate (adversarial review): pending (from stage)">PRR~</span>');
+    });
+
+    it('names an unrecorded, un-inferable gate as "(not recorded)" in the tooltip, with neither modifier class', () => {
+      const html = G.tcV6SprintCarGateBadgeMarkup({
+        key: 'iGate', label: 'I', name: 'I-Gate (integrator merge)', status: 'unknown', source: 'unknown', sha: null, token: null, stale: false
+      });
+      assert.equal(html,
+        '<span class="v6-sprint-gate-badge is-unknown" role="img" title="I-Gate (integrator merge): unknown (not recorded)" aria-label="I-Gate (integrator merge): unknown (not recorded)">I</span>');
+    });
+
+    it('includes a token after the SHA when both are present, matching sprint-wave-ui.js\'s own separator', () => {
+      const html = G.tcV6SprintCarGateBadgeMarkup({
+        key: 'oGate', label: 'O', name: 'O-Gate (independent peer, exact head)', status: 'pass', source: 'recorded', sha: 'cafef00d', token: 'A1234', stale: false
+      });
+      assert.equal(html,
+        '<span class="v6-sprint-gate-badge is-pass" role="img" title="O-Gate (independent peer, exact head): passed @ cafef00d · A1234" aria-label="O-Gate (independent peer, exact head): passed @ cafef00d · A1234">O</span>');
     });
   });
 
