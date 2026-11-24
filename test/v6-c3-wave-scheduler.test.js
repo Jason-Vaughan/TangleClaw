@@ -11,9 +11,10 @@ const assert = require('node:assert/strict');
 const { DatabaseSync } = require('node:sqlite');
 
 const {
-  CAR_STATUSES, GATE_TYPES, DEFAULT_MAX_STALL_MS, WaveSchedulerError,
+  CAR_STATUSES, GATE_TYPES, DEFAULT_MAX_STALL_MS, DEFAULT_FLEET_BUILDER_LANES, WaveSchedulerError,
   MemorySchedulerStore, SqliteSchedulerStore, WaveScheduler, ensureSchema,
-  isValidId, lockKey, normalizeScope, scopesConflict, scopeWithin, topologicalWaves
+  isValidId, lockKey, normalizeScope, scopesConflict, scopeWithin, topologicalWaves,
+  planParallelWaveShards, validateParallelWavePlan
 } = require('../lib/v6/c3-wave-scheduler');
 
 /**
@@ -471,4 +472,296 @@ describe('PRR-B R1 HOLD regressions (PR #3025)', () => {
       assert.equal(isValidId(bad), false, String(bad));
     }
   });
+});
+
+// #3213, #3216 Pillar 1 — the Mechanical Maximum Fleet Parallelization
+// Guard: a mechanical sharding planner, and the drift check that holds any
+// hand-built Car graph to the same standard.
+describe('DEFAULT_FLEET_BUILDER_LANES', () => {
+  it('names the 4 Builder lanes', () => {
+    assert.deepEqual([...DEFAULT_FLEET_BUILDER_LANES], ['TC-Lane-A', 'TC-Lane-B', 'TC-Lane-C', 'TC-Lane-D']);
+  });
+});
+
+describe('planParallelWaveShards', () => {
+  it('validates its inputs', () => {
+    throwsCode(() => planParallelWaveShards({ issues: [] }), 'ISSUES_REQUIRED');
+    throwsCode(() => planParallelWaveShards({}), 'ISSUES_REQUIRED');
+    throwsCode(() => planParallelWaveShards({ issues: [{ id: 'a', fileScope: ['x.js'] }], builderLanes: [] }), 'BUILDER_LANES_REQUIRED');
+    throwsCode(() => planParallelWaveShards({ issues: [{ id: 'a', fileScope: ['x.js'] }], builderLanes: ['TC-Lane-A', 'TC-Lane-A'] }), 'BUILDER_LANES_DUPLICATE');
+    // #3213 R-Gate R3 BLOCKING 1 — a single malformed entry.
+    for (const malformed of [[''], [null], [{}]]) {
+      throwsCode(() => planParallelWaveShards({ issues: [{ id: 'a', fileScope: ['x.js'] }], builderLanes: malformed }), 'BUILDER_LANES_INVALID');
+    }
+    throwsCode(() => planParallelWaveShards({ issues: [{ fileScope: ['x.js'] }] }), 'ISSUE_ID_REQUIRED');
+    throwsCode(() => planParallelWaveShards({ issues: [{ id: 'a', fileScope: [] }] }), 'ISSUE_FILE_SCOPE_REQUIRED');
+    throwsCode(() => planParallelWaveShards({ issues: [{ id: 'a' }] }), 'ISSUE_FILE_SCOPE_REQUIRED');
+  });
+
+  it('shards 4 file-disjoint issues into one 4-car parallel Wave 1, one lane each, no dependsOn', () => {
+    const plan = planParallelWaveShards({
+      issues: [
+        { id: 1, fileScope: ['lib/a.js'] },
+        { id: 2, fileScope: ['lib/b.js'] },
+        { id: 3, fileScope: ['lib/c.js'] },
+        { id: 4, fileScope: ['lib/d.js'] }
+      ]
+    });
+    assert.equal(plan.waves.length, 1);
+    assert.equal(plan.waves[0].length, 4);
+    assert.equal(plan.maxParallelLanes, 4);
+    assert.deepEqual(plan.waveParallelLanes, [4]);
+    assert.deepEqual(plan.cars.map((c) => c.lane), ['TC-Lane-A', 'TC-Lane-B', 'TC-Lane-C', 'TC-Lane-D']);
+    assert.ok(plan.cars.every((c) => c.dependsOn.length === 0), 'nothing in Wave 1 depends on anything');
+    assert.deepEqual(plan.cars.map((c) => c.payload.issueId), [1, 2, 3, 4]);
+  });
+
+  it('a file-overlapping issue is placed into Wave 2, dependsOn the exact Wave 1 car it conflicts with', () => {
+    const plan = planParallelWaveShards({
+      issues: [
+        { id: 1, fileScope: ['lib/shared.js'] },
+        { id: 2, fileScope: ['lib/other.js'] },
+        { id: 3, fileScope: ['lib/shared.js'] } // conflicts with issue 1 only
+      ]
+    });
+    assert.equal(plan.waves.length, 2);
+    assert.deepEqual(plan.waveParallelLanes, [2, 1]);
+    const car1 = plan.cars.find((c) => c.payload.issueId === 1);
+    const car3 = plan.cars.find((c) => c.payload.issueId === 3);
+    assert.deepEqual(car3.dependsOn, [car1.id]);
+    assert.ok(plan.cars.find((c) => c.payload.issueId === 2).dependsOn.length === 0);
+  });
+
+  it('capacity overflow: 6 file-disjoint issues over 4 lanes -> 4 in Wave 1, 2 in Wave 2, dependsOn ALL of Wave 1 (no conflict, just capacity)', () => {
+    const plan = planParallelWaveShards({
+      issues: [1, 2, 3, 4, 5, 6].map((n) => ({ id: n, fileScope: [`lib/f${n}.js`] }))
+    });
+    assert.deepEqual(plan.waveParallelLanes, [4, 2]);
+    const wave1Ids = plan.cars.filter((c) => [1, 2, 3, 4].includes(c.payload.issueId)).map((c) => c.id);
+    for (const issueId of [5, 6]) {
+      const car = plan.cars.find((c) => c.payload.issueId === issueId);
+      assert.deepEqual([...car.dependsOn].sort(), [...wave1Ids].sort(),
+        `issue ${issueId} has no real conflict with Wave 1 — it depends on ALL of it only because every lane was taken`);
+    }
+  });
+
+  it('honors a custom carPrefix and builderLanes list', () => {
+    const plan = planParallelWaveShards({
+      issues: [{ id: 'x', fileScope: ['a.js'] }, { id: 'y', fileScope: ['b.js'] }],
+      builderLanes: ['Solo-A', 'Solo-B'],
+      carPrefix: 'Car'
+    });
+    assert.deepEqual(plan.cars.map((c) => c.id), ['Car1-A', 'Car1-B']);
+    assert.deepEqual(plan.cars.map((c) => c.lane), ['Solo-A', 'Solo-B']);
+  });
+
+  it('a plan it returns passes straight into WaveScheduler#createRun', () => {
+    const plan = planParallelWaveShards({
+      issues: [
+        { id: 1, fileScope: ['lib/a.js'] },
+        { id: 2, fileScope: ['lib/b.js'] }
+      ]
+    });
+    const { scheduler } = setup();
+    const run = scheduler.createRun({ id: 'r', fleetId: 'f', cars: plan.cars });
+    assert.deepEqual(run.waves, plan.waves);
+  });
+});
+
+describe('validateParallelWavePlan', () => {
+  it('rejects a single Wave-1 car for 2+ issues across 2+ lanes, with no serialReason and no justifying conflict', () => {
+    const cars = [
+      { id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }
+    ];
+    throwsCode(() => validateParallelWavePlan({ cars }), 'SINGLE_STREAM_MULTI_ISSUE_DRIFT');
+  });
+
+  it('accepts it when an explicit serialReason is attested', () => {
+    const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
+    const result = validateParallelWavePlan({ cars, serialReason: 'Operator requested one lane for this release' });
+    assert.equal(result.ok, true);
+    assert.equal(result.serialReason, 'Operator requested one lane for this release');
+    assert.equal(result.wave1ParallelCars, 1);
+  });
+
+  it('refuses a blank or whitespace-only serialReason as not actually attested', () => {
+    const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
+    throwsCode(() => validateParallelWavePlan({ cars, serialReason: '   ' }), 'SINGLE_STREAM_MULTI_ISSUE_DRIFT');
+  });
+
+  it('accepts a single Wave-1 car when every later car genuinely conflicts with it', () => {
+    const cars = [
+      { id: 'a', fileScope: ['lib/shared.js'] },
+      { id: 'b', dependsOn: ['a'], fileScope: ['lib/shared.js'] },
+      { id: 'c', dependsOn: ['a'], fileScope: ['lib/shared.js', 'lib/extra.js'] }
+    ];
+    const result = validateParallelWavePlan({ cars, issueCount: 3 });
+    assert.equal(result.ok, true);
+    assert.equal(result.wave1ParallelCars, 1);
+  });
+
+  it('accepts the normal 4-car Wave 1 case unconditionally — nothing to excuse', () => {
+    const plan = planParallelWaveShards({
+      issues: [1, 2, 3, 4].map((n) => ({ id: n, fileScope: [`lib/f${n}.js`] }))
+    });
+    const result = validateParallelWavePlan({ cars: plan.cars, issueCount: 4 });
+    assert.equal(result.ok, true);
+    assert.equal(result.wave1ParallelCars, 4);
+  });
+
+  it('is a no-op for a single issue, or a single Builder lane — nothing to parallelize', () => {
+    const oneIssue = [{ id: 'a', fileScope: ['lib/a.js'] }];
+    assert.equal(validateParallelWavePlan({ cars: oneIssue, issueCount: 1 }).ok, true);
+    const twoIssuesOneLane = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
+    assert.equal(validateParallelWavePlan({ cars: twoIssuesOneLane, issueCount: 2, builderLanes: ['TC-Lane-A'] }).ok, true);
+  });
+
+  // #3213 R-Gate R1 BLOCKING 1 — a Car's bundled issues live at
+  // `car.payload.issues` ({@link planParallelWaveShards}'s own shape),
+  // not just a top-level `car.issues`; omitting `issueCount` must still
+  // infer the real count from either, in that order.
+  it('infers issueCount from car.payload.issues when issueCount is omitted', () => {
+    const cars = [{ id: 'a', fileScope: ['lib/a.js'], payload: { issues: [3213, 3216] } }];
+    throwsCode(() => validateParallelWavePlan({ cars }), 'SINGLE_STREAM_MULTI_ISSUE_DRIFT');
+  });
+
+  it('prefers car.payload.issues over a top-level car.issues when both are present', () => {
+    const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1], payload: { issues: [3213, 3216] } }];
+    const result = validateParallelWavePlan({ cars, serialReason: 'attested' });
+    assert.equal(result.wave1ParallelCars, 1);
+    throwsCode(() => validateParallelWavePlan({ cars }), 'SINGLE_STREAM_MULTI_ISSUE_DRIFT',
+      'payload.issues (length 2) must win, not the top-level issues (length 1)');
+  });
+
+  it('rejects a non-array car.payload.issues or car.issues as malformed, rather than silently counting 1', () => {
+    throwsCode(() => validateParallelWavePlan({ cars: [{ id: 'a', fileScope: ['x'], payload: { issues: 'oops' } }] }),
+      'CAR_ISSUES_INVALID');
+    throwsCode(() => validateParallelWavePlan({ cars: [{ id: 'a', fileScope: ['x'], issues: 'oops' }] }),
+      'CAR_ISSUES_INVALID');
+  });
+
+  // #3213 R-Gate R1 BLOCKING 2 — builderLanes must get the same non-empty,
+  // distinct-entries validation planParallelWaveShards already enforces,
+  // not a bare ok:true the moment builderLanes.length < 2 short-circuits
+  // the drift check.
+  it('rejects an empty builderLanes array, rather than treating it as "nothing to parallelize"', () => {
+    const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
+    throwsCode(() => validateParallelWavePlan({ cars, builderLanes: [] }), 'BUILDER_LANES_REQUIRED');
+  });
+
+  it('rejects duplicate builderLanes entries', () => {
+    const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
+    throwsCode(() => validateParallelWavePlan({ cars, builderLanes: ['TC-Lane-A', 'TC-Lane-A'] }), 'BUILDER_LANES_DUPLICATE');
+  });
+
+  // #3213 R-Gate R3 BLOCKING 1 — a single malformed entry passes both
+  // BUILDER_LANES_REQUIRED (a 1-element array is non-empty) and
+  // BUILDER_LANES_DUPLICATE (a 1-element array has no duplicates by
+  // construction) — only a per-entry type/shape check can catch it.
+  for (const malformed of [[''], [null], [{}]]) {
+    it(`rejects builderLanes: ${JSON.stringify(malformed)} as malformed, not a valid single lane`, () => {
+      const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
+      throwsCode(() => validateParallelWavePlan({ cars, builderLanes: malformed }), 'BUILDER_LANES_INVALID');
+    });
+  }
+
+  // #3213 R-Gate R3 BLOCKING 1 (R4) — the error message must never
+  // serialize the caller-supplied value: JSON.stringify throws its own
+  // native TypeError on a BigInt or a circular object, which would crash
+  // before need() ever got a chance to raise BUILDER_LANES_INVALID.
+  it('rejects builderLanes: [1n] (a BigInt) with BUILDER_LANES_INVALID, not a native TypeError from serializing it', () => {
+    const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
+    throwsCode(() => validateParallelWavePlan({ cars, builderLanes: [1n] }), 'BUILDER_LANES_INVALID');
+  });
+
+  it('rejects builderLanes: [<a circular object>] with BUILDER_LANES_INVALID, not a native TypeError from serializing it', () => {
+    const circular = {};
+    circular.self = circular;
+    const cars = [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }];
+    throwsCode(() => validateParallelWavePlan({ cars, builderLanes: [circular] }), 'BUILDER_LANES_INVALID');
+  });
+});
+
+describe('WaveScheduler#createRun — optional parallel-sharding enforcement (metadata.enforceParallelSharding)', () => {
+  it('is off by default: an unsharded multi-issue single car is accepted exactly as before this car', () => {
+    const { scheduler } = setup();
+    const run = scheduler.createRun({
+      id: 'r', fleetId: 'f',
+      cars: [{ id: 'a', fileScope: ['lib/a.js'] }]
+    });
+    assert.equal(run.status, 'active');
+  });
+
+  it('enforces the guard when metadata.enforceParallelSharding is true, before persisting anything', () => {
+    const { scheduler, store } = setup();
+    throwsCode(() => scheduler.createRun({
+      id: 'r', fleetId: 'f',
+      cars: [{ id: 'a', fileScope: ['lib/a.js'] }],
+      metadata: { enforceParallelSharding: true, issueCount: 4 }
+    }), 'SINGLE_STREAM_MULTI_ISSUE_DRIFT');
+    assert.deepEqual(store.read().runs, {}, 'a run that fails the guard must never be persisted');
+  });
+
+  it('passes with metadata.enforceParallelSharding when the plan is genuinely sharded', () => {
+    const { scheduler } = setup();
+    const plan = planParallelWaveShards({
+      issues: [1, 2, 3, 4].map((n) => ({ id: n, fileScope: [`lib/f${n}.js`] }))
+    });
+    const run = scheduler.createRun({
+      id: 'r', fleetId: 'f', cars: plan.cars,
+      metadata: { enforceParallelSharding: true, issueCount: 4 }
+    });
+    assert.equal(run.status, 'active');
+    assert.equal(run.waves[0].length, 4);
+  });
+
+  it('passes a serialReason through metadata to the guard', () => {
+    const { scheduler } = setup();
+    const run = scheduler.createRun({
+      id: 'r', fleetId: 'f',
+      cars: [{ id: 'a', fileScope: ['lib/a.js'] }],
+      metadata: { enforceParallelSharding: true, issueCount: 2, serialReason: 'deliberate single-car release' }
+    });
+    assert.equal(run.status, 'active');
+  });
+
+  // #3213 R-Gate R1 BLOCKING 1 — the exact regression named in the
+  // dispatch: metadata.enforceParallelSharding: true with
+  // payload.issues: [3213, 3216], omitting metadata.issueCount entirely.
+  it('enforces the guard from payload.issues alone, with metadata.issueCount omitted, before persisting anything', () => {
+    const { scheduler, store } = setup();
+    throwsCode(() => scheduler.createRun({
+      id: 'r', fleetId: 'f',
+      cars: [{ id: 'a', fileScope: ['lib/a.js'], payload: { issues: [3213, 3216] } }],
+      metadata: { enforceParallelSharding: true }
+    }), 'SINGLE_STREAM_MULTI_ISSUE_DRIFT');
+    assert.deepEqual(store.read().runs, {}, 'a run that fails the guard must never be persisted');
+  });
+
+  // #3213 R-Gate R1 BLOCKING 2 — a malformed metadata.builderLanes must
+  // refuse through createRun's own enforcement, not just the standalone
+  // validateParallelWavePlan call already covered above.
+  it('rejects metadata.builderLanes: [] through createRun, rather than silently skipping enforcement', () => {
+    const { scheduler, store } = setup();
+    throwsCode(() => scheduler.createRun({
+      id: 'r', fleetId: 'f',
+      cars: [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }],
+      metadata: { enforceParallelSharding: true, builderLanes: [] }
+    }), 'BUILDER_LANES_REQUIRED');
+    assert.deepEqual(store.read().runs, {}, 'a run with malformed builderLanes must never be persisted');
+  });
+
+  // #3213 R-Gate R3 BLOCKING 1 — a single malformed metadata.builderLanes
+  // entry, through createRun's own enforcement path.
+  for (const malformed of [[''], [null], [{}]]) {
+    it(`rejects metadata.builderLanes: ${JSON.stringify(malformed)} through createRun, not just a bare-array shape check`, () => {
+      const { scheduler, store } = setup();
+      throwsCode(() => scheduler.createRun({
+        id: 'r', fleetId: 'f',
+        cars: [{ id: 'a', fileScope: ['lib/a.js'], issues: [1, 2] }],
+        metadata: { enforceParallelSharding: true, builderLanes: malformed }
+      }), 'BUILDER_LANES_INVALID');
+      assert.deepEqual(store.read().runs, {}, 'a run with a malformed builderLanes entry must never be persisted');
+    });
+  }
 });
