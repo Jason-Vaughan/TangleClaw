@@ -41,7 +41,7 @@ const AIDER = wake.ENGINE_WAKE_PROFILES.aider;
 const {
   IDLE_PANE, BUSY_PANE, DIALOG_PANE, TYPING_PANE,
   AG_IDLE_PANE, AG_BUSY_PANE, AG_DIALOG_PANE, AG_TYPING_PANE,
-  CX_COMPOSER
+  CX_COMPOSER, CX_TRANSCRIPT_PROSE_PANE
 } = require('./_wake-fixtures');
 
 /** A live tmux Claude session record. */
@@ -499,6 +499,32 @@ describe('medusa-wake — busyMarker/idleMarker scoped to the trailing status ch
       const lines = ['Waiting for model is ordinary transcript prose.', '> '];
       assert.deepEqual(wake._assessActivity(lines, AIDER), { working: false, reason: null });
       assert.deepEqual(wake._assessPane(lines, AIDER, null), { idle: true, reason: 'at-prompt' });
+    });
+  });
+
+  // #3247 R7 — a full-repo CI run (not this car's own two sibling test
+  // files, which were caught only by the full suite) found two more gaps
+  // R4-R6 introduced:
+  //   (a) unbordered idleRows got scoped to rows.slice(lastGlyph+1), but
+  //       Codex has no reliable composer anchor for the IDLE marker at
+  //       all (its composer draws identically idle or mid-turn) -- a
+  //       SEPARATE mechanism (the engine-channel hold, ledger 5030) is
+  //       what actually catches a Codex pane quoting its idle marker in
+  //       prose, not this gate, and test/medusa-wake-engine-activity.test.js
+  //       asserts that precondition explicitly.
+  //   (b) divider-bordered busyRows was scoped to belowDivider only, but
+  //       Claude draws its own live-turn spinner ABOVE the divider, not
+  //       in the status footer below it.
+  describe('unbordered idleRows stays unscoped (a separate mechanism, not this gate, catches Codex prose-quoting-its-idle-marker) and the divider-bordered busy spinner above the divider is still detected (#3247 R7)', () => {
+    it('Codex: _assessPane alone still reads CX_TRANSCRIPT_PROSE_PANE as idle -- the precondition a separate engine-channel hold exists to catch (ledger 5030)', () => {
+      const CODEX = wake.ENGINE_WAKE_PROFILES.codex;
+      assert.equal(wake._assessPane(CX_TRANSCRIPT_PROSE_PANE, CODEX, null).idle, true);
+    });
+
+    it('Claude: a live-turn spinner row above the divider ("✻ Churning… (12s · esc to interrupt)") is still turn-in-flight', () => {
+      const lines = ['✻ Churning… (12s · esc to interrupt)', ...IDLE_PANE];
+      assert.deepEqual(wake._assessActivity(lines, CLAUDE), { working: true, reason: 'turn-in-flight' });
+      assert.equal(wake._assessPane(lines, CLAUDE, null).idle, false);
     });
   });
 });
