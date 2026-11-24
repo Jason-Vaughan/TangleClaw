@@ -24,9 +24,18 @@ yellow() { printf '\033[0;33m%s\033[0m\n' "$1"; }
 # installer's shell PATH widens what the launchd service's PATH exposes for
 # no runtime benefit. Strips any `.../opt/openjdk/bin` segment from a
 # colon-separated PATH string, leaving everything else untouched.
+#
+# `for seg in $input` after `IFS=:` splits on colons, but an unquoted
+# expansion is ALSO subject to pathname (glob) expansion: a PATH component
+# like `/tmp/*` would silently expand against whatever files happen to exist
+# in the current directory at install time. `set -f` disables that for the
+# duration of the loop (restored unconditionally, success or failure, via
+# the trap below — nothing else in this function can fail under `set -e`).
 strip_openjdk_path() {
   local input="$1" seg new_path=""
   local IFS=:
+  set -f
+  trap 'set +f' RETURN
   for seg in $input; do
     case "$seg" in
       */opt/openjdk/bin) ;; # drop

@@ -410,11 +410,12 @@ describe('deploy/install.sh', () => {
   describe('strip_openjdk_path (#3211 SEC-01, executed not grepped)', () => {
     const { execFileSync } = require('node:child_process');
 
-    function stripOpenjdkPath(input) {
+    function stripOpenjdkPath(input, cwd) {
       const m = script.match(/^strip_openjdk_path\(\) \{[\s\S]*?^\}/m);
       assert.ok(m, 'strip_openjdk_path() must be defined as a top-level shell function');
       return execFileSync('/bin/bash', ['-c', `${m[0]}\nstrip_openjdk_path ${JSON.stringify(input)}`], {
-        encoding: 'utf8'
+        encoding: 'utf8',
+        ...(cwd ? { cwd } : {})
       });
     }
 
@@ -437,6 +438,22 @@ describe('deploy/install.sh', () => {
     it('only matches a bin dir actually under opt/openjdk, not a lookalike', () => {
       const path = '/opt/homebrew/opt/openjdk-not-really/bin:/usr/bin';
       assert.equal(stripOpenjdkPath(path), path);
+    });
+
+    // R1 BLOCKING finding (Architect, PR #3252): the unquoted `for seg in
+    // $input` after `IFS=:` splitting is ALSO subject to pathname (glob)
+    // expansion, so a PATH component like `*` would silently expand against
+    // whatever happens to exist in the current directory. Proven with a
+    // sandbox directory holding a file a glob would actually match, so this
+    // fails loudly if `set -f` regresses rather than passing by accident of
+    // an empty cwd.
+    it('preserves a glob-metacharacter PATH segment literally, without expanding it', () => {
+      const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'tc-install-glob-'));
+      sandboxRoots.push(dir);
+      fs.writeFileSync(path.join(dir, 'glob-canary'), '');
+      const result = stripOpenjdkPath('*:/opt/homebrew/opt/openjdk/bin:/usr/bin', dir);
+      assert.equal(result, '*:/usr/bin',
+        'a literal "*" segment must survive untouched, not expand to files in the cwd');
     });
 
     it('is wired into LAUNCHD_PATH construction', () => {
