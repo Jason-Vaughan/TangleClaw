@@ -40,7 +40,8 @@ const AIDER = wake.ENGINE_WAKE_PROFILES.aider;
 // so the two cannot drift on the exact bytes (`test/_wake-fixtures.js`).
 const {
   IDLE_PANE, BUSY_PANE, DIALOG_PANE, TYPING_PANE,
-  AG_IDLE_PANE, AG_BUSY_PANE, AG_DIALOG_PANE, AG_TYPING_PANE
+  AG_IDLE_PANE, AG_BUSY_PANE, AG_DIALOG_PANE, AG_TYPING_PANE,
+  CX_COMPOSER
 } = require('./_wake-fixtures');
 
 /** A live tmux Claude session record. */
@@ -475,6 +476,29 @@ describe('medusa-wake — busyMarker/idleMarker scoped to the trailing status ch
     it('Aider: the GENUINE "Waiting for <model>" busy row above the prompt is still detected', () => {
       const lines = ['Waiting for ollama_chat/gpt-oss:120b', '> '];
       assert.deepEqual(wake._assessActivity(lines, AIDER), { working: true, reason: 'turn-in-flight' });
+    });
+  });
+
+  // #3247 R6 (PRR-B R-Gate R5) — R5's shape check still accepted a
+  // `startsWith(profile.busyMarker)` prefix, so a multi-word transcript
+  // sentence that happens to BEGIN with the marker still matched ("esc to
+  // interrupt is only documentation.", "Waiting for model is ordinary
+  // transcript prose." — the latter genuinely starts with Aider's own
+  // "Waiting for "). The full-row-shape regexes require nothing else on
+  // the row at all.
+  describe('a leading-prose sentence starting with the marker itself is still excluded, not just mid-sentence prose (#3247 R6)', () => {
+    const CODEX = wake.ENGINE_WAKE_PROFILES.codex;
+
+    it('Codex: "esc to interrupt is only documentation." above the composer is still at-rest', () => {
+      const lines = ['esc to interrupt is only documentation.', CX_COMPOSER, '  · Ready ·'];
+      assert.deepEqual(wake._assessActivity(lines, CODEX), { working: false, reason: null });
+      assert.deepEqual(wake._assessPane(lines, CODEX, null), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('Aider: "Waiting for model is ordinary transcript prose." above the prompt is still at-rest', () => {
+      const lines = ['Waiting for model is ordinary transcript prose.', '> '];
+      assert.deepEqual(wake._assessActivity(lines, AIDER), { working: false, reason: null });
+      assert.deepEqual(wake._assessPane(lines, AIDER, null), { idle: true, reason: 'at-prompt' });
     });
   });
 });
