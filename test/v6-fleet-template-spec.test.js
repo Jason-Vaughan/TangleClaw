@@ -568,6 +568,14 @@ describe('PG-4 — Plane A / Plane B separation (#3194)', () => {
       b.boundAt = 'not-a-date';
       assert.ok(spec.validateInstanceBindingRecord(b).errors.some((e) => e.path === 'boundAt'));
     });
+
+    it('rejects a boundAt that Date.parse accepts but is not strict ISO-8601 (R-Gate R2 WARNING, PRR-A/Architect, #3194)', () => {
+      for (const nonIso of ['November 24, 2026', '11/24/2026', '2026-11-24']) {
+        const b = validBinding();
+        b.boundAt = nonIso;
+        assert.ok(spec.validateInstanceBindingRecord(b).errors.some((e) => e.path === 'boundAt'), `expected "${nonIso}" to be rejected despite Date.parse accepting it`);
+      }
+    });
   });
 });
 
@@ -619,6 +627,17 @@ describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-ru
     assert.equal(result.ok, true);
     assert.doesNotMatch(result.blueprint.seats[0].primingPrompt, /~\//);
     assert.match(result.blueprint.seats[0].primingPrompt, /<path-redacted>/);
+  });
+
+  it('strips non-home absolute Unix/macOS paths that _PATH_RE does not cover (R-Gate R2, PRR-A/Architect, #3194)', () => {
+    for (const leak of ['/opt/private/secret', '/var/lib/tangleclaw', '/tmp/scratch', '/etc/tangleclaw.conf', '/private/tmp/leak', '/srv/data', '/mnt/share', '/Volumes/External/notes', '/Applications/TangleClaw.app', '/Library/LaunchAgents/x', '/usr/local/bin/tc', '/bin/sh', '/sbin/launchd']) {
+      const fleetState = v11FleetState();
+      fleetState.seats[0].primingPrompt = `see ${leak} for details`;
+      const result = spec.exportFleetPackBlueprint(fleetState);
+      assert.equal(result.ok, true, leak);
+      assert.doesNotMatch(result.blueprint.seats[0].primingPrompt, new RegExp(leak.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')), `expected "${leak}" to be redacted`);
+      assert.match(result.blueprint.seats[0].primingPrompt, /<path-redacted>/, leak);
+    }
   });
 
   it('never leaks a directory\'s real suffix when it merely shares a PREFIX with the configured fleetSharedDir/seatWorkspaceDir (Critic BLOCKING finding, #3194)', () => {
