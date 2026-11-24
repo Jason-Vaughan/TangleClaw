@@ -2039,3 +2039,267 @@ describe('#3218 tcBindMasterDropzone', () => {
     assert.equal(ids.masterDrawerFrame.style.pointerEvents, '');
   });
 });
+
+describe('Car V6510-W1-D: animated ellipsis loading indicator (#3207)', () => {
+  it('tcV6AnimatedEllipsisMarkup normalizes trailing dots/ellipsis to the bare stem', () => {
+    assert.match(G.tcV6AnimatedEllipsisMarkup('Loading chat...'), /data-v6-loading-stem="Loading chat"/);
+    assert.match(G.tcV6AnimatedEllipsisMarkup('Connecting…'), /data-v6-loading-stem="Connecting"/);
+    assert.match(G.tcV6AnimatedEllipsisMarkup('Starting session.'), /data-v6-loading-stem="Starting session"/);
+    assert.match(G.tcV6AnimatedEllipsisMarkup('Retrieving history'), /data-v6-loading-stem="Retrieving history"/);
+  });
+
+  it('tcV6AnimatedEllipsisMarkup renders the label, a static ellipsis span, and the right ARIA/role scaffolding', () => {
+    const html = G.tcV6AnimatedEllipsisMarkup('Refreshing usage...');
+    assert.match(html, /<span class="v6-loading-indicator" role="status" aria-live="polite"/);
+    assert.match(html, /data-v6-loading-state="loading"/);
+    assert.match(html, /<span class="v6-loading-label">Refreshing usage<\/span>/);
+    assert.match(html, /<span class="v6-loading-ellipsis" aria-hidden="true">\.\.\.<\/span>/);
+  });
+
+  it('tcV6AnimatedEllipsisMarkup escapes a custom label', () => {
+    assert.match(G.tcV6AnimatedEllipsisMarkup('<b>hi</b>...'), /&lt;b&gt;hi&lt;\/b&gt;/);
+    assert.doesNotMatch(G.tcV6AnimatedEllipsisMarkup('<b>hi</b>...'), /<b>hi<\/b>/);
+  });
+
+  /**
+   * A controller mount with fully injected, synchronous-capture timers, so
+   * the test drives ticks itself rather than racing a real one.
+   * @param {object} [extra] - Extra options merged over the defaults.
+   * @returns {{doc: object, root: object, ctrl: object, tick: () => void,
+   *   clearedId: *}}
+   */
+  function mountEllipsis(extra) {
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    let intervalFn = null;
+    const state = { clearedId: null };
+    const ctrl = G.tcV6CreateAnimatedEllipsisController(Object.assign({
+      doc, containerEl: root, label: 'Loading chat...', intervalMs: 350,
+      setInterval: (fn) => { intervalFn = fn; return 'timer-1'; },
+      clearInterval: (id) => { state.clearedId = id; }
+    }, extra || {}));
+    return { doc, root, ctrl, tick: () => intervalFn(), state };
+  }
+
+  it('cycles the ellipsis . -> .. -> ... -> . on each tick, wrapping back to one dot', () => {
+    const { root, tick } = mountEllipsis();
+    const el = () => root.querySelector('.v6-loading-ellipsis');
+    assert.equal(el().textContent, '...', 'mounts at the full 3 dots, matching the markup function\'s own static form');
+    tick();
+    assert.equal(el().textContent, '.');
+    tick();
+    assert.equal(el().textContent, '..');
+    tick();
+    assert.equal(el().textContent, '...');
+    tick();
+    assert.equal(el().textContent, '.', 'wraps back to one dot rather than growing past three');
+  });
+
+  it('setLabel updates the stem immediately, without disturbing the ellipsis animation', () => {
+    const { root, ctrl, tick } = mountEllipsis();
+    tick();
+    const dotsBefore = root.querySelector('.v6-loading-ellipsis').textContent;
+    ctrl.setLabel('Still loading...');
+    assert.equal(root.querySelector('.v6-loading-label').textContent, 'Still loading');
+    assert.equal(root.querySelector('.v6-loading-indicator').getAttribute('data-v6-loading-stem'), 'Still loading');
+    assert.equal(root.querySelector('.v6-loading-ellipsis').textContent, dotsBefore, 'the ellipsis cadence itself is untouched by a label change');
+  });
+
+  it('stop() clears the timer and leaves the last-rendered state in place', () => {
+    const { root, ctrl, state } = mountEllipsis();
+    ctrl.stop();
+    assert.equal(state.clearedId, 'timer-1');
+    assert.ok(root.querySelector('.v6-loading-indicator'), 'stop() does not tear down the indicator itself');
+    ctrl.stop();
+    assert.equal(state.clearedId, 'timer-1', 'idempotent — a second stop() is a no-op, not a double-clear');
+  });
+
+  it('fail() stops the animation and replaces the indicator with an actionable .v6-loading-error, wiring the given onRetry', () => {
+    const { root, ctrl, state } = mountEllipsis();
+    let retried = 0;
+    ctrl.fail('Could not reach the server.', { onRetry: () => { retried += 1; } });
+    assert.equal(state.clearedId, 'timer-1', 'fail() stops the timer, same as stop()');
+    assert.doesNotMatch(root.innerHTML, /v6-loading-indicator/, 'the loading indicator itself is gone');
+    const err = root.querySelector('.v6-loading-error');
+    assert.ok(err, root.innerHTML);
+    assert.equal(err.getAttribute('role'), 'alert');
+    assert.equal(err.textContent, 'Could not reach the server.');
+    const btn = root.querySelector('.v6-loading-retry-btn');
+    assert.ok(btn);
+    btn.dispatch('click');
+    assert.equal(retried, 1);
+  });
+
+  it('fail() with no retry callback shows the message alone, no button', () => {
+    const { root, ctrl } = mountEllipsis();
+    ctrl.fail('Could not reach the server.');
+    assert.ok(root.querySelector('.v6-loading-error'));
+    assert.equal(root.querySelector('.v6-loading-retry-btn'), null);
+  });
+
+  it('prefers-reduced-motion (explicit opt) never starts a timer and renders a static ellipsis', () => {
+    let setIntervalCalled = false;
+    const { root } = mountEllipsis({
+      prefersReducedMotion: true,
+      setInterval: () => { setIntervalCalled = true; return 'x'; }
+    });
+    assert.equal(setIntervalCalled, false);
+    assert.equal(root.querySelector('.v6-loading-ellipsis').textContent, '...');
+  });
+
+  it('prefers-reduced-motion, read from win.matchMedia, has the same effect as the explicit option', () => {
+    let setIntervalCalled = false;
+    const win = { matchMedia: (q) => ({ matches: /reduce/.test(q) }) };
+    const { root } = mountEllipsis({
+      win, prefersReducedMotion: undefined,
+      setInterval: () => { setIntervalCalled = true; return 'x'; }
+    });
+    assert.equal(setIntervalCalled, false);
+    assert.equal(root.querySelector('.v6-loading-ellipsis').textContent, '...');
+  });
+});
+
+describe('Car V6510-W1-D: tcV6FormatResetCountdown (#3209)', () => {
+  const NOW = Date.UTC(2026, 10, 23, 0, 0, 0);
+
+  it('formats days+hours, hours+minutes, and minutes-only countdowns', () => {
+    assert.equal(G.tcV6FormatResetCountdown(NOW + 4 * 3600000 + 48 * 60000, NOW), 'resets in 4h 48m');
+    assert.equal(G.tcV6FormatResetCountdown(NOW + 3 * 86400000 + 12 * 3600000, NOW), 'resets in 3d 12h');
+    assert.equal(G.tcV6FormatResetCountdown(NOW + 42 * 60000, NOW), 'resets in 42m');
+  });
+
+  it('reads an ISO string the same way as epoch milliseconds', () => {
+    const iso = new Date(NOW + 90 * 60000).toISOString();
+    assert.equal(G.tcV6FormatResetCountdown(iso, NOW), 'resets in 1h 30m');
+  });
+
+  it('reports "resetting soon" at or past the reset time', () => {
+    assert.equal(G.tcV6FormatResetCountdown(NOW, NOW), 'resetting soon');
+    assert.equal(G.tcV6FormatResetCountdown(NOW - 1000, NOW), 'resetting soon');
+  });
+
+  it('returns an empty string for nothing to parse', () => {
+    assert.equal(G.tcV6FormatResetCountdown(null, NOW), '');
+    assert.equal(G.tcV6FormatResetCountdown(undefined, NOW), '');
+    assert.equal(G.tcV6FormatResetCountdown('not a date', NOW), '');
+  });
+
+  it('R2 BLOCKING 2: an exact hour (or exact N hours) reads "Nh 0m", not "Nh 1m" -- the minutes-only clamp must not leak into the hours branch', () => {
+    assert.equal(G.tcV6FormatResetCountdown(NOW + 3600000, NOW), 'resets in 1h 0m');
+    assert.equal(G.tcV6FormatResetCountdown(NOW + 2 * 3600000, NOW), 'resets in 2h 0m');
+  });
+
+  it('R2 BLOCKING 2: under a minute remaining still reads "resets in 1m", never "resets in 0m"', () => {
+    assert.equal(G.tcV6FormatResetCountdown(NOW + 30000, NOW), 'resets in 1m');
+  });
+});
+
+describe('Car V6510-W1-D: tcV6RenderEngineUsageCardMarkup (#3209)', () => {
+  const NOW = Date.UTC(2026, 10, 23, 0, 0, 0);
+
+  it('renders a provider-probed card with its title, source badge, and last-probed timestamp', () => {
+    const html = G.tcV6RenderEngineUsageCardMarkup('claude', {
+      weeklyRemainingPct: 62, fiveHourRemainingPct: 88,
+      weeklyResetAt: NOW + 3 * 86400000, fiveHourResetAt: NOW + 4 * 3600000 + 48 * 60000,
+      source: 'probed', lastSuccessObservedAt: '2026-11-23T00:00:00.000Z'
+    }, { fiveHour: 12000, weekly: 88000, activeSessions: 2 }, { nowMs: NOW });
+    assert.match(html, /<section class="v6-usage-engine-card" data-usage-provider="claude">/);
+    assert.match(html, /<h4 class="v6-usage-card-title">Claude<\/h4>/);
+    assert.match(html, /<span class="v6-usage-source-badge--probed">Provider Probed<\/span>/);
+    assert.match(html, /v6-usage-last-probed">Last probed: 2026-11-23T00:00:00\.000Z/);
+  });
+
+  it('renders codex and antigravity with their own titles, and a Local Estimate badge when unprobed', () => {
+    const codex = G.tcV6RenderEngineUsageCardMarkup('codex', { source: 'estimated' }, null, { nowMs: NOW });
+    assert.match(codex, /data-usage-provider="codex"/);
+    assert.match(codex, /<h4 class="v6-usage-card-title">Codex<\/h4>/);
+    assert.match(codex, /v6-usage-source-badge--estimated">Local Estimate</);
+    const gravity = G.tcV6RenderEngineUsageCardMarkup('antigravity', { source: 'estimated' }, null, { nowMs: NOW });
+    assert.match(gravity, /<h4 class="v6-usage-card-title">Antigravity<\/h4>/);
+  });
+
+  it('renders distinct, aligned 5-Hour and Weekly quota window rows with progress bars and % left badges', () => {
+    const html = G.tcV6RenderEngineUsageCardMarkup('claude', {
+      weeklyRemainingPct: 62, fiveHourRemainingPct: 88,
+      weeklyResetAt: NOW + 3 * 86400000, fiveHourResetAt: NOW + 48 * 60000
+    }, null, { nowMs: NOW });
+    assert.match(html, /<div class="v6-usage-window-row" data-usage-window="five-hour">[\s\S]*?5-Hour Quota Window[\s\S]*?width: 88%[\s\S]*?88% left[\s\S]*?resets in 48m/);
+    assert.match(html, /<div class="v6-usage-window-row" data-usage-window="weekly">[\s\S]*?Weekly Quota Window[\s\S]*?width: 62%[\s\S]*?62% left[\s\S]*?resets in 3d 0h/);
+  });
+
+  it('shows "—" instead of a percentage when a window\'s remaining pct is unknown', () => {
+    const html = G.tcV6RenderEngineUsageCardMarkup('claude', { weeklyRemainingPct: null, fiveHourRemainingPct: undefined }, null, { nowMs: NOW });
+    assert.match(html, /data-usage-window="five-hour">[\s\S]*?width: 0%[\s\S]*?<span class="v6-usage-pct-left">—<\/span>/);
+    assert.match(html, /data-usage-window="weekly">[\s\S]*?width: 0%[\s\S]*?<span class="v6-usage-pct-left">—<\/span>/);
+  });
+
+  it('renders a sub-tier breakdown list only when probeReading.subTiers is non-empty (Claude\'s Fable, Antigravity\'s Claude & GPT models)', () => {
+    const withTiers = G.tcV6RenderEngineUsageCardMarkup('claude', {
+      subTiers: { Fable: { fiveHourRemainingPct: 50, weeklyRemainingPct: 70 } }
+    }, null, { nowMs: NOW });
+    assert.match(withTiers, /<ul class="v6-usage-subtiers"><li data-usage-subtier="Fable">/);
+    assert.match(withTiers, /Fable · 5h[\s\S]*?width: 50%/);
+    assert.match(withTiers, /Fable · Weekly[\s\S]*?width: 70%/);
+    const withoutTiers = G.tcV6RenderEngineUsageCardMarkup('codex', {}, null, { nowMs: NOW });
+    assert.doesNotMatch(withoutTiers, /v6-usage-subtiers/);
+  });
+
+  it('keeps Local Transcript Token & Session Aggregates visually separate from the provider-probed percentages', () => {
+    const html = G.tcV6RenderEngineUsageCardMarkup('claude', { weeklyRemainingPct: 62 }, { fiveHour: 12000, weekly: 88000, activeSessions: 3 }, { nowMs: NOW });
+    assert.match(html, /<div class="v6-usage-local-estimates">[\s\S]*?Local Transcript Token &amp; Session Aggregates[\s\S]*?5h tokens: 12000[\s\S]*?Weekly tokens: 88000[\s\S]*?Active sessions: 3[\s\S]*?<\/div>/);
+  });
+
+  it('defaults token aggregates to 0 when no tokenEstimate is given', () => {
+    const html = G.tcV6RenderEngineUsageCardMarkup('claude', {}, null, { nowMs: NOW });
+    assert.match(html, /5h tokens: 0/);
+    assert.match(html, /Weekly tokens: 0/);
+    assert.match(html, /Active sessions: 0/);
+  });
+
+  it('shows a degraded-refresh note, with the real error text, while still keeping the preserved quota bars visible', () => {
+    const html = G.tcV6RenderEngineUsageCardMarkup('claude', {
+      weeklyRemainingPct: 62, fiveHourRemainingPct: 88, refreshDegraded: true, lastRefreshError: 'probe timed out'
+    }, null, { nowMs: NOW });
+    assert.match(html, /<p class="v6-usage-degraded-note" role="alert">probe timed out<\/p>/);
+    assert.match(html, /width: 88%/, 'the 5h bar is still rendered, not hidden by the degraded note');
+    assert.match(html, /width: 62%/, 'the weekly bar is still rendered, not hidden by the degraded note');
+  });
+
+  it('shows a generic degraded note when refreshDegraded is set but no specific error message is given', () => {
+    const html = G.tcV6RenderEngineUsageCardMarkup('claude', { refreshDegraded: true }, null, { nowMs: NOW });
+    assert.match(html, /v6-usage-degraded-note" role="alert">Usage refresh degraded/);
+  });
+
+  it('shows no degraded note at all when the refresh is healthy', () => {
+    const html = G.tcV6RenderEngineUsageCardMarkup('claude', { weeklyRemainingPct: 62 }, null, { nowMs: NOW });
+    assert.doesNotMatch(html, /v6-usage-degraded-note/);
+  });
+
+  it('R2 BLOCKING 1: a real persisted probe snapshot (lib/usage-windows.js#getUsageProbeSnapshot\'s own shape) reads as Provider Probed, with its own observedAt as the last-probed timestamp', () => {
+    const html = G.tcV6RenderEngineUsageCardMarkup('claude', {
+      provider: 'claude', status: 'configured', source: 'cli-print', observedAt: '2026-11-23T08:00:00Z',
+      fiveHourRemainingPct: 82, weeklyRemainingPct: 64
+    }, null, { nowMs: NOW });
+    assert.match(html, /v6-usage-source-badge--probed">Provider Probed/);
+    assert.match(html, /v6-usage-last-probed">Last probed: 2026-11-23T08:00:00Z/);
+  });
+
+  it('R2 BLOCKING 1: a real probe failure (status !== "configured", source: "none", a real error message) shows the degraded note', () => {
+    const html = G.tcV6RenderEngineUsageCardMarkup('codex', {
+      provider: 'codex', status: 'not-configured', source: 'none', observedAt: '2026-11-23T08:05:00Z', error: 'Timed out'
+    }, null, { nowMs: NOW });
+    assert.match(html, /v6-usage-degraded-note" role="alert">Timed out<\/p>/);
+    assert.match(html, /v6-usage-last-probed">Last probed: 2026-11-23T08:05:00Z/, 'observedAt still shows, even though this reading never configured');
+    assert.doesNotMatch(html, /v6-usage-source-badge--probed/, 'a failed probe is not "Provider Probed" -- there is no reading to show as probed');
+  });
+
+  it('R2 Ruling A956: a sub-tier label containing & escapes exactly once, never doubled', () => {
+    const html = G.tcV6RenderEngineUsageCardMarkup('antigravity', {
+      subTiers: { 'Claude & GPT models': { fiveHourRemainingPct: 50, weeklyRemainingPct: 70 } }
+    }, null, { nowMs: NOW });
+    assert.match(html, /Claude &amp; GPT models/);
+    assert.doesNotMatch(html, /&amp;amp;/);
+  });
+});
