@@ -74,8 +74,9 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 - Branched `release/v6.5.11` explicitly from the named base commit (`git checkout -b
   release/v6.5.11 766d68b75c00541b087cd402affdf85fc961308a`).
 - Verified with `node --test test/readme-version-pins.test.js test/changelog*.test.js
-  test/version*.test.js test/features-index.test.js test/changelog-fragment-gate.test.js`
-  (446 + 26 pass) and `node scripts/test-stage.js 1`.
+  test/version*.test.js test/features-index.test.js` (446/446 pass — `test/changelog*.test.js`
+  already matches `test/changelog-fragment-gate.test.js`, so naming it again in the same
+  command would be redundant, not an additional 26) and `node scripts/test-stage.js 1`.
 - **R2** (`TC-Lane-PRR-A`, on `PR #3246` R1 `caacc00300fb4b83f04e62f967ba5ae1f3d9ae58`): the
   compiled `[6.5.11]` section only recorded publishing the audit/layout-spec/backlog
   (`changelog.d/3210...md` was written in the docs car, `PR #3234`) without recording that the
@@ -90,7 +91,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   exported `hashReleasedSections(text)` and wrote it into
   `test/fixtures/changelog-released-sections.lock.json` by hand, rather than bypassing the
   script's safety check any other way. `release-prepare.js` then reports "already current";
-  446/446 + 26/26 and stage 1 still green after.
+  the same combined 446/446 and stage 1 still green after.
 
 ## 2026-11-23 — v6.5.10 release cut (Milestone #104), Car V6510-W2-REL
 
