@@ -8,6 +8,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 - Published the standalone V6 Workspace Five-Tab Functional & UX Architecture Audit, the cohesive `Sprint & Cars` layout specification, and the prioritized V6 Workspace Tabs UX Design Backlog (#3210): `docs/architecture/v6-five-tab-ux-audit-and-backlog.md` benchmarks Chat as the reference experience across all five tabs — Chat, Sprint & Cars, Charter & Roadmap, Kaizen & Reports, and Wizard — evaluates each tab's real responsibility, what works today vs. what falls back to a plainer built-in rendering, direct operator actions vs. the one real server-side governance interlock found (a STOPPED assignment's launch refusal), a verified current-vs.-proposed `FleetPack v1alpha1` (Issue #3194) compatibility comparison for the Wizard, a recommended low-risk side-by-side layout for Sprint & Cars' Kanban board and 6-gate receipt matrix, and a ranked P0/P1/P2 design backlog for Operator review. Registered in the SSOT Master Document Registry as `V6_FIVE_TAB_UX_AUDIT_AND_BACKLOG`.
+- Shipped the audit's own recommended cohesive `Sprint & Cars` layout (#3210 Deliverable 2): a responsive `@media (min-width: 1200px)` 2-column side-by-side Kanban board & 6-gate receipt matrix layout with theme-aware `.v6-sprint-gate-badge` styling, and a `.v6-sprint-cars-summary` active milestone/sprint summary strip with compact inline 6-gate review receipt badges on each car.
 
 ## [6.5.10] - 2026-11-23
 

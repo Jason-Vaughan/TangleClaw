@@ -76,6 +76,21 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 - Verified with `node --test test/readme-version-pins.test.js test/changelog*.test.js
   test/version*.test.js test/features-index.test.js test/changelog-fragment-gate.test.js`
   (446 + 26 pass) and `node scripts/test-stage.js 1`.
+- **R2** (`TC-Lane-PRR-A`, on `PR #3246` R1 `caacc00300fb4b83f04e62f967ba5ae1f3d9ae58`): the
+  compiled `[6.5.11]` section only recorded publishing the audit/layout-spec/backlog
+  (`changelog.d/3210...md` was written in the docs car, `PR #3234`) without recording that the
+  actual Deliverable 2 UI implementation shipped in `PR #3243`/`PR #3244` — unlike
+  `README.md`, `FEATURES.md` and `docs/releases/v6.5.11.md`, which already recorded both.
+  Verified the cited selectors (`@media (min-width: 1200px)`, `.v6-sprint-gate-badge`,
+  `.v6-sprint-cars-summary`) directly against `public/style.css` before writing them, then added
+  a second `### Added` bullet in `CHANGELOG.md` recording the shipped layout. Re-running
+  `scripts/release-prepare.js` refused ("already-released CHANGELOG sections changed since they
+  were locked") since `6.5.11` was already in the lock from R1 — not a real release-drift case
+  (the PR hasn't merged or been tagged), so computed the new hash directly via the script's own
+  exported `hashReleasedSections(text)` and wrote it into
+  `test/fixtures/changelog-released-sections.lock.json` by hand, rather than bypassing the
+  script's safety check any other way. `release-prepare.js` then reports "already current";
+  446/446 + 26/26 and stage 1 still green after.
 
 ## 2026-11-23 — v6.5.10 release cut (Milestone #104), Car V6510-W2-REL
 
