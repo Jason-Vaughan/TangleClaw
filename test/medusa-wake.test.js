@@ -399,6 +399,25 @@ describe('medusa-wake — busyMarker/idleMarker scoped to the trailing status ch
     assert.deepEqual(wake._assessActivity(outside9, CLAUDE), { working: false, reason: null },
       'one row older than the window: the marker is now one row short of it');
   });
+
+  // #3247 R3 (PRR-A R-Gate R2) — _assessActivity is EXPORTED and already
+  // had two external callers besides this file's own two internal ones:
+  // lib/wrap-delivery-receipt.js and test/activity-observer.test.js, both
+  // predating this scoping fix, both passing the pane as a single joined
+  // string rather than rows. Must accept both shapes identically, not just
+  // the array shape this file's own two callers happen to use.
+  it('accepts both a rows array and a single joined string, with identical status-chrome scoping', () => {
+    const lines = [...TRANSCRIPT_MENTIONING_CLAUDE_MARKER, ...BUSY_PANE];
+    const asString = lines.join('\n');
+    assert.deepEqual(wake._assessActivity(lines, CLAUDE), wake._assessActivity(asString, CLAUDE));
+    assert.deepEqual(wake._assessActivity(asString, CLAUDE), { working: true, reason: 'turn-in-flight' });
+
+    const idleLines = [...TRANSCRIPT_MENTIONING_CLAUDE_MARKER, ...IDLE_PANE];
+    const idleAsString = idleLines.join('\n');
+    assert.deepEqual(wake._assessActivity(idleLines, CLAUDE), wake._assessActivity(idleAsString, CLAUDE));
+    assert.deepEqual(wake._assessActivity(idleAsString, CLAUDE), { working: false, reason: null },
+      'the trailing-window scoping excludes the same transcript mention whether the pane arrives as rows or as one string');
+  });
 });
 
 describe('medusa-wake — Aider 0.86.2 measured pane profile (#2961)', () => {
