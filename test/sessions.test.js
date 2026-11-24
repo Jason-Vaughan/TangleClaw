@@ -4301,6 +4301,220 @@ describe('sessions', () => {
     });
   });
 
+  describe('launchSessionAsync (#3216 Pillar 2)', () => {
+    const tmux = require('../lib/tmux');
+    const enginesModule = require('../lib/engines');
+    let sessions;
+    let originalHasSession;
+    let originalCreateSession;
+    let originalDetectEngine;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+    });
+
+    beforeEach(() => {
+      originalHasSession = tmux.hasSession;
+      originalCreateSession = tmux.createSession;
+      originalDetectEngine = enginesModule.detectEngine;
+      // Same stubbing `describe('silent prime delivery (#103)')` uses — no
+      // real tmux process, no real engine binary, so the DEFERRED launch
+      // this suite flushes actually completes fast and deterministically.
+      // `hasSession: () => false` matters here specifically — unlike that
+      // suite's own per-test `name === '<fixed project>'` stub, this one
+      // covers several different project names, and launchSession's own
+      // "is this tmux name already taken" check (lib/sessions.js:1375)
+      // hits the REAL tmux binary (a 5s timeout per call) for any name
+      // this stub does not already claim.
+      tmux.hasSession = () => false;
+      tmux.createSession = () => true;
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+    });
+
+    afterEach(() => {
+      tmux.hasSession = originalHasSession;
+      tmux.createSession = originalCreateSession;
+      enginesModule.detectEngine = originalDetectEngine;
+    });
+
+    it('returns {accepted: false} synchronously for an unknown project, same message as launchSession', () => {
+      const result = sessions.launchSessionAsync('nonexistent-async');
+      assert.equal(result.accepted, false);
+      assert.ok(result.error.includes('not found'));
+    });
+
+    it('returns {accepted: false} synchronously for an archived project', () => {
+      const projDir = path.join(projectsDir, 'archived-async-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'archived-async-proj', path: projDir, engine: 'claude' });
+      store.projects.archive(proj.id);
+      const result = sessions.launchSessionAsync('archived-async-proj');
+      assert.equal(result.accepted, false);
+      assert.ok(result.error.includes('archived'));
+    });
+
+    it('returns {accepted: false} synchronously when a session is already active, without running the deferred launch', async () => {
+      const projDir = path.join(projectsDir, 'already-active-async-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'already-active-async-proj', path: projDir, engine: 'claude' });
+      const launched = sessions.launchSession('already-active-async-proj');
+      assert.equal(launched.error, null, 'the synchronous launch that sets up this test must itself succeed');
+      try {
+        const result = sessions.launchSessionAsync('already-active-async-proj');
+        assert.equal(result.accepted, false);
+        assert.ok(result.error.includes('already active'));
+      } finally {
+        const active = store.sessions.getActive(proj.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    it('accepts immediately ({accepted: true, async: true, status: "starting"}) and the deferred launchSession actually runs once flushed', async () => {
+      const projDir = path.join(projectsDir, 'accepted-async-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'accepted-async-proj', path: projDir, engine: 'claude' });
+      try {
+        const before = store.sessions.getActive(proj.id);
+        assert.equal(before, null, 'nothing active yet');
+        const result = sessions.launchSessionAsync('accepted-async-proj');
+        assert.deepEqual(
+          { accepted: result.accepted, async: result.async, status: result.status, project: result.project },
+          { accepted: true, async: true, status: 'starting', project: 'accepted-async-proj' }
+        );
+        assert.ok(result.requestedAt, 'carries a requestedAt timestamp');
+        // Nothing has launched yet -- this call returned before the
+        // deferred setImmediate() has had a chance to run at all.
+        assert.equal(store.sessions.getActive(proj.id), null, 'still nothing active immediately after the call returns');
+        await new Promise((resolve) => setImmediate(resolve));
+        const after = store.sessions.getActive(proj.id);
+        assert.ok(after, 'the deferred launchSession call actually ran and created a real session');
+      } finally {
+        const active = store.sessions.getActive(proj.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    it('R2 BLOCKING 2: two back-to-back calls for the SAME project in the same tick -- the first is accepted, the second is refused 409-shaped before the first\'s deferred launch ever runs', async () => {
+      const projDir = path.join(projectsDir, 'single-flight-async-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'single-flight-async-proj', path: projDir, engine: 'claude' });
+      try {
+        const first = sessions.launchSessionAsync('single-flight-async-proj');
+        // Still in the SAME tick: launchSession's own `setImmediate` has
+        // not run yet, so store.sessions.getActive would still read null
+        // here too -- the ONLY thing that can tell these two calls apart
+        // is the in-flight claim, not the session row.
+        const second = sessions.launchSessionAsync('single-flight-async-proj');
+        assert.equal(first.accepted, true, 'the first caller wins the claim');
+        assert.equal(second.accepted, false, 'the second caller, same tick, is refused');
+        assert.equal(second.code, 'ALREADY_STARTING');
+        assert.equal(second.error, 'Session is already starting for this project');
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.ok(store.sessions.getActive(proj.id), 'exactly one deferred launch actually ran');
+      } finally {
+        const active = store.sessions.getActive(proj.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    it('R2 BLOCKING 2: the in-flight claim is released once the deferred launch settles, so a LATER call (not same-tick) succeeds normally', async () => {
+      const projDir = path.join(projectsDir, 'single-flight-later-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'single-flight-later-proj', path: projDir, engine: 'claude' });
+      try {
+        const first = sessions.launchSessionAsync('single-flight-later-proj');
+        assert.equal(first.accepted, true);
+        await new Promise((resolve) => setImmediate(resolve));
+        const active = store.sessions.getActive(proj.id);
+        assert.ok(active, 'the first deferred launch completed');
+        store.sessions.kill(active.id, 'test cleanup, mid-test');
+        const second = sessions.launchSessionAsync('single-flight-later-proj');
+        assert.equal(second.accepted, true, 'the claim was released once the first deferred launch settled');
+      } finally {
+        const active = store.sessions.getActive(proj.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    it('R2 WebUI continuation gap: onDeferredResult is called with the deferred launchSession call\'s own return value once it settles', async () => {
+      const projDir = path.join(projectsDir, 'deferred-callback-async-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'deferred-callback-async-proj', path: projDir, engine: 'claude' });
+      try {
+        const calls = [];
+        const result = sessions.launchSessionAsync('deferred-callback-async-proj', {}, (deferredResult) => calls.push(deferredResult));
+        assert.equal(result.accepted, true);
+        assert.deepEqual(calls, [], 'not called yet -- the deferred launch has not run');
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(calls.length, 1, 'called exactly once, with the deferred launchSession call\'s own result');
+        assert.equal(calls[0].error, null);
+        assert.ok(calls[0].session, 'the real launchSession return value, not a placeholder');
+      } finally {
+        const active = store.sessions.getActive(proj.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    it('R3 BLOCKING 1: an ordinary launch (no model override) no longer synchronously scans this engine\'s entire session history, leaving an independent timer scheduled alongside it essentially unskewed', async () => {
+      const projDir = path.join(projectsDir, 'event-loop-responsive-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'event-loop-responsive-proj', path: projDir, engine: 'claude' });
+      try {
+        // An independent timer, scheduled right alongside the async launch.
+        // Its OWN firing delay is the signal: under the OLD unconditional
+        // lib/profile-reconciler.js#snapshotExistingSessionIds scan (~9s,
+        // scaling with this engine's real session history), a deferred
+        // launchSession call running inside the same single-threaded event
+        // loop would have skewed this 50ms timer by nearly that whole
+        // amount. Fixed (the scan is skipped entirely with no model
+        // override), the skew should be negligible.
+        const scheduledAt = Date.now();
+        let firedAt = null;
+        const independentTimer = setTimeout(() => { firedAt = Date.now(); }, 50);
+        await new Promise((resolve) => {
+          sessions.launchSessionAsync('event-loop-responsive-proj', {}, resolve);
+        });
+        // The deferred launch has now settled; give the independent timer
+        // a moment to fire too, if it somehow hasn't already.
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        clearTimeout(independentTimer);
+        assert.ok(firedAt, 'the independent timer fired at all');
+        const skewMs = firedAt - scheduledAt - 50;
+        assert.ok(skewMs < 2000, `the independent timer's own 50ms delay must not be skewed by anywhere near the old ~9s cost (measured skew: ${skewMs}ms)`);
+      } finally {
+        const active = store.sessions.getActive(proj.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    it('R3: a launch that DOES request a model override still computes the real exclude-set (this fix narrows WHEN the scan runs, never what it returns when it does run)', async () => {
+      const projDir = path.join(projectsDir, 'model-override-async-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({ name: 'model-override-async-proj', path: projDir, engine: 'claude' });
+      try {
+        const calls = [];
+        sessions.launchSessionAsync('model-override-async-proj', { model: 'claude-opus-5-5' }, (r) => calls.push(r));
+        // Flush until the deferred call (which genuinely needs the real
+        // scan for this path) settles -- unlike the other tests here, this
+        // one is not expected to be fast, and does not assert that it is.
+        // R4: the pre-scan itself now yields every 20 files
+        // (snapshotExistingSessionIdsAsync), so the real scan can take
+        // hundreds of setImmediate ticks on a machine with heavy history
+        // -- poll with a generous wall-clock bound instead of a fixed
+        // tick count.
+        const deadline = Date.now() + 20000;
+        while (calls.length === 0 && Date.now() < deadline) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        assert.equal(calls.length, 1, 'the deferred launch eventually completed');
+        assert.equal(calls[0].error, null);
+      } finally {
+        const active = store.sessions.getActive(proj.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+  });
+
   describe('launchSession adopts orphaned tmux session', () => {
     const tmux = require('../lib/tmux');
     const enginesModule = require('../lib/engines');
@@ -6208,5 +6422,152 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
         sessionsLib.launchSession = origLaunch;
       }
     });
+  });
+});
+
+describe('POST /api/sessions/:project { async: true } holds its single-flight claim through a WebUI continuation (#3216 R4)', () => {
+  let server;
+  let http;
+  let operatorHeaders;
+  let sessionsLib;
+  let base;
+
+  function request(method, urlPath, body) {
+    return new Promise((resolve, reject) => {
+      const addr = server.address();
+      const bodyStr = body !== undefined ? JSON.stringify(body) : null;
+      const headers = { 'Content-Type': 'application/json', ...operatorHeaders(server) };
+      if (bodyStr !== null) headers['Content-Length'] = Buffer.byteLength(bodyStr);
+      const req = http.request({ hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let parsed;
+          try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+          resolve({ status: res.statusCode, body: parsed });
+        });
+      });
+      req.on('error', reject);
+      if (bodyStr !== null) req.write(bodyStr);
+      req.end();
+    });
+  }
+
+  before(async () => {
+    // #3216 R4: each top-level describe in this file owns its own store
+    // lifecycle (`describe('stored launch blockers...')`'s own identical
+    // before/after is the established convention) — `describe('sessions',
+    // ...)`'s own `after()` already closed the store this one inherited by
+    // the time a LATER top-level block runs.
+    base = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-webui-single-flight-'));
+    store._setBasePath(base);
+    store.init();
+    http = require('node:http');
+    ({ operatorHeaders } = require('./_shared-docs-callers'));
+    const { createServer } = require('../server');
+    sessionsLib = require('../lib/sessions');
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    try { store.close(); } catch { /* already closed */ }
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it('a second async launch for the same project, issued while the first\'s launchWebuiSession continuation is still pending, is refused 409', async () => {
+    const conn = store.openclawConnections.create({
+      name: 'webui-single-flight-conn', host: '192.0.2.50', sshUser: 'user', sshKeyPath: '/tmp/key',
+      auditSecret: 'webui-single-flight-secret', defaultMode: 'webui', availableAsEngine: true
+    });
+    const dir = path.join(store._getBasePath(), 'projects', 'webui-single-flight-proj');
+    fs.mkdirSync(dir, { recursive: true });
+    store.projects.create({ name: 'webui-single-flight-proj', path: dir, engine: `openclaw:${conn.id}` });
+    // launchSession's own `engines.resolveProfile`/availability check runs
+    // before the webui branch -- stubbed the same way
+    // `describe('POST /api/sessions/:project diagnostic enrichment')`
+    // already does for an ordinary engine, so this never needs a real
+    // openclaw-cli binary on PATH.
+    const enginesModule = require('../lib/engines');
+    const origDetectEngine = enginesModule.detectEngine;
+    enginesModule.detectEngine = () => ({ available: true, path: '/fake/bin/openclaw-cli' });
+    const origLaunchWebuiSession = sessionsLib.launchWebuiSession;
+    let resolveWebui = null;
+    sessionsLib.launchWebuiSession = () => new Promise((resolve) => { resolveWebui = resolve; });
+    try {
+      const first = await request('POST', '/api/sessions/webui-single-flight-proj', { async: true });
+      assert.equal(first.status, 202);
+      // Poll for the stub's OWN invocation (resolveWebui captured) rather
+      // than a fixed tick count -- launchSession's webui branch returns
+      // long before any tmux work, but the exact number of event-loop
+      // phases between this HTTP response settling and the deferred
+      // setImmediate actually running is not something to hardcode.
+      const deadline = Date.now() + 5000;
+      while (!resolveWebui && Date.now() < deadline) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.ok(resolveWebui, 'launchWebuiSession was called -- the deferred launch reached the webui branch');
+      const second = await request('POST', '/api/sessions/webui-single-flight-proj', { async: true });
+      assert.equal(second.status, 409, JSON.stringify(second.body));
+      assert.equal(second.body.code, 'ALREADY_STARTING');
+    } finally {
+      if (resolveWebui) {
+        resolveWebui({ error: null, session: { id: 999999, engineId: `openclaw:${conn.id}`, startedAt: new Date().toISOString() } });
+      }
+      sessionsLib.launchWebuiSession = origLaunchWebuiSession;
+      enginesModule.detectEngine = origDetectEngine;
+      // Flush the (now-resolved) continuation so it does not leak into
+      // a later test as an unawaited background promise.
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  });
+});
+
+describe('#3216 R5: snapshotExistingSessionIdsAsync matches the sync version exactly (PRR-A\'s own finding — the encoded transcript directory is not injective)', () => {
+  const profileReconciler = require('../lib/profile-reconciler');
+  let claudeHome;
+
+  beforeEach(() => {
+    claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-r5-claude-home-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(claudeHome, { recursive: true, force: true });
+  });
+
+  it('absent: no history at all for this project — both resolve an empty set', async () => {
+    const projectPath = '/Users/jasonvaughan/never-launched-anywhere';
+    const syncResult = profileReconciler.snapshotExistingSessionIds(projectPath, 'claude', { claudeHome });
+    const asyncResult = await profileReconciler.snapshotExistingSessionIdsAsync(projectPath, 'claude', { claudeHome });
+    assert.deepEqual([...syncResult], []);
+    assert.deepEqual([...asyncResult], []);
+  });
+
+  it('colliding: the project\'s own encoded directory also holds a DIFFERENT project\'s session (a different cwd) — only the real match is included, by either version', async () => {
+    const projectPath = '/Users/jasonvaughan/colliding-project';
+    const dir = path.join(claudeHome, 'projects', projectPath.replace(/[/.]/g, '-'));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'session-mine.jsonl'), `${JSON.stringify({ cwd: projectPath })}\n`);
+    fs.writeFileSync(path.join(dir, 'session-other.jsonl'), `${JSON.stringify({ cwd: '/Users/jasonvaughan/a-different-real-path' })}\n`);
+    const syncResult = profileReconciler.snapshotExistingSessionIds(projectPath, 'claude', { claudeHome });
+    const asyncResult = await profileReconciler.snapshotExistingSessionIdsAsync(projectPath, 'claude', { claudeHome });
+    assert.deepEqual([...syncResult], ['session-mine']);
+    assert.deepEqual([...asyncResult], ['session-mine']);
+  });
+
+  it('alternate/split: this project\'s own real history is split between its expected encoded directory and a totally differently-named one (e.g. an older Claude Code encoding scheme) — BOTH ids are found, by either version', async () => {
+    const projectPath = '/Users/jasonvaughan/split-history-project';
+    const expectedDir = path.join(claudeHome, 'projects', projectPath.replace(/[/.]/g, '-'));
+    fs.mkdirSync(expectedDir, { recursive: true });
+    fs.writeFileSync(path.join(expectedDir, 'session-A.jsonl'), `${JSON.stringify({ cwd: projectPath })}\n`);
+    const altDir = path.join(claudeHome, 'projects', 'totally-unrelated-old-encoding');
+    fs.mkdirSync(altDir, { recursive: true });
+    fs.writeFileSync(path.join(altDir, 'session-B.jsonl'), `${JSON.stringify({ cwd: projectPath })}\n`);
+    const syncResult = profileReconciler.snapshotExistingSessionIds(projectPath, 'claude', { claudeHome });
+    const asyncResult = await profileReconciler.snapshotExistingSessionIdsAsync(projectPath, 'claude', { claudeHome });
+    assert.deepEqual([...syncResult].sort(), ['session-A', 'session-B']);
+    assert.deepEqual([...asyncResult].sort(), ['session-A', 'session-B']);
   });
 });
