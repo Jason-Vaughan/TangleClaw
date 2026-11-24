@@ -826,12 +826,123 @@
     blocked: 'Blocked', closed: 'Closed'
   });
 
+  /**
+   * What each gate status word means, for the gate badge tooltip (#3210
+   * Deliverable 2, R-Gate R2) — mirrors `public/sprint-wave-ui.js`'s own
+   * (unexported) `GATE_STATUS_LABELS` exactly, since `ui.carGates(row)`'s
+   * `status` field is always one of these six keys.
+   */
+  const WORKSPACE_GATE_STATUS_LABELS = Object.freeze({
+    pass: 'passed', fail: 'failed', in_progress: 'in progress', pending: 'pending', blocked: 'blocked', unknown: 'unknown'
+  });
+
   /** The sprint report's hero figures, in the order the built-in Kaizen & Reports panel lists them. */
   const WORKSPACE_KPI_LABELS = Object.freeze([
     ['issuesClosed', 'Issues closed'], ['builderPRs', 'Builder PRs'], ['waves', 'Waves'],
     ['fileCollisions', 'File collisions'], ['reviewRounds', 'Review rounds'], ['cycleTimeHours', 'Cycle time (h)'],
     ['netLOC', 'Net LOC'], ['releaseCommit', 'Release commit']
   ]);
+
+  /**
+   * Compact inline 6-gate review receipt badges for one Sprint & Cars row in
+   * this file's own built-in fallback list (#3210 Deliverable 2). Reuses the
+   * sprint UI's own `carGates(row)` — real status inference from the row's
+   * stage, staleness-vs-head-SHA detection, status aliasing — rather than
+   * reimplementing any of it here. Renders only when BOTH the sprint UI is
+   * loaded (no local fallback for the gate logic itself: it is genuinely
+   * nontrivial, and this file has no business re-deriving it) AND the row
+   * carries a `gates` object: a row with none recorded gets no badge strip
+   * at all here, rather than six "unknown" pills that would be pure noise in
+   * this compact list (the richer board/matrix drawn by `ui.renderSprintWaveBoard`
+   * already shows inferred-from-stage gates, explicitly marked as such).
+   * @param {{gates?: object}} row
+   * @param {object|null} ui - `window.TangleClawSprintWaveUi`, if loaded.
+   * @returns {string} HTML, or `''`.
+   */
+  function sprintCarGateBadgesMarkup(row, ui) {
+    if (!row || typeof row !== 'object' || !row.gates || typeof row.gates !== 'object') return '';
+    if (!ui || typeof ui.carGates !== 'function') return '';
+    let gates;
+    try {
+      gates = ui.carGates(row);
+    } catch (err) { // prawduct:allow prawduct/broad-except -- a helper from another car that throws must not blank the row; no badges stands in
+      return '';
+    }
+    if (!Array.isArray(gates) || !gates.length) return '';
+    return ` <span class="v6-sprint-gate-strip">${gates.map((g) => sprintCarGateBadgeMarkup(g)).join('')}</span>`;
+  }
+
+  /**
+   * One gate badge (#3210 Deliverable 2, R-Gate R2 BLOCKING: R1 emitted only
+   * `is-${status}`/`title="name: status"`, losing `ui.carGates(row)`'s own
+   * `source`/`stale`/`sha`/`token` fields entirely — a stale recorded CI
+   * pass bound to an outdated head SHA rendered as an ordinary green "pass"
+   * badge, indistinguishable from a genuinely current one, and a
+   * stage-inferred gate was indistinguishable from a recorded one). Mirrors
+   * `public/sprint-wave-ui.js`'s own `_gatePill(gate)` semantics exactly —
+   * same modifier classes, same tooltip wording and punctuation, same
+   * `role="img"` (what actually makes a screen reader announce the tooltip
+   * rather than just the bare glyph) — with one deliberate ADDITION:
+   * `_gatePill` marks an inferred gate with the `is-inferred` CSS class
+   * alone, relying on a stylesheet rule this compact list's own CSS (a
+   * SEPARATE car, `public/style.css`) does not define yet; a trailing `~`
+   * on the visible label keeps that distinction perceptible to a sighted
+   * user even before that stylesheet lands.
+   * @param {{key: string, label: string, name: string, status: string,
+   *   source: string, sha: (string|null), token: (string|null), stale: boolean}} g
+   * @returns {string} HTML.
+   */
+  function sprintCarGateBadgeMarkup(g) {
+    const from = g.source === 'stage' ? ' (from stage)' : g.source === 'unknown' ? ' (not recorded)' : '';
+    const tip = `${g.name}: ${WORKSPACE_GATE_STATUS_LABELS[g.status] || g.status}${from}`
+      + (g.sha ? ` @ ${g.sha}` : '') + (g.token ? ` · ${g.token}` : '')
+      + (g.stale ? ' — bound to a different head' : '');
+    return `<span class="v6-sprint-gate-badge is-${escapeHtml(g.status)}${g.source === 'stage' ? ' is-inferred' : ''}${g.stale ? ' is-stale' : ''}"`
+      + ` role="img" title="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}">${escapeHtml(g.label)}${g.source === 'stage' ? '~' : ''}</span>`;
+  }
+
+  /**
+   * The active milestone/sprint summary strip above the Sprint & Cars board
+   * (#3210 Deliverable 2): total car count, a per-stage distribution (only
+   * the stages actually present, in {@link WORKSPACE_STAGE_LABELS}'s own
+   * order), and an optional milestone/sprint/version label when the payload
+   * names one (`data.milestone`, else `data.sprint`, else `data.version`,
+   * whichever is present first) — all three are optional top-level fields
+   * on the SAME `GET /api/sprint-waves` payload `data.dispatch` already
+   * comes from, not a separate read. `data-sprint-renderer` records which
+   * path actually drew the board directly below this strip (`"board"` for
+   * `ui.renderSprintWaveBoard`, `"fallback"` for this file's own built-in
+   * list) — a provenance signal `#3234` Section 4 P0 item 1 asked for, so
+   * an operator (or a later E2E test) can tell which one rendered without
+   * depending on the two drawings' differing internal markup. Called only
+   * when `ids.length > 0`; the caller never reaches this for an empty board.
+   * @param {object} data - The sprint route's own data payload.
+   * @param {object} dispatch - `data.dispatch`, already validated as an object.
+   * @param {string[]} ids - `Object.keys(dispatch)`.
+   * @param {('board'|'fallback')} renderer
+   * @returns {string} HTML.
+   */
+  function sprintCarsSummaryMarkup(data, dispatch, ids, renderer) {
+    const stages = Object.keys(WORKSPACE_STAGE_LABELS);
+    const counts = new Map(stages.map((s) => [s, 0]));
+    let other = 0;
+    ids.forEach((id) => {
+      const stage = String((dispatch[id] || {}).stage || '');
+      if (counts.has(stage)) counts.set(stage, counts.get(stage) + 1);
+      else other++;
+    });
+    const stageBits = stages.filter((s) => counts.get(s) > 0).map((s) => (
+      `<span class="v6-sprint-cars-summary-stage" data-stage="${escapeHtml(s)}">${escapeHtml(WORKSPACE_STAGE_LABELS[s])}: ${counts.get(s)}</span>`
+    ));
+    if (other > 0) stageBits.push(`<span class="v6-sprint-cars-summary-stage" data-stage="other">Other: ${other}</span>`);
+    const labelSource = [data.milestone, data.sprint, data.version].find((v) => typeof v === 'string' && v.trim());
+    const label = labelSource ? `<span class="v6-sprint-cars-summary-label">${escapeHtml(labelSource.trim())}</span>` : '';
+    return `<div class="v6-sprint-cars-summary" data-sprint-renderer="${escapeHtml(renderer)}">`
+      + `<span class="v6-sprint-cars-summary-total">${ids.length} car${ids.length === 1 ? '' : 's'}</span>`
+      + label
+      + `<span class="v6-sprint-cars-summary-stages">${stageBits.join('')}</span>`
+      + '</div>';
+  }
 
   /**
    * A data mode's panel content (#3086, Rulings A760, A761, A774). A failed
@@ -856,22 +967,29 @@
         : `<p class="v6-workspace-empty is-error">Could not load this: ${escapeHtml(r.error || 'the server did not answer')}.</p>`;
     }
     const data = r.data && typeof r.data === 'object' ? r.data : {};
-    // The charter builder draws a charter, not this payload's waves (#3088), so
-    // the waves here are always the built-in list; see charterPanelContent.
-    const builder = mode === 'sprint' ? 'renderSprintWaveBoard' : mode === 'kaizen' ? 'renderKaizenLedgerPanel' : null;
-    if (builder && ui && typeof ui[builder] === 'function') {
-      try {
-        const html = mode === 'sprint' ? ui[builder](null, data) : ui[builder](data.report || data);
-        if (typeof html === 'string') return html;
-      } catch (err) { // prawduct:allow prawduct/broad-except -- a builder from another car that throws must not blank the panel; the built-in drawing stands in
-        // Fall through to the built-in drawing.
-      }
-    }
+    // #3210 Deliverable 2: the active-milestone summary strip and this
+    // file's own fallback list both need `dispatch`/`ids` regardless of
+    // which path ultimately draws the board, so sprint mode is handled
+    // whole here rather than sharing the generic builder branch below —
+    // unlike kaizen's builder, sprint's own builder call signature also
+    // differs (`ui.renderSprintWaveBoard(null, data)`, container-first).
     if (mode === 'sprint') {
       const dispatch = data.dispatch && typeof data.dispatch === 'object' ? data.dispatch : {};
       const ids = Object.keys(dispatch);
       if (!ids.length) return '<p class="v6-workspace-empty">No cars are on the board yet.</p>';
-      return `<ul class="v6-workspace-list">${ids.map((id) => {
+      if (ui && typeof ui.renderSprintWaveBoard === 'function') {
+        try {
+          const html = ui.renderSprintWaveBoard(null, data);
+          // The summary strip is prepended as SIBLING markup, never a
+          // wrapper: `.sprint-wave-board`/`.sprint-gate-matrix` inside
+          // `html` must stay direct children of `#v6WorkspacePanel`
+          // (Car V6511-W1-C's own CSS grid rule depends on it).
+          if (typeof html === 'string') return sprintCarsSummaryMarkup(data, dispatch, ids, 'board') + html;
+        } catch (err) { // prawduct:allow prawduct/broad-except -- a builder from another car that throws must not blank the panel; the built-in drawing stands in
+          // Fall through to the built-in drawing.
+        }
+      }
+      return sprintCarsSummaryMarkup(data, dispatch, ids, 'fallback') + `<ul class="v6-workspace-list">${ids.map((id) => {
         const row = dispatch[id] || {};
         const stage = String(row.stage || '');
         const label = Object.prototype.hasOwnProperty.call(WORKSPACE_STAGE_LABELS, stage) ? WORKSPACE_STAGE_LABELS[stage] : stage;
@@ -879,8 +997,20 @@
           + (label ? ` <span class="v6-workspace-item-stage">${escapeHtml(label)}</span>` : '')
           + (row.laneName ? ` <span class="v6-workspace-item-lane">${escapeHtml(row.laneName)}</span>` : '')
           + (row.openPrNumber != null ? ` <span class="v6-workspace-item-pr">#${escapeHtml(row.openPrNumber)}</span>` : '')
+          + sprintCarGateBadgesMarkup(row, ui)
           + '</li>';
       }).join('')}</ul>`;
+    }
+    // The charter builder draws a charter, not this payload's waves (#3088), so
+    // the waves here are always the built-in list; see charterPanelContent.
+    const builder = mode === 'kaizen' ? 'renderKaizenLedgerPanel' : null;
+    if (builder && ui && typeof ui[builder] === 'function') {
+      try {
+        const html = ui[builder](data.report || data);
+        if (typeof html === 'string') return html;
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a builder from another car that throws must not blank the panel; the built-in drawing stands in
+        // Fall through to the built-in drawing.
+      }
     }
     if (mode === 'charter') {
       const waves = Array.isArray(data.waves) ? data.waves.filter((w) => w && typeof w === 'object') : [];
@@ -11409,6 +11539,9 @@
   global.tcV6WorkspaceVisibility = workspaceVisibility;
   global.tcV6WorkspaceModeBarMarkup = workspaceModeBarMarkup;
   global.tcV6WorkspacePanelContent = workspacePanelContent;
+  global.tcV6SprintCarsSummaryMarkup = sprintCarsSummaryMarkup;
+  global.tcV6SprintCarGateBadgesMarkup = sprintCarGateBadgesMarkup;
+  global.tcV6SprintCarGateBadgeMarkup = sprintCarGateBadgeMarkup;
   global.tcV6CharterPanelContent = charterPanelContent;
   global.tcV6ParseTrainCars = parseTrainCars;
   global.tcV6TrainResultMarkup = trainResultMarkup;
