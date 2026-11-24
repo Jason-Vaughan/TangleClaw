@@ -446,6 +446,37 @@ describe('medusa-wake — busyMarker/idleMarker scoped to the trailing status ch
       assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, null), { idle: false, reason: 'not-at-rest' });
     });
   });
+
+  // #3247 R5 (PRR-A R-Gate R4) — R4's unbordered (Codex/Aider) branch added
+  // the one non-blank row above the composer/prompt glyph to busyRows
+  // UNCONDITIONALLY. An idle pane whose transcript's own last line merely
+  // mentions the busy phrase mid-sentence — not a real busy status row —
+  // still matched, since nothing checked the row's actual SHAPE.
+  describe('the row above an unbordered composer/prompt only counts as busy when it has the measured busy-status-row shape (#3247 R5)', () => {
+    const CODEX = wake.ENGINE_WAKE_PROFILES.codex;
+
+    it('Codex: a transcript line merely mentioning "esc to interrupt" (not the real "• Working (...)" row) above an idle composer is still at-rest', () => {
+      const lines = ['The phrase "esc to interrupt" is only documentation.', '› Ask Codex to do anything', '', '  GPT-6-Astra default · Ready · Ask for approval'];
+      assert.deepEqual(wake._assessActivity(lines, CODEX), { working: false, reason: null });
+      assert.deepEqual(wake._assessPane(lines, CODEX, null), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('Aider: a transcript line merely mentioning "Waiting for model" (not starting with the real busyMarker) above an idle prompt is still at-rest', () => {
+      const lines = ['The phrase "Waiting for model" is only documentation.', '> '];
+      assert.deepEqual(wake._assessActivity(lines, AIDER), { working: false, reason: null });
+      assert.deepEqual(wake._assessPane(lines, AIDER, null), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('Codex: the GENUINE "• Working (...)" busy row above the composer is still detected', () => {
+      const lines = ['• Working (3s • esc to interrupt)', '› Ask Codex to do anything', '', '  GPT-6-Astra default · Working · Ask for approval'];
+      assert.deepEqual(wake._assessActivity(lines, CODEX), { working: true, reason: 'turn-in-flight' });
+    });
+
+    it('Aider: the GENUINE "Waiting for <model>" busy row above the prompt is still detected', () => {
+      const lines = ['Waiting for ollama_chat/gpt-oss:120b', '> '];
+      assert.deepEqual(wake._assessActivity(lines, AIDER), { working: true, reason: 'turn-in-flight' });
+    });
+  });
 });
 
 describe('medusa-wake — Aider 0.86.2 measured pane profile (#2961)', () => {
