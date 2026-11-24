@@ -706,6 +706,52 @@ describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-ru
     assert.equal(result.blueprint.seats[0].primingPrompt, 'workspace at ${SEAT_WORKSPACE_DIR}/logs/today.log, unrelated leak at <path-redacted>');
   });
 
+  it('redacts a file:// URL\'s own host path -- a file:// URL is never a "safe remote URL" the way http(s) is (R-Gate R8 BLOCKING, PRR-A/PRR-B, #3194)', () => {
+    for (const leak of ['file:///root/.ssh/id_ed25519', 'file:///etc/passwd', 'file:///Users/alice/.env']) {
+      const fleetState = v11FleetState();
+      fleetState.seats[0].primingPrompt = `see ${leak} for details`;
+      const result = spec.exportFleetPackBlueprint(fleetState);
+      assert.equal(result.ok, true, leak);
+      assert.match(result.blueprint.seats[0].primingPrompt, /^see file:\/\/<path-redacted> for details$/, `expected "${leak}"'s path to redact while keeping the file:// prefix`);
+    }
+  });
+
+  it('redacts a URL\'s own userinfo credentials, including a generic password _INLINE_TOKEN_RE would never recognize on its own (R-Gate R8 BLOCKING, PRR-A/PRR-B, #3194)', () => {
+    const ghpLeak = spec.exportFleetPackBlueprint((() => {
+      const s = v11FleetState();
+      s.seats[0].primingPrompt = 'clone https://user:ghp_1234567890123456789012345@github.com/org/repo for details';
+      return s;
+    })());
+    assert.equal(ghpLeak.ok, true);
+    assert.equal(ghpLeak.blueprint.seats[0].primingPrompt, 'clone https://<credentials-redacted>@github.com/org/repo for details');
+    assert.doesNotMatch(ghpLeak.blueprint.seats[0].primingPrompt, /ghp_/);
+
+    const genericPasswordLeak = spec.exportFleetPackBlueprint((() => {
+      const s = v11FleetState();
+      s.seats[0].primingPrompt = 'login at https://admin:hunter2@example.com/a/b';
+      return s;
+    })());
+    assert.equal(genericPasswordLeak.ok, true);
+    assert.equal(genericPasswordLeak.blueprint.seats[0].primingPrompt, 'login at https://<credentials-redacted>@example.com/a/b');
+    assert.doesNotMatch(genericPasswordLeak.blueprint.seats[0].primingPrompt, /hunter2/);
+  });
+
+  it('redacts a known secret-shaped token inside a URL\'s own query string', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].primingPrompt = 'see https://example.com/api?token=ghp_1234567890123456789012345 for details';
+    const result = spec.exportFleetPackBlueprint(fleetState);
+    assert.equal(result.ok, true);
+    assert.equal(result.blueprint.seats[0].primingPrompt, 'see https://example.com/api?token=<token-redacted> for details');
+  });
+
+  it('a plain, credential-free https:// URL is still never touched (the credential/file:// fixes must not reopen the URL exclusion)', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].primingPrompt = 'see https://example.com/a/b for details';
+    const result = spec.exportFleetPackBlueprint(fleetState);
+    assert.equal(result.ok, true);
+    assert.equal(result.blueprint.seats[0].primingPrompt, 'see https://example.com/a/b for details');
+  });
+
   it('never leaks a directory\'s real suffix when it merely shares a PREFIX with the configured fleetSharedDir/seatWorkspaceDir (Critic BLOCKING finding, #3194)', () => {
     const fleetState = v11FleetState();
     fleetState.seats[0].primingPrompt = 'see /Users/jasonvaughan/Documents/Projects/SharedArchive-2026/secretproject for details';
