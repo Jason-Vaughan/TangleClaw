@@ -402,6 +402,49 @@ describe('deploy/install.sh', () => {
     });
   });
 
+  // #3211 SEC-01: the server never invokes java, so an inherited openjdk bin
+  // dir has no business in the launchd service's PATH. Executed, not
+  // grepped — same rationale as the TCC preflight block above: pure string
+  // logic that shells out to nothing, so running it actually proves the
+  // behavior instead of matching a string that merely looks right.
+  describe('strip_openjdk_path (#3211 SEC-01, executed not grepped)', () => {
+    const { execFileSync } = require('node:child_process');
+
+    function stripOpenjdkPath(input) {
+      const m = script.match(/^strip_openjdk_path\(\) \{[\s\S]*?^\}/m);
+      assert.ok(m, 'strip_openjdk_path() must be defined as a top-level shell function');
+      return execFileSync('/bin/bash', ['-c', `${m[0]}\nstrip_openjdk_path ${JSON.stringify(input)}`], {
+        encoding: 'utf8'
+      });
+    }
+
+    it('drops a homebrew openjdk bin dir from the middle of PATH', () => {
+      assert.equal(
+        stripOpenjdkPath('/opt/homebrew/bin:/opt/homebrew/opt/openjdk/bin:/usr/bin:/bin'),
+        '/opt/homebrew/bin:/usr/bin:/bin'
+      );
+    });
+
+    it('leaves a PATH with no openjdk segment untouched', () => {
+      const path = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin';
+      assert.equal(stripOpenjdkPath(path), path);
+    });
+
+    it('collapses to an empty string when openjdk is the only entry', () => {
+      assert.equal(stripOpenjdkPath('/opt/homebrew/opt/openjdk/bin'), '');
+    });
+
+    it('only matches a bin dir actually under opt/openjdk, not a lookalike', () => {
+      const path = '/opt/homebrew/opt/openjdk-not-really/bin:/usr/bin';
+      assert.equal(stripOpenjdkPath(path), path);
+    });
+
+    it('is wired into LAUNCHD_PATH construction', () => {
+      assert.match(script, /LAUNCHD_PATH="\$\(strip_openjdk_path "\$PATH"\)"/,
+        'LAUNCHD_PATH must be built from the filtered PATH, not the raw one');
+    });
+  });
+
   // These tests run the real script rather than grepping it, because the
   // defects were failures of BEHAVIOR that a source-shape assertion would have
   // happily matched: the script "handled" a failed download and "supported"
