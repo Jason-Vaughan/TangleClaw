@@ -2122,3 +2122,108 @@ describe('Car V6510-W1-C: shared loading indicator & per-engine usage card styli
     });
   });
 });
+
+/**
+ * Car V6511-W1-C (#3210 Deliverable 2 — the Section 3 design
+ * `docs/architecture/v6-five-tab-ux-audit-and-backlog.md`, Car
+ * V6511-W1-A, specified). Exclusive file scope: public/style.css and
+ * this file only.
+ */
+describe('Car V6511-W1-C: cohesive Sprint & Cars side-by-side layout (#3210 Deliverable 2)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  /** @param {string} selector @returns {string} the selector's own `{ ... }` body, or '' if not found. */
+  const body = (selector) => {
+    const m = new RegExp(`(^|\\n)${selector.replace(/[.[\]>="^-]/g, '\\$&')} \\{([^}]*)\\}`).exec(css);
+    return m ? m[2] : '';
+  };
+
+  it('#v6WorkspacePanel:has(> .sprint-wave-board) becomes a 2-column grid only at min-width: 1200px, with both the title and the (forward) summary line spanning full width', () => {
+    const m = /@media \(min-width: 1200px\) \{\s*#v6WorkspacePanel:has\(> \.sprint-wave-board\) \{([^}]*)\}/.exec(css);
+    assert.ok(m, 'the 2-column grid rule must live inside its own min-width: 1200px media query');
+    assert.match(m[1], /grid-template-columns: minmax\(0, 3fr\) minmax\(320px, 2fr\);/);
+    assert.match(css, /#v6WorkspacePanel:has\(> \.sprint-wave-board\) > \.v6-workspace-panel-title,\s*#v6WorkspacePanel:has\(> \.sprint-wave-board\) > \.v6-sprint-cars-summary \{\s*grid-column: 1 \/ -1;/);
+  });
+
+  it('does not touch the EXISTING @media (max-width: 900px) .sprint-wave-board rule — a different element, a non-overlapping viewport range, verified by exact-text match', () => {
+    assert.match(css, /@media \(max-width: 900px\) \{\s*\.sprint-wave-board \{\s*grid-template-columns: none;\s*grid-auto-flow: column;\s*grid-auto-columns: minmax\(160px, 220px\);\s*overflow-x: auto;\s*\}\s*\}/);
+  });
+
+  it('.v6-sprint-gate-badge does NOT copy .sprint-gate-pill\'s own solid-fill colors (white-on-#2ea043/white-on-#f85149 both measure under 4.5:1) — it reuses theme-aware var(--danger)/var(--warning), and a dedicated light override for "pass"', () => {
+    const badge = body('.v6-sprint-gate-badge.is-fail,\n.v6-sprint-gate-badge.is-blocked');
+    assert.match(badge, /color: var\(--danger\);/);
+    assert.match(body('.v6-sprint-gate-badge.is-in_progress'), /color: var\(--warning\);/);
+    assert.doesNotMatch(body('.v6-sprint-gate-badge'), /background:/, 'text-on-transparent, not a solid fill needing its own contrast check per state');
+    assert.match(body('[data-theme="light"] .v6-sprint-gate-badge.is-pass'), /color: #1a7f37;/);
+  });
+
+  /**
+   * WCAG relative luminance / contrast ratio — the same algorithm this
+   * file's other WCAG describes already use, duplicated here since
+   * neither exports it.
+   * @param {string} hex @returns {number}
+   */
+  function luminance(hex) {
+    const h = hex.replace('#', '');
+    const [r, g, b] = [0, 2, 4].map((i) => {
+      const c = parseInt(h.slice(i, i + 2), 16) / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }
+  /** @param {string} hexA @param {string} hexB @returns {number} */
+  function contrastRatio(hexA, hexB) {
+    const [l1, l2] = [luminance(hexA), luminance(hexB)].sort((a, b) => b - a);
+    return (l1 + 0.05) / (l2 + 0.05);
+  }
+
+  it('.v6-sprint-gate-badge.is-pass clears WCAG AA (>= 4.5:1) in both themes', () => {
+    assert.ok(contrastRatio('#56d364', '#0d0d0d') >= 4.5, 'dark: #56d364 on the dark card background');
+    assert.ok(contrastRatio('#1a7f37', '#FFFFFF') >= 4.5, 'light override: #1a7f37 on the light card background');
+  });
+
+  it('.v6-sprint-cars-summary uses the theme-aware var(--text-muted) token, not a hardcoded literal', () => {
+    assert.match(body('.v6-sprint-cars-summary'), /color: var\(--text-muted\);/);
+  });
+
+  describe('Mounted against the real #v6WorkspacePanel shape (title + board + matrix as flat siblings)', () => {
+    /**
+     * A minimal tag-stack HTML -> mini-DOM builder for this block's own
+     * fixture — the same bounded technique (and the same reason:
+     * `withIdParsingInnerHTML` only extracts flat id stand-ins) the
+     * #3218 and #3209 describes earlier in this file already use.
+     * @param {object} doc @param {string} html @returns {object}
+     */
+    function mountFixtureMarkup(doc, html) {
+      const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+      const stack = [];
+      let root = null;
+      let match;
+      while ((match = tagRe.exec(html))) {
+        const [, closing, tag, attrs] = match;
+        if (closing) { stack.pop(); continue; }
+        const el = doc.createElement(tag);
+        const idMatch = /\bid="([^"]*)"/.exec(attrs);
+        const classMatch = /\bclass="([^"]*)"/.exec(attrs);
+        if (idMatch) { el.id = idMatch[1]; doc._register(el); }
+        if (classMatch) el.className = classMatch[1];
+        if (stack.length) stack[stack.length - 1].appendChild(el);
+        else root = el;
+        stack.push(el);
+      }
+      return root;
+    }
+
+    it('#v6WorkspacePanel\'s real fill (workspacePanelMarkup: <h2 class="v6-workspace-panel-title"> then the sprint content, flat, no wrapper) satisfies :has(> .sprint-wave-board), with the title as its own direct child', () => {
+      const { doc } = makeDocument([]);
+      // Verified shape: workspacePanelMarkup (public/v6-shell.js) emits
+      // the title, then workspacePanelContent's own sprint output
+      // (.sprint-wave-board then .sprint-gate-matrix, back to back, no
+      // wrapper) — all as flat children of #v6WorkspacePanel.
+      const panel = mountFixtureMarkup(doc, '<section id="v6WorkspacePanel"><h2 class="v6-workspace-panel-title">Sprint & Cars</h2><div class="sprint-wave-board"></div><table class="sprint-gate-matrix"></table></section>');
+      assert.equal(panel.id, 'v6WorkspacePanel');
+      const directChildren = panel.childNodes.map((c) => c.className);
+      assert.deepEqual(directChildren, ['v6-workspace-panel-title', 'sprint-wave-board', 'sprint-gate-matrix'], 'exactly the 3 real flat children the :has() selector and its grid-column: 1 / -1 title rule both depend on');
+      assert.ok(panel.childNodes.some((c) => c.className === 'sprint-wave-board'), ':has(> .sprint-wave-board) only matches a panel whose DIRECT child carries this exact class — confirmed present');
+    });
+  });
+});

@@ -6690,6 +6690,86 @@ p.v6-history-secret {
   }
 }
 
+/* ── Car V6511-W1-C: cohesive Sprint & Cars layout (#3210 Deliverable 2
+   — the Section 3 design `docs/architecture/v6-five-tab-ux-audit-and-
+   backlog.md`, Car V6511-W1-A, specified). `workspacePanelMarkup`
+   (public/v6-shell.js) renders <h2 class="v6-workspace-panel-title">
+   followed directly by whatever `sprint` mode's own content is —
+   .sprint-wave-board then .sprint-gate-matrix, with no wrapper of their
+   own — as direct children of #v6WorkspacePanel. `:has()` already has a
+   precedent in this stylesheet (.launch-mode-option:has(...)), so this
+   is not a new browser-support assumption. Deliberately does NOT touch
+   the @media (max-width: 900px) rule above: that targets
+   .sprint-wave-board itself over a DIFFERENT, non-overlapping viewport
+   range (max 900px here, min 1200px below), so both apply exactly as
+   written with no interaction. */
+@media (min-width: 1200px) {
+  #v6WorkspacePanel:has(> .sprint-wave-board) {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
+    column-gap: 16px;
+    align-items: start;
+  }
+  /* Both the panel's own title AND the (forward) per-sprint summary line
+     span the full width, above the board/matrix pair — neither is
+     squeezed into column 1 alongside the Kanban. */
+  #v6WorkspacePanel:has(> .sprint-wave-board) > .v6-workspace-panel-title,
+  #v6WorkspacePanel:has(> .sprint-wave-board) > .v6-sprint-cars-summary {
+    grid-column: 1 / -1;
+  }
+}
+/* A per-sprint summary line above the board/matrix pair — forward
+   styling: no caller renders `.v6-sprint-cars-summary` yet. Variable-
+   driven, so dark/light/high-contrast clear WCAG AA without a
+   per-component override, the same approach every other v6-* surface
+   in this file already relies on. */
+.v6-sprint-cars-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.9em;
+  color: var(--text-muted);
+}
+/* A compact per-car row of gate pills — forward styling for whichever
+   future markup embeds one (e.g. inside a .sprint-wave-card, Section 3's
+   own "larger alternative" option). */
+.v6-sprint-gate-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 4px;
+}
+/* NOT a copy of .sprint-gate-pill's own solid-fill colors — checked
+   their real contrast first: white-on-#2ea043 (3.37:1) and
+   white-on-#f85149 (3.35:1) both fail the 4.5:1 floor this car's own
+   dispatch requires, so copying them would ship a second instance of
+   the same gap rather than the compliant badge asked for. Text-on-
+   transparent instead, reusing tokens this file already verified:
+   var(--danger) (theme-aware) and var(--warning) (theme-aware) for
+   fail/blocked and in_progress; "pass" gets the same dedicated
+   [data-theme="light"] override pattern .v6-usage-source-badge--probed
+   above already uses, since no theme-aware "success" token exists yet. */
+.v6-sprint-gate-badge {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.72em;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.5;
+}
+.v6-sprint-gate-badge.is-pass { color: #56d364; }
+[data-theme="light"] .v6-sprint-gate-badge.is-pass { color: #1a7f37; }
+.v6-sprint-gate-badge.is-fail,
+.v6-sprint-gate-badge.is-blocked { color: var(--danger); }
+.v6-sprint-gate-badge.is-in_progress { color: var(--warning); }
+.v6-sprint-gate-badge.is-pending,
+.v6-sprint-gate-badge.is-unknown { color: inherit; border-color: #8c959f; opacity: 0.8; }
+
 /* #3088: the charter versions and the train launch controls under Charter & Roadmap. */
 .v6-workspace-panel-subtitle {
   margin: 12px 0 6px;
