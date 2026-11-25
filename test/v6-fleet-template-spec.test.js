@@ -760,8 +760,8 @@ describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-ru
     assert.equal(result.blueprint.seats[0].primingPrompt, 'see https://maps.example/api?key=<token-redacted>&format=json for details');
   });
 
-  it('never redacts a benign parameter name that merely CONTAINS "key" as a substring (R-Gate R11 WARNING, PRR-B, #3194) -- the bare-key fix in R10 over-matched', () => {
-    for (const benign of ['monkey=banana', 'keyboard=us', 'keynote=1']) {
+  it('never redacts a benign parameter name that merely CONTAINS a sensitive keyword as a substring, for ANY keyword in the list (R-Gate R11/R12 WARNING, PRR-B, #3194) -- every keyword must be component-bounded, not just "key"', () => {
+    for (const benign of ['monkey=banana', 'keyboard=us', 'keynote=1', 'design=logo', 'author=alice']) {
       const fleetState = v11FleetState();
       fleetState.seats[0].primingPrompt = `see https://example.com/x?${benign} for details`;
       const result = spec.exportFleetPackBlueprint(fleetState);
