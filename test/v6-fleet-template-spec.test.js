@@ -817,6 +817,14 @@ describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-ru
     assert.equal(result.blueprint.seats[0].primingPrompt, 'see https://example.com/x?access%5Ftoken%ZZ=<token-redacted> for details');
   });
 
+  it('still redacts a valid sensitive escape run even when immediately followed by an invalid UTF-8 byte sequence (R-Gate R15 BLOCKING, PRR-A/PM, #3194) -- decoding byte-by-byte, not grouping contiguous escapes through decodeURIComponent, is what prevents one throw from undoing the whole run', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].primingPrompt = 'see https://example.com/x?%61%75%74%68%C0%AF=hunter2 for details';
+    const result = spec.exportFleetPackBlueprint(fleetState);
+    assert.equal(result.ok, true);
+    assert.equal(result.blueprint.seats[0].primingPrompt, 'see https://example.com/x?%61%75%74%68%C0%AF=<token-redacted> for details');
+  });
+
   it('stops a sensitive parameter\'s value at a semicolon delimiter too, not just & and # (R-Gate R11 WARNING, PRR-B, #3194)', () => {
     const fleetState = v11FleetState();
     fleetState.seats[0].primingPrompt = 'see https://example.com/hook?password=hunter2;mode=live for details';
