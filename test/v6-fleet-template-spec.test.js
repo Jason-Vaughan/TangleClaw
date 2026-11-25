@@ -744,6 +744,14 @@ describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-ru
     assert.equal(result.blueprint.seats[0].primingPrompt, 'see https://example.com/api?token=<token-redacted> for details');
   });
 
+  it('redacts a URL\'s own sensitive query/fragment parameters by NAME, even when the value has no recognizable secret shape (R-Gate R8 BLOCKING, PRR-A, #3194)', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].primingPrompt = 'see https://example.com/hook?password=hunter2&access_token=abc123&mode=live#client_secret=xyz for details';
+    const result = spec.exportFleetPackBlueprint(fleetState);
+    assert.equal(result.ok, true);
+    assert.equal(result.blueprint.seats[0].primingPrompt, 'see https://example.com/hook?password=<token-redacted>&access_token=<token-redacted>&mode=live#client_secret=<token-redacted> for details');
+  });
+
   it('a plain, credential-free https:// URL is still never touched (the credential/file:// fixes must not reopen the URL exclusion)', () => {
     const fleetState = v11FleetState();
     fleetState.seats[0].primingPrompt = 'see https://example.com/a/b for details';
