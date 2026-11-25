@@ -41,6 +41,38 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-24 — v6.6.0 release cut (Milestone #94), Car V660-W2-REL
+
+<!-- prawduct: type=internal | scope=v660-release -->
+
+- Compiled the 4 accepted `changelog.d/` fragments (#3194 from PR #3253; #3212 Phase 1.1 from
+  PR #3251; #3211 + #3212 Phase 1.2 from PR #3252; #3212 Phase 1.2 from PR #3255) into
+  `CHANGELOG.md` section `[6.6.0]` via the real `compileFragments`/`spliceIntoUnreleased`,
+  promoting the compiled `[Unreleased]` block into a dated `[6.6.0]` header by hand (no
+  committed `_promoteUnreleased` helper exists; the prior release's commit message named one but
+  it was never added to `lib/changelog-fragments.js`). Target version `6.6.0` (minor — 3
+  `added` + 1 `fixed`, no duplication to resolve this round). Bumped `version.json` (`6.5.12` ->
+  `6.6.0`); `scripts/release-prepare.js` updated the released-section lock correctly but did a
+  blind string substitution of the version number in README's "Latest release" banner, leaving
+  the PRIOR release's own descriptive prose attached to the new version number — caught and
+  hand-rewritten to actually describe `v6.6.0`'s real changes before anything was committed.
+  Updated `FEATURES.md`, `ROADMAP.md`, `docs/releases/index.md`, and `docs/releases/v6.6.0.md`.
+- Verified before branching: base commit `76b450ae1ad3d37e690f0e91e3da401bfe99e3ba` (PRs #3251,
+  #3252, #3253, #3255 all true-merged), issues #3194/#3211/#3212 all closed, milestone #94 at
+  0 open / 3 closed — all checked directly against `gh`, and cross-checked against the live
+  `LANE_QUEUE.md` row for this car, not assumed from the dispatch alone.
+- `FEATURES.md` entries cite anchors grepped against the real merged code
+  (`lib/v6/fleet-template-spec.js#exportFleetPackBlueprint`/`#validateInstanceBindingRecord`,
+  `lib/v6/c3-merge-queue.js#verifyFourGateMergeReadiness`/`#authorizeControlPlaneMerge`,
+  `lib/tmux.js#scrubSessionLaunchSecrets`), not copied from the fragments or PR titles.
+- Branched `release/v6.6.0` explicitly from the named base commit (`git checkout -b
+  release/v6.6.0 76b450ae1ad3d37e690f0e91e3da401bfe99e3ba`).
+- Verified with `node --test test/version-sync.test.js test/changelog-lock.test.js
+  test/readme-version-pins.test.js test/features-index.test.js test/changelog-fragments.test.js
+  test/changelog-fragments-repo.test.js test/changelog-fragment-gate.test.js` (134/134 pass) and
+  `node scripts/test-stage.js 1`. Diff matched the chartered 13-file scope exactly (`git status`
+  checked before committing).
+
 ## 2026-11-23 — v6.5.12 release cut (Milestone #106), Car V6512-W2-REL
 
 <!-- prawduct: type=internal | scope=v6512-release -->

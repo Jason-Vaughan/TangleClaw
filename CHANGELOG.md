@@ -4,6 +4,30 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.6.0] - 2026-11-24
+
+### Added
+- Added the canonical Fleet Pack `schemaVersion: "1.1"` to `lib/v6/fleet-template-spec.js`
+  alongside the existing `"1.0"` (#3194, Ruling A1042): four portability guardrails —
+  `PG-1` (a `"1.1"` seat's `seatId` must be symbolic, rejecting a raw numeric SQLite
+  `project_id` or a runtime Medusa workspace suffix), `PG-2` (logical `${FLEET_SHARED_DIR}`/
+  `${SEAT_WORKSPACE_DIR}` path-token substitution and `~`-relative host-path stripping on
+  export), `PG-3` (an explicit, enumerated `authorityClass` per seat), and `PG-4` (a Plane A
+  blueprint must never carry Plane B instance-binding data) — plus the new
+  `exportFleetPackBlueprint` Plane A dry-run exporter and `validateInstanceBindingRecord`
+  Plane B counterpart. `"1.0"` specs, including both existing `BUNDLED_FLEET_SPECS` entries,
+  validate exactly as before — every guardrail is additive to `"1.1"` only.
+- Added the v6 Control-Plane GitHub Merge Broker's 4-gate verification (`lib/v6/c3-merge-queue.js`): `verifyFourGateMergeReadiness` mechanically checks `O-Gate`/`A-Gate`/`R-Gate`/CI `PASS` receipts pinned to the exact head sha, and `authorizeControlPlaneMerge` additionally forbids direct merge execution by any actor authority other than `integrator`/`operator` (#3212).
+- Added `scrubSessionLaunchSecrets` in `lib/tmux.js`, wired into `createSession` and
+  `createSessionWithTccBootstrap`: automatically removes ephemeral launch-secret environment
+  variables (`TANGLECLAW_LAUNCH_SECRET` by default) from a session's tmux environment table
+  right after bootstrap, on the default server and the TCC-authorized server's real session
+  alike, so a peer session under the same UID can no longer read them back via
+  `tmux show-environment` (#3212 Phase 1.2).
+
+### Fixed
+- Stripped the unused Homebrew `openjdk` bin dir from the server LaunchAgent's `PATH` template, and bumped `website/` dependencies (`next` to `16.4.6`, `minimatch` to `11.0.9` for the `@typescript-eslint/typescript-estree` toolchain only) to close Dependabot alerts #21-#28; the canonical security posture & credential-isolation assessment is now tracked at `docs/security/tangleclaw-security-posture-and-credential-isolation-assessment.md` (#3211).
+
 ## [6.5.12] - 2026-11-23
 
 ### Added

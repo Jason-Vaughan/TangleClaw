@@ -18,7 +18,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
 
-**Latest release:** `v6.5.12` — “the Wave Scheduler gets a Mechanical Maximum Fleet Parallelization Guard against single-stream drift, session launches can now run non-blocking with a single-flight claim held through the full launch, tc model switch no longer misclassifies a cross-provider switch when the stored engine id has drifted, a governed session wrap's learnings-capture gate no longer wedges under macOS TCC restrictions, and the Medusa wake monitor no longer misreads a session quoting its own busy/idle marker phrases in prose as mid-turn” ([release status](docs/releases/v6.5.12.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.5.12` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.5.12/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
+**Latest release:** `v6.6.0` — “the canonical Fleet Pack schema gains `schemaVersion: "1.1"` with four portability guardrails and a Plane A dry-run exporter, the v6 Control-Plane GitHub Merge Broker gains mechanical 4-gate verification pinned to the exact head sha, an ephemeral launch secret handed to a session no longer lingers in its tmux environment table where a peer session could read it back, and the server LaunchAgent's `PATH` plus `website/` dependencies get a hygiene pass closing 8 Dependabot alerts” ([release status](docs/releases/v6.6.0.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.6.0` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.6.0/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
 
 One AI coding agent is easy. Five are not. They forget what the last session decided, edit the same files, fight over the same ports, and wait silently for an answer you did not know they needed. You end up watching terminals.
 
@@ -52,7 +52,7 @@ TangleClaw is developed with TangleClaw. Its own Builder, Project Manager and re
 
 ```bash
 # macOS. What the installer does, and what you need first: Quick Start, below
-git clone --branch v6.5.12 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.6.0 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw && ./deploy/install.sh
 ```
 
@@ -186,7 +186,7 @@ Most importantly, TangleClaw enforces strict safety boundaries, ensuring that wh
 ## Quick Start
 
 ```bash
-git clone --branch v6.5.12 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.6.0 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw
 ./deploy/install.sh
 ```
