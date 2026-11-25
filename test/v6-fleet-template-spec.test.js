@@ -761,12 +761,23 @@ describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-ru
   });
 
   it('never redacts a benign parameter name that merely CONTAINS a sensitive keyword as a substring, for ANY keyword in the list (R-Gate R11/R12 WARNING, PRR-B, #3194) -- every keyword must be component-bounded, not just "key"', () => {
-    for (const benign of ['monkey=banana', 'keyboard=us', 'keynote=1', 'design=logo', 'author=alice']) {
+    for (const benign of ['monkey=banana', 'keyboard=us', 'keynote=1', 'design=logo', 'author=alice', 'mode=live', 'format=json']) {
       const fleetState = v11FleetState();
       fleetState.seats[0].primingPrompt = `see https://example.com/x?${benign} for details`;
       const result = spec.exportFleetPackBlueprint(fleetState);
       assert.equal(result.ok, true, benign);
       assert.equal(result.blueprint.seats[0].primingPrompt, `see https://example.com/x?${benign} for details`, `expected "${benign}" to survive untouched`);
+    }
+  });
+
+  it('redacts "authorization" and a camelCase sensitive name like "webhookSecret" too (R-Gate R13 BLOCKING, PRR-B/PM, #3194) -- the structural rewrite covers any token-set member, not just the names a prior regex happened to enumerate', () => {
+    for (const leak of [['authorization=hunter2', 'authorization'], ['webhookSecret=xyz', 'webhookSecret']]) {
+      const [param, name] = leak;
+      const fleetState = v11FleetState();
+      fleetState.seats[0].primingPrompt = `see https://example.com/x?${param} for details`;
+      const result = spec.exportFleetPackBlueprint(fleetState);
+      assert.equal(result.ok, true, param);
+      assert.equal(result.blueprint.seats[0].primingPrompt, `see https://example.com/x?${name}=<token-redacted> for details`, `expected "${param}" to redact`);
     }
   });
 
