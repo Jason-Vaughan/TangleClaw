@@ -781,6 +781,24 @@ describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-ru
     }
   });
 
+  it('never redacts "assign" or "insignia" -- a whole word containing a sensitive stem as a SUBSTRING is not itself a sensitive token (#3194)', () => {
+    for (const benign of ['assign=1', 'insignia=gold']) {
+      const fleetState = v11FleetState();
+      fleetState.seats[0].primingPrompt = `see https://example.com/x?${benign} for details`;
+      const result = spec.exportFleetPackBlueprint(fleetState);
+      assert.equal(result.ok, true, benign);
+      assert.equal(result.blueprint.seats[0].primingPrompt, `see https://example.com/x?${benign} for details`, `expected "${benign}" to survive untouched`);
+    }
+  });
+
+  it('DOES redact a delimiter-separated short stem like "de-sig-n" -- Ruling A1085 (#3194): a real author-chosen "-" boundary around "sig" is the credential keyword, not a residual false positive', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].primingPrompt = 'see https://example.com/x?de-sig-n=live for details';
+    const result = spec.exportFleetPackBlueprint(fleetState);
+    assert.equal(result.ok, true);
+    assert.equal(result.blueprint.seats[0].primingPrompt, 'see https://example.com/x?de-sig-n=<token-redacted> for details');
+  });
+
   it('stops a sensitive parameter\'s value at a semicolon delimiter too, not just & and # (R-Gate R11 WARNING, PRR-B, #3194)', () => {
     const fleetState = v11FleetState();
     fleetState.seats[0].primingPrompt = 'see https://example.com/hook?password=hunter2;mode=live for details';
