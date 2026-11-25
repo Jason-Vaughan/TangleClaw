@@ -752,6 +752,32 @@ describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-ru
     assert.equal(result.blueprint.seats[0].primingPrompt, 'see https://example.com/hook?password=<token-redacted>&access_token=<token-redacted>&mode=live#client_secret=<token-redacted> for details');
   });
 
+  it('redacts a BARE "key" query parameter too, not just a compound api_key/private_key/etc. (R-Gate R10 BLOCKING, PRR-A/Architect, #3194) -- the Google Maps API convention', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].primingPrompt = 'see https://maps.example/api?key=AIzaSyExampleSecret1234567890&format=json for details';
+    const result = spec.exportFleetPackBlueprint(fleetState);
+    assert.equal(result.ok, true);
+    assert.equal(result.blueprint.seats[0].primingPrompt, 'see https://maps.example/api?key=<token-redacted>&format=json for details');
+  });
+
+  it('redacts a Google-style API key or AWS access key id anywhere in a string, even with no telling query-parameter name around it', () => {
+    const googleKey = spec.exportFleetPackBlueprint((() => {
+      const s = v11FleetState();
+      s.seats[0].primingPrompt = 'the key is AIzaSyExampleGoogleApiKey1234567890 -- keep it secret';
+      return s;
+    })());
+    assert.equal(googleKey.ok, true);
+    assert.equal(googleKey.blueprint.seats[0].primingPrompt, 'the key is <token-redacted> -- keep it secret');
+
+    const awsKey = spec.exportFleetPackBlueprint((() => {
+      const s = v11FleetState();
+      s.seats[0].primingPrompt = 'access key: AKIAIOSFODNN7EXAMPLE';
+      return s;
+    })());
+    assert.equal(awsKey.ok, true);
+    assert.equal(awsKey.blueprint.seats[0].primingPrompt, 'access key: <token-redacted>');
+  });
+
   it('a plain, credential-free https:// URL is still never touched (the credential/file:// fixes must not reopen the URL exclusion)', () => {
     const fleetState = v11FleetState();
     fleetState.seats[0].primingPrompt = 'see https://example.com/a/b for details';
