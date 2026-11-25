@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.5.12 — Mechanical fleet parallelization, non-blocking async session launch, engine state convergence, and Medusa wake fixes](v6.5.12.md)
+- [v6.6.0 — Fleet Pack schema v1.1, control-plane merge broker verification, ephemeral launch-secret scrubbing, and website dependency/deploy hygiene](v6.6.0.md)
 
 ## Recent releases
+
+- [v6.5.12 — Mechanical fleet parallelization, non-blocking async session launch, engine state convergence, and Medusa wake fixes](v6.5.12.md)
 
 - [v6.5.11 — V6 Workspace Five-Tab UX Architecture Audit and a cohesive Sprint & Cars layout](v6.5.11.md)
 

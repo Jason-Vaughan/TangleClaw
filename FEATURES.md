@@ -17,6 +17,13 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.6.0 — Fleet Pack schema v1.1, control-plane merge broker verification, ephemeral launch-secret scrubbing, and website dependency/deploy hygiene
+
+- **Fleet Pack schema `"1.1"` & portability guardrails** (#3194) — `lib/v6/fleet-template-spec.js#exportFleetPackBlueprint`/`#validateInstanceBindingRecord`: adds `schemaVersion: "1.1"` alongside `"1.0"` with four guardrails — `PG-1` symbolic `seatId` addressing (rejecting a raw numeric SQLite `project_id` or runtime Medusa suffix), `PG-2` logical `${FLEET_SHARED_DIR}`/`${SEAT_WORKSPACE_DIR}` path-token substitution and host-path stripping on export, `PG-3` an explicit enumerated `authorityClass` per seat, and `PG-4` a hard Plane A/Plane B separation. `"1.0"` specs validate unchanged.
+- **Control-Plane GitHub Merge Broker 4-gate verification** (#3212 Phase 1.1) — `lib/v6/c3-merge-queue.js#verifyFourGateMergeReadiness`/`#authorizeControlPlaneMerge`: mechanically checks `O-Gate`/`A-Gate`/`R-Gate`/CI `PASS` receipts pinned to the exact head sha, and forbids direct merge execution by any actor authority other than `integrator`/`operator`.
+- **Ephemeral launch-secret scrubbing** (#3212 Phase 1.2) — `lib/tmux.js#scrubSessionLaunchSecrets`, wired into `#createSession`/`#createSessionWithTccBootstrap`: automatically removes ephemeral launch-secret environment variables (`TANGLECLAW_LAUNCH_SECRET` by default) from a session's tmux environment table right after bootstrap, on the default server and the TCC-authorized server's real session alike, gated so an ordinary launch that never carries one of these keys costs nothing extra.
+- **Security posture & credential-isolation assessment** (#3211) — `docs/security/tangleclaw-security-posture-and-credential-isolation-assessment.md`: the canonical in-repo record of this host's multi-agent credential and execution isolation findings and their phased remediation plan.
+
 ## v6.5.12 — Mechanical fleet parallelization, non-blocking async session launch, engine state convergence, and Medusa wake fixes
 
 - **Mechanical Maximum Fleet Parallelization Guard** (#3213) — `lib/v6/c3-wave-scheduler.js#planParallelWaveShards`/`#validateParallelWavePlan`, `WaveScheduler#createRun`: mechanically shards a flat issue list into file-disjoint, lane-capacity-bounded parallel waves, and rejects a plan that collapses multiple issues into a single Wave 1 Car (single-stream drift) unless an explicit `serialReason` is attested or every later Car genuinely conflicts with Wave 1's one Car. Enforced inline when `metadata.enforceParallelSharding` is set; existing callers unaffected.
