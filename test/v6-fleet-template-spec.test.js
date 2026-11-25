@@ -799,6 +799,24 @@ describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-ru
     assert.equal(result.blueprint.seats[0].primingPrompt, 'see https://example.com/x?de-sig-n=<token-redacted> for details');
   });
 
+  it('redacts a percent-encoded or form-encoded sensitive parameter name too (R-Gate R13 BLOCKING, PRR-B/Architect, #3194) -- access%5Ftoken decodes to access_token, %6Bey decodes to key', () => {
+    for (const encoded of ['access%5Ftoken=abc123', '%6Bey=xyz']) {
+      const fleetState = v11FleetState();
+      fleetState.seats[0].primingPrompt = `see https://example.com/x?${encoded} for details`;
+      const result = spec.exportFleetPackBlueprint(fleetState);
+      assert.equal(result.ok, true, encoded);
+      assert.equal(result.blueprint.seats[0].primingPrompt, `see https://example.com/x?${encoded.split('=')[0]}=<token-redacted> for details`, `expected "${encoded}" to redact`);
+    }
+  });
+
+  it('never throws on a malformed percent-escape, and still redacts the valid sensitive escape elsewhere in the same name', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].primingPrompt = 'see https://example.com/x?access%5Ftoken%ZZ=abc123 for details';
+    const result = spec.exportFleetPackBlueprint(fleetState);
+    assert.equal(result.ok, true);
+    assert.equal(result.blueprint.seats[0].primingPrompt, 'see https://example.com/x?access%5Ftoken%ZZ=<token-redacted> for details');
+  });
+
   it('stops a sensitive parameter\'s value at a semicolon delimiter too, not just & and # (R-Gate R11 WARNING, PRR-B, #3194)', () => {
     const fleetState = v11FleetState();
     fleetState.seats[0].primingPrompt = 'see https://example.com/hook?password=hunter2;mode=live for details';
