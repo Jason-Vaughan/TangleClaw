@@ -760,6 +760,24 @@ describe('exportFleetPackBlueprint — PG-2 logical path tokens + Plane A dry-ru
     assert.equal(result.blueprint.seats[0].primingPrompt, 'see https://maps.example/api?key=<token-redacted>&format=json for details');
   });
 
+  it('never redacts a benign parameter name that merely CONTAINS "key" as a substring (R-Gate R11 WARNING, PRR-B, #3194) -- the bare-key fix in R10 over-matched', () => {
+    for (const benign of ['monkey=banana', 'keyboard=us', 'keynote=1']) {
+      const fleetState = v11FleetState();
+      fleetState.seats[0].primingPrompt = `see https://example.com/x?${benign} for details`;
+      const result = spec.exportFleetPackBlueprint(fleetState);
+      assert.equal(result.ok, true, benign);
+      assert.equal(result.blueprint.seats[0].primingPrompt, `see https://example.com/x?${benign} for details`, `expected "${benign}" to survive untouched`);
+    }
+  });
+
+  it('stops a sensitive parameter\'s value at a semicolon delimiter too, not just & and # (R-Gate R11 WARNING, PRR-B, #3194)', () => {
+    const fleetState = v11FleetState();
+    fleetState.seats[0].primingPrompt = 'see https://example.com/hook?password=hunter2;mode=live for details';
+    const result = spec.exportFleetPackBlueprint(fleetState);
+    assert.equal(result.ok, true);
+    assert.equal(result.blueprint.seats[0].primingPrompt, 'see https://example.com/hook?password=<token-redacted>;mode=live for details');
+  });
+
   it('redacts a Google-style API key or AWS access key id anywhere in a string, even with no telling query-parameter name around it', () => {
     const googleKey = spec.exportFleetPackBlueprint((() => {
       const s = v11FleetState();
