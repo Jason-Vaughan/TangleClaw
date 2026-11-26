@@ -289,6 +289,7 @@
     "test/v6-e4-rich-report-presentation.test.js",
     "test/v6-e6a-report-search-indexer.test.js",
     "test/v6-e6b-report-narrative-synthesizer.test.js",
+    "test/v6-engine-usage-health-indicator.test.js",
     "test/v6-f1-knowledge-base.test.js",
     "test/v6-f2-code-doc-parity.test.js",
     "test/v6-f3-support-diagnostic-scrubber.test.js",
