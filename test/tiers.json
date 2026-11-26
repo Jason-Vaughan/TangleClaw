@@ -512,6 +512,7 @@
     "test/v6-e1-project-charter-lifecycle.test.js",
     "test/v6-e3b-whatif-simulator.test.js",
     "test/v6-e5-kaizen-ledger.test.js",
+    "test/v6-fleet-membership.test.js",
     "test/v6-fleet-wave-and-report-e2e.test.js",
     "test/v6-full-stack-soak-and-chaos.test.js",
     "test/v6-g1-github-integration.test.js",
