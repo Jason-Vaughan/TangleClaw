@@ -249,6 +249,21 @@ describe('tcV6RenderCharterSectionsMarkup (#3275 AC3) — cross-checked against 
     assert.match(withLink, /v6-charter-runtime-links/);
     assert.match(withLink, /href="\/settings\/fleet"/);
   });
+
+  it('allows https(s):// and relative/hash/query paths through unchanged', () => {
+    for (const href of ['https://example.com/x', 'http://example.com/x', '/settings/fleet', '#charter', '?tab=charter']) {
+      const html = G.tcV6RenderCharterSectionsMarkup({ ...ssot.defaultCharter(), runtimeLinks: { fleetSettings: href, sessionRules: null, roadmap: null } });
+      assert.match(html, new RegExp(`href="${href.replace(/[/?#]/g, '\\$&')}"`), href);
+    }
+  });
+
+  it('neutralizes a javascript:/data:/vbscript: runtime link to "#" rather than executing it (#3275 R-Gate C1, security)', () => {
+    for (const unsafe of ['javascript:alert(1)', 'JaVaScRiPt:alert(1)', 'data:text/html,<script>alert(1)</script>', 'vbscript:msgbox(1)']) {
+      const html = G.tcV6RenderCharterSectionsMarkup({ ...ssot.defaultCharter(), runtimeLinks: { fleetSettings: unsafe, sessionRules: null, roadmap: null } });
+      assert.match(html, /href="#"/, unsafe);
+      assert.doesNotMatch(html, /href="[^"]*(javascript|data|vbscript):/i, unsafe);
+    }
+  });
 });
 
 describe('tcV6MountSsotView (#3275 AC2)', () => {

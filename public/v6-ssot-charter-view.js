@@ -96,9 +96,26 @@
   });
 
   /**
+   * Whether `value` is a safe `href` for a runtime link (#3275 R-Gate C1,
+   * security): an absolute `http(s)://` URL, or a relative/hash/query
+   * path starting with `/`, `#`, or `?`. Escaping alone does not stop a
+   * `javascript:`/`data:`/`vbscript:` scheme from executing on click —
+   * HTML-attribute escaping protects against breaking OUT of the
+   * attribute, never against the scheme the browser then dereferences.
+   * @param {string} value
+   * @returns {boolean}
+   */
+  function _tcV6IsSafeRuntimeLinkHref(value) {
+    return /^https?:\/\//i.test(value) || /^[/#?]/.test(value);
+  }
+
+  /**
    * Read-only rendering of the Functional Project Charter's seven
    * structured sections (#3275 AC3), plus whichever runtime links
-   * (`fleetSettings`/`sessionRules`/`roadmap`) are set.
+   * (`fleetSettings`/`sessionRules`/`roadmap`) are set. An unsafe scheme
+   * (see {@link _tcV6IsSafeRuntimeLinkHref}) is neutralized to `#` rather
+   * than rejected outright, so a malformed link degrades to inert instead
+   * of hiding the whole runtime-links list.
    * @param {{sections?: Object<string,string>, runtimeLinks?: {fleetSettings?: ?string, sessionRules?: ?string, roadmap?: ?string}}|null} charter
    * @returns {string} HTML.
    */
@@ -114,7 +131,11 @@
     const links = (charter && charter.runtimeLinks) || {};
     const linkItems = ['fleetSettings', 'sessionRules', 'roadmap']
       .filter((key) => links[key])
-      .map((key) => `<li><a href="${escapeHtml(String(links[key]))}">${escapeHtml(CHARTER_SECTION_TITLES[key] || key)}</a></li>`)
+      .map((key) => {
+        const raw = String(links[key]);
+        const href = _tcV6IsSafeRuntimeLinkHref(raw) ? raw : '#';
+        return `<li><a href="${escapeHtml(href)}">${escapeHtml(CHARTER_SECTION_TITLES[key] || key)}</a></li>`;
+      })
       .join('');
     const linksMarkup = linkItems ? `<ul class="v6-charter-runtime-links">${linkItems}</ul>` : '';
     return `<div class="v6-charter-sections">${body}${linksMarkup}</div>`;
