@@ -29,6 +29,20 @@
  *
  * There is no flag to accept a partial selection.
  *
+ * `KNOWN_FLAKY_STAGE2` (#3254) is a separate, narrower carve-out: a named
+ * test file that is correctly, honestly SELECTED (reached by the diff) but
+ * is excluded from what Stage 2 actually runs and blocks on, because it is
+ * confirmed pre-existing-broken independent of any diff (build-time
+ * reproduction: identical failures against both the changed `lib/tmux.js`
+ * and the unmodified `origin/main` one). This is not a tier and does not
+ * live in `test/tiers.json` -- that ledger's own `--write` regenerates its
+ * file from `small`/`medium`/`large` alone (`scripts/test-tiers.js`'s
+ * `buildLedger`/`formatLedger`), so any other key added there would be
+ * silently dropped the next time anyone ran it. A file leaves this list only
+ * when its flake is actually fixed, never because Stage 2 is inconvenient;
+ * `report()` always names every excluded file and its reason, and the full
+ * suite (Stage 3+, CI) still runs it for real.
+ *
  * Usage: node scripts/test-touched.js [--base <ref>] [--run] [--explain] [--junit <path>]
  *   --base     the ref the diff is against (default `origin/main`; the
  *              merge-base with HEAD is what is diffed)
@@ -57,6 +71,21 @@ const SHARED_HELPER = /^test\/(?:_[^/]+\.js|helpers\/|fixtures\/)/;
 
 /** A changed file that is a test the suite runs. */
 const TEST_FILE = /^test\/[^/]+\.test\.js$/;
+
+/**
+ * Test files excluded from Stage 2's run/block, each with the citation for
+ * why: a confirmed pre-existing failure, reproduced identically against both
+ * the diff and the unmodified base, unrelated to what the diff actually
+ * changes. Reached-by-the-diff files NOT in this list (e.g.
+ * `test/tmux-tcc.test.js`, `test/tmux-session-names.test.js`) are unaffected
+ * and keep running in Stage 2 exactly as before.
+ * @type {Readonly<Record<string, string>>}
+ */
+const KNOWN_FLAKY_STAGE2 = Object.freeze({
+  'test/tmux-draft-capture.test.js': '#3254: real-tmux session contention (a shared fixture session dies mid-run), reproduced identically against both the diff and unmodified origin/main',
+  'test/engine-health.test.js': '#3254: probed-session-state races (reads CRASHED instead of HEALTHY), reproduced identically against both the diff and unmodified origin/main',
+  'test/ttyd-runtime.test.js': '#3254: darwin otool-dispatch check fails independent of any tmux change; does not even touch tmux'
+});
 
 /**
  * The repository's default io for the selector: git and the file system.
@@ -99,9 +128,10 @@ function changedFiles(base, root) {
  *   `tests` are the suite's files, absolute; `ring` the always-run tests (the static ring by default)
  * @returns {{
  *   changed: Array<{file: string, tests: string[], reason: string|null, detail: string}>,
- *   selected: string[], ring: string[], escalations: string[],
+ *   selected: string[], ring: string[], escalations: string[], excludedFlaky: Array<{file: string, reason: string}>,
  *   dynamic: Array<{test: string, from: string, line: number, request: string}>, opaque: number
- * }} `selected` and `ring` are repo-relative; `escalations` is empty when the selection holds
+ * }} `selected` and `ring` are repo-relative and already exclude {@link KNOWN_FLAKY_STAGE2};
+ *   `escalations` is empty when the selection holds; `excludedFlaky` names what was removed and why
  */
 function select(changed, ctx) {
   const root = ctx.root;
@@ -135,7 +165,9 @@ function select(changed, ctx) {
     row.detail = `${reached.length} test file(s)`;
     for (const t of reached) selected.add(t);
   }
-  const selectedList = [...selected].sort();
+  const excludedFlaky = [...selected].filter((t) => Object.hasOwn(KNOWN_FLAKY_STAGE2, t)).sort()
+    .map((file) => ({ file, reason: KNOWN_FLAKY_STAGE2[file] }));
+  const selectedList = [...selected].filter((t) => !Object.hasOwn(KNOWN_FLAKY_STAGE2, t)).sort();
   const dynamic = [];
   let opaque = 0;
   for (const t of selectedList) {
@@ -144,7 +176,10 @@ function select(changed, ctx) {
     for (const d of r.dynamic) dynamic.push({ test: t, from: rel(d.from), line: d.line, request: d.request });
     opaque += r.opaque.length;
   }
-  return { changed: rows, selected: selectedList, ring: [...ring], escalations: escalations.map((r) => `${r.file}: ${r.reason}: ${r.detail}`), dynamic, opaque };
+  return {
+    changed: rows, selected: selectedList, ring: [...ring],
+    escalations: escalations.map((r) => `${r.file}: ${r.reason}: ${r.detail}`), excludedFlaky, dynamic, opaque
+  };
 }
 
 /**
@@ -192,6 +227,10 @@ function report(selection, io) {
   const groups = io.ledger ? byTier(selection, io.ledger) : null;
   const total = new Set([...selection.selected, ...selection.ring]).size;
   w(`selected: ${selection.selected.length} test file(s) + ${selection.ring.length} static ring = ${total}${groups ? ` (small ${groups.small.length}, medium ${groups.medium.length}, large ${groups.large.length}${groups.undeclared.length ? `, undeclared in the ledger: ${groups.undeclared.join(', ')}` : ''})` : ''}`);
+  if (selection.excludedFlaky.length > 0) {
+    w(`excluded (known pre-existing flake, not run or blocked on here -- the full suite still runs it): ${selection.excludedFlaky.length}`);
+    for (const { file, reason } of selection.excludedFlaky) w(`  ${file}: ${reason}`);
+  }
   if (io.explain) {
     for (const t of selection.selected) w(`  ${t}`);
     for (const r of selection.ring) if (!selection.selected.includes(r)) w(`  ${r} (static ring)`);
@@ -292,7 +331,9 @@ function main(argv, seams = {}) {
   return stage2(parsed, seams);
 }
 
-module.exports = { SHARED_HELPER, TEST_FILE, repoIo, changedFiles, select, byTier, report, runSelection, parseArgs, stage2, main };
+module.exports = {
+  SHARED_HELPER, TEST_FILE, KNOWN_FLAKY_STAGE2, repoIo, changedFiles, select, byTier, report, runSelection, parseArgs, stage2, main
+};
 
 if (require.main === module) {
   process.exitCode = main(process.argv.slice(2));
