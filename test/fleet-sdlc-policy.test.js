@@ -126,4 +126,25 @@ describe('evaluateCarAdmission', () => {
     assert.throws(() => policy.evaluateCarAdmission(NONE, { issues: 'not-an-array' }), policy.FleetSdlcPolicyError);
     assert.throws(() => policy.evaluateCarAdmission(NONE, null), policy.FleetSdlcPolicyError);
   });
+
+  it('R-Gate R1->R2: full-validates the policy via validateFleetSdlcPolicy, not a truthiness check on requireRoadmapTriage', () => {
+    // A truthy-but-non-boolean requireRoadmapTriage (a string "false" is
+    // truthy in JS) must be refused outright, not silently treated as true.
+    assert.throws(() => policy.evaluateCarAdmission({ issueBackend: 'github', requireRoadmapTriage: 'false' }, { issues: ['#1'] }), policy.FleetSdlcPolicyError);
+    assert.throws(() => policy.evaluateCarAdmission({ issueBackend: 'github', requireRoadmapTriage: 0 }, { issues: ['#1'] }), policy.FleetSdlcPolicyError);
+    assert.throws(() => policy.evaluateCarAdmission({ issueBackend: 'github' }, { issues: ['#1'] }), policy.FleetSdlcPolicyError);
+  });
+
+  it('R-Gate R1->R2: refuses a car whose issues array contains an invalid reference', () => {
+    for (const badIssues of [[''], ['  '], [null], [0], [NaN], ['#1', null], ['#1', '']]) {
+      assert.throws(() => policy.evaluateCarAdmission(GITHUB_LOOSE, { issues: badIssues }),
+        policy.FleetSdlcPolicyError, `expected a throw for issues=${JSON.stringify(badIssues)}`);
+    }
+  });
+
+  it('R-Gate R1->R2: a positive integer issue reference is valid; a non-positive or non-integer one is not', () => {
+    assert.doesNotThrow(() => policy.evaluateCarAdmission(GITHUB_LOOSE, { issues: [3265] }));
+    assert.throws(() => policy.evaluateCarAdmission(GITHUB_LOOSE, { issues: [-1] }), policy.FleetSdlcPolicyError);
+    assert.throws(() => policy.evaluateCarAdmission(GITHUB_LOOSE, { issues: [3.5] }), policy.FleetSdlcPolicyError);
+  });
 });
