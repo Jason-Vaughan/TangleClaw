@@ -38,23 +38,28 @@ describe('tcV6RenderEngineHealthDotMarkup (#3269, V6-025)', () => {
   it('a configured probe with either window exhausted (<= 0%) reads outage (red), even with no error flag', () => {
     const fiveHourZero = G.tcV6RenderEngineHealthDotMarkup({ status: 'configured', fiveHourRemainingPct: 0, weeklyRemainingPct: 40 });
     assert.match(fiveHourZero, /color: #f85149;/);
-    assert.match(fiveHourZero, /title="Unavailable — quota exhausted"/);
+    assert.match(fiveHourZero, /title="Unavailable"/);
     const weeklyNegative = G.tcV6RenderEngineHealthDotMarkup({ status: 'configured', fiveHourRemainingPct: 30, weeklyRemainingPct: -1 });
     assert.match(weeklyNegative, /color: #f85149;/);
   });
 
-  it('a configured probe carrying refreshDegraded, lastRefreshError, or error reads degraded (amber), checked before outage', () => {
-    assert.match(G.tcV6RenderEngineHealthDotMarkup({ status: 'configured', fiveHourRemainingPct: 50, refreshDegraded: true }),
-      /color: #d4a72c;/);
+  it('a configured probe carrying a real error (error or lastRefreshError) reads outage (red), per #3269 AC2 grouping Error under Red', () => {
     assert.match(G.tcV6RenderEngineHealthDotMarkup({ status: 'configured', fiveHourRemainingPct: 50, lastRefreshError: 'timeout' }),
-      /color: #d4a72c;/);
+      /color: #f85149;/);
     assert.match(G.tcV6RenderEngineHealthDotMarkup({ status: 'configured', fiveHourRemainingPct: 50, error: 'boom' }),
+      /color: #f85149;/);
+  });
+
+  it('a configured probe carrying ONLY refreshDegraded (no actual error) reads degraded (amber) — the softer "Needs attention" state', () => {
+    assert.match(G.tcV6RenderEngineHealthDotMarkup({ status: 'configured', fiveHourRemainingPct: 50, refreshDegraded: true }),
       /color: #d4a72c;/);
   });
 
-  it('exhausted quota wins over a degraded flag — the outage check runs first', () => {
-    const html = G.tcV6RenderEngineHealthDotMarkup({ status: 'configured', fiveHourRemainingPct: 0, refreshDegraded: true });
-    assert.match(html, /color: #f85149;/, 'outage (exhausted) must win, not degraded');
+  it('exhausted quota wins over refreshDegraded/error — the outage-by-quota check runs first', () => {
+    const viaQuota = G.tcV6RenderEngineHealthDotMarkup({ status: 'configured', fiveHourRemainingPct: 0, refreshDegraded: true });
+    assert.match(viaQuota, /color: #f85149;/, 'outage (exhausted) must win, not degraded');
+    const viaError = G.tcV6RenderEngineHealthDotMarkup({ status: 'configured', fiveHourRemainingPct: 0, error: 'boom' });
+    assert.match(viaError, /color: #f85149;/, 'still outage, just via a different trigger');
   });
 
   it('anything not status "configured" — not-present, not-configured, missing, null — reads unknown (gray), never degraded', () => {

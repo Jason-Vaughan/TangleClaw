@@ -7234,15 +7234,19 @@
     const zeroLeft = [r.fiveHourRemainingPct, r.weeklyRemainingPct]
       .some((v) => typeof v === 'number' && Number.isFinite(v) && v <= 0);
     if (zeroLeft) return 'outage';
-    const hasError = Boolean(r.refreshDegraded || r.lastRefreshError || r.error);
-    return hasError ? 'degraded' : 'operational';
+    // #3269 R-Gate R2 (PRR-A): AC2 groups a real Error under Red/outage,
+    // not Orange/degraded — `error`/`lastRefreshError` are an actual
+    // failure, while `refreshDegraded` alone (no error) is the softer
+    // "Degraded / Needs attention" state the issue keeps separate.
+    if (r.error || r.lastRefreshError) return 'outage';
+    return r.refreshDegraded ? 'degraded' : 'operational';
   }
 
   /** {@link _tcV6EngineHealthState}'s glyph/color/label, one per state. */
   const TC_V6_ENGINE_HEALTH_STYLES = Object.freeze({
     operational: { glyph: '●', color: '#56d364', label: 'Healthy' },
     degraded: { glyph: '◐', color: '#d4a72c', label: 'Degraded' },
-    outage: { glyph: '✖', color: '#f85149', label: 'Unavailable — quota exhausted' },
+    outage: { glyph: '✖', color: '#f85149', label: 'Unavailable' },
     unknown: { glyph: '○', color: '#8b949e', label: 'Unknown — not probed' }
   });
 
