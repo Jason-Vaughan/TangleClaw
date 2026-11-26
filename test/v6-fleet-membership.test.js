@@ -11,6 +11,12 @@
 // for the real, confirmed schema constraint (a UNIQUE column plus a
 // composite foreign key) that rules the latter out for an EXISTING legacy
 // project joining a fleet it does not itself own.
+//
+// R2 (PRR-A, PR #3310): `projectExists`/`isLegacyProjectSessionActive` are
+// MANDATORY dependencies — a caller that omits either is refused
+// `MISSING_DEPENDENCY`, never silently given a permissive default. Every
+// test below supplies both explicitly via `baseDeps()`; the dedicated
+// "fails closed" describe block proves the refusal itself.
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
@@ -50,13 +56,30 @@ function seedLegacyProject(name) {
   return store.projects.create({ name, path: path.join(tmpDir, name), engine: 'claude' }).id;
 }
 
+/**
+ * The real, non-permissive deps every test supplies by default — backed
+ * by the real store for `projectExists`, "never active" for
+ * `isLegacyProjectSessionActive` (a test-chosen fixed answer, never a
+ * module-side default). `overrides` replaces individual keys, including
+ * to `undefined` to exercise the MISSING_DEPENDENCY path deliberately.
+ * @param {object} [overrides]
+ */
+function baseDeps(overrides = {}) {
+  return {
+    groupsApi: store.projectGroups,
+    projectExists: (id) => Boolean(store.projects.get(id)),
+    isLegacyProjectSessionActive: () => false,
+    ...overrides
+  };
+}
+
 describe('lib/fleet-membership.js — addMember', () => {
   it('adds a project to the group', (t) => {
     freshStore();
     t.after(cleanup);
     const group = seedGroup();
     const legacyProjectId = seedLegacyProject('proj-a');
-    const result = fleetMembership.addMember({ groupId: group.id, legacyProjectId }, { groupsApi: store.projectGroups });
+    const result = fleetMembership.addMember({ groupId: group.id, legacyProjectId }, baseDeps());
     assert.deepEqual(result, { ok: true, code: 'CREATED' });
     assert.deepEqual(store.projectGroups.listMembers(group.id), [legacyProjectId]);
   });
@@ -65,7 +88,7 @@ describe('lib/fleet-membership.js — addMember', () => {
     freshStore();
     t.after(cleanup);
     const legacyProjectId = seedLegacyProject('proj-a');
-    const result = fleetMembership.addMember({ groupId: 'nope', legacyProjectId }, { groupsApi: store.projectGroups });
+    const result = fleetMembership.addMember({ groupId: 'nope', legacyProjectId }, baseDeps());
     assert.deepEqual(result, { ok: false, code: 'FLEET_NOT_FOUND' });
   });
 
@@ -75,7 +98,7 @@ describe('lib/fleet-membership.js — addMember', () => {
     const group = seedGroup();
     const result = fleetMembership.addMember(
       { groupId: group.id, legacyProjectId: 999 },
-      { groupsApi: store.projectGroups, projectExists: () => false }
+      baseDeps({ projectExists: () => false })
     );
     assert.deepEqual(result, { ok: false, code: 'PROJECT_NOT_FOUND' });
   });
@@ -85,24 +108,24 @@ describe('lib/fleet-membership.js — addMember', () => {
     t.after(cleanup);
     const group = seedGroup();
     const legacyProjectId = seedLegacyProject('proj-a');
-    assert.equal(fleetMembership.addMember({ groupId: group.id, legacyProjectId }, { groupsApi: store.projectGroups }).ok, true);
-    const second = fleetMembership.addMember({ groupId: group.id, legacyProjectId }, { groupsApi: store.projectGroups });
+    assert.equal(fleetMembership.addMember({ groupId: group.id, legacyProjectId }, baseDeps()).ok, true);
+    const second = fleetMembership.addMember({ groupId: group.id, legacyProjectId }, baseDeps());
     assert.deepEqual(second, { ok: false, code: 'ALREADY_MEMBER' });
   });
 
   it('validates groupId and legacyProjectId before touching the database', () => {
     assert.deepEqual(
-      fleetMembership.addMember({ groupId: '', legacyProjectId: 1 }, { groupsApi: store.projectGroups }),
+      fleetMembership.addMember({ groupId: '', legacyProjectId: 1 }, baseDeps()),
       { ok: false, code: 'INVALID_REQUEST' }
     );
     assert.deepEqual(
-      fleetMembership.addMember({ groupId: 'g1', legacyProjectId: 'not-a-number' }, { groupsApi: store.projectGroups }),
+      fleetMembership.addMember({ groupId: 'g1', legacyProjectId: 'not-a-number' }, baseDeps()),
       { ok: false, code: 'INVALID_REQUEST' }
     );
   });
 
   it('refuses MISSING_DEPENDENCY with no groupsApi injected', () => {
-    assert.deepEqual(fleetMembership.addMember({ groupId: 'g1', legacyProjectId: 1 }, {}), { ok: false, code: 'MISSING_DEPENDENCY' });
+    assert.deepEqual(fleetMembership.addMember({ groupId: 'g1', legacyProjectId: 1 }, baseDeps({ groupsApi: undefined })), { ok: false, code: 'MISSING_DEPENDENCY' });
   });
 });
 
@@ -112,8 +135,8 @@ describe('lib/fleet-membership.js — removeMember', () => {
     t.after(cleanup);
     const group = seedGroup();
     const legacyProjectId = seedLegacyProject('proj-a');
-    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, { groupsApi: store.projectGroups });
-    const removed = fleetMembership.removeMember({ groupId: group.id, legacyProjectId }, { groupsApi: store.projectGroups });
+    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, baseDeps());
+    const removed = fleetMembership.removeMember({ groupId: group.id, legacyProjectId }, baseDeps());
     assert.deepEqual(removed, { ok: true, code: 'UPDATED' });
     assert.deepEqual(store.projectGroups.listMembers(group.id), []);
   });
@@ -123,13 +146,13 @@ describe('lib/fleet-membership.js — removeMember', () => {
     t.after(cleanup);
     const group = seedGroup();
     const legacyProjectId = seedLegacyProject('proj-a');
-    assert.deepEqual(fleetMembership.removeMember({ groupId: group.id, legacyProjectId }, { groupsApi: store.projectGroups }), { ok: false, code: 'NOT_FOUND' });
+    assert.deepEqual(fleetMembership.removeMember({ groupId: group.id, legacyProjectId }, baseDeps()), { ok: false, code: 'NOT_FOUND' });
   });
 
   it('refuses FLEET_NOT_FOUND for an unknown group before checking membership', (t) => {
     freshStore();
     t.after(cleanup);
-    assert.deepEqual(fleetMembership.removeMember({ groupId: 'nope', legacyProjectId: 1 }, { groupsApi: store.projectGroups }), { ok: false, code: 'FLEET_NOT_FOUND' });
+    assert.deepEqual(fleetMembership.removeMember({ groupId: 'nope', legacyProjectId: 1 }, baseDeps()), { ok: false, code: 'FLEET_NOT_FOUND' });
   });
 
   it('the active-session safeguard: refuses ACTIVE_SESSION unless confirmed', (t) => {
@@ -137,8 +160,8 @@ describe('lib/fleet-membership.js — removeMember', () => {
     t.after(cleanup);
     const group = seedGroup();
     const legacyProjectId = seedLegacyProject('proj-a');
-    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, { groupsApi: store.projectGroups });
-    const deps = { groupsApi: store.projectGroups, isLegacyProjectSessionActive: () => true };
+    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, baseDeps());
+    const deps = baseDeps({ isLegacyProjectSessionActive: () => true });
     const blocked = fleetMembership.removeMember({ groupId: group.id, legacyProjectId }, deps);
     assert.deepEqual(blocked, { ok: false, code: 'ACTIVE_SESSION' });
     assert.deepEqual(store.projectGroups.listMembers(group.id), [legacyProjectId], 'still a member — the refusal did not remove it');
@@ -147,13 +170,65 @@ describe('lib/fleet-membership.js — removeMember', () => {
     assert.deepEqual(store.projectGroups.listMembers(group.id), []);
   });
 
-  it('defaults to "never active" when isLegacyProjectSessionActive is omitted — a test-only default, never the real caller\'s path', (t) => {
+  it('a project genuinely with no active session removes cleanly', (t) => {
     freshStore();
     t.after(cleanup);
     const group = seedGroup();
     const legacyProjectId = seedLegacyProject('proj-a');
-    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, { groupsApi: store.projectGroups });
-    assert.equal(fleetMembership.removeMember({ groupId: group.id, legacyProjectId }, { groupsApi: store.projectGroups }).ok, true);
+    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, baseDeps());
+    assert.equal(fleetMembership.removeMember({ groupId: group.id, legacyProjectId }, baseDeps()).ok, true);
+  });
+});
+
+describe('lib/fleet-membership.js — fails closed on missing mandatory dependencies (PRR-A R2, PR #3310)', () => {
+  it('addMember refuses MISSING_DEPENDENCY when projectExists is omitted — never silently admits any project id', (t) => {
+    freshStore();
+    t.after(cleanup);
+    const group = seedGroup();
+    const result = fleetMembership.addMember(
+      { groupId: group.id, legacyProjectId: 999999 },
+      { groupsApi: store.projectGroups }
+    );
+    assert.deepEqual(result, { ok: false, code: 'MISSING_DEPENDENCY' });
+    assert.deepEqual(store.projectGroups.listMembers(group.id), [], 'nothing was added');
+  });
+
+  it('addMember refuses MISSING_DEPENDENCY when projectExists is not a function', (t) => {
+    freshStore();
+    t.after(cleanup);
+    const group = seedGroup();
+    const result = fleetMembership.addMember(
+      { groupId: group.id, legacyProjectId: 1 },
+      { groupsApi: store.projectGroups, projectExists: 'not-a-function' }
+    );
+    assert.deepEqual(result, { ok: false, code: 'MISSING_DEPENDENCY' });
+  });
+
+  it('removeMember refuses MISSING_DEPENDENCY when isLegacyProjectSessionActive is omitted — never silently bypasses the active-session safeguard', (t) => {
+    freshStore();
+    t.after(cleanup);
+    const group = seedGroup();
+    const legacyProjectId = seedLegacyProject('proj-a');
+    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, baseDeps());
+    const result = fleetMembership.removeMember(
+      { groupId: group.id, legacyProjectId },
+      { groupsApi: store.projectGroups }
+    );
+    assert.deepEqual(result, { ok: false, code: 'MISSING_DEPENDENCY' });
+    assert.deepEqual(store.projectGroups.listMembers(group.id), [legacyProjectId], 'nothing was removed');
+  });
+
+  it('removeMember refuses MISSING_DEPENDENCY when isLegacyProjectSessionActive is not a function', (t) => {
+    freshStore();
+    t.after(cleanup);
+    const group = seedGroup();
+    const legacyProjectId = seedLegacyProject('proj-a');
+    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, baseDeps());
+    const result = fleetMembership.removeMember(
+      { groupId: group.id, legacyProjectId },
+      { groupsApi: store.projectGroups, isLegacyProjectSessionActive: true }
+    );
+    assert.deepEqual(result, { ok: false, code: 'MISSING_DEPENDENCY' });
   });
 });
 
@@ -165,11 +240,11 @@ describe('lib/fleet-membership.js — listMembers', () => {
     const a = seedLegacyProject('proj-a');
     const b = seedLegacyProject('proj-b');
     const c = seedLegacyProject('proj-c');
-    fleetMembership.addMember({ groupId: group.id, legacyProjectId: a }, { groupsApi: store.projectGroups });
-    fleetMembership.addMember({ groupId: group.id, legacyProjectId: b }, { groupsApi: store.projectGroups });
-    fleetMembership.addMember({ groupId: group.id, legacyProjectId: c }, { groupsApi: store.projectGroups });
-    fleetMembership.removeMember({ groupId: group.id, legacyProjectId: b }, { groupsApi: store.projectGroups });
-    const result = fleetMembership.listMembers({ groupId: group.id }, { groupsApi: store.projectGroups });
+    fleetMembership.addMember({ groupId: group.id, legacyProjectId: a }, baseDeps());
+    fleetMembership.addMember({ groupId: group.id, legacyProjectId: b }, baseDeps());
+    fleetMembership.addMember({ groupId: group.id, legacyProjectId: c }, baseDeps());
+    fleetMembership.removeMember({ groupId: group.id, legacyProjectId: b }, baseDeps());
+    const result = fleetMembership.listMembers({ groupId: group.id }, baseDeps());
     assert.equal(result.ok, true);
     assert.deepEqual(result.members, [a, c]);
   });
@@ -177,7 +252,7 @@ describe('lib/fleet-membership.js — listMembers', () => {
   it('refuses FLEET_NOT_FOUND for an unknown group', (t) => {
     freshStore();
     t.after(cleanup);
-    assert.deepEqual(fleetMembership.listMembers({ groupId: 'nope' }, { groupsApi: store.projectGroups }), { ok: false, code: 'FLEET_NOT_FOUND' });
+    assert.deepEqual(fleetMembership.listMembers({ groupId: 'nope' }, baseDeps()), { ok: false, code: 'FLEET_NOT_FOUND' });
   });
 });
 
@@ -213,7 +288,7 @@ describe('lib/routes/v6-fleets.js', () => {
     t.after(cleanup);
     const group = seedGroup();
     const legacyProjectId = seedLegacyProject('proj-a');
-    const router = createV6FleetsRouter({ groupsApi: store.projectGroups });
+    const router = createV6FleetsRouter(baseDeps());
     const { req, res } = fakeExchange('POST', `/api/v6/fleets/${group.id}/members`, { legacyProjectId });
     const handled = await router.handle(req, res);
     assert.equal(handled, true);
@@ -226,7 +301,7 @@ describe('lib/routes/v6-fleets.js', () => {
     freshStore();
     t.after(cleanup);
     const group = seedGroup();
-    const router = createV6FleetsRouter({ groupsApi: store.projectGroups });
+    const router = createV6FleetsRouter(baseDeps());
     const { req, res } = fakeExchange('POST', `/api/v6/fleets/${group.id}/members`, { legacyProjectId: 'nope' });
     await router.handle(req, res);
     assert.equal(res.statusCode, 400);
@@ -237,8 +312,8 @@ describe('lib/routes/v6-fleets.js', () => {
     t.after(cleanup);
     const group = seedGroup();
     const legacyProjectId = seedLegacyProject('proj-a');
-    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, { groupsApi: store.projectGroups });
-    const router = createV6FleetsRouter({ groupsApi: store.projectGroups });
+    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, baseDeps());
+    const router = createV6FleetsRouter(baseDeps());
     const { req, res } = fakeExchange('GET', `/api/v6/fleets/${group.id}/members`);
     await router.handle(req, res);
     assert.equal(res.statusCode, 200);
@@ -250,8 +325,8 @@ describe('lib/routes/v6-fleets.js', () => {
     t.after(cleanup);
     const group = seedGroup();
     const legacyProjectId = seedLegacyProject('proj-a');
-    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, { groupsApi: store.projectGroups });
-    const router = createV6FleetsRouter({ groupsApi: store.projectGroups });
+    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, baseDeps());
+    const router = createV6FleetsRouter(baseDeps());
     const { req, res } = fakeExchange('DELETE', `/api/v6/fleets/${group.id}/members/${legacyProjectId}`);
     await router.handle(req, res);
     assert.equal(res.statusCode, 200);
@@ -263,8 +338,8 @@ describe('lib/routes/v6-fleets.js', () => {
     t.after(cleanup);
     const group = seedGroup();
     const legacyProjectId = seedLegacyProject('proj-a');
-    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, { groupsApi: store.projectGroups });
-    const router = createV6FleetsRouter({ groupsApi: store.projectGroups, isLegacyProjectSessionActive: () => true });
+    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, baseDeps());
+    const router = createV6FleetsRouter(baseDeps({ isLegacyProjectSessionActive: () => true }));
     const { req, res } = fakeExchange('DELETE', `/api/v6/fleets/${group.id}/members/${legacyProjectId}`);
     await router.handle(req, res);
     assert.equal(res.statusCode, 409);
@@ -275,15 +350,39 @@ describe('lib/routes/v6-fleets.js', () => {
     t.after(cleanup);
     const group = seedGroup();
     const legacyProjectId = seedLegacyProject('proj-a');
-    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, { groupsApi: store.projectGroups });
-    const router = createV6FleetsRouter({ groupsApi: store.projectGroups, isLegacyProjectSessionActive: () => true });
+    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, baseDeps());
+    const router = createV6FleetsRouter(baseDeps({ isLegacyProjectSessionActive: () => true }));
     const { req, res } = fakeExchange('DELETE', `/api/v6/fleets/${group.id}/members/${legacyProjectId}`, { confirmed: true });
     await router.handle(req, res);
     assert.equal(res.statusCode, 200);
   });
 
-  it('returns false (unhandled) for a request matching no route in this table', async () => {
+  it('POST responds 500 MISSING_DEPENDENCY when the router was created with no projectExists at all', async (t) => {
+    freshStore();
+    t.after(cleanup);
+    const group = seedGroup();
     const router = createV6FleetsRouter({ groupsApi: store.projectGroups });
+    const { req, res } = fakeExchange('POST', `/api/v6/fleets/${group.id}/members`, { legacyProjectId: 1 });
+    await router.handle(req, res);
+    assert.equal(res.statusCode, 500);
+    assert.equal(res.body.code, 'MISSING_DEPENDENCY');
+  });
+
+  it('DELETE responds 500 MISSING_DEPENDENCY when the router was created with no isLegacyProjectSessionActive at all', async (t) => {
+    freshStore();
+    t.after(cleanup);
+    const group = seedGroup();
+    const legacyProjectId = seedLegacyProject('proj-a');
+    fleetMembership.addMember({ groupId: group.id, legacyProjectId }, baseDeps());
+    const router = createV6FleetsRouter({ groupsApi: store.projectGroups, projectExists: baseDeps().projectExists });
+    const { req, res } = fakeExchange('DELETE', `/api/v6/fleets/${group.id}/members/${legacyProjectId}`);
+    await router.handle(req, res);
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(store.projectGroups.listMembers(group.id), [legacyProjectId], 'nothing was removed');
+  });
+
+  it('returns false (unhandled) for a request matching no route in this table', async () => {
+    const router = createV6FleetsRouter(baseDeps());
     const { req, res } = fakeExchange('GET', '/api/something-else');
     assert.equal(await router.handle(req, res), false);
   });
