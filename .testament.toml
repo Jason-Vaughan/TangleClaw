@@ -395,6 +395,7 @@ files = [
   "test/dashboard-boot-beacon.test.js",
   "test/decision-routing.test.js",
   "test/delegate-assignment.test.js",
+  "test/delegate-succession.test.js",
   "test/drill-gate-fallback.test.js",
   "test/engine-canary.test.js",
   "test/engine-profile-sync.test.js",
