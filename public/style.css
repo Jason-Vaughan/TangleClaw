@@ -6302,7 +6302,10 @@ p.v6-history-secret {
   right: 0;
   left: auto;
   z-index: 30;
-  min-width: 320px;
+  /* R-Gate (PR #3288): a plain `min-width: 320px` wins over `max-width`
+     below a 352px viewport (CSS gives min-width precedence), so the two
+     must share one formula instead of conflicting. */
+  min-width: min(320px, calc(100vw - 32px));
   max-width: calc(100vw - 32px);
   padding: 8px;
   background: var(--card-bg, #0d0d0d);

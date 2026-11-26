@@ -59,6 +59,18 @@ describe('#3270 (V6-026): .v6-usage-popover never overflows the viewport to the 
     assert.match(body, /max-height:\s*min\([^)]*vh[^)]*\);/);
     assert.match(body, /overflow-y:\s*auto;/);
   });
+
+  it('R-Gate (PR #3288): ties min-width to the same viewport budget as max-width, so neither can '
+    + 'win below a narrow viewport', () => {
+    // A bare `min-width: 320px` wins over `max-width: calc(100vw - 32px)` below a 352px
+    // viewport -- CSS gives min-width precedence over max-width whenever they conflict.
+    // Below that width this clamp must shrink too, not stay fixed.
+    assert.doesNotMatch(body, /min-width:\s*\d+px;/, 'a plain min-width in px would reintroduce the conflict');
+    const minWidthMatch = body.match(/min-width:\s*min\(\s*(\d+)px\s*,\s*calc\(100vw\s*-\s*(\d+)px\)\s*\);/);
+    assert.ok(minWidthMatch, 'min-width must be min(<Npx>, calc(100vw - <Mpx>)), tied to the same formula');
+    const maxWidthMatch = body.match(/max-width:\s*calc\(100vw\s*-\s*(\d+)px\);/);
+    assert.equal(minWidthMatch[2], maxWidthMatch[1], 'the two must share the same viewport-margin subtrahend');
+  });
 });
 
 describe('#3276 (V6-040): no unreclaimable dead space below the chat composer', () => {
