@@ -274,6 +274,7 @@ const { _setRestartScheduler, _setCutoverSpawner } = setupRoutes;
 // prior-use answer through it, and its test seam stays on this file's export
 // surface under its name.
 const configRoutes = require('./lib/routes/config');
+const projectsRoutes = require('./lib/routes/projects');
 const { _installPriorUse, _setInstallPriorUse } = configRoutes;
 
 // The tc routes live in their own module; the request dispatcher reads the
@@ -1608,6 +1609,11 @@ route('POST', '/api/server/restart', async (req, res, _params, body) => {
 // held; the setup credential decision and the ingress door reader the handlers
 // use still live here and are handed over.
 configRoutes.register({ _decideSetupCredential, _gateIngress });
+
+// #3278 — the project settings-parity read route. Every dependency it needs
+// is a real, independently-requirable library, so it registers with its own
+// defaults; nothing from server.js is handed over.
+projectsRoutes.register();
 
 // AUTH-4b — service-token management. These are OPERATOR endpoints (gated by
 // basic_auth in caddy mode / localhost-only in direct mode, like the rest of
