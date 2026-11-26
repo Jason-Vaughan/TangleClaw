@@ -4,6 +4,25 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.6.2] - 2026-11-26
+
+### Added
+- Added a standalone, audited interactive-choice/confirmation-prompt detection module (`public/v6-interactive-choices.js`) covering numbered menus, arrow-selected selector dialogs, folder-trust prompts, and multi-choice questions with up to 5 options plus an explicit "Chat about this" free-form option — reading real option text from the pane instead of assuming a fixed set. Not yet wired into the live V6 chat card (#3259; wiring is a follow-up car once PR #3295 merges).
+- Added a per-engine health indicator (healthy / degraded / unavailable /
+  unknown, matching the Fleet Sidebar's existing color semantics) to the
+  bottom-right engine usage popover's per-engine cards, computed from each
+  engine's own quota-probe reading (#3269).
+
+### Fixed
+- Fixed dense, cramped conversation text and near-zero margins around
+  embedded link/unfurl previews in V6 Chat: looser line spacing for long
+  replies, and real breathing room around `.v6-chat-link-preview`,
+  `.v6-chat-unfurl`, and `.v6-chat-local-ref` cards (#3260).
+- Fixed Peek Under the Hood's "Hide Medusa & fleet chatter" filter (`filterPeekTrafficLines` in `public/v6-shell.js`): a real terminal hard-wraps a switchboard notice wherever the pane's width falls, with no guaranteed indentation on the continuation line, but the filter only tried to recognize a continuation when it WAS indented — so every wrapped line of a notice leaked straight through unfiltered. Clarified the filter-bar's legend and scope labels (`verbosityMarkup`) so Chat-scope and Peek-Under-the-Hood-scope controls read unambiguously, without changing any existing id, class or checkbox behavior (#3261).
+- Fixed the V6 chat pane dropping an operator's active text selection and shifting scroll during background polls: `setLive`'s targeted redraws (live output, raw peek, tucked replies, recorded events, pending bubble) now skip replacing a pane's `innerHTML` when the new markup is identical or when the operator has an active, non-collapsed selection inside it, and the 4s/12s `setEngineHealth`/`setProjects`/`setTree`/`setTelemetry` background polls defer (never drop) their full-page redraw while a selection is active inside the chat stream or raw peek, flushing it once the selection clears (#3287).
+- Fixed a URL getting cut off mid-link in the V6 chat: when a terminal hard-wraps a reply and the wrap happens to split a URL with no spaces in it (`appendReplyLine` in `public/v6-shell.js`), reconstructing the two lines with a space — correct for an ordinary wrapped word — instead cut the URL in two, so `MESSAGE_LINK`'s own `[Preview]` button rendered in the middle of the link. Lines are now glued with no space whenever the line being merged into still ends mid-URL (#3291).
+- Fixed an unbounded disk-fill: an orphaned `scripts/with-scratch-server.js` child outlived its harness and wrote an unlinked log file without limit. `lib/logger.js`'s rotation now checks the open descriptor's own size/inode rather than trusting the file path alone, closes the descriptor once its log directory is gone, and enforces a hard size ceiling; `server.js` swallows `EPIPE`/`ERR_STREAM_DESTROYED` instead of looping through `uncaughtException`, and rate-limits repeated exception logging; the scratch harness now spawns its child detached, kills the whole process group on teardown, and the child watches its own parent and exits if orphaned (#3315).
+
 ## [6.6.1] - 2026-11-26
 
 ### Fixed
