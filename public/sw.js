@@ -282,7 +282,11 @@ const NETWORK_FIRST_PATHS = new Set([
   // STATIC_ASSETS above.
   '/subagent-parallelization-ui.js',
   // v6-shell.js -- see the matching comment in STATIC_ASSETS above.
-  '/v6-shell.js'
+  '/v6-shell.js',
+  // v6-ssot-charter-view.js (#3275) is a not-yet-mounted, standalone SSOT
+  // index/reader module still under active review -- cache-first would
+  // let the operator's browser hold a stale copy indefinitely.
+  '/v6-ssot-charter-view.js'
 ]);
 
 self.addEventListener('install', (event) => {
