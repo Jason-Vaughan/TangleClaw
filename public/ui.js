@@ -9741,12 +9741,26 @@ if (typeof window.tcCreateV6Shell === 'function') {
     // it and gets the chat on screen, same as before.
     onStartSession(projectName) { v6Live.startSession(projectName); },
     onStartFleet() { v6Live.startFleet(); },
+    // #3258: v6-shell.js's own `startFleetMembers` (v6Live method) has no
+    // `options.onStartFleetMembers` caller yet — the real per-member fleet
+    // start today goes through the zero-arg `onStartFleet` above via its
+    // stash/drain workaround (#3215 R2's `_consumePendingStartFleetMembers`,
+    // left that way because that car didn't own this file). Wired here per
+    // #3258's acceptance criteria, ahead of a future shell-side consumer.
+    onStartFleetMembers(names) { v6Live.startFleetMembers(names); },
     onTreeLinkClick(hash) { v6Live.treeLinkClicked(hash); },
     // #3071: rename the chat's target from its header.
     onRenameProject(oldName, newName, opts) { v6Live.renameProject(oldName, newName, opts); },
     // #3066: the sidebar's chat history and recents panel.
     onHistoryLoad(form) { v6Live.loadHistory(form); },
     onHistoryOpenSession(pick) { v6Live.openHistorySession(pick); },
+    // #3258: the offline startup hero's "🕓 View Previous Conversation" /
+    // "↩ Return to Start Card" buttons — v6-shell.js's wireControls()
+    // already binds #v6ChatViewHistoryHero and the offline-history return
+    // buttons to these (lines ~9658-9667), but they were never passed here,
+    // so the click did nothing in production.
+    onViewOfflineHistory(projectName) { v6Live.viewOfflineHistory(projectName); },
+    onReturnToStartCard(projectName) { v6Live.returnToStartCard(projectName); },
     // #3114: the 3 Wizard workflows — standalone workspace, convert to
     // fleet, and template provisioning — none of them touch `onRender`'s
     // own `detail`; each lands its outcome in the Wizard's own state.
