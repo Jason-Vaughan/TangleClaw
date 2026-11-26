@@ -4331,6 +4331,15 @@ body::-webkit-scrollbar-thumb:active,
 .v6-conversation-content {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  /* #3260 (V6-005): a long reply with no paragraph breathing room reads as
+     one dense block. `messageMarkup` (public/v6-shell.js) joins lines with
+     a literal newline, not real `<p>` elements, so this is the one lever
+     available from style.css alone: looser line spacing for the running
+     text itself. Heading hierarchy, list indentation and table formatting
+     need real markdown-to-HTML rendering in messageMarkup, out of this
+     car's file envelope (public/style.css only) -- flagged, not attempted
+     here as a CSS-only illusion of markup that does not exist. */
+  line-height: 1.55;
 }
 /* #3167: unwrapped paragraphs (joined by the JS side's own fix for this
    issue) must flow across the full center-pane width and auto-wrap as the
@@ -5969,7 +5978,10 @@ p.v6-history-secret {
   align-items: center;
   gap: 6px;
   max-width: 100%;
-  margin: 2px 0;
+  /* #3260 (V6-005): 2px read as colliding with adjacent text -- an inline-
+     level embedded card still respects vertical margin, it just needs more
+     of it to read as its own element rather than crowding the line above/below. */
+  margin: 8px 0;
   padding: 4px 8px;
   border: 1px solid var(--v6-outline, #3d444d);
   border-radius: 6px;
@@ -6025,6 +6037,9 @@ p.v6-history-secret {
   align-items: center;
   gap: 6px;
   max-width: 100%;
+  /* #3260 (V6-005): matches .v6-chat-link-preview's own margin -- an
+     unfurl card had none at all, crowding straight into adjacent text. */
+  margin: 8px 0;
 }
 .v6-chat-unfurl-loading,
 .v6-chat-unfurl-error {
@@ -6054,7 +6069,8 @@ p.v6-history-secret {
   align-items: center;
   gap: 6px;
   max-width: 100%;
-  margin: 2px 0;
+  /* #3260 (V6-005): same reasoning as .v6-chat-link-preview's own margin. */
+  margin: 8px 0;
   padding: 4px 8px;
   border: 1px dashed var(--v6-outline, #3d444d);
   border-radius: 6px;
