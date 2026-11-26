@@ -608,6 +608,62 @@ describe('getAdmissionState (PRR-A finding 1, round 2 on PR #2757)', () => {
   });
 });
 
+describe('recheckUnobservedModel (#3257)', () => {
+  let tmpHome;
+  beforeEach(() => {
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-codex-recheck-home-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  /** Write a rollout file under `tmpHome/sessions/<subpath>` with the given records. */
+  function writeRollout(subpath, records) {
+    const full = path.join(tmpHome, 'sessions', subpath);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    return full;
+  }
+
+  it('returns {ok: false} outright for any engine other than codex — those always had a real control to retry', () => {
+    const result = reconciler.recheckUnobservedModel('session:1', 'claude', 'claude-opus-5-5', { codexHome: tmpHome, projectPath: '/project', startedAtMs: Date.now() });
+    assert.equal(result.ok, false);
+    assert.equal(result.observed, null);
+    assert.equal(reconciler.getAdmissionState('session:1'), 'pending', 'never touches admission state on a non-codex engine');
+  });
+
+  it('returns {ok: false} when no rollout file matches yet (turn 1 genuinely still has not run)', () => {
+    const result = reconciler.recheckUnobservedModel('session:2', 'codex', 'gpt-6-luna', { codexHome: tmpHome, projectPath: '/project', startedAtMs: Date.now() });
+    assert.equal(result.ok, false);
+    assert.equal(result.observed, null);
+    assert.equal(reconciler.getAdmissionState('session:2'), 'pending');
+  });
+
+  it('matches and sets admission state to "verified" once a rollout file now exists with the desired model', () => {
+    const startedAtMs = startedAtMsAgo(1000);
+    writeRollout('2026/11/26/rollout-recheck.jsonl', [
+      { type: 'session_meta', payload: { id: 's1', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString() } },
+      { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-6-luna' } }
+    ]);
+    const result = reconciler.recheckUnobservedModel('session:3', 'codex', 'gpt-6-luna', { codexHome: tmpHome, projectPath: '/project', startedAtMs });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.observed, { engine: 'codex', model: 'gpt-6-luna' });
+    assert.equal(reconciler.getAdmissionState('session:3'), 'verified');
+  });
+
+  it('does not set admission state when the rollout file now exists but names a DIFFERENT model — a real mismatch, not "still unobserved"', () => {
+    const startedAtMs = startedAtMsAgo(1000);
+    writeRollout('2026/11/26/rollout-mismatch.jsonl', [
+      { type: 'session_meta', payload: { id: 's1', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString() } },
+      { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-5.6-sol' } }
+    ]);
+    const result = reconciler.recheckUnobservedModel('session:4', 'codex', 'gpt-6-luna', { codexHome: tmpHome, projectPath: '/project', startedAtMs });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.observed, { engine: 'codex', model: 'gpt-5.6-sol' });
+    assert.equal(reconciler.getAdmissionState('session:4'), 'pending');
+  });
+});
+
 describe('getCheckpoint', () => {
   it('returns null when nothing was ever recorded for a resource', () => {
     assert.equal(reconciler.getCheckpoint('never-checkpointed'), null);
@@ -1855,6 +1911,110 @@ describe('model admission (lib/sessions.js, PRR-A finding 1 round 2)', () => {
       } finally {
         store.close();
         fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('#3257: re-checks and clears a Codex launch that stayed unobserved, once a rollout file now exists with the matching model', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-admission-codex-recheck-'));
+      const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-admission-codex-home-'));
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+      const realCodexHomeEnv = process.env.CODEX_HOME;
+      process.env.CODEX_HOME = codexHome;
+      try {
+        const project = store.projects.create({ name: 'admission-codex-recheck', path: tmpDir, engine: 'codex' });
+        const session = store.sessions.start({ projectId: project.id, engineId: 'codex', tmuxSession: 'admission-codex-recheck' });
+        store.activity.log({
+          projectId: project.id, sessionId: session.id, eventType: 'session.model-launch-verified',
+          detail: { engine: 'codex', model: 'gpt-6-luna', effort: 'medium', ok: false, state: 'hold', observed: null }
+        });
+        reconciler._resetForTests();
+        // Before the rollout file exists at all: still held, exactly as
+        // before this car — turn 1 genuinely has not run yet.
+        assert.equal(sessions._modelAdmissionBlock(session.id), 'model-unverified');
+
+        // Turn 1 finally runs (the #3257 pane-id fix is what let the native
+        // startupControl fire reach it) and Codex writes its rollout file —
+        // nothing re-ran `_verifyModelAfterLaunch` for this; the file simply
+        // now exists where it didn't a moment ago.
+        const activeNow = store.sessions.getActive(project.id);
+        const startedAtMs = reconciler.parseLaunchTimestampMs(activeNow.startedAt);
+        const rolloutPath = path.join(codexHome, 'sessions', '2026/11/26/rollout-admission.jsonl');
+        fs.mkdirSync(path.dirname(rolloutPath), { recursive: true });
+        // +2000, not +200: `startedAtMs` here is SQLite's own second-resolution
+        // `datetime('now')`, so it IS second-aligned, and `_readCodexActiveModel`'s
+        // own same-second ambiguity guard treats anything inside
+        // `[startedAtMs, startedAtMs + 1000)` as unresolvable with no
+        // `engineSessionId`/`excludeSessionIds` to disambiguate it (neither is
+        // available to this recheck, which only knows the durable row).
+        fs.writeFileSync(rolloutPath, [
+          JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: tmpDir, timestamp: new Date(startedAtMs + 2000).toISOString() } }),
+          JSON.stringify({ type: 'turn_context', payload: { cwd: tmpDir, model: 'gpt-6-luna' } })
+        ].join('\n') + '\n');
+        const mtime = (startedAtMs + 2000) / 1000;
+        fs.utimesSync(rolloutPath, mtime, mtime);
+
+        assert.equal(sessions._modelAdmissionBlock(session.id), null, 'admits the session once the rollout file confirms the model');
+
+        // Not `rows[0]`: `store.activity.query`'s `ORDER BY created_at DESC`
+        // has no tiebreaker, and this row and the original one can land in
+        // the same second's resolution in a fast test run — a pre-existing
+        // store property, nothing this recheck caused. What this asserts is
+        // its own: a fresh, durable `ok: true` row actually exists, not just
+        // an in-memory flip nothing else could ever see after a restart.
+        const rows = store.activity.query({ sessionId: session.id, eventType: 'session.model-launch-verified' });
+        assert.ok(
+          rows.some((r) => r.detail && r.detail.ok === true && r.detail.model === 'gpt-6-luna'),
+          'a fresh ok:true row for the matched model is logged, not just an in-memory flip'
+        );
+
+        // And it stays admitted afterward without re-scanning the filesystem
+        // — the in-memory admission state is now "verified".
+        fs.rmSync(rolloutPath);
+        assert.equal(sessions._modelAdmissionBlock(session.id), null);
+      } finally {
+        if (realCodexHomeEnv === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = realCodexHomeEnv;
+        store.close();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(codexHome, { recursive: true, force: true });
+      }
+    });
+
+    it('#3257: a confirmed mismatch (observed is not null) is never second-guessed by the recheck — stays "model-unverified" even if a later file would now match', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-admission-codex-mismatch-'));
+      const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-admission-codex-mismatch-home-'));
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+      const realCodexHomeEnv = process.env.CODEX_HOME;
+      process.env.CODEX_HOME = codexHome;
+      try {
+        const project = store.projects.create({ name: 'admission-codex-mismatch', path: tmpDir, engine: 'codex' });
+        const session = store.sessions.start({ projectId: project.id, engineId: 'codex', tmuxSession: 'admission-codex-mismatch' });
+        // observed is NOT null here — a real, confirmed mismatch from a prior
+        // reconciliation attempt, not "never got to check."
+        store.activity.log({
+          projectId: project.id, sessionId: session.id, eventType: 'session.model-launch-verified',
+          detail: { engine: 'codex', model: 'gpt-6-luna', ok: false, state: 'hold', observed: { engine: 'codex', model: 'some-other-model' } }
+        });
+        reconciler._resetForTests();
+
+        const activeNow = store.sessions.getActive(project.id);
+        const startedAtMs = reconciler.parseLaunchTimestampMs(activeNow.startedAt);
+        const rolloutPath = path.join(codexHome, 'sessions', '2026/11/26/rollout-mismatch.jsonl');
+        fs.mkdirSync(path.dirname(rolloutPath), { recursive: true });
+        fs.writeFileSync(rolloutPath, [
+          JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: tmpDir, timestamp: new Date(startedAtMs + 2000).toISOString() } }),
+          JSON.stringify({ type: 'turn_context', payload: { cwd: tmpDir, model: 'gpt-6-luna' } })
+        ].join('\n') + '\n');
+        const mtime = (startedAtMs + 2000) / 1000;
+        fs.utimesSync(rolloutPath, mtime, mtime);
+
+        assert.equal(sessions._modelAdmissionBlock(session.id), 'model-unverified', 'a confirmed prior mismatch is not re-opened by this recheck');
+      } finally {
+        if (realCodexHomeEnv === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = realCodexHomeEnv;
+        store.close();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(codexHome, { recursive: true, force: true });
       }
     });
 

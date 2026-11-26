@@ -637,6 +637,71 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       try { execFileSync('tmux', ['-L', otherSocket, 'kill-server'], { stdio: 'ignore' }); } catch { /* already gone */ }
     }
   });
+
+  it('populates options.born.paneId/born.server from the TCC-authorized server\'s own new-session, never null (#3257) — and tmux.visiblePane can read that pane back', () => {
+    const cwd = fakeProtectedCwd('Documents/born-pane-proj');
+    withContentionRetry(() => {
+      const name = uniqueSessionName('tcc_born_pane');
+      createdDefault.push(name);
+      startAuthorizedAnchor();
+      const born = { paneId: 'sentinel', server: 'sentinel' };
+      withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
+        const created = tmux.createSessionWithTccBootstrap(name, { cwd, born });
+        assert.equal(created, true);
+      });
+      // Real, not the attach proxy's: born.server must be the TCC-authorized
+      // server's own identity, which the default server's proxy can never
+      // produce (it is a different tmux server process entirely).
+      assert.match(born.paneId, /^%\d+$/);
+      assert.match(born.server, /^\d+\.\d+$/);
+      const realServer = execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'display-message', '-p', '-t', `=${name}:`, '#{pid}.#{start_time}'], { encoding: 'utf8' }).trim();
+      assert.equal(born.server, realServer, 'born.server names the TCC-authorized server, not the default one');
+      // The whole point (#3257): visiblePane must be able to read this pane
+      // back using exactly what createSessionWithTccBootstrap recorded,
+      // routing through the TCC-authorized socket on its own — the default
+      // server's own same-named session is only the attach proxy, and a
+      // caller that never knew about TCC_SOCKET at all still gets a real read.
+      const pane = tmux.visiblePane(name, born.paneId, born.server);
+      assert.equal(pane.paneId, born.paneId);
+    });
+  });
+
+  it('leaves options.born.paneId/born.server null when the TCC new-session prints nothing usable, rather than throwing or guessing', () => {
+    const cwd = fakeProtectedCwd('Documents/born-pane-malformed-proj');
+    withContentionRetry(() => {
+      const name = uniqueSessionName('tcc_born_pane_malformed');
+      createdDefault.push(name);
+      startAuthorizedAnchor();
+      const born = { paneId: 'sentinel', server: 'sentinel' };
+      // Discards stdout on exactly the `new-session` call this test's own
+      // unique name reaches — the session is still created for real (the
+      // shim still execs the real binary; only its own `-P -F` print is
+      // lost), simulating "tmux ran but printed nothing usable" without
+      // guessing at what malformed output would even look like.
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-silence-shim-'));
+      fs.writeFileSync(path.join(binDir, 'tmux'), [
+        '#!/bin/sh',
+        'case "$*" in',
+        `  *"new-session"*"${name}"*) exec ${REAL_TMUX} "$@" > /dev/null ;;`,
+        `  *) exec ${REAL_TMUX} "$@" ;;`,
+        'esac'
+      ].join('\n'), { mode: 0o755 });
+      const realPath = process.env.PATH;
+      process.env.PATH = `${binDir}:${realPath}`;
+      try {
+        const created = tmux.createSessionWithTccBootstrap(name, { cwd, born });
+        assert.equal(created, true);
+      } finally {
+        process.env.PATH = realPath;
+        fs.rmSync(binDir, { recursive: true, force: true });
+      }
+      assert.equal(born.paneId, null);
+      assert.equal(born.server, null);
+      // The session itself was still created for real — only the identity
+      // print was lost, which must not block (or fake) the bootstrap itself.
+      assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
+    });
+  });
 });
 
 describe('TCC attach-proxy follow-up fixes (#2929, issue comment #6699775329)', () => {
