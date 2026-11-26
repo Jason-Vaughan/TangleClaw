@@ -128,6 +128,46 @@ describe('assignFleetDelegate (#3263)', () => {
     assert.equal(store.projectConfig.load(pm.path).fleetCoordinator, false);
   });
 
+  it('records a failing projectConfig write as a failed step rather than throwing (#3263 PRR-B R2)', () => {
+    // A project whose `.path` is actually a FILE, not a directory: `load()`
+    // stays safe (returns defaults, same as a missing path), but `save()`'s
+    // `fs.mkdirSync(path.join(path, '.tangleclaw'))` throws ENOTDIR -- a
+    // real filesystem failure, not a simulated one.
+    const brokenPath = path.join(os.tmpdir(), `tc-delegate-broken-${Date.now()}-${Math.random()}`);
+    fs.writeFileSync(brokenPath, 'not a directory');
+    try {
+      const broken = store.projects.create({ name: `Broken-${uniq}`, path: brokenPath, engine: 'claude' });
+      const result = assignFleetDelegate({ newDelegateProjectId: broken.id, memberProjectIds: [] }, OPERATOR);
+      assert.equal(result.ok, false);
+      assert.equal(result.controlAssignmentsPending, true);
+      const failed = result.steps.find((s) => !s.ok);
+      assert.equal(failed.step, 'setNewFleetCoordinatorFlag');
+      assert.match(failed.detail.error, /ENOTDIR/);
+      // The coordinator role WAS granted (an earlier step) before the config write failed.
+      assert.equal(store.coordinatorRoles.getActiveForProject(broken.id).role, 'project-manager');
+    } finally {
+      fs.rmSync(brokenPath, { force: true });
+    }
+  });
+
+  it('records a failing MEMBER projectConfig write as a failed step too, not just the delegate\'s own', () => {
+    const brokenPath = path.join(os.tmpdir(), `tc-delegate-broken-member-${Date.now()}-${Math.random()}`);
+    fs.writeFileSync(brokenPath, 'not a directory');
+    try {
+      const brokenMember = store.projects.create({ name: `BrokenMember-${uniq}`, path: brokenPath, engine: 'claude' });
+      const result = assignFleetDelegate({ newDelegateProjectId: pm.id, memberProjectIds: [brokenMember.id] }, OPERATOR);
+      assert.equal(result.ok, false);
+      const failed = result.steps.find((s) => !s.ok);
+      assert.equal(failed.step, 'updateMemberCoordinatorProject');
+      assert.match(failed.detail.error, /ENOTDIR/);
+      // The delegate's own grant + fleetCoordinator flag already committed before the member write failed.
+      assert.equal(store.coordinatorRoles.getActiveForProject(pm.id).role, 'project-manager');
+      assert.equal(store.projectConfig.load(pm.path).fleetCoordinator, true);
+    } finally {
+      fs.rmSync(brokenPath, { force: true });
+    }
+  });
+
   it('refuses an invalid member project id before any step runs, leaving no partial state', () => {
     assert.throws(
       () => assignFleetDelegate({ newDelegateProjectId: pm.id, memberProjectIds: [999999] }, OPERATOR),
