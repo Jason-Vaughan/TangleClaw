@@ -34,6 +34,26 @@ function loadShellFilter() {
   return sandbox.tcV6FilterPeekTrafficLines;
 }
 
+/**
+ * `tcV6ExtractLiveTurns` from the real shipped `public/v6-shell.js`, the
+ * same `vm.runInContext` pattern {@link loadShellFilter} uses. This
+ * module's test file is where the #3291 wrapped-URL-stitching fix landed
+ * (same car, same PR) — its own natural home, `test/v6-b1-ui-shell.test.js`
+ * (`describe('tcV6ExtractLiveTurns unwraps soft-wrapped terminal lines
+ * into flowing prose (#3167)')`), is a sibling car's file, out of this
+ * car's scope to add to.
+ * @returns {Function}
+ */
+function loadExtractLiveTurns() {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'v6-shell.js'), 'utf8');
+  const sandbox = { console };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(src, sandbox);
+  return sandbox.tcV6ExtractLiveTurns;
+}
+
 /** A real switchboard wake notice, hard-wrapped at ~76 columns with NO
  * indentation on its continuation lines — the common case a plain
  * terminal actually produces. */
@@ -141,6 +161,29 @@ describe('parity with public/v6-shell.js\'s own copy, the two files this car kee
   it('matches with hideTraffic off too (both return the input unchanged)', () => {
     const lines = [...WRAPPED_NOTICE, 'after'];
     assert.deepEqual(uth.filterPeekTrafficLines(lines, false), JSON.parse(JSON.stringify(shellFilter(lines, false))));
+  });
+});
+
+describe('tcV6ExtractLiveTurns: wrapped-URL stitching, #3291', () => {
+  const extract = loadExtractLiveTurns();
+  const run = (lines) => JSON.parse(JSON.stringify(extract(lines, 'claude', [])));
+  const padding = 'x'.repeat(40);
+
+  it('glues a URL wrapped at "https://github.com/Jason-" | "Vaughan/..." with no inserted space', () => {
+    const out = run(['> go', `See this issue: ${padding} https://github.com/Jason-`, 'Vaughan/TangleClaw/issues/3290 for details']);
+    assert.match(out.turns[1].text, /https:\/\/github\.com\/Jason-Vaughan\/TangleClaw\/issues\/3290/);
+    assert.doesNotMatch(out.turns[1].text, /Jason- Vaughan/);
+  });
+
+  it('glues a URL wrapped at "https://github" | ".com/Jason-Vaughan/..." with no inserted space', () => {
+    const out = run(['> go', `See this issue: ${padding} https://github`, '.com/Jason-Vaughan/TangleClaw/issues/3290 for details']);
+    assert.match(out.turns[1].text, /https:\/\/github\.com\/Jason-Vaughan\/TangleClaw\/issues\/3290/);
+    assert.doesNotMatch(out.turns[1].text, /github \.com/);
+  });
+
+  it('still inserts a space for an ordinary wrapped word, unaffected by the URL fix', () => {
+    const out = run(['> go', `${'x'.repeat(55)} and the rest of the sentence.`]);
+    assert.equal(out.turns[1].text, `${'x'.repeat(55)} and the rest of the sentence.`);
   });
 });
 

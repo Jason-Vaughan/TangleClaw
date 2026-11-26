@@ -3068,6 +3068,14 @@
     const WRAP_WIDTH_THRESHOLD = 55;
     const NEW_REPLY_BLOCK = /^#{1,6}\s/;
     const FENCE_DELIM = /^(?:```|~~~)/;
+    // #3291: a URL with no spaces in it can itself be split by the same
+    // column-width wrap `mergeIntoLast` reconstructs — gluing it back with
+    // a space, the normal case for a wrapped WORD boundary, instead cuts
+    // the URL in two (`MESSAGE_LINK`'s bare-URL branch stops at the first
+    // whitespace it sees). This matches only when the line being merged
+    // INTO still ends mid-URL — no whitespace seen since its `http(s)://`/
+    // `file://` — so an ordinary wrapped word is unaffected.
+    const TRAILING_OPEN_URL = /(?:https?|file):\/\/[^\s<>"'`]*$/i;
     let replyLineLen = 0;
     let inFence = false;
     // `hasBullet` (Ruling A864): the bullet-stripping call site below strips
@@ -3079,8 +3087,10 @@
       const isFenceDelim = FENCE_DELIM.test(txt);
       const startsNewBlock = !inFence && (hasBullet || isFenceDelim || NEW_REPLY_BLOCK.test(txt) || QUESTION_PREFIX.test(txt));
       const mergeIntoLast = !inFence && !startsNewBlock && reply.length > 0 && replyLineLen >= WRAP_WIDTH_THRESHOLD;
-      if (mergeIntoLast) reply[reply.length - 1] += ` ${txt}`;
-      else reply.push(txt);
+      if (mergeIntoLast) {
+        const prev = reply[reply.length - 1];
+        reply[reply.length - 1] = TRAILING_OPEN_URL.test(prev) ? `${prev}${txt}` : `${prev} ${txt}`;
+      } else reply.push(txt);
       replyLineLen = txt.length;
       if (isFenceDelim) inFence = !inFence;
     };
