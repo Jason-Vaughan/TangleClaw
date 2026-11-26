@@ -26,6 +26,9 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
+
+const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
 
 const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
 const SHELL_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'v6-shell.js'), 'utf8');
@@ -153,5 +156,186 @@ describe('#3258 (V6-001): public/ui.js wires every tcCreateV6Shell callback publ
     + '(if it ever stops, say so loudly rather than let the audit above pass for the wrong reason)', () => {
     assert.match(SHELL_SRC, /options\.onViewOfflineHistory/);
     assert.match(SHELL_SRC, /options\.onReturnToStartCard/);
+  });
+});
+
+/*
+ * R-Gate (PR #3293): the audit above proves public/ui.js's TEXT wires the
+ * callbacks, but never executes it, so it cannot prove a real click
+ * actually reaches them. What follows mounts the REAL, unmodified
+ * production mount block — extracted verbatim from public/ui.js, not a
+ * hand-written stand-in — against the REAL public/v6-shell.js, inside a vm
+ * sandbox (the same technique test/v6-b1-ui-shell.test.js already uses to
+ * load v6-shell.js itself), and drives it through an actual button click.
+ */
+
+/**
+ * Loads the real public/v6-shell.js into a fresh vm sandbox. Every global
+ * it defines (`tcCreateV6Shell`, `tcV6CreateLiveController`,
+ * `tcV6TuckAdminControls`, `tcV6ViewToggleLabel`, ...) lands directly on
+ * the returned sandbox, since the module assigns to `global.*`/`window.*`
+ * and `sandbox.window = sandbox.globalThis = sandbox`.
+ * @returns {object}
+ */
+function loadV6Shell() {
+  const sandbox = { console };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(SHELL_SRC, sandbox);
+  return sandbox;
+}
+
+/**
+ * Installs a minimal `location.hash` + `addEventListener('hashchange', ...)`
+ * directly on the sandbox, standing in for the real `window` production
+ * code reads implicitly (`public/ui.js` never passes `options.window`, so
+ * `tcCreateV6Shell` falls back to the ambient `window` — here, the sandbox
+ * itself, since `sandbox.window === sandbox`).
+ * @param {object} sandbox
+ * @param {string} [initialHash]
+ */
+function installFakeLocation(sandbox, initialHash) {
+  let hash = initialHash || '';
+  const listeners = {};
+  Object.defineProperty(sandbox, 'location', {
+    configurable: true,
+    value: {
+      get hash() { return hash; },
+      set hash(v) {
+        hash = v.startsWith('#') ? v : `#${v}`;
+        (listeners.hashchange || []).slice().forEach((fn) => fn());
+      }
+    }
+  });
+  sandbox.addEventListener = (type, fn) => { (listeners[type] || (listeners[type] = [])).push(fn); };
+  sandbox.removeEventListener = (type, fn) => {
+    if (!listeners[type]) return;
+    listeners[type] = listeners[type].filter((f) => f !== fn);
+  };
+}
+
+/**
+ * The literal body of `if (typeof window.tcCreateV6Shell === 'function') { ... }`
+ * in public/ui.js — the whole production v6-shell mount block, not just the
+ * options object: the real root-element lookups, the real `v6Live`
+ * construction, the real `tcCreateV6Shell(document, {...})` call with its
+ * options object exactly as shipped, and the toggle-button wiring after it.
+ * @returns {string}
+ */
+function extractMountBlockSource() {
+  const marker = "if (typeof window.tcCreateV6Shell === 'function') {";
+  const start = UI_SRC.indexOf(marker);
+  assert.ok(start !== -1, 'public/ui.js must still guard the v6 shell mount with this exact check');
+  const openBrace = start + marker.length - 1;
+  const closeBrace = matchingBraceIndex(UI_SRC, openBrace);
+  assert.ok(closeBrace !== -1, 'unbalanced braces while scanning the v6 shell mount block');
+  return UI_SRC.slice(openBrace + 1, closeBrace);
+}
+
+/**
+ * Mounts public/ui.js's real, unmodified v6-shell mount block against the
+ * real public/v6-shell.js.
+ * @param {{api: Function, apiMutate: Function, initialHash?: string}} deps
+ * @returns {{v6Shell: object, v6Live: object, doc: object}}
+ */
+function mountProductionV6Shell(deps) {
+  const sandbox = loadV6Shell();
+  const { doc } = makeDocument(['projectsContainer', 'v6ViewToggleBtn']);
+  const shellRoot = doc.createElement('div');
+  shellRoot.id = 'v6ShellRoot';
+  withIdParsingInnerHTML(shellRoot, doc);
+  doc.body.appendChild(shellRoot);
+  doc._register(shellRoot);
+  // public/ui.js's real block also reads `document.querySelector('.toolbar')`
+  // (#3046) — no toolbar in this fixture; a doc-level querySelector
+  // delegating to the body is enough for the `if (v6ClassicToolbar)` guards
+  // to see `null`, same as a page that never rendered one.
+  doc.querySelector = (sel) => doc.body.querySelector(sel);
+  installFakeLocation(sandbox, deps.initialHash);
+  sandbox.document = doc;
+  sandbox.api = deps.api;
+  sandbox.apiMutate = deps.apiMutate;
+  sandbox.openSettings = deps.openSettings || (() => {});
+  const harness = `(function() {\n${extractMountBlockSource()}\nreturn { v6Shell, v6Live };\n})()`;
+  return { ...vm.runInContext(harness, sandbox), doc };
+}
+
+/**
+ * Lets the mount block's own fire-and-forget `v6Live.handleRoute(...)`
+ * call (and any promise chain a subsequent click starts) settle. A
+ * `setTimeout` macrotask, unlike a handful of `await Promise.resolve()`
+ * microtask hops, is guaranteed to run after every microtask already
+ * queued — including ones a later `await` inside the production code
+ * enqueues only once an earlier one resolves.
+ * @returns {Promise<void>}
+ */
+function flush() {
+  return new Promise((resolve) => { setTimeout(resolve, 20); });
+}
+
+describe('#3258 (V6-001): the production mount block, executed for real (not a hand-written stand-in)', () => {
+  /**
+   * @param {object} [overrides] - `url -> response`, checked before the defaults.
+   * @returns {Function & {calls: string[]}} An `api(url)` stub.
+   */
+  function makeApi(overrides) {
+    const calls = [];
+    const api = async (url) => {
+      calls.push(url);
+      if (overrides && Object.prototype.hasOwnProperty.call(overrides, url)) return overrides[url];
+      if (url === '/api/projects') {
+        return { projects: [{ id: 7, name: 'Offline-Proj', engine: { id: 'claude' }, session: null }] };
+      }
+      if (/^\/api\/sessions\/[^/]+\/status$/.test(url)) return { active: false };
+      if (/^\/api\/sessions\/[^/]+\/history\?limit=1$/.test(url)) return { sessions: [] };
+      if (/^\/api\/continuity\/[^/]+\/sessions$/.test(url)) return { sessions: [] };
+      return null;
+    };
+    api.calls = calls;
+    api.lastError = null;
+    return api;
+  }
+
+  it('a real click on "View Previous Conversation" reaches v6Live.viewOfflineHistory through production onViewOfflineHistory, '
+    + 'and renders the empty-state when no prior history exists (#3258 acceptance criterion 3)', async () => {
+    const api = makeApi();
+    const { v6Shell, doc } = mountProductionV6Shell({
+      api, apiMutate: async () => ({ ok: true }), initialHash: '#/resources/7/conversation'
+    });
+    void v6Shell; // the mount block's OWN unawaited handleRoute call already fired; flush() below waits for it.
+    await flush();
+
+    const viewBtn = doc.getElementById('v6ChatViewHistoryHero');
+    assert.ok(viewBtn, 'the offline hero\'s View Previous Conversation button must be on screen for an offline project');
+    const before = api.calls.length;
+    assert.ok(viewBtn.dispatch('click'), 'the click must find a REAL listener — proves production onViewOfflineHistory was actually passed in, not just present as text');
+    await flush();
+
+    const reached = api.calls.slice(before);
+    assert.ok(reached.some((u) => /\/history\?limit=1$/.test(u)),
+      `expected a call to the session-history endpoint, got: ${JSON.stringify(reached)}`);
+    assert.ok(reached.some((u) => /\/continuity\//.test(u)),
+      'with no B2 session row, it must fall back to the continuity sessions list (viewOfflineHistory\'s own documented fallback)');
+    assert.doesNotMatch(doc.body.text, /undefined.*undefined/,
+      'a thrown/undefined render would be the most common failure mode of a wiring gap');
+
+    const returnBtn = doc.getElementById('v6ChatOfflineHistoryReturnTop') || doc.getElementById('v6ChatOfflineHistoryReturnBottom');
+    assert.ok(returnBtn, 'a Return to Start Card control must be on screen once the offline-history view rendered');
+    assert.ok(returnBtn.dispatch('click'), 'the click must find a REAL listener — proves production onReturnToStartCard was actually passed in');
+
+    const heroAgain = doc.getElementById('v6ChatViewHistoryHero');
+    assert.ok(heroAgain, 'returning to the Start Card must bring the View Previous Conversation hero back');
+  });
+
+  it('never starts the engine while loading offline history (#3258 acceptance criterion 2)', async () => {
+    const api = makeApi();
+    const apiMutate = async (url) => { throw new Error(`apiMutate must never be called viewing offline history, got: ${url}`); };
+    const { doc } = mountProductionV6Shell({ api, apiMutate, initialHash: '#/resources/7/conversation' });
+    await flush();
+    doc.getElementById('v6ChatViewHistoryHero').dispatch('click');
+    await flush();
+    // No assertion needed beyond "didn't throw" — apiMutate throwing above would fail this test,
+    // and that is the whole point: viewOfflineHistory only ever reads, through onViewOfflineHistory.
   });
 });
