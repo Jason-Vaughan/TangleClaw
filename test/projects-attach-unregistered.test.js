@@ -95,6 +95,51 @@ describe('attachProject — options.path', () => {
     assert.match(errors[0], /must be a direct subdirectory of the Projects directory/);
   });
 
+  it('R2 (PRR-A): refuses a RELATIVE path that traverses outside projectsDir via ".." — not just an absolute one', async () => {
+    const outsideName = `tc-attach-traversal-target-${Date.now()}`;
+    const outside = path.join(os.tmpdir(), outsideName);
+    fs.mkdirSync(outside, { recursive: true });
+    try {
+      // projectsDir is itself under os.tmpdir() in this suite, so a
+      // relative "../../<outsideName>" from projectsDir genuinely resolves
+      // to a real, existing directory outside it — proving this is refused
+      // on containment, not merely because nothing was found at the end.
+      const relativeTraversal = path.relative(projectsDir, outside);
+      const { project, errors } = await projects.attachProject('traversal-proj', { path: relativeTraversal });
+      assert.equal(project, null);
+      assert.match(errors[0], /must be a direct subdirectory of the Projects directory/);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('R2 (PRR-A): refuses a bare relative name that LEXICALLY looks contained but is a symlink escaping projectsDir', async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-attach-symlink-target-'));
+    const linkPath = path.join(projectsDir, 'escape-link');
+    fs.symlinkSync(outside, linkPath, 'dir');
+    try {
+      const { project, errors } = await projects.attachProject('symlink-proj', { path: 'escape-link' });
+      assert.equal(project, null);
+      assert.match(errors[0], /must be a direct subdirectory of the Projects directory/);
+    } finally {
+      fs.rmSync(linkPath, { force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('a symlink INSIDE projectsDir pointing at another real child of projectsDir is accepted — containment is about the target, not "never a symlink"', async () => {
+    const real = seedDir('symlink-real-target');
+    const linkPath = path.join(projectsDir, 'symlink-alias');
+    fs.symlinkSync(real, linkPath, 'dir');
+    try {
+      const { project, errors } = await projects.attachProject('symlink-alias-proj', { path: 'symlink-alias' });
+      assert.deepEqual(errors, []);
+      assert.ok(project);
+    } finally {
+      fs.rmSync(linkPath, { force: true });
+    }
+  });
+
   it('"Directory not found" names the requested path, not the registered name, when they differ', async () => {
     const { project, errors } = await projects.attachProject('My App', { path: 'does-not-exist' });
     assert.equal(project, null);
