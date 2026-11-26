@@ -17,10 +17,25 @@ const { setLevel } = require('../lib/logger');
 setLevel('error');
 
 const store = require('../lib/store');
+const coordinatorRotation = require('../lib/coordinator-rotation');
 const { DelegateSuccessionError, nextSurrogate, failoverToSurrogate, recoverToPrimary } = require('../lib/delegate-succession');
 const { assignFleetDelegate } = require('../lib/delegate-assignment');
 
 const OPERATOR = { kind: 'operator' };
+
+/**
+ * Grant `projectId` the active project-manager role DIRECTLY (bypassing
+ * `assignFleetDelegate`'s own revoke-the-old-holder step), so a test can
+ * construct genuine split-brain: `coordinator_roles`' unique index is
+ * per-project, never global, so two independent grants really do leave
+ * two different projects simultaneously active (#3272 PRR-B R2).
+ * @param {number} projectId
+ * @returns {void}
+ */
+function grantDirectly(projectId) {
+  const result = coordinatorRotation.grantRole({ caller: OPERATOR, body: { projectId, role: 'project-manager' } });
+  assert.equal(result.status, 201, 'test setup: the direct grant itself must succeed');
+}
 
 describe('delegate succession (#3272)', () => {
   let prevBase;
@@ -106,6 +121,27 @@ describe('delegate succession (#3272)', () => {
       assert.equal(store.coordinatorRoles.getActiveForProject(arc.id).role, 'project-manager');
     });
 
+    it('refuses with SPLIT_BRAIN_DETECTED when another chain member is ALSO currently active (#3272 PRR-B R2)', () => {
+      // pm is believed-current, but arc independently also holds the role --
+      // a true split-brain, not just a stale belief (CURRENT_NOT_LIVE_DELEGATE
+      // only fires when the BELIEVED-current one itself isn't active).
+      grantDirectly(pm.id);
+      grantDirectly(arc.id);
+      assert.throws(
+        () => failoverToSurrogate({ chain: [pm.id, arc.id, surrogate2.id], currentProjectId: pm.id, memberProjectIds: [] }, OPERATOR),
+        (err) => {
+          assert.ok(err instanceof DelegateSuccessionError);
+          assert.equal(err.code, 'SPLIT_BRAIN_DETECTED');
+          assert.equal(err.status, 409);
+          assert.deepEqual(err.detail.alsoActive, [arc.id]);
+          return true;
+        }
+      );
+      // Nothing was transferred as a result of the refused attempt.
+      assert.equal(store.coordinatorRoles.getActiveForProject(pm.id).role, 'project-manager');
+      assert.equal(store.coordinatorRoles.getActiveForProject(arc.id).role, 'project-manager');
+    });
+
     it('refuses when the chain names no surrogate after the current project (end of chain)', () => {
       assignFleetDelegate({ newDelegateProjectId: surrogate2.id, memberProjectIds: [] }, OPERATOR);
       assert.throws(
@@ -133,7 +169,7 @@ describe('delegate succession (#3272)', () => {
     it('is a no-op when the primary already holds the live active delegate role', () => {
       assignFleetDelegate({ newDelegateProjectId: pm.id, memberProjectIds: [] }, OPERATOR);
       const result = recoverToPrimary({ chain: [pm.id, arc.id], memberProjectIds: [] }, OPERATOR);
-      assert.deepEqual(result, { ok: true, noop: true, from: null, to: pm.id, assignment: null });
+      assert.deepEqual(result, { ok: true, noop: true, from: null, to: pm.id, assignment: null, revokedExtraneous: [] });
     });
 
     it('transfers back from whichever surrogate is currently active to the primary', () => {
@@ -153,6 +189,35 @@ describe('delegate succession (#3272)', () => {
       assert.equal(result.ok, true);
       assert.equal(result.from, null);
       assert.equal(result.to, pm.id);
+      assert.equal(store.coordinatorRoles.getActiveForProject(pm.id).role, 'project-manager');
+    });
+
+    it('reconciles true split-brain: revokes a surrogate ALSO active alongside the primary (#3272 PRR-B R2)', () => {
+      // Both pm (primary) AND arc independently hold the role at once --
+      // the old no-op check ("is primary active?") would have stopped here
+      // and left arc's lingering role in place.
+      grantDirectly(pm.id);
+      grantDirectly(arc.id);
+      const result = recoverToPrimary({ chain: [pm.id, arc.id], memberProjectIds: [] }, OPERATOR);
+      assert.equal(result.ok, true);
+      assert.equal(result.noop, false);
+      assert.equal(result.from, arc.id);
+      assert.equal(result.to, pm.id);
+      assert.deepEqual(result.revokedExtraneous, [{ projectId: arc.id, ok: true, detail: result.revokedExtraneous[0].detail }]);
+      assert.equal(store.coordinatorRoles.getActiveForProject(arc.id), null);
+      assert.equal(store.coordinatorRoles.getActiveForProject(pm.id).role, 'project-manager');
+    });
+
+    it('reconciles true split-brain with TWO extraneous active surrogates, revoking both', () => {
+      grantDirectly(pm.id);
+      grantDirectly(arc.id);
+      grantDirectly(surrogate2.id);
+      const result = recoverToPrimary({ chain: [pm.id, arc.id, surrogate2.id], memberProjectIds: [] }, OPERATOR);
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.revokedExtraneous.map((r) => r.projectId).sort(), [arc.id, surrogate2.id].sort());
+      assert.ok(result.revokedExtraneous.every((r) => r.ok));
+      assert.equal(store.coordinatorRoles.getActiveForProject(arc.id), null);
+      assert.equal(store.coordinatorRoles.getActiveForProject(surrogate2.id), null);
       assert.equal(store.coordinatorRoles.getActiveForProject(pm.id).role, 'project-manager');
     });
 
