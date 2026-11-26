@@ -439,6 +439,7 @@
     "test/primer-launch-wiring.test.js",
     "test/project-tags-shape.test.js",
     "test/projects-async-io.test.js",
+    "test/projects-attach-unregistered.test.js",
     "test/projects-dir-upgrade.test.js",
     "test/recovery-default.test.js",
     "test/release-recommendation.test.js",
