@@ -143,6 +143,10 @@ const NETWORK_FIRST_PATHS = new Set([
   // medusa-loops-ui.js and below for remote-ca-assist.js.
   '/secure-clipboard-ui.js',
   '/session.js',
+  // v6-uth-filter.js (#3261) mirrors v6-shell.js's live traffic-filter
+  // primitives verbatim for its own test parity -- network-first avoids a
+  // CACHE_NAME bump every time either side's logic moves.
+  '/v6-uth-filter.js',
   // wrap-drawer.js is the pure-helper sibling of session.js: session.js
   // (network-first) calls its helpers directly, so a stale wrap-drawer.js
   // served from cache against a fresh session.js is a version skew that

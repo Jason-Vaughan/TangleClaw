@@ -3068,6 +3068,14 @@
     const WRAP_WIDTH_THRESHOLD = 55;
     const NEW_REPLY_BLOCK = /^#{1,6}\s/;
     const FENCE_DELIM = /^(?:```|~~~)/;
+    // #3291: a URL with no spaces in it can itself be split by the same
+    // column-width wrap `mergeIntoLast` reconstructs — gluing it back with
+    // a space, the normal case for a wrapped WORD boundary, instead cuts
+    // the URL in two (`MESSAGE_LINK`'s bare-URL branch stops at the first
+    // whitespace it sees). This matches only when the line being merged
+    // INTO still ends mid-URL — no whitespace seen since its `http(s)://`/
+    // `file://` — so an ordinary wrapped word is unaffected.
+    const TRAILING_OPEN_URL = /(?:https?|file):\/\/[^\s<>"'`]*$/i;
     let replyLineLen = 0;
     let inFence = false;
     // `hasBullet` (Ruling A864): the bullet-stripping call site below strips
@@ -3079,8 +3087,10 @@
       const isFenceDelim = FENCE_DELIM.test(txt);
       const startsNewBlock = !inFence && (hasBullet || isFenceDelim || NEW_REPLY_BLOCK.test(txt) || QUESTION_PREFIX.test(txt));
       const mergeIntoLast = !inFence && !startsNewBlock && reply.length > 0 && replyLineLen >= WRAP_WIDTH_THRESHOLD;
-      if (mergeIntoLast) reply[reply.length - 1] += ` ${txt}`;
-      else reply.push(txt);
+      if (mergeIntoLast) {
+        const prev = reply[reply.length - 1];
+        reply[reply.length - 1] = TRAILING_OPEN_URL.test(prev) ? `${prev}${txt}` : `${prev} ${txt}`;
+      } else reply.push(txt);
       replyLineLen = txt.length;
       if (isFenceDelim) inFence = !inFence;
     };
@@ -3914,7 +3924,14 @@
   }
 
   /**
-   * The verbosity filter (#3082): one checkbox per switchboard-reply kind.
+   * The verbosity filter (#3082): one checkbox per switchboard-reply kind,
+   * plus the unrelated raw-traffic checkbox (#3191). #3261: the legend and
+   * an added scope note name which pane each group affects — the three
+   * `v6-chat-verbosity-option` checkboxes decide what the CHAT shows, the
+   * `--traffic` one decides what Peek Under the Hood's raw output shows —
+   * without changing any existing id, class or label text, which
+   * `test/v6-b1-ui-shell.test.js` (a sibling car's file, out of this car's
+   * scope) pins exactly.
    * @param {object} [verbosity]
    * @returns {string} HTML.
    */
@@ -3926,11 +3943,12 @@
     const hideTraffic = hideHoodTraffic !== false;
     const box = (id, key, label) => `<label class="v6-chat-verbosity-option"><input type="checkbox" id="${id}" data-verbosity="${key}"${v[key] ? ' checked' : ''}> ${label}</label>`;
     return `<fieldset class="v6-chat-verbosity">
-          <legend>Switchboard replies shown in the chat</legend>
-          <span class="v6-chat-verbosity-fixed">Direct chat &amp; questions: always</span>
+          <legend>Switchboard &amp; fleet-chatter filters</legend>
+          <span class="v6-chat-verbosity-fixed">In the chat — direct chat &amp; questions: always</span>
           ${box('v6ChatShowBlockers', 'blockers', 'Blockers')}
           ${box('v6ChatShowMilestones', 'milestones', 'Milestones')}
           ${box('v6ChatShowChatter', 'chatter', 'Fleet chatter')}
+          <span class="v6-chat-verbosity-fixed">In Peek Under the Hood's raw output —</span>
           <label class="v6-chat-verbosity-option v6-chat-verbosity-option--traffic"><input type="checkbox" id="v6ChatHideHoodTraffic"${hideTraffic ? ' checked' : ''}> Hide Medusa &amp; fleet chatter</label>
         </fieldset>`;
   }
@@ -5160,12 +5178,21 @@
     list.forEach((raw) => {
       const text = String(raw);
       const trimmed = text.trim();
-      const indented = /^\s/.test(text);
       if (wakeSoFar !== null) {
-        if (indented) {
-          const joined = `${wakeSoFar} ${trimmed}`;
-          if (fitsNotice(joined)) { wakeSoFar = joined; return; }
-        }
+        // #3287/#3261 audit: a real terminal hard-wraps wherever the pane's
+        // width falls, words included, with NO guaranteed leading
+        // whitespace on the continuation row (that is exactly why
+        // `fitsNotice` itself compares with all whitespace stripped,
+        // per its own doc comment) — gating this on `/^\s/.test(text)`,
+        // as a prior version of this function did, meant a plain
+        // unindented continuation line (the common case) was never even
+        // offered to `fitsNotice`, so only a wake notice's FIRST line was
+        // ever recognized and every wrapped continuation leaked straight
+        // through. Always try extending the match; `fitsNotice`'s own
+        // strict prefix check is what keeps this from swallowing a
+        // genuinely unrelated next line.
+        const joined = `${wakeSoFar} ${trimmed}`;
+        if (fitsNotice(joined)) { wakeSoFar = joined; return; }
         wakeSoFar = null;
       }
       if (SWITCHBOARD_TEXT.test(trimmed)) { wakeSoFar = trimmed; return; }
@@ -10133,16 +10160,49 @@
     }
 
     /**
+     * Whether the document has an active, non-collapsed text selection with
+     * either boundary inside `el` (#3287) — replacing `el`'s subtree while
+     * the operator is mid-selection (reading, about to copy) would silently
+     * drop it and can shift scroll.
+     * @param {Element|null} el
+     * @returns {boolean}
+     */
+    function hasActiveSelectionIn(el) {
+      if (!el || typeof doc.getSelection !== 'function') return false;
+      const sel = doc.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
+      const contains = typeof el.contains === 'function' ? (node) => el.contains(node) : () => false;
+      return contains(sel.anchorNode) || contains(sel.focusNode);
+    }
+
+    /**
+     * Set `el.innerHTML` to `html`, except: skip entirely when it already
+     * matches (identical content never replaces DOM nodes, so no listener
+     * or selection anywhere else in the subtree is disturbed), and skip —
+     * deferring to whichever redraw runs next — when the operator has an
+     * active, non-collapsed selection inside `el` (#3287): replacing a live
+     * selection's own subtree silently drops it and can shift scroll.
+     * @param {Element|null} el
+     * @param {string} html
+     * @returns {boolean} Whether the assignment happened.
+     */
+    function paintIfChanged(el, html) {
+      if (!el) return false;
+      if (el.innerHTML === html) return false;
+      if (hasActiveSelectionIn(el)) return false;
+      el.innerHTML = html;
+      return true;
+    }
+
+    /**
      * Redraw the replies the verbosity filter tucked away, and their count
      * on the Under the Hood summary (#3082).
      * @param {object|null} live
      */
     function paintTucked(live) {
       const tucked = tuckedTurns(live && Array.isArray(live.turns) ? live.turns : [], verbosity);
-      const list = doc.getElementById('v6ChatTucked');
-      if (list) list.innerHTML = tuckedMarkup(tucked, thumbsNow(), unfurlsNow());
-      const count = doc.getElementById('v6ChatTuckedCount');
-      if (count) count.innerHTML = escapeHtml(tuckedCountText(tucked.length));
+      paintIfChanged(doc.getElementById('v6ChatTucked'), tuckedMarkup(tucked, thumbsNow(), unfurlsNow()));
+      paintIfChanged(doc.getElementById('v6ChatTuckedCount'), escapeHtml(tuckedCountText(tucked.length)));
       // #3107 (PRR-A R1 C1/C2): this innerHTML assignment destroys whatever
       // listeners wireControls()'s last full render attached to any
       // .v6-chat-unfurl-btn/.v6-chat-local-ref-copy inside #v6ChatTucked —
@@ -10225,12 +10285,9 @@
       const chat = view.chat || {};
       const name = String((view.project && view.project.name) || '');
       const parts = arrangeRecorded(view.events, chat.live && Array.isArray(chat.live.turns) ? chat.live.turns : [], chat.lastSent);
-      const head = doc.getElementById('v6ChatRecorded');
-      if (head) head.innerHTML = recordedEventsMarkup(parts.head, name, chat.thumbs, chat.unfurls);
-      const tailEl = doc.getElementById('v6ChatRecordedTail');
-      if (tailEl) tailEl.innerHTML = recordedEventsMarkup(parts.tail, name, chat.thumbs, chat.unfurls);
-      const pendingEl = doc.getElementById('v6ChatPending');
-      if (pendingEl) pendingEl.innerHTML = pendingMarkup(pendingSends.filter((p) => p.key === chatTargetKey()), chat.lastSent, chat.thumbs, chat.unfurls);
+      paintIfChanged(doc.getElementById('v6ChatRecorded'), recordedEventsMarkup(parts.head, name, chat.thumbs, chat.unfurls));
+      paintIfChanged(doc.getElementById('v6ChatRecordedTail'), recordedEventsMarkup(parts.tail, name, chat.thumbs, chat.unfurls));
+      paintIfChanged(doc.getElementById('v6ChatPending'), pendingMarkup(pendingSends.filter((p) => p.key === chatTargetKey()), chat.lastSent, chat.thumbs, chat.unfurls));
       wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): same reason as paintTucked's own call.
       // #3191: recorded/pending content grows #v6ChatStream — re-pin it
       // (and the peek group, harmlessly, if it also stayed pinned).
@@ -11049,6 +11106,58 @@
       win.addEventListener('hashchange', handleHashChange);
     }
 
+    // #3287: setEngineHealth/setProjects/setTree/setTelemetry are background
+    // polls that used to call the full render() (replacing the ENTIRE page's
+    // innerHTML) unconditionally, regardless of the operator mid-selection
+    // in the chat. They keep rendering on every call (several existing
+    // tests rely on exactly that — e.g. "a shell redraw sends the live
+    // stats home first" calls setTelemetry with structurally-identical-but-
+    // distinct data specifically to force a redraw, and "the draft survives
+    // a re-render that is not a send" relies on setTelemetry(null) always
+    // re-rendering to prove a live composer draft is captured first — so
+    // this is deliberately NOT gated on whether the new value differs from
+    // the old one). What changes here is only WHEN: when the operator has
+    // an active, non-collapsed selection inside `#v6ChatStream` or
+    // `#v6ChatPeek`, the render is deferred (never dropped) via
+    // `backgroundRenderPending`, flushed by `handleSelectionChange` once
+    // the selection clears.
+    let backgroundRenderPending = false;
+
+    /**
+     * Whether calling the full render() right now would risk dropping an
+     * active, non-collapsed selection inside the chat (#3287) — render()
+     * replaces the whole page's innerHTML, so unlike {@link paintIfChanged}
+     * there is no narrower region to spare; the whole call must wait.
+     * @returns {boolean}
+     */
+    function fullRenderWouldDropSelection() {
+      if (!detail || detail.kind !== 'conversation') return false;
+      return hasActiveSelectionIn(doc.getElementById('v6ChatStream')) || hasActiveSelectionIn(doc.getElementById('v6ChatPeek'));
+    }
+
+    /**
+     * render(), unless the operator currently has an active selection
+     * inside the chat (#3287) — then it is deferred, not dropped:
+     * `backgroundRenderPending` makes the next call here, or the next
+     * `handleSelectionChange` once the selection clears, actually run it.
+     * @returns {void}
+     */
+    function renderUnlessSelectionActive() {
+      if (fullRenderWouldDropSelection()) { backgroundRenderPending = true; return; }
+      backgroundRenderPending = false;
+      render();
+    }
+
+    /** Flush a render a background poll deferred, once its blocking selection is gone (#3287). */
+    function handleSelectionChange() {
+      if (!backgroundRenderPending || fullRenderWouldDropSelection()) return;
+      backgroundRenderPending = false;
+      render();
+    }
+    if (doc && typeof doc.addEventListener === 'function') {
+      doc.addEventListener('selectionchange', handleSelectionChange);
+    }
+
     render();
 
     return {
@@ -11081,12 +11190,12 @@
       /** @param {Object<string, {status?: string}>|null} health - Engine id -> status (#3053). */
       setEngineHealth(health) {
         engineHealth = health && typeof health === 'object' ? health : {};
-        render();
+        renderUnlessSelectionActive();
       },
       setProjects(rows) {
         projectRows = new Map((Array.isArray(rows) ? rows : [])
           .filter((r) => r && r.id != null).map((r) => [String(r.id), r]));
-        render();
+        renderUnlessSelectionActive();
       },
       /**
        * #3215 R2: reads and clears the member names the sidebar/Overview's
@@ -11101,8 +11210,14 @@
         pendingStartFleetMembers = null;
         return v;
       },
-      setTree(nextTree) { tree = buildHierarchyTree(nextTree || []); render(); },
-      setTelemetry(bar) { telemetry = bar || null; render(); },
+      setTree(nextTree) {
+        tree = buildHierarchyTree(nextTree || []);
+        renderUnlessSelectionActive();
+      },
+      setTelemetry(bar) {
+        telemetry = bar || null;
+        renderUnlessSelectionActive();
+      },
       setTemplates(nextTemplates) { templates = Array.isArray(nextTemplates) ? nextTemplates : []; render(); },
       /**
        * The live controller's answer to `POST /api/v6/fleet-templates/:id/plan`
@@ -11213,18 +11328,14 @@
         const traffic = doc.getElementById('v6ChatSwitchboard');
         if (traffic) traffic.innerHTML = switchboardMarkup(switchboardItems(detail.view.events, live));
         paintMedusa(medusa);
-        const peekEl = doc.getElementById('v6ChatPeek');
-        if (peekEl) {
-          // #3135 (PRR-B R1 blocking 2a): a plain innerHTML replace here
-          // dropped the live-CLI indicator every 4s poll while Interactive
-          // Mode was on — it is not part of `chatPeekMarkup`'s own markup,
-          // the same way the full render draws it, so it is restored here too.
-          peekEl.innerHTML = (hoodInteractive
-            ? '<span id="v6ChatHoodLiveIndicator" style="color:#9CF732;display:block;">LIVE CLI — Type directly into pane</span>'
-            : '') + chatPeekMarkup(peek, { hideTraffic: hideHoodTraffic });
-        }
-        const liveEl = doc.getElementById('v6ChatLive');
-        if (liveEl) liveEl.innerHTML = liveTurnsMarkup(live ? live.turns : [], name, verbosity, thumbsNow(), unfurlsNow());
+        // #3135 (PRR-B R1 blocking 2a): a plain innerHTML replace here
+        // dropped the live-CLI indicator every 4s poll while Interactive
+        // Mode was on — it is not part of `chatPeekMarkup`'s own markup,
+        // the same way the full render draws it, so it is restored here too.
+        paintIfChanged(doc.getElementById('v6ChatPeek'), (hoodInteractive
+          ? '<span id="v6ChatHoodLiveIndicator" style="color:#9CF732;display:block;">LIVE CLI — Type directly into pane</span>'
+          : '') + chatPeekMarkup(peek, { hideTraffic: hideHoodTraffic }));
+        paintIfChanged(doc.getElementById('v6ChatLive'), liveTurnsMarkup(live ? live.turns : [], name, verbosity, thumbsNow(), unfurlsNow()));
         wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): setLive runs on every live poll — the bug this finding is actually about.
         paintTucked(live);
         paintRecorded();
@@ -11481,6 +11592,8 @@
         if (tickerId != null) { stopTicker(tickerId); tickerId = null; }
         busy = null;
         if (win && typeof win.removeEventListener === 'function') win.removeEventListener('hashchange', handleHashChange);
+        // #3287: no controller may keep listening for selection changes past shell teardown.
+        if (doc && typeof doc.removeEventListener === 'function') doc.removeEventListener('selectionchange', handleSelectionChange);
         // #3206/#3209 R5: no controller may keep ticking past shell teardown.
         stopEllipsisLoaders();
       }
