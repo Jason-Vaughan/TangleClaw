@@ -17,6 +17,16 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.6.2 — Interactive choices, per-engine health indicators, V6 chat refinements, and scratch-server reliability
+
+- **Interactive-choice and confirmation prompt module** (#3259) — `public/v6-interactive-choices.js`: standalone audited detection for numbered menus, selector dialogs, folder-trust prompts, and multi-choice questions with an explicit free-form option. Live V6 chat wiring remains a follow-up.
+- **Conversation readability** (#3260) — `public/style.css`: more legible line spacing and spacing around embedded link previews.
+- **Peek Under the Hood traffic filter** (#3261) — `public/v6-shell.js`, `public/v6-uth-filter.js`: hard-wrapped switchboard notices stay hidden when the filter is active; labels clarify the filter scopes.
+- **Per-engine health indicators** (#3269) — `public/api-helper.js`: usage cards show each engine's healthy, degraded, unavailable, or unknown status.
+- **Chat selection and scroll stability** (#3287) — `public/v6-shell.js`: background polling preserves active text selection and avoids unnecessary redraws.
+- **Wrapped URL continuity** (#3291) — `public/v6-shell.js`: URL fragments split by terminal wrapping are rejoined without inserting a space.
+- **Scratch-server and log reliability** (#3315) — `lib/logger.js`, `server.js`, `scripts/with-scratch-server.js`: prevent orphaned scratch children, EPIPE logging loops, and unbounded growth of unlinked log files.
+
 ## v6.6.1 — TCC-bootstrapped Codex startup, offline conversation history, and V6 layout fixes
 
 - **Stage 2 test isolation** (#3254) — `scripts/test-touched.js`: excludes three confirmed unrelated pre-existing failures from the `lib/tmux.js` touched-test gate while retaining its TCC and session-name tests.

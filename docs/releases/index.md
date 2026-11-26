@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.6.1 — TCC-bootstrapped Codex startup, offline conversation history, and V6 layout fixes](v6.6.1.md)
+- [v6.6.2 — Interactive choices, per-engine health indicators, V6 chat refinements, and scratch-server reliability](v6.6.2.md)
 
 ## Recent releases
+
+- [v6.6.1 — TCC-bootstrapped Codex startup, offline conversation history, and V6 layout fixes](v6.6.1.md)
 
 - [v6.6.0 — Fleet Pack schema v1.1, control-plane merge broker verification, ephemeral launch-secret scrubbing, and website dependency/deploy hygiene](v6.6.0.md)
 
