@@ -1,12 +1,13 @@
 'use strict';
 
 // #3278 (V6-049) — settings API parity audit primitive, and the project
-// domain's own read route built on it. The route handler is tested as a
-// pure function via its dependency-injection factory (no real HTTP server,
-// no real store) — the same testability bar lib/roadmap-admission.js and
-// lib/fleet-sdlc-policy.js already hold themselves to, and the only option
-// available anyway: register() is not wired into server.js by this car (see
-// lib/routes/projects.js's own module doc for why).
+// domain's own read route built on it (now mounted in server.js — see
+// lib/routes/projects.js's own module doc). The route handler is tested as
+// a pure function via its dependency-injection factory (no real HTTP
+// server, no real store) — the same testability bar lib/roadmap-admission.js
+// and lib/fleet-sdlc-policy.js already hold themselves to; the 'register'
+// describe block below additionally exercises register() end to end
+// against the real shared kernel route table.
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
