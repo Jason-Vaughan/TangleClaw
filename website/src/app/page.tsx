@@ -35,6 +35,33 @@ export default function Home() {
     {
       title: "Local by design",
       desc: "TangleClaw runs on your hardware. Bring your existing AI accounts or local models. Built-in authentication, TLS integration, recovery controls, and PortHub help protect the operating environment."
+    },
+    {
+      title: "Portable multi-agent fleets",
+      desc: "Define a fleet once as a versioned Fleet Pack (PM, Architect, parallel Builders, dual reviewers, Integrator, Observer) and stand it up for software teams or non-SDLC fleets alike — creative studios, research cells, solo workspaces."
+    },
+    {
+      title: "Autonomous release trains",
+      desc: "File-disjoint parallel waves across lanes, idle-builder look-ahead onto the next version while the current one reviews, and a 4-gate merge broker (Architect, Observer, Reviewer, CI) pinned to the exact commit before anything lands."
+    }
+  ];
+
+  const whoItsFor = [
+    {
+      title: "Solo technical founders & high-output engineers",
+      desc: "Turn one Mac into a 24/7 engineering organization that plans, codes, reviews, tests and ships multi-version release trains across several parallel agents, without babysitting terminals."
+    },
+    {
+      title: "Multi-engine AI power users",
+      desc: "Stop being locked into one subscription or rate-limit wall — combine Claude, Codex and Antigravity in one fleet, each seat running the model suited to its role, with failover when a quota resets."
+    },
+    {
+      title: "Engineering leads & security-conscious teams",
+      desc: "Keep source, credentials and session state on your own hardware, with mechanical merge-gate enforcement, an auditable switchboard log, and published sprint reports for every release."
+    },
+    {
+      title: "Multi-disciplinary AI studio operators",
+      desc: "Use portable Fleet Packs to stand up specialized agent teams beyond software engineering — media and animation studios, research and compliance cells, product operations."
     }
   ];
 
@@ -137,6 +164,30 @@ export default function Home() {
                 <p className="text-zinc-400 text-lg leading-relaxed">{feature.desc}</p>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Who TangleClaw Is For (And Why) */}
+        <div id="who-its-for" className="w-full pt-16 border-t border-white/10">
+          <h2 className="text-3xl font-semibold tracking-tight mb-12 text-center">Who TangleClaw Is For (And Why)</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-12 max-w-4xl mx-auto">
+            {whoItsFor.map((persona, i) => (
+              <div key={i} className="flex flex-col">
+                <h3 className="text-xl font-semibold mb-3 text-zinc-100">{persona.title}</h3>
+                <p className="text-zinc-400 text-base leading-relaxed">{persona.desc}</p>
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-wrap justify-center gap-4 mt-12 text-sm">
+            <a href="https://jason-vaughan.github.io/TangleClaw/" target="_blank" rel="noopener noreferrer" className="px-5 py-2 rounded-full border border-white/10 text-zinc-300 hover:text-white hover:border-white/30 transition-colors">
+              Public Roadmap
+            </a>
+            <a href="https://jason-vaughan.github.io/TangleClaw/reports/" target="_blank" rel="noopener noreferrer" className="px-5 py-2 rounded-full border border-white/10 text-zinc-300 hover:text-white hover:border-white/30 transition-colors">
+              Autonomous Sprint Reports
+            </a>
+            <a href="https://github.com/Jason-Vaughan/TangleClaw/releases" target="_blank" rel="noopener noreferrer" className="px-5 py-2 rounded-full border border-white/10 text-zinc-300 hover:text-white hover:border-white/30 transition-colors">
+              GitHub Releases
+            </a>
           </div>
         </div>
 

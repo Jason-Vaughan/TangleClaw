@@ -58,6 +58,24 @@ cd TangleClaw && ./deploy/install.sh
 
 Then open the dashboard, finish the short first-run setup, and launch a session on any project folder. More at **[tangleclaw.com](https://tangleclaw.com)**.
 
+## Who Uses TangleClaw & Why
+
+- **Solo technical founders & high-output engineers** — turn one Mac into a 24/7 engineering organization that plans, codes, reviews, tests and ships multi-version release trains across several parallel agents, without babysitting terminals.
+- **Multi-engine AI power users** — stop being locked into one subscription or rate-limit wall. Combine Claude, Codex and Antigravity in one fleet, each seat running the model suited to its role, with failover when a quota resets.
+- **Engineering leads & security-conscious teams** — keep source, credentials and session state on your own hardware, with mechanical merge-gate enforcement, an auditable switchboard log, and published sprint reports for every release.
+- **Multi-disciplinary AI studio operators** — use portable Fleet Packs to stand up specialized agent teams beyond software engineering: media and animation studios, research and compliance cells, product operations.
+
+## V6 Feature Matrix
+
+| Category | What it means |
+| --- | --- |
+| **Multi-agent fleet architecture** | Versioned, portable Fleet Packs (`FleetPack v1alpha1`) define a fleet once — PM coordinator, Architect, parallel Builders, dual reviewers, Integrator, Observer — reusable for SDLC fleets and non-SDLC fleets (creative studios, research cells, solo workspaces) alike. |
+| **Conversation-first workspace** | A unified chat surface with rich link previews, a collapsible raw-CLI/interactive terminal view, a Sprints & Cars board, a Charter & Roadmap drawer, an interactive Sprint Reports hub, and a project/fleet creation wizard. |
+| **Autonomous release trains** | File-disjoint parallel waves across lanes, idle-builder look-ahead onto the next version while the current one is in review, and a 4-gate merge broker (Architect, Observer, Reviewer, CI) pinned to the exact commit SHA before anything merges. |
+| **Cross-engine orchestration** | Claude Code, Codex, Antigravity and Aider run side by side over the Medusa switchboard, with live per-provider quota probing, reset countdowns, and delegate failover. |
+| **Governed continuity** | Generation-bound continuity capsules, managed coordinator rotations, and structured session wraps that survive context clears, engine switches, and machine restarts. |
+| **Local-first security** | Ephemeral launch-secret scrubbing, shared-document locking and attestation, PortHub collision prevention, and Tailscale/MagicDNS remote and mobile control — all on your own hardware. |
+
 ## Core Features
 
 - **Persistent sessions** — AI engine sessions run in tmux, surviving network drops, device switches, and reconnects. Close your laptop, switch devices, pick up where you left off
