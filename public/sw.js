@@ -186,6 +186,10 @@ const NETWORK_FIRST_PATHS = new Set([
   // so a cached old copy against a fresh shell is the same version skew as the
   // lockstep pairs above: a builder the shell expects would be missing.
   '/sprint-wave-ui.js',
+  // v6-lifecycle-stage-progress.js (#3277) is a not-yet-mounted, standalone
+  // startup/wrap stage renderer still under active review — cache-first
+  // would let the operator's browser hold a stale copy indefinitely.
+  '/v6-lifecycle-stage-progress.js',
   '/session.css',
   // The dashboard shell's core UI assets (category 2). ui.js builds every
   // dashboard view + the settings modal, and style.css skins them — exactly the
