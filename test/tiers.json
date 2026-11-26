@@ -285,6 +285,7 @@
     "test/v6-b4-telemetry-header.test.js",
     "test/v6-c2-fleet-templates.test.js",
     "test/v6-c3-merge-queue.test.js",
+    "test/v6-c3-wave-scheduler-max-parallelism-and-lookahead.test.js",
     "test/v6-conversation-readability.test.js",
     "test/v6-e1-doc-planes-context-compiler.test.js",
     "test/v6-e4-rich-report-presentation.test.js",
