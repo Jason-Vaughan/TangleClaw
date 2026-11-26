@@ -4753,6 +4753,21 @@ p.v6-history-secret {
   max-height: 100%;
   overflow-y: auto;
 }
+/* #3276 (V6-040): the flex-fill above zeroes dead space INSIDE `.v6-chat`,
+   but `.v6-shell-root`'s own 16px row gap plus `.v6-shell-watermark`'s own
+   16px `margin-top` (both sized for the non-chat views, where row 1 carries
+   real telemetry content) still left 32px of fixed, unreclaimable space
+   between the chat column and the footer below it -- on top of whatever
+   `.v6-chat-send-status:empty` no longer reserves above. Chat mode's own
+   row 1 is empty (the telemetry header moves into the chat's own header
+   row instead, #3063), so tightening this here doesn't affect any other
+   view. */
+.v6-shell-root--chat {
+  row-gap: 0;
+}
+.v6-shell-root--chat .v6-shell-watermark {
+  margin-top: 4px;
+}
 /* #3059: the chat header is one wrapping row — identity on the left,
    icon controls on the right. */
 .v6-chat-header {
@@ -5472,6 +5487,13 @@ p.v6-history-secret {
   margin: 0;
   min-height: 1.2em;
   overflow-wrap: anywhere;
+}
+/* #3276 (V6-040): with no message to show, this still reserved ~19px plus
+   `.v6-chat`'s own 10px flex gap below the composer -- the same
+   reserve-space-only-when-there's-content pattern `.v6-chat-attachments:empty`
+   already uses below. */
+.v6-chat-send-status:empty {
+  display: none;
 }
 .v6-chat-send-status.is-pending { opacity: 0.7; }
 .v6-chat-send-status.is-ok { color: #56d364; }
@@ -6274,9 +6296,16 @@ p.v6-history-secret {
 .v6-usage-popover {
   position: absolute;
   bottom: calc(100% + 6px);
-  left: 0;
+  /* #3270 (V6-026): #v6EngineUsageSlot sits near the right edge of the
+     footer, so anchoring this with `left: 0` forced the min-width box past
+     the right edge of the viewport -- anchor from the right instead. */
+  right: 0;
+  left: auto;
   z-index: 30;
-  min-width: 320px;
+  /* R-Gate (PR #3288): a plain `min-width: 320px` wins over `max-width`
+     below a 352px viewport (CSS gives min-width precedence), so the two
+     must share one formula instead of conflicting. */
+  min-width: min(320px, calc(100vw - 32px));
   max-width: calc(100vw - 32px);
   padding: 8px;
   background: var(--card-bg, #0d0d0d);
