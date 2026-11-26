@@ -204,23 +204,50 @@ const V6_REQUIREMENTS_LEDGER = Object.freeze([
 
 /**
  * Build the Gate 1 / Gate 4 traceability matrix for the full 51-item ledger.
+ *
  * Gate 1 (intake -> issue -> milestone): every one of an entry's `issues`
- * must resolve to a real, fetched issue. Gate 4 (PR/test/sprint-report
- * evidence): only required where `gateFourApplies` -- a design-review entry
- * is not yet shippable work, so it is reported `n/a`, never a false gap.
+ * must resolve to a real, fetched issue WITH a non-empty milestone assigned
+ * -- an issue existing but carrying no milestone is Gate 1 incomplete too
+ * (PRR-B R2 BLOCKING 1: issue-existence alone was being read as complete).
+ *
+ * Gate 4 (PR/test/sprint-report evidence): only required where
+ * `gateFourApplies` -- a design-review entry is not yet shippable work, so
+ * it is reported `n/a`, never a false gap. For a shippable entry, reports
+ * one of three states rather than a boolean: `'complete'` (every issue has
+ * real release evidence), `'in-flight'` (not released, but a changelog.d
+ * fragment or an open PR already references every issue -- real progress,
+ * not a gap), or `'incomplete'` (no evidence of either).
  * @param {ReadonlyArray<object>} ledger - {@link V6_REQUIREMENTS_LEDGER} or a test double of the same shape.
- * @param {Map<number, {state: string}>} issueStates - Real issue number -> its fetched state (Gate 1 data).
- * @param {Set<number>} shippedIssueNumbers - Gate 4 evidence, same meaning as {@link buildTraceabilityMatrix}'s own.
+ * @param {Map<number, {state: string, milestone: (string|null)}>} issueStates - Real issue number -> its fetched state/milestone (Gate 1 data).
+ * @param {Set<number>} shippedIssueNumbers - Gate 4 released evidence, same meaning as {@link buildTraceabilityMatrix}'s own.
+ * @param {Set<number>} [inFlightIssueNumbers] - Gate 4 in-progress evidence (a changelog.d fragment or an open PR). Omitted defaults to empty.
  * @returns {{rows: object[], gateOneIncomplete: string[], gateFourIncomplete: string[]}}
  */
-function buildLedgerTraceability(ledger, issueStates, shippedIssueNumbers) {
+function buildLedgerTraceability(ledger, issueStates, shippedIssueNumbers, inFlightIssueNumbers = new Set()) {
   if (!Array.isArray(ledger)) throw new TypeError('ledger must be an array');
   if (!(issueStates instanceof Map)) throw new TypeError('issueStates must be a Map');
   if (!(shippedIssueNumbers instanceof Set)) throw new TypeError('shippedIssueNumbers must be a Set');
+  if (!(inFlightIssueNumbers instanceof Set)) throw new TypeError('inFlightIssueNumbers must be a Set');
+
+  // This repo's convention closes an issue via "Fixes #N" on the merging PR,
+  // so a CLOSED issue already means the real work landed on main -- it
+  // counts as shipped for the LEDGER's own Gate 4 even before the formal
+  // release cut later drains changelog.d into a dated CHANGELOG.md section.
+  // Kept local to this function rather than folded into the shared
+  // `shippedIssueNumbers` Set: buildTraceabilityMatrix's own
+  // closedWithoutShippedEvidence check needs "closed" and "shipped" to stay
+  // two different facts, or a closed issue with real evidence missing
+  // (#3248) could never be reported as a gap again.
+  const reallyShipped = (n) => shippedIssueNumbers.has(n) || (issueStates.get(n) || {}).state === 'CLOSED';
 
   const rows = ledger.map((entry) => {
-    const gateOneComplete = entry.issues.every((n) => issueStates.has(n));
-    const gateFourComplete = !entry.gateFourApplies || entry.issues.every((n) => shippedIssueNumbers.has(n));
+    const gateOneComplete = entry.issues.every((n) => issueStates.has(n) && Boolean(issueStates.get(n).milestone));
+    let gateFour = 'n/a';
+    if (entry.gateFourApplies) {
+      if (entry.issues.every(reallyShipped)) gateFour = 'complete';
+      else if (entry.issues.every((n) => reallyShipped(n) || inFlightIssueNumbers.has(n))) gateFour = 'in-flight';
+      else gateFour = 'incomplete';
+    }
     return {
       id: entry.id,
       workstream: entry.workstream,
@@ -228,7 +255,7 @@ function buildLedgerTraceability(ledger, issueStates, shippedIssueNumbers) {
       classification: entry.classification,
       issues: entry.issues,
       gateOneComplete,
-      gateFour: entry.gateFourApplies ? (gateFourComplete ? 'complete' : 'incomplete') : 'n/a'
+      gateFour
     };
   });
 
@@ -248,7 +275,7 @@ function renderLedgerMarkdown(matrix) {
   const lines = [];
   lines.push('## Complete 51-item ledger (V6-001 - V6-051): Gate 1 / Gate 4 status');
   lines.push('');
-  lines.push('Gate 1 (intake -> issue -> milestone): the entry\'s issue(s) exist in the tracker.');
+  lines.push('Gate 1 (intake -> issue -> milestone): the entry\'s issue(s) exist in the tracker AND carry a milestone.');
   lines.push('Gate 4 (PR/test/sprint-report evidence): only required where the entry is actionable, '
     + 'shippable work -- a Collaborative/Owner-review entry reads `n/a`, not a false gap.');
   lines.push('');
@@ -279,41 +306,61 @@ function renderLedgerMarkdown(matrix) {
  * retroactive, so an older issue having none is expected, not a gap. The
  * floor is a fixed constant, not re-derived at runtime, because that scan is
  * exactly the kind of one-time cost this script exists to avoid repeating.
+ * Gate 4 distinguishes "in-flight" from "shipped" (PRR-B R2 BLOCKING): a
+ * `changelog.d/` fragment or an open PR both mean real work exists, but
+ * neither means it released -- `CHANGELOG.md` text naming the issue is the
+ * one signal that the release process actually compiled and cut it.
+ * Counting a fragment's mere presence as "shipped" (the R1/R2 bug) made
+ * every in-flight PR this very train opened read as already released.
  * @param {{milestone?: string, minIssueNumber?: number}} [options]
- * @returns {{issues: object[], shippedIssueNumbers: Set<number>}}
+ * @returns {{issues: object[], shippedIssueNumbers: Set<number>, inFlightIssueNumbers: Set<number>}}
  */
 function _fetchRealData(options = {}) {
   const minIssueNumber = options.minIssueNumber ?? 3200;
-  const args = ['issue', 'list', '--state', 'all', '--json', 'number,title,state,body', '--limit', '500'];
+  const args = ['issue', 'list', '--state', 'all', '--json', 'number,title,state,body,milestone', '--limit', '500'];
   if (options.milestone) args.push('--milestone', options.milestone);
   const raw = execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
   const issues = JSON.parse(raw)
-    .map((i) => ({ ...i, state: String(i.state).toUpperCase() }))
+    .map((i) => ({ ...i, state: String(i.state).toUpperCase(), milestone: (i.milestone && i.milestone.title) || null }))
     .filter((i) => i.number >= minIssueNumber);
 
-  const shipped = new Set();
   const changelogText = fs.existsSync('CHANGELOG.md') ? fs.readFileSync('CHANGELOG.md', 'utf8') : '';
   const fragmentDir = 'changelog.d';
   const fragmentNames = fs.existsSync(fragmentDir) ? fs.readdirSync(fragmentDir) : [];
+
+  // Which issue numbers an OPEN pull request references, via the same
+  // "#NNN" convention every PR body in this repo already uses (Fixes/Refs).
+  const prRaw = execFileSync('gh', ['pr', 'list', '--state', 'open', '--json', 'number,body', '--limit', '500'],
+    { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  const openPrReferencedIssues = new Set();
+  for (const pr of JSON.parse(prRaw)) {
+    for (const m of String(pr.body || '').matchAll(/#(\d+)/g)) openPrReferencedIssues.add(Number(m[1]));
+  }
+
+  const shipped = new Set();
+  const inFlight = new Set();
   for (const issue of issues) {
     const ref = `#${issue.number}`;
-    if (changelogText.includes(ref) || fragmentNames.some((f) => f.startsWith(`${issue.number}.`))) {
+    const hasFragment = fragmentNames.some((f) => f.startsWith(`${issue.number}.`));
+    if (changelogText.includes(ref)) {
       shipped.add(issue.number);
+    } else if (hasFragment || openPrReferencedIssues.has(issue.number)) {
+      inFlight.add(issue.number);
     }
   }
-  return { issues, shippedIssueNumbers: shipped };
+  return { issues, shippedIssueNumbers: shipped, inFlightIssueNumbers: inFlight };
 }
 
 if (require.main === module) {
   const write = process.argv.includes('--write');
-  const { issues, shippedIssueNumbers } = _fetchRealData();
+  const { issues, shippedIssueNumbers, inFlightIssueNumbers } = _fetchRealData();
   const matrix = buildTraceabilityMatrix(issues, shippedIssueNumbers);
   const scopeNote = 'Scope: issues #3200 and above only. Checked once against the full tracker '
     + '(1506 issues, #1 through #3291) that every existing `Intake Reference` falls between #3258 '
     + 'and #3285 -- the convention is new to this intake wave, not retroactive, so an older issue '
     + 'having none is expected and is not listed as a gap here.';
-  const issueStates = new Map(issues.map((i) => [i.number, { state: i.state }]));
-  const ledgerMatrix = buildLedgerTraceability(V6_REQUIREMENTS_LEDGER, issueStates, shippedIssueNumbers);
+  const issueStates = new Map(issues.map((i) => [i.number, { state: i.state, milestone: i.milestone }]));
+  const ledgerMatrix = buildLedgerTraceability(V6_REQUIREMENTS_LEDGER, issueStates, shippedIssueNumbers, inFlightIssueNumbers);
   const markdown = renderMatrixMarkdown(matrix, new Date().toISOString(), scopeNote)
     + '\n' + renderLedgerMarkdown(ledgerMatrix);
   if (write) {

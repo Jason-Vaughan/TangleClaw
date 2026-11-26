@@ -125,15 +125,18 @@ describe('buildLedgerTraceability', () => {
     { id: 'V6-B', workstream: 'E01', title: 'Design review item', classification: 'Collaborative Design', issues: [101], gateFourApplies: false },
     { id: 'V6-C', workstream: 'E01', title: 'Multi-issue shippable item', classification: 'Actionable Enhancement', issues: [102, 103], gateFourApplies: true }
   ];
+  /** A fetched issue with a milestone, the common case these tests build on. */
+  const withMilestone = (state = 'OPEN') => ({ state, milestone: 'v6.6.1' });
 
   it('rejects malformed inputs', () => {
     assert.throws(() => buildLedgerTraceability('not-an-array', new Map(), new Set()), TypeError);
     assert.throws(() => buildLedgerTraceability([], [], new Set()), TypeError);
     assert.throws(() => buildLedgerTraceability([], new Map(), []), TypeError);
+    assert.throws(() => buildLedgerTraceability([], new Map(), new Set(), []), TypeError);
   });
 
-  it('Gate 1 is complete only when every one of an entry\'s issues was actually fetched', () => {
-    const states = new Map([[100, { state: 'OPEN' }], [101, { state: 'OPEN' }]]);
+  it('Gate 1 is complete only when every one of an entry\'s issues was fetched AND carries a milestone', () => {
+    const states = new Map([[100, withMilestone()], [101, withMilestone()]]);
     const m = buildLedgerTraceability(FAKE_LEDGER, states, new Set());
     const a = m.rows.find((r) => r.id === 'V6-A');
     const c = m.rows.find((r) => r.id === 'V6-C');
@@ -142,15 +145,22 @@ describe('buildLedgerTraceability', () => {
     assert.deepEqual(m.gateOneIncomplete, ['V6-C']);
   });
 
+  it('PRR-B R2 BLOCKING 1: an issue that exists but has NO milestone is Gate 1 incomplete, not complete', () => {
+    const states = new Map([[100, { state: 'OPEN', milestone: null }]]);
+    const m = buildLedgerTraceability([FAKE_LEDGER[0]], states, new Set());
+    const a = m.rows.find((r) => r.id === 'V6-A');
+    assert.equal(a.gateOneComplete, false, 'issue exists but has no milestone -- Gate 1 must not read this as complete');
+  });
+
   it('Gate 4 reads n/a for a design-review entry, regardless of shipped evidence', () => {
-    const states = new Map([[100, {}], [101, {}], [102, {}], [103, {}]]);
+    const states = new Map([[100, withMilestone()], [101, withMilestone()], [102, withMilestone()], [103, withMilestone()]]);
     const m = buildLedgerTraceability(FAKE_LEDGER, states, new Set());
     const b = m.rows.find((r) => r.id === 'V6-B');
     assert.equal(b.gateFour, 'n/a');
   });
 
-  it('Gate 4 requires every one of a shippable entry\'s issues to be shipped', () => {
-    const states = new Map([[100, {}], [102, {}], [103, {}]]);
+  it('Gate 4 requires every one of a shippable entry\'s issues to be shipped for "complete"', () => {
+    const states = new Map([[100, withMilestone()], [102, withMilestone()], [103, withMilestone()]]);
     const partiallyShipped = buildLedgerTraceability(FAKE_LEDGER, states, new Set([102]));
     const c1 = partiallyShipped.rows.find((r) => r.id === 'V6-C');
     assert.equal(c1.gateFour, 'incomplete', '103 is not shipped, so a multi-issue entry is not complete');
@@ -162,11 +172,48 @@ describe('buildLedgerTraceability', () => {
     assert.equal(c2.gateFour, 'complete');
     assert.deepEqual(fullyShipped.gateFourIncomplete, []);
   });
+
+  it('PRR-B R2 BLOCKING 2: a changelog.d fragment or open-PR reference alone reads "in-flight", never "complete"', () => {
+    const states = new Map([[100, withMilestone()]]);
+    const m = buildLedgerTraceability([FAKE_LEDGER[0]], states, new Set(), new Set([100]));
+    const a = m.rows.find((r) => r.id === 'V6-A');
+    assert.equal(a.gateFour, 'in-flight', 'in-flight evidence must not be conflated with genuinely shipped');
+    assert.deepEqual(m.gateFourIncomplete, [], 'in-flight is real progress, not a reported gap');
+  });
+
+  it('with neither shipped nor in-flight evidence, Gate 4 reads "incomplete" -- a real, reportable gap', () => {
+    const states = new Map([[100, withMilestone()]]);
+    const m = buildLedgerTraceability([FAKE_LEDGER[0]], states, new Set(), new Set());
+    const a = m.rows.find((r) => r.id === 'V6-A');
+    assert.equal(a.gateFour, 'incomplete');
+    assert.deepEqual(m.gateFourIncomplete, ['V6-A']);
+  });
+
+  it('a multi-issue entry with one shipped and one only in-flight reads "in-flight" overall, not "complete"', () => {
+    const states = new Map([[102, withMilestone()], [103, withMilestone()]]);
+    const m = buildLedgerTraceability([FAKE_LEDGER[2]], states, new Set([102]), new Set([103]));
+    const c = m.rows.find((r) => r.id === 'V6-C');
+    assert.equal(c.gateFour, 'in-flight');
+  });
+
+  it('a CLOSED issue counts as shipped for the ledger\'s own Gate 4, even with empty shippedIssueNumbers (merge precedes the formal release cut)', () => {
+    const states = new Map([[100, withMilestone('CLOSED')]]);
+    const m = buildLedgerTraceability([FAKE_LEDGER[0]], states, new Set(), new Set());
+    const a = m.rows.find((r) => r.id === 'V6-A');
+    assert.equal(a.gateFour, 'complete');
+  });
+
+  it('closure alone does not feed back into shippedIssueNumbers itself -- a separate caller\'s own set is untouched', () => {
+    const shippedIssueNumbers = new Set();
+    const states = new Map([[100, withMilestone('CLOSED')]]);
+    buildLedgerTraceability([FAKE_LEDGER[0]], states, shippedIssueNumbers);
+    assert.equal(shippedIssueNumbers.size, 0, 'buildLedgerTraceability must not mutate its caller\'s Set');
+  });
 });
 
 describe('renderLedgerMarkdown', () => {
   it('names every entry and flags both kinds of gap', () => {
-    const states = new Map([[101, {}]]);
+    const states = new Map([[101, { state: 'OPEN', milestone: 'v6.6.1' }]]);
     const m = buildLedgerTraceability(
       [
         { id: 'V6-X', workstream: 'E01', title: 'Missing issue', classification: 'Actionable Enhancement', issues: [999], gateFourApplies: true },
@@ -180,7 +227,20 @@ describe('renderLedgerMarkdown', () => {
     assert.match(md, /V6-Y/);
     assert.match(md, /Gate 1 incomplete: V6-X/);
     // V6-X is incomplete on BOTH gates (its issue was never fetched, so it
-    // can't be shipped either); V6-Y is Gate 1 complete but not yet shipped.
+    // can't be shipped either); V6-Y is Gate 1 complete but not yet shipped
+    // (and has no in-flight evidence either, in this test).
     assert.match(md, /Gate 4 incomplete: V6-X, V6-Y/);
+  });
+
+  it('renders "in-flight" distinctly from "complete" and "incomplete" in the table itself', () => {
+    const states = new Map([[100, { state: 'OPEN', milestone: 'v6.6.1' }]]);
+    const m = buildLedgerTraceability(
+      [{ id: 'V6-Z', workstream: 'E01', title: 'In progress', classification: 'Actionable Enhancement', issues: [100], gateFourApplies: true }],
+      states,
+      new Set(),
+      new Set([100])
+    );
+    const md = renderLedgerMarkdown(m);
+    assert.match(md, /\| V6-Z \|.*\| in-flight \|/);
   });
 });
