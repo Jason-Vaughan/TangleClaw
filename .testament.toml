@@ -308,6 +308,7 @@ files = [
   "test/v6-h2-educational-walkthroughs.test.js",
   "test/v6-providers-contract.test.js",
   "test/v6-sprint-report-validator-v3.test.js",
+  "test/v6-usage-popover-and-composer-layout.test.js",
   "test/visual-viewport-layout.test.js",
   "test/workflow-action-pins.test.js",
   "test/workflow-queue-trigger.test.js",
