@@ -223,6 +223,7 @@ files = [
   "test/session-unreachable-state.test.js",
   "test/session-update-poll.test.js",
   "test/session-wrap-finalize.test.js",
+  "test/settings-api-parity.test.js",
   "test/settings-credential.test.js",
   "test/settings-hint-wrapping.test.js",
   "test/settings-index-toggle-render.test.js",
