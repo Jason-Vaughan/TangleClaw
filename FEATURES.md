@@ -17,6 +17,14 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.6.1 — TCC-bootstrapped Codex startup, offline conversation history, and V6 layout fixes
+
+- **Stage 2 test isolation** (#3254) — `scripts/test-touched.js`: excludes three confirmed unrelated pre-existing failures from the `lib/tmux.js` touched-test gate while retaining its TCC and session-name tests.
+- **TCC-bootstrapped Codex startup and model verification** (#3257, #3273) — `lib/tmux.js#createSessionWithTccBootstrap`, `lib/tmux.js#visiblePane`, `lib/profile-reconciler.js#recheckUnobservedModel`: captures the real TCC pane/server, routes pane reads through that socket, and rechecks launches that remained unobserved.
+- **Offline conversation history controls** (#3258) — `public/ui.js`: wires previous-conversation and return-to-start actions into the V6 shell mount.
+- **Usage popover viewport clamp** (#3270) — `public/style.css`: anchors the popover from the right edge.
+- **Composer layout** (#3276) — `public/style.css`: lets the chat stream, Under the Hood and composer use the full chat-column height.
+
 ## v6.6.0 — Fleet Pack schema v1.1, control-plane merge broker verification, ephemeral launch-secret scrubbing, and website dependency/deploy hygiene
 
 - **Fleet Pack schema `"1.1"` & portability guardrails** (#3194) — `lib/v6/fleet-template-spec.js#exportFleetPackBlueprint`/`#validateInstanceBindingRecord`: adds `schemaVersion: "1.1"` alongside `"1.0"` with four guardrails — `PG-1` symbolic `seatId` addressing (rejecting a raw numeric SQLite `project_id` or runtime Medusa suffix), `PG-2` logical `${FLEET_SHARED_DIR}`/`${SEAT_WORKSPACE_DIR}` path-token substitution and host-path stripping on export, `PG-3` an explicit enumerated `authorityClass` per seat, and `PG-4` a hard Plane A/Plane B separation. `"1.0"` specs validate unchanged.

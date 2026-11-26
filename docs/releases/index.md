@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.6.0 — Fleet Pack schema v1.1, control-plane merge broker verification, ephemeral launch-secret scrubbing, and website dependency/deploy hygiene](v6.6.0.md)
+- [v6.6.1 — TCC-bootstrapped Codex startup, offline conversation history, and V6 layout fixes](v6.6.1.md)
 
 ## Recent releases
+
+- [v6.6.0 — Fleet Pack schema v1.1, control-plane merge broker verification, ephemeral launch-secret scrubbing, and website dependency/deploy hygiene](v6.6.0.md)
 
 - [v6.5.12 — Mechanical fleet parallelization, non-blocking async session launch, engine state convergence, and Medusa wake fixes](v6.5.12.md)
 

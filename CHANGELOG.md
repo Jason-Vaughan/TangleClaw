@@ -4,6 +4,15 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.6.1] - 2026-11-26
+
+### Fixed
+- Fixed Stage 2's pre-push gate (`scripts/test-touched.js`) blocking any push touching `lib/tmux.js` on three confirmed pre-existing failures unrelated to the diff (`test/tmux-draft-capture.test.js`, `test/engine-health.test.js`, `test/ttyd-runtime.test.js`); they're excluded from what Stage 2 runs and blocks on (named, with their reason, in its output), while `test/tmux-tcc.test.js` and `test/tmux-session-names.test.js` keep running exactly as before (#3254).
+- Fixed TCC-bootstrapped Codex sessions failing native startup with `pane_not_ready` and getting stuck in a `model-unverified` admission hold: `createSessionWithTccBootstrap` now records the real pane/server identity from the TCC-authorized server's own `new-session`, `tmux.visiblePane` reads a TCC-bootstrapped pane through its own socket automatically, and a Codex launch that stayed unobserved through every launch-time retry (including after a server restart) is re-checked against the engine's own rollout file instead of staying held forever (#3257, #3273).
+- Fixed the V6 shell's "🕓 View Previous Conversation" and "↩ Return to Start Card" buttons doing nothing on an offline session; `public/ui.js` now wires `onViewOfflineHistory`/`onReturnToStartCard` into the shell mount, so an offline chat's most recent persisted conversation loads without starting the engine (#3258).
+- Fixed the bottom-right engine usage/status popover extending off the right edge of the screen; it now anchors from the right instead of the left, so it stays inside the viewport at every width (#3270).
+- Fixed a stretch of unused vertical space below the chat composer that dragging the pane resizers could never reclaim, so the stream, Under the Hood and composer now share the chat column's full height down to the footer (#3276).
+
 ## [6.6.0] - 2026-11-24
 
 ### Added
