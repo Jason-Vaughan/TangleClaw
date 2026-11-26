@@ -226,6 +226,10 @@ const NETWORK_FIRST_PATHS = new Set([
   // a bump tears down and reinstalls the worker for every browser, which behind the
   // basic_auth gate is what produced the repeating credential prompt in #710.
   '/setup.js',
+  // v6-kaizen-reports-view.js (#3266) reuses parseSprintReportSettlement's
+  // real result shape directly -- network-first avoids a CACHE_NAME bump
+  // every time either side's logic moves.
+  '/v6-kaizen-reports-view.js',
   '/landing.js',
   // sw-register.js is cache-bust-critical (category 1): its entire purpose is
   // service-worker lifecycle. Serving a stale copy would re-strand operators
