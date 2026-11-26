@@ -71,6 +71,62 @@ describe('#3270 (V6-026): .v6-usage-popover never overflows the viewport to the 
     const maxWidthMatch = body.match(/max-width:\s*calc\(100vw\s*-\s*(\d+)px\);/);
     assert.equal(minWidthMatch[2], maxWidthMatch[1], 'the two must share the same viewport-margin subtrahend');
   });
+
+  it('R-Gate R3: computed bounding-box geometry stays inside the viewport at every required width', () => {
+    // Parsed from the real rule, not hardcoded, so this tracks style.css rather than a
+    // snapshot of it: min-width's fixed literal (320), min-width's calc() subtrahend (32,
+    // must equal max-width's own), and max-width's subtrahend (32).
+    const minWidthMatch = body.match(/min-width:\s*min\(\s*(\d+)px\s*,\s*calc\(100vw\s*-\s*(\d+)px\)\s*\);/);
+    const maxWidthMatch = body.match(/max-width:\s*calc\(100vw\s*-\s*(\d+)px\);/);
+    assert.ok(minWidthMatch && maxWidthMatch, 'both min-width and max-width must parse before computing geometry');
+    const minFixedPx = Number(minWidthMatch[1]);
+    const minSubtrahendPx = Number(minWidthMatch[2]);
+    const maxSubtrahendPx = Number(maxWidthMatch[1]);
+
+    /**
+     * The actual CSS cascade for a box with both `min-width` and `max-width` (CSS 2.2 10.4):
+     * clamp to max-width first, THEN clamp the result up to min-width if that violates it —
+     * so when min-width's computed value exceeds max-width's, min-width wins outright and the
+     * box renders WIDER than max-width, which is exactly the bug this guards against. This is
+     * what distinguishes a real geometry test from a text-pattern match: it fails against the
+     * pre-fix CSS (a bare `min-width: 320px`) and passes against the post-fix one.
+     * @param {number} vw
+     * @returns {number}
+     */
+    function effectiveWidth(vw) {
+      const minWidth = Math.min(minFixedPx, vw - minSubtrahendPx);
+      const maxWidth = vw - maxSubtrahendPx;
+      return minWidth > maxWidth ? minWidth : maxWidth;
+    }
+
+    // #v6EngineUsageSlot sits near the footer's right edge (#3270's own root cause); modeled
+    // here, per R-Gate's own spec, as 16px from the viewport's right edge — the worst case the
+    // anchor (`right: 0` within that slot) actually has to survive.
+    const SLOT_RIGHT_MARGIN_PX = 16;
+
+    for (const vw of [1440, 1280, 1024, 768, 352, 320]) {
+      const width = effectiveWidth(vw);
+      const right = vw - SLOT_RIGHT_MARGIN_PX;
+      const left = right - width;
+      assert.ok(left >= 0, `left (${left}) must be >= 0 at viewport ${vw}px`);
+      assert.ok(right <= vw, `right (${right}) must be <= viewport (${vw})`);
+      assert.ok(width <= vw - maxSubtrahendPx, `width (${width}) must be <= max-width's own bound at viewport ${vw}px`);
+    }
+  });
+
+  it('R-Gate R3: the pre-fix CSS (a bare min-width, no shared formula) fails this same geometry '
+    + 'check -- proving the test is a real regression guard, not a tautology', () => {
+    const PRE_FIX_MIN_WIDTH_PX = 320;
+    const PRE_FIX_MAX_SUBTRAHEND_PX = 32;
+    function preFixEffectiveWidth(vw) {
+      const maxWidth = vw - PRE_FIX_MAX_SUBTRAHEND_PX;
+      return PRE_FIX_MIN_WIDTH_PX > maxWidth ? PRE_FIX_MIN_WIDTH_PX : maxWidth;
+    }
+    const vw = 320;
+    const width = preFixEffectiveWidth(vw);
+    const left = (vw - 16) - width;
+    assert.ok(left < 0, `sanity check: the pre-fix formula must overflow left at ${vw}px (got left=${left})`);
+  });
 });
 
 describe('#3276 (V6-040): no unreclaimable dead space below the chat composer', () => {
