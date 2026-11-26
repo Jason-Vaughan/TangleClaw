@@ -159,6 +159,76 @@ describe('report and byTier', () => {
   });
 });
 
+describe('KNOWN_FLAKY_STAGE2 (#3254): excluded from Stage 2 run/block, never silently dropped', () => {
+  const FLAKY_FILES = {
+    ...FILES,
+    'lib/tmux.js': 'module.exports = { tmux: 1 };',
+    'test/tmux-draft-capture.test.js': "const tmux = require('../lib/tmux');",
+    'test/engine-health.test.js': "const tmux = require('../lib/tmux');",
+    'test/ttyd-runtime.test.js': '',
+    'test/tmux-tcc.test.js': "const tmux = require('../lib/tmux');"
+  };
+
+  it('names exactly the three confirmed pre-existing failures, each citing #3254', () => {
+    assert.ok(Object.isFrozen(touched.KNOWN_FLAKY_STAGE2));
+    assert.deepEqual(Object.keys(touched.KNOWN_FLAKY_STAGE2).sort(), [
+      'test/engine-health.test.js', 'test/tmux-draft-capture.test.js', 'test/ttyd-runtime.test.js'
+    ]);
+    for (const reason of Object.values(touched.KNOWN_FLAKY_STAGE2)) assert.match(reason, /#3254/);
+  });
+
+  it('a lib change reached by both a flaky and a non-flaky test keeps the non-flaky one selected and excludes the flaky one, with its reason', () => {
+    const { ctx } = repo(FLAKY_FILES);
+    const s = touched.select(['lib/tmux.js'], ctx);
+    assert.deepEqual(s.escalations, []);
+    assert.deepEqual(s.selected, ['test/tmux-tcc.test.js'], 'tmux-tcc keeps running in Stage 2, exactly as before');
+    assert.deepEqual(s.excludedFlaky, [
+      { file: 'test/engine-health.test.js', reason: touched.KNOWN_FLAKY_STAGE2['test/engine-health.test.js'] },
+      { file: 'test/tmux-draft-capture.test.js', reason: touched.KNOWN_FLAKY_STAGE2['test/tmux-draft-capture.test.js'] }
+    ]);
+    // The per-changed-file row still reports the real, honest reach -- exclusion only
+    // changes what Stage 2 runs and blocks on, not what it says is reached.
+    assert.deepEqual(s.changed[0].tests.sort(), ['test/engine-health.test.js', 'test/tmux-draft-capture.test.js', 'test/tmux-tcc.test.js']);
+  });
+
+  it('a lib change reached ONLY by a flaky test selects nothing for it, but does not escalate as unreached', () => {
+    const { ctx } = repo({ ...FLAKY_FILES, 'lib/only-flaky.js': '', 'test/engine-health.test.js': "const x = require('../lib/only-flaky');" });
+    const s = touched.select(['lib/only-flaky.js'], ctx);
+    assert.deepEqual(s.escalations, []);
+    assert.deepEqual(s.selected, []);
+    assert.deepEqual(s.excludedFlaky, [{ file: 'test/engine-health.test.js', reason: touched.KNOWN_FLAKY_STAGE2['test/engine-health.test.js'] }]);
+    assert.equal(s.changed[0].detail, '1 test file(s)', 'the row is still honest about what was reached');
+  });
+
+  it('directly editing a flaky test file itself is excluded too, not just a transitively-reached one', () => {
+    const { ctx } = repo(FLAKY_FILES);
+    const s = touched.select(['test/ttyd-runtime.test.js'], ctx);
+    assert.deepEqual(s.escalations, []);
+    assert.deepEqual(s.selected, []);
+    assert.deepEqual(s.excludedFlaky, [{ file: 'test/ttyd-runtime.test.js', reason: touched.KNOWN_FLAKY_STAGE2['test/ttyd-runtime.test.js'] }]);
+    assert.equal(s.changed[0].detail, 'itself');
+  });
+
+  it('report() names every exclusion and its reason, outside the selected count, and still returns trusted', () => {
+    const { ctx } = repo(FLAKY_FILES);
+    const s = touched.select(['lib/tmux.js'], ctx);
+    const out = sink();
+    assert.equal(touched.report(s, { out, explain: false }), true);
+    assert.match(out.text(), /^selected: 1 test file\(s\) \+ 2 static ring = 3$/m);
+    assert.match(out.text(), /^excluded \(known pre-existing flake, not run or blocked on here -- the full suite still runs it\): 2$/m);
+    assert.match(out.text(), /^ {2}test\/engine-health\.test\.js: #3254:/m);
+    assert.match(out.text(), /^ {2}test\/tmux-draft-capture\.test\.js: #3254:/m);
+  });
+
+  it('no exclusions means no excluded-flaky line at all', () => {
+    const { ctx } = repo(FILES);
+    const s = touched.select(['lib/b.js'], ctx);
+    const out = sink();
+    touched.report(s, { out, explain: false });
+    assert.doesNotMatch(out.text(), /excluded \(known pre-existing flake/);
+  });
+});
+
 describe('stage2 through the seam, without running', () => {
   it('reports a trusted selection and exits 0; an escalation exits 1 without running anything', () => {
     const { tests, graphIo } = repo(FILES);
