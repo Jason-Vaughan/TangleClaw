@@ -5,7 +5,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { createLogger, setLevel, getLevel, setConsoleStream, initFileLogging, closeFileLogging } = require('../lib/logger');
+const {
+  createLogger, setLevel, getLevel, setConsoleStream, initFileLogging, closeFileLogging,
+  _isFileLoggingActiveForTesting
+} = require('../lib/logger');
 
 describe('logger', () => {
   let tmpDir;
@@ -265,6 +268,115 @@ describe('logger', () => {
       assert.ok(!fs.existsSync(`${logFile}.1`), 'oversized log must be left in place');
       const content = fs.readFileSync(logFile, 'utf8');
       assert.ok(content.includes('appended without rotating'), 'writes still land in the same file');
+    });
+
+    it('reopens a fresh file once the periodic check notices the current one was unlinked (#3315)', () => {
+      // The old `_rotateIfNeeded` only ever checked the PATH
+      // (fs.existsSync/statSync), so once the file was unlinked while _fd
+      // stayed open, it became a permanent no-op: _fd kept growing an
+      // orphaned inode with nothing ever rotating it (the 271 GB incident).
+      const logDir = path.join(tmpDir, 'logs');
+      initFileLogging(logDir);
+      const logFile = path.join(logDir, 'tangleclaw.log');
+      const log = createLogger('test');
+
+      fs.unlinkSync(logFile);
+      assert.ok(!fs.existsSync(logFile), 'unlinked: the path is gone even though _fd is still open on the old inode');
+
+      // The periodic check only runs every ROTATION_CHECK_INTERVAL (1000)
+      // writes -- drive enough writes to make it fire.
+      for (let i = 0; i < 1000; i++) log.info(`line ${i}`);
+
+      assert.ok(fs.existsSync(logFile), 'the periodic check must reopen a real file at the original path once it notices the unlink');
+      log.info('after reopen');
+      const content = fs.readFileSync(logFile, 'utf8');
+      assert.ok(content.includes('after reopen'), 'new writes land in the reopened file');
+      assert.ok(!content.includes('line 0'), 'the reopened file does not carry forward everything written to the old unlinked inode');
+    });
+
+    it('closes the open descriptor once the whole log directory is gone, instead of growing an unlinked inode forever (#3315)', () => {
+      // A removed scratch TANGLECLAW_HOME (scripts/with-scratch-server.js's
+      // teardown) leaves nowhere to reopen into -- file logging must stop
+      // cleanly rather than keep writing.
+      const logDir = path.join(tmpDir, 'logs');
+      initFileLogging(logDir);
+      const log = createLogger('test');
+      log.info('before dir removal');
+      assert.equal(_isFileLoggingActiveForTesting(), true);
+
+      fs.rmSync(logDir, { recursive: true, force: true });
+
+      for (let i = 0; i < 1000; i++) log.info(`line ${i}`);
+
+      assert.equal(_isFileLoggingActiveForTesting(), false,
+        '_fd must close once the periodic check notices the log directory itself is gone');
+      assert.doesNotThrow(() => log.info('a write after the directory is gone must be a safe no-op'));
+    });
+
+    it('stops file writes rather than leaving the descriptor open when the rotation rename itself fails (#3315 hard ceiling)', () => {
+      const logDir = path.join(tmpDir, 'logs');
+      initFileLogging(logDir);
+      const logFile = path.join(logDir, 'tangleclaw.log');
+      const log = createLogger('test');
+
+      // Block the rename chain. The loop shifts files from the HIGHEST
+      // index down (.1 -> .2 first, then the live file -> .1), so blocking
+      // .1 alone does nothing -- it just gets moved out of the way before
+      // the live file ever reaches it. Block the .1 -> .2 step instead: a
+      // real file at .1 (so that rename is actually attempted) and a
+      // non-empty directory at .2 (a file can never be renamed onto one).
+      fs.writeFileSync(`${logFile}.1`, 'old rotated content');
+      fs.mkdirSync(`${logFile}.2`);
+      fs.writeFileSync(path.join(`${logFile}.2`, 'blocker.txt'), 'x');
+
+      // Grow the already-open fd's own file past MAX_LOG_SIZE directly
+      // (same path/inode _fd already has open), then drive the check.
+      fs.appendFileSync(logFile, 'x'.repeat(11 * 1024 * 1024));
+      for (let i = 0; i < 1000; i++) log.info(`line ${i}`);
+
+      assert.equal(_isFileLoggingActiveForTesting(), false,
+        'a rotation that cannot complete must still close the descriptor rather than leave it open and growing');
+      assert.doesNotThrow(() => log.info('after a failed rotation, logging must be a safe no-op'));
+    });
+  });
+
+  describe('console stream write safety (#3315)', () => {
+    afterEach(() => setConsoleStream(null));
+
+    it('does not throw when the console stream write itself throws synchronously (e.g. EPIPE)', () => {
+      setConsoleStream({ write() { throw Object.assign(new Error('write after end'), { code: 'EPIPE' }); } });
+      assert.doesNotThrow(() => createLogger('test').info('must not throw'));
+    });
+
+    it('skips the write entirely for a destroyed stream', () => {
+      let writeCalled = false;
+      setConsoleStream({ destroyed: true, write() { writeCalled = true; } });
+      createLogger('test').info('should be skipped');
+      assert.equal(writeCalled, false);
+    });
+
+    it('skips the write entirely for a stream with writableEnded true', () => {
+      let writeCalled = false;
+      setConsoleStream({ writableEnded: true, write() { writeCalled = true; } });
+      createLogger('test').info('should be skipped');
+      assert.equal(writeCalled, false);
+    });
+
+    it('skips the write entirely for a stream with writable === false', () => {
+      let writeCalled = false;
+      setConsoleStream({ writable: false, write() { writeCalled = true; } });
+      createLogger('test').info('should be skipped');
+      assert.equal(writeCalled, false);
+    });
+
+    it('attaches an "error" listener to process.stdout/stderr at module load, so an EPIPE never becomes an unhandled exception', () => {
+      // The module-load-time guard (_ensureStreamErrorGuards) attaches one
+      // unconditionally -- checked by listener count rather than actually
+      // emitting a synthetic 'error' on the real global stdout/stderr,
+      // which would also reach (and disrupt) the test runner's own
+      // reporting machinery, since it shares those same streams.
+      assert.ok(process.stdout.listenerCount('error') > 0, 'stdout must carry the EPIPE-swallowing listener');
+      assert.ok(process.stderr.listenerCount('error') > 0, 'stderr must carry the EPIPE-swallowing listener');
     });
   });
 });

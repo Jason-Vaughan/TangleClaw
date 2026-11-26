@@ -133,12 +133,30 @@ async function withScratchServer(fn, opts = {}) {
   const env = {
     ...(opts.env || process.env),
     TANGLECLAW_HOME: homeDir,
-    TANGLECLAW_PORT: String(port)
+    TANGLECLAW_PORT: String(port),
+    // #3315: lets the child watch for THIS process dying without running
+    // the `finally` below (a SIGKILL this process cannot catch) — see
+    // server.js's scratch-mode watchdog.
+    TANGLECLAW_SCRATCH_PARENT_PID: String(process.pid)
   };
-  const child = spawn(process.execPath, [SERVER_ENTRY], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  // #3315: detached so the child heads its own process group, which lets
+  // cleanup below kill that whole group (any grandchild included) rather
+  // than only the one direct child pid.
+  const child = spawn(process.execPath, [SERVER_ENTRY], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   let stderr = '';
   child.stderr.on('data', (d) => { stderr += d.toString(); });
   const exited = new Promise((resolve) => { child.once('exit', (code, signal) => resolve({ code, signal })); });
+
+  // #3315: best-effort group kill if THIS process is itself killed (not a
+  // graceful SIGTERM/SIGINT, which already reach `finally` below) --
+  // 'exit' cannot run async work or stop the exit, so this is a last,
+  // synchronous attempt, same spirit as the `finally` block's own kill.
+  const onParentExit = () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch (_err) { try { child.kill('SIGKILL'); } catch (_err2) { /* best effort */ } }
+    }
+  };
+  process.once('exit', onParentExit);
 
   try {
     await Promise.race([
@@ -148,10 +166,16 @@ async function withScratchServer(fn, opts = {}) {
     return await fn({ baseUrl: `http://127.0.0.1:${port}`, homeDir, projectsDir });
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGTERM');
+      // Kill the whole process group (negative pid), not just the direct
+      // child, in case it ever forks/re-execs (#3315); fall back to the
+      // plain child kill if the group kill itself fails.
+      try { process.kill(-child.pid, 'SIGTERM'); } catch (_err) { child.kill('SIGTERM'); }
       await Promise.race([exited, new Promise((r) => setTimeout(r, SHUTDOWN_GRACE_MS))]);
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      if (child.exitCode === null && child.signalCode === null) {
+        try { process.kill(-child.pid, 'SIGKILL'); } catch (_err) { child.kill('SIGKILL'); }
+      }
     }
+    process.removeListener('exit', onParentExit);
     fs.rmSync(homeDir, { recursive: true, force: true });
     fs.rmSync(projectsDir, { recursive: true, force: true });
   }

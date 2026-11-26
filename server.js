@@ -13071,12 +13071,68 @@ if (require.main === module) {
 
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+
+  // #3315: a closed stdio pipe (the scratch harness that spawned this
+  // process died) raises EPIPE on the next console write as an unhandled
+  // stream 'error' event otherwise -- swallow it here so it never reaches
+  // uncaughtException at all. lib/logger.js carries the matching guard for
+  // every OTHER process that requires it; this one covers a write that
+  // bypasses the logger (there are none today, but the failure mode this
+  // closes is specifically "a write outside the logger's own guard").
+  const swallowBrokenPipe = (err) => {
+    if (err && (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED')) return;
+  };
+  process.stdout.on('error', swallowBrokenPipe);
+  process.stderr.on('error', swallowBrokenPipe);
+
+  // #3315: an uncaughtException that is ITSELF caused by a broken pipe
+  // (EPIPE/ERR_STREAM_DESTROYED) must not re-log -- log.error's own write
+  // can raise the same error again, in a tight, self-sustaining loop (the
+  // 100% CPU / 1.2 GB/min incident this issue fixes). A burst guard backs
+  // this up for any OTHER repeating exception: more than
+  // UNCAUGHT_EXCEPTION_BURST_LIMIT within UNCAUGHT_EXCEPTION_BURST_WINDOW_MS
+  // means something is looping, not a one-off, so further logging in that
+  // window is skipped too.
+  const UNCAUGHT_EXCEPTION_BURST_WINDOW_MS = 10000;
+  const UNCAUGHT_EXCEPTION_BURST_LIMIT = 20;
+  let _uncaughtBurstWindowStart = 0;
+  let _uncaughtBurstCount = 0;
   process.on('uncaughtException', (err) => {
+    if (err && (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED')) return;
+    const now = Date.now();
+    if (now - _uncaughtBurstWindowStart > UNCAUGHT_EXCEPTION_BURST_WINDOW_MS) {
+      _uncaughtBurstWindowStart = now;
+      _uncaughtBurstCount = 0;
+    }
+    _uncaughtBurstCount += 1;
+    if (_uncaughtBurstCount > UNCAUGHT_EXCEPTION_BURST_LIMIT) return;
     log.error('Uncaught exception', { error: err.message, stack: err.stack });
   });
   process.on('unhandledRejection', (reason) => {
     log.error('Unhandled rejection', { error: String(reason) });
   });
+
+  // #3315: in scratch mode (scripts/with-scratch-server.js sets this), watch
+  // for the parent harness dying without running its cleanup -- a SIGKILL'd
+  // harness never reaches its `finally`, so this child is reparented to PID
+  // 1 and would otherwise run forever against a since-removed TANGLECLAW_HOME.
+  const scratchParentPid = process.env.TANGLECLAW_SCRATCH_PARENT_PID
+    ? Number(process.env.TANGLECLAW_SCRATCH_PARENT_PID)
+    : null;
+  if (Number.isSafeInteger(scratchParentPid) && scratchParentPid > 0) {
+    setInterval(() => {
+      let parentAlive = true;
+      try {
+        process.kill(scratchParentPid, 0);
+      } catch (_err) {
+        parentAlive = false;
+      }
+      const homeGone = Boolean(process.env.TANGLECLAW_HOME) && !fs.existsSync(process.env.TANGLECLAW_HOME);
+      if (process.ppid === 1 || !parentAlive || homeGone) {
+        process.exit(1);
+      }
+    }, 1000).unref();
+  }
 }
 
 
