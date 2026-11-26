@@ -122,6 +122,15 @@ const STATIC_ASSETS = [
 // a network fetch on every page load.
 const NETWORK_FIRST_PATHS = new Set([
   '/openclaw-cache.js',
+  // v6-interactive-choices.js (#3259): a brand-new file in this diff, not
+  // yet wired into the live page (nothing loads or calls it yet — see its
+  // own header) — scripts/cache-bump-guard.js's own doc notes a new file
+  // is a deliberate over-report (nothing has a stale cache entry for it
+  // yet), but the guard still gates on it mechanically. Carved out here,
+  // at its own insertion point, rather than a CACHE_NAME bump, so several
+  // sibling cars adding their own new public/v6-*.js files in the same
+  // wave don't all collide on the same bumped line.
+  '/v6-interactive-choices.js',
   // api-helper.js is the shared frontend base (api()/apiMutate()/copy helper)
   // loaded before every page script on both the dashboard and session pages.
   // A stale copy hides shared-helper changes from operators the same way #271
