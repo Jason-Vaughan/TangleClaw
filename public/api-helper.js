@@ -7214,6 +7214,58 @@
   }
 
   /**
+   * This engine's quota-probe health, in the same 4-state vocabulary and
+   * color meaning `public/v6-shell.js`'s sidebar engine badge already uses
+   * (`ENGINE_HEALTH`: `'operational'`/`'degraded'`/`'outage'`, falling
+   * back `'unknown'`; `public/style.css`'s `.v6-member-ai-status
+   * .is-operational`/`-degraded`/`-outage`: green `#56d364`/amber
+   * `#d4a72c`/red `#f85149`). Computed from THIS probe reading
+   * (quota/refresh health) — a different signal than the sidebar's own
+   * `engineHealth` (session/launch connectivity, a `v6-shell.js`-private
+   * closure this file has no access to), but the same four-color meaning
+   * applies to it just as well, and it is the only signal available
+   * where this renders (#3269, V6-025).
+   * @param {object|null} probeReading - Same shape {@link tcV6RenderEngineUsageCardMarkup} reads.
+   * @returns {'operational'|'degraded'|'outage'|'unknown'}
+   */
+  function _tcV6EngineHealthState(probeReading) {
+    const r = probeReading || {};
+    if (r.status !== 'configured') return 'unknown';
+    const zeroLeft = [r.fiveHourRemainingPct, r.weeklyRemainingPct]
+      .some((v) => typeof v === 'number' && Number.isFinite(v) && v <= 0);
+    if (zeroLeft) return 'outage';
+    const hasError = Boolean(r.refreshDegraded || r.lastRefreshError || r.error);
+    return hasError ? 'degraded' : 'operational';
+  }
+
+  /** {@link _tcV6EngineHealthState}'s glyph/color/label, one per state. */
+  const TC_V6_ENGINE_HEALTH_STYLES = Object.freeze({
+    operational: { glyph: '●', color: '#56d364', label: 'Healthy' },
+    degraded: { glyph: '◐', color: '#d4a72c', label: 'Degraded' },
+    outage: { glyph: '✖', color: '#f85149', label: 'Unavailable — quota exhausted' },
+    unknown: { glyph: '○', color: '#8b949e', label: 'Unknown — not probed' }
+  });
+
+  /**
+   * A small health dot + tooltip for one engine's quota probe, inline-
+   * styled from {@link TC_V6_ENGINE_HEALTH_STYLES} so no new
+   * `public/style.css` rule is needed (#3269 R-Gate: this car's envelope
+   * is `public/api-helper.js` alone). Exported so `public/v6-shell.js`'s
+   * own footer `pill()` can call it directly once it touches this file —
+   * `tcV6RenderEngineHealthDotMarkup(probeFor(e.key))`, using the SAME
+   * probe reading its own usage popover already fetches, is the whole
+   * wire-up.
+   * @param {object|null} probeReading - Same shape {@link tcV6RenderEngineUsageCardMarkup} reads.
+   * @returns {string} HTML.
+   */
+  function tcV6RenderEngineHealthDotMarkup(probeReading) {
+    const state = _tcV6EngineHealthState(probeReading);
+    const style = TC_V6_ENGINE_HEALTH_STYLES[state];
+    return `<span class="v6-engine-health-dot" style="color: ${style.color};" `
+      + `title="${tcEscapeHtml(style.label)}" aria-hidden="true">${style.glyph}</span>`;
+  }
+
+  /**
    * One engine's structured usage card (#3209).
    * @param {'claude'|'codex'|'antigravity'} providerKey
    * @param {{weeklyRemainingPct?: number|null, fiveHourRemainingPct?: number|null,
@@ -7281,6 +7333,7 @@
       : '';
     return `<section class="v6-usage-engine-card" data-usage-provider="${tcEscapeHtml(key)}">
       <header class="v6-usage-card-header">
+        ${tcV6RenderEngineHealthDotMarkup(r)}
         <h4 class="v6-usage-card-title">${tcEscapeHtml(title)}</h4>
         <span class="${badgeClass}">${badgeLabel}</span>
         ${lastProbed}
@@ -7300,6 +7353,7 @@
 
   global.tcV6FormatResetCountdown = tcV6FormatResetCountdown;
   global.tcV6RenderEngineUsageCardMarkup = tcV6RenderEngineUsageCardMarkup;
+  global.tcV6RenderEngineHealthDotMarkup = tcV6RenderEngineHealthDotMarkup;
 
   // ── System-Wide Watermark Opacity Easter Egg (#2930) ──
   // Ctrl+Shift+Up / Ctrl+Alt+Up (or Ctrl+Shift+] ) -> increase opacity (+2%, max 60%)
