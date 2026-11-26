@@ -65,6 +65,15 @@ export default function Home() {
     }
   ];
 
+  const v6Capabilities = [
+    { title: "Multi-agent fleet architecture", desc: "Versioned, portable Fleet Packs define a fleet once — PM, Architect, parallel Builders, dual reviewers, Integrator, Observer — reusable for software teams and non-SDLC fleets alike." },
+    { title: "Conversation-first workspace", desc: "A unified chat surface, a collapsible raw-CLI terminal view, a Sprints & Cars board, a Charter & Roadmap drawer, an interactive Sprint Reports hub, and a project/fleet wizard." },
+    { title: "Autonomous release trains", desc: "File-disjoint parallel waves, idle-builder look-ahead onto the next version, and a 4-gate merge broker pinned to the exact commit SHA before anything merges." },
+    { title: "Cross-engine orchestration", desc: "Claude, Codex, Antigravity and Aider run side by side over the Medusa switchboard, with live per-provider quota probing and delegate failover." },
+    { title: "Governed continuity", desc: "Generation-bound continuity capsules, managed coordinator rotations, and structured session wraps that survive context clears and machine restarts." },
+    { title: "Local-first security", desc: "Ephemeral launch-secret scrubbing, shared-document locking and attestation, PortHub collision prevention, and Tailscale/MagicDNS remote control — all on your own hardware." }
+  ];
+
   const alsoIncluded = [
     "Full transcript search",
     "Session history and summaries",
@@ -199,6 +208,19 @@ export default function Home() {
               <div key={i} className="flex items-center">
                 <span className="text-green-500 mr-3 text-lg leading-none">•</span>
                 <span className="text-base">{item}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* V6 Architecture & Capabilities */}
+        <div id="v6-capabilities" className="w-full pt-16 border-t border-white/10">
+          <h2 className="text-3xl font-semibold tracking-tight mb-12 text-center">V6 Architecture &amp; Capabilities</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-10 max-w-4xl mx-auto">
+            {v6Capabilities.map((cap, i) => (
+              <div key={i} className="flex flex-col">
+                <h3 className="text-xl font-semibold mb-3 text-zinc-100">{cap.title}</h3>
+                <p className="text-zinc-400 text-base leading-relaxed">{cap.desc}</p>
               </div>
             ))}
           </div>

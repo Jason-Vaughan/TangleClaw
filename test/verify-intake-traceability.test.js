@@ -6,7 +6,10 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { parseIntakeReferences, buildTraceabilityMatrix, renderMatrixMarkdown } = require('../scripts/verify-intake-traceability');
+const {
+  parseIntakeReferences, buildTraceabilityMatrix, renderMatrixMarkdown,
+  V6_REQUIREMENTS_LEDGER, buildLedgerTraceability, renderLedgerMarkdown
+} = require('../scripts/verify-intake-traceability');
 
 describe('parseIntakeReferences', () => {
   it('extracts a single backtick-fenced intake reference, as most issues write it', () => {
@@ -95,5 +98,89 @@ describe('renderMatrixMarkdown', () => {
     );
     const md = renderMatrixMarkdown(m, '2026-11-26T00:00:00.000Z');
     assert.match(md, /V6-050, V6-051/);
+  });
+});
+
+describe('V6_REQUIREMENTS_LEDGER (the authoritative 51-item intake ledger)', () => {
+  it('has exactly 51 entries, V6-001 through V6-051, each with a unique id', () => {
+    assert.equal(V6_REQUIREMENTS_LEDGER.length, 51);
+    const ids = new Set(V6_REQUIREMENTS_LEDGER.map((e) => e.id));
+    assert.equal(ids.size, 51, 'every id must be unique');
+    assert.ok(ids.has('V6-001'));
+    assert.ok(ids.has('V6-051'));
+  });
+
+  it('every entry names at least one real issue number and a workstream', () => {
+    for (const entry of V6_REQUIREMENTS_LEDGER) {
+      assert.ok(Array.isArray(entry.issues) && entry.issues.length > 0, `${entry.id} must name at least one issue`);
+      assert.match(entry.workstream, /^E\d{2}$/, `${entry.id}'s workstream must be E01-E10`);
+      assert.equal(typeof entry.gateFourApplies, 'boolean', `${entry.id} must declare whether Gate 4 applies`);
+    }
+  });
+});
+
+describe('buildLedgerTraceability', () => {
+  const FAKE_LEDGER = [
+    { id: 'V6-A', workstream: 'E01', title: 'Shippable item', classification: 'Actionable Enhancement', issues: [100], gateFourApplies: true },
+    { id: 'V6-B', workstream: 'E01', title: 'Design review item', classification: 'Collaborative Design', issues: [101], gateFourApplies: false },
+    { id: 'V6-C', workstream: 'E01', title: 'Multi-issue shippable item', classification: 'Actionable Enhancement', issues: [102, 103], gateFourApplies: true }
+  ];
+
+  it('rejects malformed inputs', () => {
+    assert.throws(() => buildLedgerTraceability('not-an-array', new Map(), new Set()), TypeError);
+    assert.throws(() => buildLedgerTraceability([], [], new Set()), TypeError);
+    assert.throws(() => buildLedgerTraceability([], new Map(), []), TypeError);
+  });
+
+  it('Gate 1 is complete only when every one of an entry\'s issues was actually fetched', () => {
+    const states = new Map([[100, { state: 'OPEN' }], [101, { state: 'OPEN' }]]);
+    const m = buildLedgerTraceability(FAKE_LEDGER, states, new Set());
+    const a = m.rows.find((r) => r.id === 'V6-A');
+    const c = m.rows.find((r) => r.id === 'V6-C');
+    assert.equal(a.gateOneComplete, true);
+    assert.equal(c.gateOneComplete, false, 'issue 103 was never fetched, so Gate 1 is incomplete');
+    assert.deepEqual(m.gateOneIncomplete, ['V6-C']);
+  });
+
+  it('Gate 4 reads n/a for a design-review entry, regardless of shipped evidence', () => {
+    const states = new Map([[100, {}], [101, {}], [102, {}], [103, {}]]);
+    const m = buildLedgerTraceability(FAKE_LEDGER, states, new Set());
+    const b = m.rows.find((r) => r.id === 'V6-B');
+    assert.equal(b.gateFour, 'n/a');
+  });
+
+  it('Gate 4 requires every one of a shippable entry\'s issues to be shipped', () => {
+    const states = new Map([[100, {}], [102, {}], [103, {}]]);
+    const partiallyShipped = buildLedgerTraceability(FAKE_LEDGER, states, new Set([102]));
+    const c1 = partiallyShipped.rows.find((r) => r.id === 'V6-C');
+    assert.equal(c1.gateFour, 'incomplete', '103 is not shipped, so a multi-issue entry is not complete');
+
+    const fullyShipped = buildLedgerTraceability(FAKE_LEDGER, states, new Set([100, 102, 103]));
+    const a2 = fullyShipped.rows.find((r) => r.id === 'V6-A');
+    const c2 = fullyShipped.rows.find((r) => r.id === 'V6-C');
+    assert.equal(a2.gateFour, 'complete');
+    assert.equal(c2.gateFour, 'complete');
+    assert.deepEqual(fullyShipped.gateFourIncomplete, []);
+  });
+});
+
+describe('renderLedgerMarkdown', () => {
+  it('names every entry and flags both kinds of gap', () => {
+    const states = new Map([[101, {}]]);
+    const m = buildLedgerTraceability(
+      [
+        { id: 'V6-X', workstream: 'E01', title: 'Missing issue', classification: 'Actionable Enhancement', issues: [999], gateFourApplies: true },
+        { id: 'V6-Y', workstream: 'E01', title: 'Not shipped', classification: 'Actionable Enhancement', issues: [101], gateFourApplies: true }
+      ],
+      states,
+      new Set()
+    );
+    const md = renderLedgerMarkdown(m);
+    assert.match(md, /V6-X/);
+    assert.match(md, /V6-Y/);
+    assert.match(md, /Gate 1 incomplete: V6-X/);
+    // V6-X is incomplete on BOTH gates (its issue was never fetched, so it
+    // can't be shipped either); V6-Y is Gate 1 complete but not yet shipped.
+    assert.match(md, /Gate 4 incomplete: V6-X, V6-Y/);
   });
 });

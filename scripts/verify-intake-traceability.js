@@ -132,6 +132,143 @@ function renderMatrixMarkdown(matrix, generatedAt, scopeNote) {
 }
 
 /**
+ * The authoritative 51-item intake ledger (#3279, V6-050/V6-051), transcribed
+ * from `TangleClaw-Shared/v6-post-release-requirements-intake-ledger.md`
+ * ("Prepared 2026-11-25", stewarded by TC-Lane-PM/TC-Lane-Arc) -- itself
+ * derived from `TangleClaw_v6_Requirements_Intake.pdf`'s 51 intake references
+ * across workstreams E01-E10. This is a dated snapshot, not a live feed: the
+ * ledger document is the source of truth going forward, and this constant
+ * should be re-transcribed if that document is revised.
+ *
+ * `gateFourApplies` is false for a classification that is itself a design/
+ * discovery stage ("Collaborative Design", "Collaborative UX Design", "Owner
+ * Screenshot Audit") -- those issues are trackers for future work, not yet
+ * shippable, so asking them for shipped evidence would always read as a false
+ * gap. Every other classification ("Bug...", "Actionable...") is real,
+ * scoped, shippable work and does need Gate 4 evidence.
+ * @type {ReadonlyArray<{id: string, workstream: string, title: string, classification: string, issues: number[], gateFourApplies: boolean}>}
+ */
+const V6_REQUIREMENTS_LEDGER = Object.freeze([
+  { id: 'V6-001', workstream: 'E01', title: 'View Previous Conversation button', classification: 'Bug (Root Cause Found)', issues: [3258], gateFourApplies: true },
+  { id: 'V6-002', workstream: 'E01', title: 'CLI-to-UI fidelity audit', classification: 'Owner Screenshot Audit', issues: [3280], gateFourApplies: false },
+  { id: 'V6-003', workstream: 'E01', title: 'Interactive questions and selections', classification: 'Actionable Enhancement', issues: [3259], gateFourApplies: true },
+  { id: 'V6-004', workstream: 'E01', title: 'Suggested next prompt autocomplete', classification: 'Collaborative UX Design', issues: [3280], gateFourApplies: false },
+  { id: 'V6-005', workstream: 'E01', title: 'Conversation readability', classification: 'Actionable Enhancement', issues: [3260], gateFourApplies: true },
+  { id: 'V6-006', workstream: 'E01', title: 'Peek Under the Hood accuracy and filters', classification: 'Bug / Enhancement', issues: [3261], gateFourApplies: true },
+  { id: 'V6-007', workstream: 'E01', title: 'Full-pane terminal mode', classification: 'Collaborative UX Design', issues: [3280], gateFourApplies: false },
+  { id: 'V6-008', workstream: 'E02', title: 'Dedicated fleet settings page', classification: 'Collaborative UX Design', issues: [3281], gateFourApplies: false },
+  { id: 'V6-009', workstream: 'E02', title: 'Post-creation membership management', classification: 'Actionable Enhancement', issues: [3262], gateFourApplies: true },
+  { id: 'V6-010', workstream: 'E02', title: 'Explicit delegate assignment', classification: 'Actionable Enhancement', issues: [3263], gateFourApplies: true },
+  { id: 'V6-011', workstream: 'E02', title: 'Granular delegate permissions', classification: 'Collaborative Design', issues: [3281], gateFourApplies: false },
+  { id: 'V6-012', workstream: 'E02', title: 'YOLO delegate mode', classification: 'Collaborative Design', issues: [3281], gateFourApplies: false },
+  { id: 'V6-013', workstream: 'E02', title: 'Defaults and inheritance', classification: 'Collaborative Design', issues: [3281], gateFourApplies: false },
+  { id: 'V6-014', workstream: 'E03', title: 'Runtime-enforced fleet policies', classification: 'Collaborative Design', issues: [3281], gateFourApplies: false },
+  { id: 'V6-015', workstream: 'E03', title: 'Maximize safe parallelization', classification: 'Actionable Enhancement', issues: [3264], gateFourApplies: true },
+  { id: 'V6-016', workstream: 'E03', title: 'Issue-tracking and roadmap workflow', classification: 'Actionable Enhancement', issues: [3265], gateFourApplies: true },
+  { id: 'V6-017', workstream: 'E03', title: 'Mandatory sprint reports and postmortems', classification: 'Actionable Enhancement', issues: [3266], gateFourApplies: true },
+  { id: 'V6-018', workstream: 'E03', title: 'Car and train status synchronization', classification: 'Bug / Enhancement', issues: [3267], gateFourApplies: true },
+  { id: 'V6-019', workstream: 'E03', title: 'Safe sprint look-ahead', classification: 'Actionable Enhancement', issues: [3268], gateFourApplies: true },
+  { id: 'V6-020', workstream: 'E04', title: 'Wrap procedure audit', classification: 'Collaborative Design', issues: [3282], gateFourApplies: false },
+  { id: 'V6-021', workstream: 'E04', title: 'Automated solo-session wrap', classification: 'Collaborative Design', issues: [3282], gateFourApplies: false },
+  { id: 'V6-022', workstream: 'E04', title: 'Delegate-orchestrated fleet wrap', classification: 'Collaborative Design', issues: [3282], gateFourApplies: false },
+  { id: 'V6-023', workstream: 'E04', title: 'Intelligent wrap decisions', classification: 'Collaborative Design', issues: [3282], gateFourApplies: false },
+  { id: 'V6-024', workstream: 'E04', title: 'Wrap API parity', classification: 'Collaborative Design', issues: [3282], gateFourApplies: false },
+  { id: 'V6-025', workstream: 'E05', title: 'Consistent engine health indicators', classification: 'Actionable Enhancement', issues: [3269], gateFourApplies: true },
+  { id: 'V6-026', workstream: 'E05', title: 'Engine status modal overflow', classification: 'Bug (Root Cause Found)', issues: [3270], gateFourApplies: true },
+  { id: 'V6-027', workstream: 'E05', title: 'Member-level engine fallback chains', classification: 'Actionable Enhancement', issues: [3271], gateFourApplies: true },
+  { id: 'V6-028', workstream: 'E05', title: 'Delegate succession and surrogate', classification: 'Actionable Enhancement', issues: [3272], gateFourApplies: true },
+  { id: 'V6-029', workstream: 'E05', title: 'Modern Codex compatibility', classification: 'Actionable Chore / Bug', issues: [3273, 3257], gateFourApplies: true },
+  { id: 'V6-030', workstream: 'E06', title: 'Configurable observer role', classification: 'Collaborative Design', issues: [3283], gateFourApplies: false },
+  { id: 'V6-031', workstream: 'E06', title: 'Observer reporting responsibilities', classification: 'Collaborative Design', issues: [3283], gateFourApplies: false },
+  { id: 'V6-032', workstream: 'E06', title: 'Close continuous-improvement loop', classification: 'Collaborative Design', issues: [3283], gateFourApplies: false },
+  { id: 'V6-033', workstream: 'E06', title: 'Recover missing historical reports', classification: 'Actionable Docs / Audit', issues: [3274], gateFourApplies: true },
+  { id: 'V6-034', workstream: 'E06', title: 'Kaizen and Reports workspace integration', classification: 'Actionable Enhancement', issues: [3266], gateFourApplies: true },
+  { id: 'V6-035', workstream: 'E07', title: 'Standard project documentation structure', classification: 'Actionable Enhancement', issues: [3275], gateFourApplies: true },
+  { id: 'V6-036', workstream: 'E07', title: 'Dedicated SSOT view', classification: 'Actionable Enhancement', issues: [3275], gateFourApplies: true },
+  { id: 'V6-037', workstream: 'E07', title: 'Functional project charter', classification: 'Actionable Enhancement', issues: [3275], gateFourApplies: true },
+  { id: 'V6-038', workstream: 'E07', title: 'Sprint and cars visualization', classification: 'Actionable Enhancement', issues: [3267], gateFourApplies: true },
+  { id: 'V6-039', workstream: 'E07', title: 'Workspace navigation review', classification: 'Collaborative UX Design', issues: [3284], gateFourApplies: false },
+  { id: 'V6-040', workstream: 'E08', title: 'Reclaim space below prompt composer', classification: 'Bug (Actionable)', issues: [3276], gateFourApplies: true },
+  { id: 'V6-041', workstream: 'E08', title: 'Workspace pane and resizing review', classification: 'Owner Screenshot Audit', issues: [3280], gateFourApplies: false },
+  { id: 'V6-042', workstream: 'E08', title: 'Startup visualization', classification: 'Actionable Enhancement', issues: [3277], gateFourApplies: true },
+  { id: 'V6-043', workstream: 'E08', title: 'Wrap visualization', classification: 'Actionable Enhancement', issues: [3277], gateFourApplies: true },
+  { id: 'V6-044', workstream: 'E09', title: 'Runtime-assisted bug reporting', classification: 'Collaborative Design', issues: [3285], gateFourApplies: false },
+  { id: 'V6-045', workstream: 'E09', title: 'Optional automatic bug filing', classification: 'Collaborative Design', issues: [3285], gateFourApplies: false },
+  { id: 'V6-046', workstream: 'E09', title: 'Security-sensitive reporting', classification: 'Collaborative Design', issues: [3285], gateFourApplies: false },
+  { id: 'V6-047', workstream: 'E09', title: 'Discoverable feedback submission', classification: 'Collaborative Design', issues: [3285], gateFourApplies: false },
+  { id: 'V6-048', workstream: 'E09', title: 'Embedded settings/help assistant', classification: 'Collaborative Design', issues: [3285], gateFourApplies: false },
+  { id: 'V6-049', workstream: 'E09', title: 'Complete settings API parity', classification: 'Actionable Enhancement', issues: [3278], gateFourApplies: true },
+  { id: 'V6-050', workstream: 'E10', title: 'Reconcile original v6 requirements', classification: 'Actionable Audit', issues: [3279], gateFourApplies: true },
+  { id: 'V6-051', workstream: 'E10', title: 'Prevent future requirements loss', classification: 'Actionable Governance', issues: [3279], gateFourApplies: true }
+]);
+
+/**
+ * Build the Gate 1 / Gate 4 traceability matrix for the full 51-item ledger.
+ * Gate 1 (intake -> issue -> milestone): every one of an entry's `issues`
+ * must resolve to a real, fetched issue. Gate 4 (PR/test/sprint-report
+ * evidence): only required where `gateFourApplies` -- a design-review entry
+ * is not yet shippable work, so it is reported `n/a`, never a false gap.
+ * @param {ReadonlyArray<object>} ledger - {@link V6_REQUIREMENTS_LEDGER} or a test double of the same shape.
+ * @param {Map<number, {state: string}>} issueStates - Real issue number -> its fetched state (Gate 1 data).
+ * @param {Set<number>} shippedIssueNumbers - Gate 4 evidence, same meaning as {@link buildTraceabilityMatrix}'s own.
+ * @returns {{rows: object[], gateOneIncomplete: string[], gateFourIncomplete: string[]}}
+ */
+function buildLedgerTraceability(ledger, issueStates, shippedIssueNumbers) {
+  if (!Array.isArray(ledger)) throw new TypeError('ledger must be an array');
+  if (!(issueStates instanceof Map)) throw new TypeError('issueStates must be a Map');
+  if (!(shippedIssueNumbers instanceof Set)) throw new TypeError('shippedIssueNumbers must be a Set');
+
+  const rows = ledger.map((entry) => {
+    const gateOneComplete = entry.issues.every((n) => issueStates.has(n));
+    const gateFourComplete = !entry.gateFourApplies || entry.issues.every((n) => shippedIssueNumbers.has(n));
+    return {
+      id: entry.id,
+      workstream: entry.workstream,
+      title: entry.title,
+      classification: entry.classification,
+      issues: entry.issues,
+      gateOneComplete,
+      gateFour: entry.gateFourApplies ? (gateFourComplete ? 'complete' : 'incomplete') : 'n/a'
+    };
+  });
+
+  return {
+    rows,
+    gateOneIncomplete: rows.filter((r) => !r.gateOneComplete).map((r) => r.id),
+    gateFourIncomplete: rows.filter((r) => r.gateFour === 'incomplete').map((r) => r.id)
+  };
+}
+
+/**
+ * Render the 51-item ledger matrix as Markdown.
+ * @param {ReturnType<typeof buildLedgerTraceability>} matrix
+ * @returns {string}
+ */
+function renderLedgerMarkdown(matrix) {
+  const lines = [];
+  lines.push('## Complete 51-item ledger (V6-001 - V6-051): Gate 1 / Gate 4 status');
+  lines.push('');
+  lines.push('Gate 1 (intake -> issue -> milestone): the entry\'s issue(s) exist in the tracker.');
+  lines.push('Gate 4 (PR/test/sprint-report evidence): only required where the entry is actionable, '
+    + 'shippable work -- a Collaborative/Owner-review entry reads `n/a`, not a false gap.');
+  lines.push('');
+  if (matrix.gateOneIncomplete.length > 0) {
+    lines.push(`- Gate 1 incomplete: ${matrix.gateOneIncomplete.join(', ')}`);
+  }
+  if (matrix.gateFourIncomplete.length > 0) {
+    lines.push(`- Gate 4 incomplete: ${matrix.gateFourIncomplete.join(', ')}`);
+  }
+  lines.push('');
+  lines.push('| Intake ID | Workstream | Title | Classification | Issue(s) | Gate 1 | Gate 4 |');
+  lines.push('| --- | --- | --- | --- | --- | --- | --- |');
+  for (const r of matrix.rows) {
+    lines.push(`| ${r.id} | ${r.workstream} | ${r.title} | ${r.classification} | ${r.issues.map((n) => `#${n}`).join(', ')} | ${r.gateOneComplete ? 'complete' : 'INCOMPLETE'} | ${r.gateFour} |`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+/**
  * Real I/O: fetch issues via `gh`, and shipped evidence via `CHANGELOG.md` +
  * `changelog.d/*`'s own issue-number convention. Not called by the test file.
  *
@@ -175,7 +312,10 @@ if (require.main === module) {
     + '(1506 issues, #1 through #3291) that every existing `Intake Reference` falls between #3258 '
     + 'and #3285 -- the convention is new to this intake wave, not retroactive, so an older issue '
     + 'having none is expected and is not listed as a gap here.';
-  const markdown = renderMatrixMarkdown(matrix, new Date().toISOString(), scopeNote);
+  const issueStates = new Map(issues.map((i) => [i.number, { state: i.state }]));
+  const ledgerMatrix = buildLedgerTraceability(V6_REQUIREMENTS_LEDGER, issueStates, shippedIssueNumbers);
+  const markdown = renderMatrixMarkdown(matrix, new Date().toISOString(), scopeNote)
+    + '\n' + renderLedgerMarkdown(ledgerMatrix);
   if (write) {
     const outPath = path.join('docs', 'audits', 'v6-requirements-traceability-matrix.md');
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
@@ -186,4 +326,7 @@ if (require.main === module) {
   }
 }
 
-module.exports = { parseIntakeReferences, buildTraceabilityMatrix, renderMatrixMarkdown, INTAKE_REF_RE, INTAKE_HEADING_RE };
+module.exports = {
+  parseIntakeReferences, buildTraceabilityMatrix, renderMatrixMarkdown, INTAKE_REF_RE, INTAKE_HEADING_RE,
+  V6_REQUIREMENTS_LEDGER, buildLedgerTraceability, renderLedgerMarkdown
+};

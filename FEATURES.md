@@ -17,6 +17,17 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## V6.0–V6.6 at a glance
+
+A navigational summary only — every claim here is detailed, with its real `file.js#symbol` anchor,
+in that version's own section below. Added nothing new here that is not already a dated entry
+further down this file (#3290).
+
+- **Multi-agent fleet architecture & portable Fleet Packs** — see `v6.6.0`'s Fleet Pack schema entry below.
+- **Autonomous release trains & the 4-gate control-plane merge broker** — see `v6.6.0`'s merge-broker entry below.
+- **Ephemeral launch-secret scrubbing** — see `v6.6.0`'s own entry below.
+- Each `v6.x.y` section below is this index's real, line-free record of what shipped in that version.
+
 ## v6.6.4 — Engine failover, delegate succession, lifecycle progress, and settings parity
 
 - **Configurable engine fallback chains** (#3271) — `lib/engine-fallback-chain.js`: per-member primary, secondary, and tertiary engine/model/effort profiles with deterministic outage triggers, bounded retries, and return-to-primary behavior; Fleet settings UI and live health checks remain follow-up work.
