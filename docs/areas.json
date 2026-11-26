@@ -372,6 +372,13 @@
         "lib/fleet-visibility-routes.js"
       ]
     },
+    "fleet-sdlc-policy": {
+      "label": "area:fleet-sdlc-policy",
+      "why": "Configurable per-fleet SDLC workflow enforcement (#3265, V6-016): whether a fleet's dispatched cars must reference tracked issues, on which backend (github/local/none), and whether those issues must be triaged into the active roadmap wave. Self-contained, plain-objects-in/plain-objects-out like `roadmap`'s own admission module, but distinct from it -- that area governs train dependency admission against the separate roadmap-board repo; this one is the policy a fleet configures for itself, read by whatever dispatch/admission caller wires it in. Owned by no other family.",
+      "paths": [
+        "lib/fleet-sdlc-policy.js"
+      ]
+    },
     "terminal-chrome": {
       "label": "area:terminal-chrome",
       "why": "Deterministic per-project visual identity for terminal views (#1573) and multi-file upload queue state with auto-appending Attachment Pills (#1577) -- the `v5.60.0 Fleet and dashboard views` milestone's Car 60-D pure libraries feeding the composer/terminal chrome. Distinct from `lib/uploads*.js` (`sessions` area: the real filesystem upload path these pill states will eventually drive) and from `dashboard-ux` (`public/**`, the DOM these feed): these are pure derivation/queue logic, not I/O or rendering. Owned by no other family; Slice 2 wiring into routes/UI is a tracked follow-up.",
