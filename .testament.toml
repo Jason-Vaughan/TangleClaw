@@ -245,6 +245,7 @@ files = [
   "test/soak-attest-bridge.test.js",
   "test/soak-schedule.test.js",
   "test/sprint-report-gate.test.js",
+  "test/sprint-wave-routes.test.js",
   "test/ssh-target-safety.test.js",
   "test/startup-control.test.js",
   "test/startup-dialog-mid-session.test.js",
