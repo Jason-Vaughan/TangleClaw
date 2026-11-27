@@ -41,6 +41,72 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-27 — Global Settings rebuilt as a full-screen workspace, Car V667-W1-A
+
+<!-- prawduct: type=added | scope=v667-w1-a -->
+
+- Added #3319: rebuilt the Global Settings modal (`public/ui.js#openGlobalSettings`,
+  `public/index.html#globalSettingsModal`) from a skinny 440px dialog into a full-screen
+  workspace with a left-hand category rail — General & Server, Storage & System Health,
+  Engines & Quotas, Security & Auth, Backups & Maintenance, Bridge & Notifications. This is
+  the charter's own committed 6-category list; two separate Medusa dispatches from PM named
+  conflicting category lists (the issue's bare "e.g." list, and a 2nd dispatch's own
+  restatement), flagged non-blockingly, and PM confirmed the charter's list is authoritative
+  before building.
+- Reused the exact `position:fixed; inset:0` inline-style-over-CSS-class technique
+  `#settingsModal` (#3214) already uses for its own full-viewport page, rather than
+  introducing a second pattern — confirmed by reading that modal's own markup directly
+  after an earlier message in this session incorrectly claimed Session Settings was NOT
+  full-screen (corrected to PM in the same session).
+- Added a search box (`#gsSearchFilter`) that filters every category's fields at once (not
+  scoped to the currently-open category — finding a setting shouldn't require first
+  guessing which category it lives in) and a deep-linkable `#settings/<category>` hash via
+  `history.replaceState` (never `pushState` — one history entry per rail click would be
+  surprising in Back/Forward, not useful).
+- Added a Storage Warning Threshold (%) field (default 85, range 50-98) in Storage & System
+  Health for sibling car #3318's backend setting. Confirmed via direct source read
+  (`lib/routes/config.js`'s `allowedFields` allowlist) that NEITHER of the two candidate
+  field names the dispatch gave (`diskWarningThresholdPercent` / `storageWarningThresholdPct`)
+  exists in the backend yet — #3318 had not landed as of this write. `saveGlobalSettings`
+  sends BOTH names defensively; the server's own documented allowlist behavior silently
+  skips an unrecognized field rather than erroring, so persistence starts working the moment
+  #3318's allowlist entry lands under whichever name it actually uses, with no further
+  change needed on this side.
+- Every pre-existing control, id, and the `openGlobalSettings`/`closeGlobalSettings`/
+  `saveGlobalSettings` handlers are preserved unchanged — only re-bucketed into
+  `<section data-gs-category="...">` wrappers around the existing markup, confirmed by a
+  balanced-tag check and by keeping every existing test file in this area green
+  (`test/bridge-step-up-settings-wiring.test.js`, `test/global-engine-settings-ui.test.js`,
+  `test/isolation-override-banner.test.js`, `test/launch-isolation-override-ui.test.js`,
+  `test/operator-bridge-panel.test.js`, `test/settings-credential.test.js`,
+  `test/bind-policy-wiring.test.js`).
+- One cross-file fix outside this car's declared scope: `test/operator-bridge-panel.test.js`
+  lifts `closeGlobalSettings()` alone via `vm.runInContext`, and that function now
+  references `_gsActiveCategoryFromHash`/`window.history` as free variables the isolated
+  lift did not provide — caught by running that file, not by inspection. Stubbed minimally
+  in that file; the real hash-clearing behavior has its own direct coverage in the new test
+  file below.
+- New `test/global-settings-workspace-ui.test.js` (37 cases): markup/CSS structural
+  assertions (matching this file's own established convention for `public/ui.js`, per
+  `test/settings-credential.test.js`'s comment) plus behavioral coverage of the new rail/
+  search/hash logic, lifted together with its module-level `const`/`let` state and run
+  against a minimal hand-built fake `document`/`window` (not a full mini-DOM) with every
+  fake method it calls listed explicitly, so an unimplemented one fails loudly instead of
+  silently no-op'ing. `test/tiers.json`/`.testament.toml` regenerated via
+  `scripts/test-tiers.js --write`/`--testament` (lands in the `small` tier — no subprocess,
+  no sqlite, no socket).
+- `docs/areas.json` needed no change: confirmed by reading the whole file that `public/**`
+  is already covered by a single existing glob (the `dashboard-ux` area) and that the file
+  tracks no per-test-file registration at all — the file scope's mention of this file was a
+  stale assumption, not something requiring a forced edit.
+- Verification: full `small`-tier suite plus a targeted regression sweep of every Global
+  Settings-adjacent test file green. A broader `medium`-tier pool run (`testament run
+  --suite medium`) surfaced 24 failures clustered on 3 shared pool hosts (monad-1,
+  brooks-nas, brooks-5950x), none touching `public/ui.js`/`index.html`/`style.css` or
+  Global Settings; a sample of 3 (`store.test.js`, `bridge-gateway.test.js`,
+  `session-rules.test.js`) passes cleanly run directly on a clean `origin/main` worktree,
+  confirming pool-environment flakiness rather than a regression from this branch.
+
 ## 2026-11-27 — v6 chat UX: scroll/selection corruption, dedup send bubble, header UTH toggle, queued-turn indicator, Car V666-W1-A
 
 <!-- prawduct: type=fixed | scope=v666-w1-a -->
