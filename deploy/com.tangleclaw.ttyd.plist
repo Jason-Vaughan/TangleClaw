@@ -47,6 +47,16 @@
         <string>__TTYD_BIND_VAL__</string>
         <string>--port</string>
         <string>__TTYD_PORT__</string>
+        <!-- #3332: ttyd's own default WebSocket ping is every 5s. A terminal
+             sitting idle between keystrokes was flapping disconnected then
+             reconnected under that cadence whenever a ping round-trip was
+             even briefly slow (a loaded host, a flaky link) — 5s leaves no
+             slack before ttyd (or the browser) decides the other end is
+             gone. 30s tolerates the same transient delay without declaring
+             the session dead, while still catching a genuinely vanished
+             peer well within an operator's patience. -->
+        <string>--ping-interval</string>
+        <string>30</string>
         <!-- Raise xterm.js scrollback from its 1000-line default (#322/#290):
              gives long output room within a live session, and is large enough
              to hold the history ttyd-attach.sh replays on reconnect/restart. -->

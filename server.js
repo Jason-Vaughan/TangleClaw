@@ -7995,6 +7995,22 @@ function handleUpgrade(req, socket, head) {
     ? net.connect(target.socketPath, onProxyConnect)
     : net.connect(target.port, target.host, onProxyConnect);
 
+  // #3332: a terminal socket sitting idle between keystrokes was seen
+  // flapping disconnected/reconnected under Nagle-induced latency and a dead
+  // peer going undetected until the next write. `setNoDelay` disables Nagle's
+  // algorithm (ttyd frames are small and interactive — buffering them for a
+  // batch send only adds latency, never saves a meaningful packet), and
+  // `setKeepAlive` makes the OS probe an otherwise-silent connection every
+  // 15s so a peer that vanished without a close (a sleeping laptop, a killed
+  // network link) is noticed instead of sitting open indefinitely. Both calls
+  // are safe no-ops on `proxySocket` in caddy mode (a unix-domain socket has
+  // no Nagle/keepalive to tune, but Node does not throw for asking), so
+  // neither needs its own branch on `target.socketPath`.
+  socket.setNoDelay(true);
+  socket.setKeepAlive(true, 15000);
+  proxySocket.setNoDelay(true);
+  proxySocket.setKeepAlive(true, 15000);
+
   // Counts the terminal attach when ttyd accepts the upgrade, and its detach
   // on close, for release-candidate certification's PTY-use target (#1949).
   ptyActivity.trackTerminalConnection(socket, proxySocket);

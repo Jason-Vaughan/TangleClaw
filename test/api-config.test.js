@@ -576,6 +576,82 @@ describe('API endpoints', () => {
       assert.equal(data.code, 'BAD_REQUEST');
     });
 
+    // #3318 — the disk-space warning threshold
+    it('should default diskWarningThresholdPercent to 85, exposed under both names on GET', async () => {
+      const { status, data } = await request(server, 'GET', '/api/config');
+      assert.equal(status, 200);
+      assert.equal(data.diskWarningThresholdPercent, 85);
+      assert.equal(data.storageWarningThresholdPct, 85);
+    });
+
+    it('should accept a valid diskWarningThresholdPercent', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        diskWarningThresholdPercent: 90
+      });
+      assert.equal(status, 200);
+      assert.equal(data.config.diskWarningThresholdPercent, 90);
+      assert.equal(data.config.storageWarningThresholdPct, 90, 'the alias reflects the same write on the next read');
+    });
+
+    it('should reject diskWarningThresholdPercent below 50', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        diskWarningThresholdPercent: 49
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should reject diskWarningThresholdPercent above 98', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        diskWarningThresholdPercent: 99
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should reject a non-integer diskWarningThresholdPercent', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        diskWarningThresholdPercent: 85.5
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should accept 0 and null as explicit disable values', async () => {
+      const zero = await request(server, 'PATCH', '/api/config', { diskWarningThresholdPercent: 0 });
+      assert.equal(zero.status, 200);
+      assert.equal(zero.data.config.diskWarningThresholdPercent, 0);
+
+      const nullified = await request(server, 'PATCH', '/api/config', { diskWarningThresholdPercent: null });
+      assert.equal(nullified.status, 200);
+      assert.equal(nullified.data.config.diskWarningThresholdPercent, null);
+    });
+
+    it('should accept storageWarningThresholdPct as a write alias for the same setting', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        storageWarningThresholdPct: 92
+      });
+      assert.equal(status, 200);
+      assert.equal(data.config.diskWarningThresholdPercent, 92, 'the alias writes the one canonical field');
+      assert.equal(data.config.storageWarningThresholdPct, 92);
+    });
+
+    it('should validate storageWarningThresholdPct the same way as the canonical name', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        storageWarningThresholdPct: 10
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should refuse a body naming both diskWarningThresholdPercent and storageWarningThresholdPct as ambiguous', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        diskWarningThresholdPercent: 85, storageWarningThresholdPct: 90
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
     // AUTH-1 (#395) — ingress topology flag
     it('should default ingressMode to direct', async () => {
       const { data } = await request(server, 'GET', '/api/config');

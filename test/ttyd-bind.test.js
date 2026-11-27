@@ -48,11 +48,18 @@ function legacyPlist() {
 </plist>`;
 }
 
-/** The post-#710 shape: an explicit interface ahead of the port. */
+/**
+ * The post-#710, post-#3332 shape: an explicit interface ahead of the port,
+ * and an explicit `--ping-interval 30` after it — fully reconciled on both
+ * dimensions, so a test using this fixture to mean "already correct,
+ * nothing to do" stays true after #3332 added the second dimension.
+ */
 function pinnedPlist(iface = '127.0.0.1') {
   return legacyPlist().replace(
-    '        <string>--port</string>',
-    `        <string>--interface</string>\n        <string>${iface}</string>\n        <string>--port</string>`
+    '        <string>--port</string>\n        <string>3100</string>',
+    `        <string>--interface</string>\n        <string>${iface}</string>\n`
+      + '        <string>--port</string>\n        <string>3100</string>\n'
+      + '        <string>--ping-interval</string>\n        <string>30</string>'
   );
 }
 
@@ -71,9 +78,13 @@ WantedBy=default.target
 `;
 }
 
-/** The Linux analogue of {@link pinnedPlist}: an explicit interface ahead of the port. */
+/**
+ * The Linux analogue of {@link pinnedPlist}: an explicit interface and
+ * `--ping-interval 30` ahead of the port — fully reconciled on both
+ * dimensions (#3332).
+ */
 function pinnedUnit(iface = '127.0.0.1') {
-  return legacyUnit().replace(' --port', ` --interface ${iface} --port`);
+  return legacyUnit().replace(' --port 3100', ` --interface ${iface} --port 3100 --ping-interval 30`);
 }
 
 describe('ttyd-bind.desiredBind', () => {
@@ -110,7 +121,13 @@ describe('ttyd-bind.describeInstalledBind', () => {
     const d = describeInstalledBind(args);
     assert.equal(d.iface, null);
     assert.equal(d.port, '3100');
+    assert.equal(d.pingInterval, null, 'a job with no --ping-interval reports it as null (#3332)');
     assert.equal(d.wide, true, 'no --interface means every interface');
+  });
+
+  it('reads an installed --ping-interval value (#3332)', () => {
+    const { args } = parseProgramArguments(pinnedPlist());
+    assert.equal(describeInstalledBind(args).pingInterval, '30');
   });
 
   it('reads an explicit 0.0.0.0 as wide too', () => {
@@ -149,25 +166,27 @@ describe('ttyd-bind.describeInstalledBind', () => {
 });
 
 describe('ttyd-bind.planReconcile', () => {
-  it('rewrites a legacy port-only job to loopback', () => {
+  it('rewrites a legacy port-only job to loopback and pins ping-interval to 30 (#3332)', () => {
     const plan = planReconcile(legacyPlist(), { ingressMode: 'direct' });
     assert.equal(plan.action, 'rewrite');
     assert.equal(plan.to, '127.0.0.1');
     const { args } = parseProgramArguments(plan.xml);
     assert.deepEqual(
       args.slice(args.indexOf('--url-arg') + 1, args.indexOf('--client-option')),
-      ['--interface', '127.0.0.1', '--port', '3100'],
-      'the interface is inserted ahead of the port and nothing else moves'
+      ['--interface', '127.0.0.1', '--ping-interval', '30', '--port', '3100'],
+      'both are inserted ahead of the port and nothing else moves'
     );
   });
 
   it('changes nothing else in the file', () => {
     const before = legacyPlist();
     const plan = planReconcile(before, { ingressMode: 'direct' });
-    // Everything except the two inserted lines must survive byte-for-byte.
+    // Everything except the four inserted lines must survive byte-for-byte.
     const stripped = plan.xml
       .replace('        <string>--interface</string>\n', '')
-      .replace('        <string>127.0.0.1</string>\n', '');
+      .replace('        <string>127.0.0.1</string>\n', '')
+      .replace('        <string>--ping-interval</string>\n', '')
+      .replace('        <string>30</string>\n', '');
     assert.equal(stripped, before, 'the edit must be surgical, not a regeneration');
   });
 
@@ -175,6 +194,37 @@ describe('ttyd-bind.planReconcile', () => {
     const plan = planReconcile(pinnedPlist(), { ingressMode: 'direct' });
     assert.equal(plan.action, 'none');
     assert.equal(plan.reason, 'already-correct');
+  });
+
+  it('pins ping-interval to 30 even when the interface is already correct (#3332)', () => {
+    const withoutPing = pinnedPlist().replace(
+      '        <string>--ping-interval</string>\n        <string>30</string>\n', ''
+    );
+    const plan = planReconcile(withoutPing, { ingressMode: 'direct' });
+    assert.equal(plan.action, 'rewrite');
+    assert.equal(plan.reason, 'ping-interval-changed');
+    assert.equal(plan.to, '127.0.0.1', 'the interface itself is unchanged -- only ping-interval needed fixing');
+    const { args } = parseProgramArguments(plan.xml);
+    assert.equal(describeInstalledBind(args).iface, '127.0.0.1');
+    assert.equal(describeInstalledBind(args).pingInterval, '30');
+  });
+
+  it('replaces an installed --ping-interval that is not 30, leaving the interface alone', () => {
+    const wrongPing = pinnedPlist().replace(
+      '        <string>--ping-interval</string>\n        <string>30</string>',
+      '        <string>--ping-interval</string>\n        <string>5</string>'
+    );
+    const plan = planReconcile(wrongPing, { ingressMode: 'direct' });
+    assert.equal(plan.action, 'rewrite');
+    const { args } = parseProgramArguments(plan.xml);
+    assert.equal(describeInstalledBind(args).pingInterval, '30');
+    assert.equal(describeInstalledBind(args).iface, '127.0.0.1');
+  });
+
+  it('does NOT pin ping-interval in caddy mode either -- the same "leave it alone entirely" contract as the interface', () => {
+    const noPing = legacyPlist();
+    const plan = planReconcile(noPing, { ingressMode: 'caddy' });
+    assert.equal(plan.action, 'none', 'caddy mode is the cutover\'s business, for both dimensions');
   });
 
   it('re-pins a job someone widened, rather than honouring it', () => {
@@ -231,22 +281,22 @@ describe('ttyd-bind.planReconcile', () => {
 });
 
 describe('ttyd-bind.planReconcileSystemd (#2933)', () => {
-  it('rewrites a legacy port-only job to loopback', () => {
+  it('rewrites a legacy port-only job to loopback and pins ping-interval to 30 (#3332)', () => {
     const plan = planReconcileSystemd(legacyUnit(), { ingressMode: 'direct' });
     assert.equal(plan.action, 'rewrite');
     assert.equal(plan.to, '127.0.0.1');
     const { args } = parseExecStartArgs(plan.unitText);
     assert.deepEqual(
       args.slice(args.indexOf('--url-arg') + 1, args.indexOf('--client-option')),
-      ['--interface', '127.0.0.1', '--port', '3100'],
-      'the interface is inserted ahead of the port and nothing else moves'
+      ['--interface', '127.0.0.1', '--ping-interval', '30', '--port', '3100'],
+      'both are inserted ahead of the port and nothing else moves'
     );
   });
 
   it('changes nothing else in the file', () => {
     const before = legacyUnit();
     const plan = planReconcileSystemd(before, { ingressMode: 'direct' });
-    const stripped = plan.unitText.replace('--interface 127.0.0.1 --port', '--port');
+    const stripped = plan.unitText.replace('--interface 127.0.0.1 --ping-interval 30 --port', '--port');
     assert.equal(stripped, before, 'the edit must be surgical, not a regeneration');
   });
 
@@ -254,6 +304,31 @@ describe('ttyd-bind.planReconcileSystemd (#2933)', () => {
     const plan = planReconcileSystemd(pinnedUnit(), { ingressMode: 'direct' });
     assert.equal(plan.action, 'none');
     assert.equal(plan.reason, 'already-correct');
+  });
+
+  it('pins ping-interval to 30 even when the interface is already correct (#3332)', () => {
+    const withoutPing = pinnedUnit().replace(' --ping-interval 30', '');
+    const plan = planReconcileSystemd(withoutPing, { ingressMode: 'direct' });
+    assert.equal(plan.action, 'rewrite');
+    assert.equal(plan.reason, 'ping-interval-changed');
+    assert.equal(plan.to, '127.0.0.1', 'the interface itself is unchanged -- only ping-interval needed fixing');
+    const { args } = parseExecStartArgs(plan.unitText);
+    assert.equal(describeInstalledBind(args).iface, '127.0.0.1');
+    assert.equal(describeInstalledBind(args).pingInterval, '30');
+  });
+
+  it('replaces an installed --ping-interval that is not 30, leaving the interface alone', () => {
+    const wrongPing = pinnedUnit().replace('--ping-interval 30', '--ping-interval 5');
+    const plan = planReconcileSystemd(wrongPing, { ingressMode: 'direct' });
+    assert.equal(plan.action, 'rewrite');
+    const { args } = parseExecStartArgs(plan.unitText);
+    assert.equal(describeInstalledBind(args).pingInterval, '30');
+    assert.equal(describeInstalledBind(args).iface, '127.0.0.1');
+  });
+
+  it('does NOT pin ping-interval in caddy mode either -- the same "leave it alone entirely" contract as the interface', () => {
+    const plan = planReconcileSystemd(legacyUnit(), { ingressMode: 'caddy' });
+    assert.equal(plan.action, 'none', 'caddy mode is the cutover\'s business, for both dimensions');
   });
 
   it('re-pins a job someone widened, rather than honouring it', () => {
@@ -714,10 +789,13 @@ describe('planReconcileSystemd against a REAL generateTtydUnitFile unit (Archite
     assert.equal(describeInstalledBind(parseExecStartArgs(plan.unitText).args).iface, '127.0.0.1');
   });
 
-  it('is a no-op once a real unit is already pinned to loopback', () => {
+  it('is a no-op on INTERFACE once a real unit is already pinned to loopback, but still pins ping-interval (#3332): the generator does not set it yet', () => {
     const plan = planReconcileSystemd(realUnit('127.0.0.1'), { ingressMode: 'direct' });
-    assert.equal(plan.action, 'none');
-    assert.equal(plan.reason, 'already-correct');
+    assert.equal(plan.action, 'rewrite');
+    assert.equal(plan.reason, 'ping-interval-changed');
+    assert.deepEqual(linuxSystemd.verifyTtydUnitFileContract(plan.unitText), [],
+      'the ping-interval insertion must also pass the generator\'s own quoting contract');
+    assert.equal(describeInstalledBind(parseExecStartArgs(plan.unitText).args).pingInterval, '30');
   });
 
   it('still refuses a real unit that is socket-bound while config claims direct mode', () => {
