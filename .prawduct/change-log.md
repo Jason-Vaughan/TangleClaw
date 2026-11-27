@@ -203,6 +203,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   "PRR-A R-Gate RN BLOCKING"/"Critic RN blocking N" framing with the plain issue number and
   the technical reasoning alone — pre-existing labeled comments elsewhere in these files,
   from unrelated prior cars, were left untouched).
+- PRR-A R-Gate R5 (`5dffa76c`): **APPROVE** — 0 blocking, 0 warning, 0 note. Confirmed the R4
+  fix consumes only the signal(s) actually matched, consuming both only on genuine overlap;
+  the reverse-order test covers the R4 failure, the overlap test covers R3's. Independent PR
+  reviewer re-pass at the same head: 0 blocking, 0 warning, 0 note (the long-carried
+  test-evidence staleness finding finally accepted outright rather than re-filed a 5th time,
+  per its own prior round's recommendation). This closes the PRR-A review loop on this car —
+  5 rounds, each catching a genuine, independently-confirmed bug in `pendingMarkup`'s #3326
+  dedup logic (R1: matching any turn, not the trailing one; R2: the trailing search walking
+  past an assistant reply; R3: one echo double-consuming two pending items across the two
+  signals; R4: one match wrongly spending both signals' consumption).
 
 ## 2026-11-24 — v6.6.0 release cut (Milestone #94), Car V660-W2-REL
 
