@@ -17,6 +17,13 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.6.4 — Engine failover, delegate succession, lifecycle progress, and settings parity
+
+- **Configurable engine fallback chains** (#3271) — `lib/engine-fallback-chain.js`: per-member primary, secondary, and tertiary engine/model/effort profiles with deterministic outage triggers, bounded retries, and return-to-primary behavior; Fleet settings UI and live health checks remain follow-up work.
+- **Delegate role succession** (#3272) — `lib/delegate-succession.js#failoverToSurrogate`/`#recoverToPrimary`: configurable surrogate succession with a split-brain guard based on the store's live active-coordinator state.
+- **Lifecycle stage progress** (#3277) — `public/v6-lifecycle-stage-progress.js`: runtime-driven startup and wrap indicators with human-readable stages and no fabricated percentage; V6 shell mounting remains follow-up work.
+- **Project settings parity endpoint** (#3278) — `GET /api/projects/:name/settings-parity`: exposes resolved settings and schema-drift audit to authorized callers.
+
 ## v6.6.3 — Fleet policies, safer parallel waves, and project-management helpers
 
 - **Fleet membership management** (#3262) — `lib/fleet-membership.js`, `lib/routes/v6-fleets.js`: domain operations and a self-contained router add/remove existing workspace projects, with an active-session safeguard; live server mounting remains follow-up work.
