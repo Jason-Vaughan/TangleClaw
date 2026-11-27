@@ -333,6 +333,14 @@
         "lib/routes/config.js"
       ]
     },
+    "settings-parity": {
+      "label": "area:settings-parity",
+      "why": "Settings API parity (#3278, V6-049): a schema-validation audit primitive any settings domain can run itself through, plus the one read route it currently drives -- a project's own resolved config plus its parity audit (`GET /api/projects/:name/settings-parity`), additive alongside the existing `PATCH /api/projects/:name` in `server.js`. Distinct from `config` (the GLOBAL settings read/save) and from `fleet-sdlc-policy` (a specific policy's own shape, not a generic audit over any schema). Owned by no other family.",
+      "paths": [
+        "lib/routes/settings-parity.js",
+        "lib/routes/projects.js"
+      ]
+    },
     "external-code-security": {
       "label": "area:external-code-security",
       "why": "The untrusted-PR review boundary (#1554): sanitizing and non-executably fencing untrusted external PR text, and checking a review session's declared capabilities against the read-only review contract ADR 0014 requires. Owned by no other family; docs/external-code-security.md is the full write-up.",
