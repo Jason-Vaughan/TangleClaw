@@ -17,6 +17,15 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v6.6.3 — Fleet policies, safer parallel waves, and project-management helpers
+
+- **Fleet membership management** (#3262) — `lib/fleet-membership.js`, `lib/routes/v6-fleets.js`: domain operations and a self-contained router add/remove existing workspace projects, with an active-session safeguard; live server mounting remains follow-up work.
+- **Fleet delegate assignment helper** (#3263) — `lib/delegate-assignment.js#assignFleetDelegate`: updates coordinator roles and member configuration when explicitly invoked; no route/UI wiring or control-assignment authority update is included.
+- **Safe wave parallelization** (#3264) — `lib/v6/c3-wave-scheduler.js#validateParallelWavePlan`: adds a default-on `maximizeSafeParallelization` policy and reviewer/integrator-capacity validation.
+- **Fleet SDLC policy** (#3265) — `lib/fleet-sdlc-policy.js#validateFleetSdlcPolicy`/`#resolveFleetSdlcPolicy`/`#evaluateCarAdmission`: validates and resolves fleet issue/roadmap admission settings; a dispatch caller is separate follow-up work.
+- **Look-ahead eligibility** (#3268) — `lib/v6/c3-wave-scheduler.js#validateLookAheadEligibility`: checks dependencies, file-scope conflicts, and main-base freshness, then reports merge eligibility separately.
+- **Project attachment options** (#3289) — `lib/projects.js#attachProject`: honors contained `options.path` and validated `options.engine`; V6 wizard discovery and route forwarding remain follow-up work.
+
 ## v6.6.2 — Interactive choices, per-engine health indicators, V6 chat refinements, and scratch-server reliability
 
 - **Interactive-choice and confirmation prompt module** (#3259) — `public/v6-interactive-choices.js`: standalone audited detection for numbered menus, selector dialogs, folder-trust prompts, and multi-choice questions with an explicit free-form option. Live V6 chat wiring remains a follow-up.
