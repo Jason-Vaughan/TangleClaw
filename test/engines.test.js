@@ -3756,6 +3756,63 @@ describe('engines', () => {
           logger.setConsoleStream(null);
         }
       });
+
+      describe('fail-safe: a missing canonical script never ships a hook that would fail (#3313, R-Gate R1 WARNING, PR #3339)', () => {
+        it('_dropUnavailableHookEntries drops every entry when the canonical dir has no scripts at all', () => {
+          const baseline = { SessionStart: [{ matcher: 'startup|clear|compact', hooks: [{ type: 'command', command: `{{TANGLECLAW_DIR}}/data/hooks/sessionstart-prime-claude.sh` }] }] };
+          const result = engines._dropUnavailableHookEntries(baseline, projectDir);
+          assert.ok(!result.SessionStart, 'no usable script -- no hook, rather than one guaranteed to fail');
+        });
+
+        it('_dropUnavailableHookEntries keeps an entry whose script is actually present at the canonical path', () => {
+          engines._syncCanonicalHookScripts(); // real copy lands at the (overridden) canonicalRoot for this describe block
+          const baseline = { SessionStart: [{ matcher: 'startup|clear|compact', hooks: [{ type: 'command', command: `{{TANGLECLAW_DIR}}/data/hooks/sessionstart-prime-claude.sh` }] }] };
+          const result = engines._dropUnavailableHookEntries(baseline, projectDir);
+          assert.deepEqual(result, baseline, 'an available script\'s entry is passed through unchanged');
+        });
+
+        it('_dropUnavailableHookEntries drops only the entries whose own script is missing, keeping the rest', () => {
+          engines._syncCanonicalHookScripts(); // only the real (claude) pair lands; the codex pair never ships
+          const baseline = {
+            SessionStart: [
+              { matcher: 'startup|clear|compact', hooks: [{ type: 'command', command: `{{TANGLECLAW_DIR}}/data/hooks/sessionstart-prime-claude.sh` }] },
+              { matcher: 'startup|clear|compact', hooks: [{ type: 'command', command: `{{TANGLECLAW_DIR}}/data/hooks/sessionstart-prime-codex.sh` }] }
+            ]
+          };
+          const result = engines._dropUnavailableHookEntries(baseline, projectDir);
+          assert.equal(result.SessionStart.length, 1);
+          assert.match(result.SessionStart[0].hooks[0].command, /sessionstart-prime-claude\.sh/);
+        });
+
+        it('syncEngineHooks writes no SessionStart hook at all when the canonical sync has no usable prior copy to fall back on', () => {
+          // A canonicalInstallRoot whose parent path component is a FILE, not a
+          // directory: fs.mkdirSync(..., {recursive: true}) fails with ENOTDIR,
+          // so _syncCanonicalHookScripts never creates the dir and no script is
+          // ever written there -- a genuine "sync failed, nothing usable exists"
+          // case, not merely an empty-but-creatable directory.
+          const blockerFile = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-hook-blocker-'));
+          const blockerPath = path.join(blockerFile, 'not-a-directory');
+          fs.writeFileSync(blockerPath, 'this is a file, not a directory');
+          const saved = engines._internal.canonicalInstallRoot;
+          engines._internal.canonicalInstallRoot = () => blockerPath;
+          try {
+            writeProjConfig({ engine: 'claude', silentPrime: true });
+            engines.syncEngineHooks(projectDir);
+            // Nothing to write and no prior file: syncEngineHooks correctly
+            // creates no file at all here, rather than an empty placeholder
+            // (see _reconcileHooksFile's own "no file to add it to" case) --
+            // the settings file's absence is itself the proof no hook shipped.
+            const localFile = path.join(projectDir, '.claude', engines.LOCAL_SETTINGS_BASENAME);
+            if (fs.existsSync(localFile)) {
+              const settings = JSON.parse(fs.readFileSync(localFile, 'utf8'));
+              assert.ok(!settings.hooks || !settings.hooks.SessionStart, 'no hook is written when no usable canonical script exists');
+            }
+          } finally {
+            engines._internal.canonicalInstallRoot = saved;
+            fs.rmSync(blockerFile, { recursive: true, force: true });
+          }
+        });
+      });
     });
 
     it('does not run for non-claude engines even with silentPrime enabled', () => {
