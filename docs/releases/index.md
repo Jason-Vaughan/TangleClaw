@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.6.2 — Interactive choices, per-engine health indicators, V6 chat refinements, and scratch-server reliability](v6.6.2.md)
+- [v6.6.3 — Fleet policies, safer parallel waves, and project-management helpers](v6.6.3.md)
 
 ## Recent releases
+
+- [v6.6.2 — Interactive choices, per-engine health indicators, V6 chat refinements, and scratch-server reliability](v6.6.2.md)
 
 - [v6.6.1 — TCC-bootstrapped Codex startup, offline conversation history, and V6 layout fixes](v6.6.1.md)
 
