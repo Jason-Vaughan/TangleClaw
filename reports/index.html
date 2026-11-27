@@ -256,6 +256,7 @@
     <div class="nav-links" style="align-items:center;gap:0.75rem;">
       <label for="topnav-report-picker" style="color:var(--text-muted);font-size:0.82rem;font-weight:700;">Jump to Report (83):</label>
       <select id="topnav-report-picker" aria-label="Select a Sprint Report" onchange="if(this.value)window.location.href=this.value" style="background:var(--bg-card-alt);color:var(--text);border:1px solid var(--cyan);border-radius:8px;padding:0.38rem 0.65rem;font-size:0.84rem;font-weight:600;max-width:390px;cursor:pointer;">
+          <option value="./v6.6.4/">📡 [Live Sprint] v6.6.4 — Live Wave &amp; Gate Tracker</option>
           <option value="./v6.6.3/">📡 [Live Sprint] v6.6.3 — Live Wave &amp; Gate Tracker</option>
           <option value="./v6.6.2/">📡 [Live Sprint] v6.6.2 — Live Wave &amp; Gate Tracker</option>
           <option value="./v6.6.1/">📡 [Live Sprint] v6.6.1 — Live Wave &amp; Gate Tracker</option>
@@ -387,6 +388,7 @@
         </div>
         <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;flex:1;max-width:560px;justify-content:flex-end;">
           <select id="hero-report-picker" aria-label="Quick Report Picker" onchange="if(this.value)window.location.href=this.value" style="flex:1;min-width:260px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-hi);border-radius:10px;padding:0.55rem 0.8rem;font-size:0.9rem;font-weight:600;cursor:pointer;">
+          <option value="./v6.6.4/">📡 [Live Sprint] v6.6.4 — Live Wave &amp; Gate Tracker</option>
           <option value="./v6.6.3/">📡 [Live Sprint] v6.6.3 — Live Wave &amp; Gate Tracker</option>
           <option value="./v6.6.2/">📡 [Live Sprint] v6.6.2 — Live Wave &amp; Gate Tracker</option>
           <option value="./v6.6.1/">📡 [Live Sprint] v6.6.1 — Live Wave &amp; Gate Tracker</option>
@@ -480,7 +482,31 @@
     </section>
 
     <div class="report-list">
-            <a class="report-card" href="./v6.6.3/" data-release="v6.6.3">
+      <!-- LIVE_SPRINT_CARD_START -->
+      <article class="report-card" style="border-color:rgba(56,189,248,0.65);background:linear-gradient(135deg,rgba(15,23,42,0.96),rgba(14,116,144,0.18));">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-cyan">● Live Sprint In Progress · Updated 2026-11-27 01:48 UTC</span>
+            <h2 class="report-title"><a href="./v6.6.4/">TangleClaw <code>v6.6.4</code> — Live Wave &amp; Gate Tracker</a></h2>
+          </div>
+          <span class="badge badge-purple">5/5 Cars Merged · 0 In Review</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          <strong>Live Sprint Telemetry (Auto-Synced from <code>LANE_QUEUE.md</code>):</strong> TangleClaw Live Lane Queue — Overnight Train `v6.6.1` -&gt; `v6.6.5`.
+          Current wave status: <code>W1-A: MERGED (PR #3299 @ b9fc8822 → main @ 9ae51a74 · W1-B: MERGED (PR #3286 @ 910893c6 → main @ bdfa1730 · W1-C: MERGED (PR #3293 @ fdfd394b → main @ 322150ab · W1-D: MERGED (PR #3288 @ b7357d8e → main @ 070c21bc · W2-REL: RELEASED &amp; DEPLOYED — PR #3307 @ b0573ad6 mer</code>.
+          Open the live interactive report below to inspect real-time car progress, Builder/PRR lane assignments, and gate statuses as waves progress.
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-cyan">5 Chartered Wave Rows</span>
+          <span class="badge badge-green">5 Merged · 0 In Review</span>
+          <span class="badge badge-purple">State: V6.6.3 COMPLETE and live on :3102; V6.6.4 Wave 1 COMPLETE (4/4 PRs merged); Wave 2 release-cut PR #3321 open, CI pending</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v6.6.4/">📡 Open v6.6.4 Live Sprint Tracker →</a>
+        </div>
+      </article>
+      <!-- LIVE_SPRINT_CARD_END -->
+      <a class="report-card" href="./v6.6.3/" data-release="v6.6.3">
         <div class="card-top"><span class="version-badge">v6.6.3</span><span class="status-pill settled">Settled</span></div>
         <h3>TangleClaw Sprint v6.6.3 — Live Sprint Progress &amp; Telemetry Report</h3>
         <p class="card-desc">Published Gate 4 Sprint Report for v6.6.3.</p>
