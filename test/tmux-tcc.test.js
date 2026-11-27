@@ -216,6 +216,38 @@ function withContentionRetry(fn, attempts = 3) {
 }
 
 /**
+ * Poll until `tmux.hasSession(name)` reports `wantPresent` (#3300) — the
+ * attach-proxy readiness race `withContentionRetry` alone does not close:
+ * that helper retries the WHOLE test body (minting a fresh session name
+ * each attempt) against a budget-exceeded real round-trip, but a bootstrap
+ * call that has already returned `true` can still have its attach-proxy
+ * session land on the default tmux server a short moment AFTER the function
+ * call returns — a visibility race between "the bootstrap reported success"
+ * and "the proxy session is actually registered with the server" that
+ * retrying the whole test does not structurally close, only reduces the
+ * odds of hitting. Confirmed real on GitHub Actions Linux CI (issue #3300,
+ * commit 070c21bc — `withContentionRetry` already existed there and the
+ * suite still failed); this sandbox's own tmux is fast enough that 5/5 local
+ * runs never reproduce it, so the fix has to be a bounded, generous wait
+ * rather than something tuned against a reproduction this machine can show.
+ * Fails the test with a clear timeout message, never silently gives up.
+ * @param {string} name - tmux session name
+ * @param {boolean} [wantPresent]
+ * @param {number} [timeoutMs]
+ * @returns {void}
+ */
+function waitForHasSession(name, wantPresent = true, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (tmux.hasSession(name) === wantPresent) return;
+    if (Date.now() >= deadline) {
+      assert.fail(`timed out after ${timeoutMs}ms waiting for tmux.hasSession('${name}') to read ${wantPresent}`);
+    }
+    execFileSync('sleep', ['0.1']);
+  }
+}
+
+/**
  * Point `tmux._tccSeams.homedir` at a scratch directory and create `rel`
  * (e.g. `Documents/proj`) inside it, real on disk — never inside the actual
  * operator home.
@@ -296,7 +328,7 @@ describe('sessionSocketFlags (#2929)', () => {
       });
       // The default server DOES have a same-named session (the attach
       // proxy) — proving this isn't merely "absent on default".
-      assert.equal(tmux.hasSession(name), true);
+      waitForHasSession(name);
       assert.deepEqual(tmux.sessionSocketFlags(name), ['-L', tmux.TCC_SOCKET]);
     });
   });
@@ -316,7 +348,7 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
     createdDefault.push(name);
     const created = tmux.createSessionWithTccBootstrap(name, { cwd: os.tmpdir() });
     assert.equal(created, true);
-    assert.equal(tmux.hasSession(name), true);
+    waitForHasSession(name);
     assert.throws(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
   });
 
@@ -338,7 +370,7 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
       // ...with the usual attach-only proxy on the default server, never a
       // real session created there directly.
-      assert.equal(tmux.hasSession(name), true);
+      waitForHasSession(name);
       assert.deepEqual(tmux.sessionSocketFlags(name), ['-L', tmux.TCC_SOCKET]);
     });
   });
@@ -370,7 +402,7 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
       // ...and the default server has a same-named proxy, attach-only, with its
       // own status line off.
-      assert.equal(tmux.hasSession(name), true);
+      waitForHasSession(name);
       // #3130 — a raw `execFileSync` here, unlike `tmux.hasSession` above,
       // does not go through `lib/tmux.js`'s own `TMUX`-stripping `_exec`, so
       // it must strip it itself to target the same TRUE default server a
@@ -429,7 +461,7 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       });
       assert.equal(bootstrapCalls, 1, 'bootstraps exactly once when the authorized server was absent');
       assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
-      assert.equal(tmux.hasSession(name), true, 'the default server still gets its attach proxy');
+      waitForHasSession(name);
     });
   });
 
@@ -514,7 +546,7 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
 
       // The real session still lands on the already-running authorized server.
       assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
-      assert.equal(tmux.hasSession(name), true, 'the default server still gets its attach proxy');
+      waitForHasSession(name);
     });
   });
 
@@ -537,7 +569,7 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       // The real session lives on the DEFAULT server directly — no
       // TCC-authorized session or attach proxy at all, unlike every
       // #3108-preferring path exercised above.
-      assert.equal(tmux.hasSession(name), true);
+      waitForHasSession(name);
       assert.deepEqual(tmux.sessionSocketFlags(name), [], 'no TCC-authorized session exists for this name — it landed on the default server directly');
       assert.throws(
         () => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }),
@@ -602,7 +634,7 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
       assert.equal(bootstrapCalls, 1, 'bootstraps exactly once, after evicting the stale server');
       assert.equal(evicted, true, 'the stale TCC-authorized server (holding only the anchor) was evicted before bootstrapping a fresh one');
       assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
-      assert.equal(tmux.hasSession(name), true, 'the default server still gets its attach proxy');
+      waitForHasSession(name);
     });
   });
 
@@ -742,7 +774,7 @@ describe('TCC attach-proxy follow-up fixes (#2929, issue comment #6699775329)', 
           assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
         }, 'must not crash with tmux\'s own "duplicate session" error');
       });
-      assert.equal(tmux.hasSession(name), true, 'the default server now has its attach proxy');
+      waitForHasSession(name);
     });
   });
 
@@ -754,7 +786,7 @@ describe('TCC attach-proxy follow-up fixes (#2929, issue comment #6699775329)', 
       withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
         assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
       });
-      assert.equal(tmux.hasSession(name), true);
+      waitForHasSession(name);
       assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
 
       assert.equal(tmux.killSession(name), true);
@@ -835,7 +867,7 @@ describe('TCC attach-proxy follow-up fixes (#2929, issue comment #6699775329)', 
       withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
         assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
       });
-      assert.equal(tmux.hasSession(name), true, 'the default-server proxy exists going in');
+      waitForHasSession(name);
 
       // A real, unshimmed `has-session` against the TCC-authorized socket
       // answers near-instantly — the slow shim below only matches a
@@ -870,7 +902,7 @@ describe('TCC attach-proxy follow-up fixes (#2929, issue comment #6699775329)', 
       withSelectivelySlowTmux('"run-shell /bin/ls -- "*', () => {
         assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
       });
-      assert.equal(tmux.hasSession(name), true, 'the default-server proxy exists going in');
+      waitForHasSession(name);
 
       // A FAST failure (no timeout at all) in tmux's OWN real wording for
       // a socket that exists but can't be connected to — confirmed against
