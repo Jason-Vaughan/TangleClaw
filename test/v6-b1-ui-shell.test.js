@@ -7656,6 +7656,39 @@ describe('turns in the order they happened, and a composer that empties on Enter
     const html = G.tcV6ConversationViewMarkup(view([ev(1, 'repeat me'), ev(2, 'something else entirely')], [], { pending }));
     assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*repeat me/);
   });
+
+  // #3326 (PRR-A R-Gate R2 BLOCKING): the R1 fix's own "trailing user
+  // event" search walked backward PAST a non-user entry to find the
+  // nearest user one, instead of checking whether the array's actual last
+  // entry is user — so a matching user event an ASSISTANT REPLY already
+  // answered still read as "trailing" and could suppress a brand-new send
+  // repeating that now-answered text.
+  it('an old matching recorded event followed by an assistant reply is no longer "trailing" and does not suppress a new identical pending send', () => {
+    const pending = { id: 12, text: 'repeat me' };
+    const html = G.tcV6ConversationViewMarkup(view([ev(1, 'repeat me'), { seq: 2, role: 'assistant', content: 'done' }], [], { pending }));
+    assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*repeat me/);
+  });
+
+  it('an old matching LIVE turn followed by an assistant reply is no longer "trailing" and does not suppress a new identical pending send', () => {
+    const pending = { id: 13, text: 'repeat me' };
+    const html = G.tcV6ConversationViewMarkup(view([], [{ role: 'user', text: 'repeat me' }, { role: 'assistant', text: 'done' }], { pending }));
+    assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*repeat me/);
+  });
+
+  // #3326 (PRR-A R-Gate R2 BLOCKING, resolution guidance): a genuinely
+  // trailing, unanswered turn/event is still matched by TEXT, not a stable
+  // send/echo identity, so it cannot tell "the pane echoed THIS pending
+  // send" apart from "the operator force-sent the identical words again
+  // before the first settled." Per PRR-A's own guidance, favor showing a
+  // possibly-redundant bubble over dropping a legitimate new send: each
+  // trailing signal is consumed by at most the FIRST (chronologically
+  // earliest) matching pending item, never a second one with the same text.
+  it('a second, genuinely new pending send with the same text as an already-matched trailing turn is preserved, not also suppressed', () => {
+    const pending = [{ id: 14, text: 'same text' }, { id: 15, text: 'same text' }];
+    const html = G.tcV6ConversationViewMarkup(view([], [{ role: 'user', text: 'same text' }], { pending }));
+    assert.equal((html.match(/is-pending/g) || []).length, 1, 'the first pending item is matched by the trailing turn; the second is not suppressed by the same signal twice');
+    assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*same text/);
+  });
 });
 
 describe('sending, through the controller (#3079 item 6)', () => {

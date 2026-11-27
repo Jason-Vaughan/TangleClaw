@@ -3878,28 +3878,50 @@
   function pendingMarkup(pending, lastSent, thumbs, unfurls, liveTurns, events) {
     const turns = Array.isArray(liveTurns) ? liveTurns : [];
     const evs = Array.isArray(events) ? events : [];
-    // #3326 (PRR-A R-Gate R1 BLOCKING): matched against ANY `user` turn in
-    // `liveTurns` originally — re-sending text that repeats an OLDER turn
-    // (or one `sameMessage`'s fuzzy long-prompt-prefix match treats as
-    // equal) would wrongly match that stale turn and suppress the NEW
-    // pending bubble before the pane has echoed/settled it at all. Only
-    // the TRAILING `user` turn — the one the pane most recently showed —
-    // is actually evidence that THIS send landed; same trailing-only
-    // reasoning `trailingUserEvent` below already applies to events.
-    let trailingUserTurn = null;
-    for (let i = turns.length - 1; i >= 0; i--) {
-      if (turns[i] && turns[i].role === 'user') { trailingUserTurn = turns[i]; break; }
-    }
-    let trailingUserEvent = null;
-    for (let i = evs.length - 1; i >= 0; i--) {
-      if (evs[i] && evs[i].role === 'user') { trailingUserEvent = evs[i]; break; }
-    }
+    // #3326 (PRR-A R-Gate R1/R2 BLOCKING): two distinct bugs in the
+    // original "trailing user turn/event" fix, both now closed:
+    //
+    // 1. R1 matched against ANY `user` turn in `liveTurns`/`events`, so
+    //    re-sending text that repeated an OLDER one wrongly suppressed the
+    //    NEW pending bubble. R2 found the R1 fix's OWN "trailing" search
+    //    still walked backward PAST a non-`user` entry looking for the
+    //    nearest `user` one, instead of checking whether the array's own
+    //    LAST entry is `user` — so an assistant reply landing after the
+    //    matching user turn/event did not stop it from still being read as
+    //    "trailing" and suppressing a brand-new send that happens to
+    //    repeat that now-ANSWERED text. Fixed: `trailingUserTurn`/
+    //    `trailingUserEvent` are only ever the array's actual last entry,
+    //    never a scan past later entries of any other role.
+    // 2. Even genuinely trailing-and-unanswered text is still matched by
+    //    CONTENT, not by a stable send/echo identity, so it cannot tell
+    //    apart "the pane echoed THIS pending send" from "the operator
+    //    force-sent the identical words again before the first one
+    //    settled" — a second, truly NEW pending item with the same text.
+    //    Per PRR-A's own resolution guidance, favor showing a possibly-
+    //    redundant bubble over silently dropping a legitimate new send:
+    //    each trailing signal is consumed by at most ONE pending item (the
+    //    earliest, since `pending` is chronological), so a second pending
+    //    item with the same text is never hidden by the same signal twice.
+    const lastTurn = turns[turns.length - 1];
+    const trailingUserTurn = (lastTurn && lastTurn.role === 'user') ? lastTurn : null;
+    const lastEvent = evs[evs.length - 1];
+    const trailingUserEvent = (lastEvent && lastEvent.role === 'user') ? lastEvent : null;
+    let turnConsumed = false;
+    let eventConsumed = false;
     // One bubble per send on its way (#3082: a forced send can overlap another).
-    const list = (Array.isArray(pending) ? pending : [pending])
-      .filter((p) => p && typeof p.text === 'string'
-        && !(lastSent && lastSent.id === p.id)
-        && !(trailingUserTurn && sameMessage(p.text, trailingUserTurn.text))
-        && !(trailingUserEvent && sameMessage(trailingUserEvent.content, p.text)));
+    const list = (Array.isArray(pending) ? pending : [pending]).filter((p) => {
+      if (!p || typeof p.text !== 'string') return false;
+      if (lastSent && lastSent.id === p.id) return false;
+      if (!turnConsumed && trailingUserTurn && sameMessage(p.text, trailingUserTurn.text)) {
+        turnConsumed = true;
+        return false;
+      }
+      if (!eventConsumed && trailingUserEvent && sameMessage(trailingUserEvent.content, p.text)) {
+        eventConsumed = true;
+        return false;
+      }
+      return true;
+    });
     return list.map((p) => `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${messageMarkup(p.text, thumbs, unfurls)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`).join('');
   }
 
