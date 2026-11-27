@@ -4,6 +4,26 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.6.4] - 2026-11-27
+
+### Added
+
+- **Configurable engine fallback chains** (#3271): adds per-member primary, secondary, and tertiary engine/model/effort profiles, deterministic failover triggers, bounded retries, and return-to-primary behavior when the primary recovers. Fleet settings UI and a live health-check loop remain follow-up work.
+- **Delegate role succession** (#3272): adds configurable primary-to-surrogate delegate failover and recovery, with a split-brain guard that requires the store to confirm the genuinely live active coordinator.
+- **Lifecycle stage progress** (#3277): adds startup and wrap progress indicators and human-readable stage labels to the Fleet Sidebar and central pane, driven by runtime telemetry rather than estimated percentages. V6 shell mounting remains follow-up work.
+- **Project settings parity endpoint** (#3278): adds `GET /api/projects/:name/settings-parity` to return resolved project configuration with a schema-drift audit for authorized assistants and Admin Fleet callers.
+
+### Verification
+
+- PR #3311 (#3271): merged as `a26289bf09834b556b8071ac15111ea96df5a6ca`; exact-head Tests run `45895630157` succeeded; A-Gate/Gate 3 A1171/A1172 APPROVED and R-Gate ACCEPT.
+- PR #3303 (#3272): merged as `d79bfb78593b218eef0e7182bcf1235889e74b56`; exact-head Tests run `45889106200` succeeded; A-Gate/Gate 3 A1153/A1154 APPROVED and R-Gate R2 ACCEPT.
+- PR #3294 (#3278): merged as `2fad8bd1ed57d7e8967b6e70b55115b0e5dc5d13`; exact-head Tests run `45881922065` succeeded; A-Gate/Gate 3 A1126/A1127 APPROVED and R-Gate R3 ACCEPT.
+- PR #3306 (#3277): merged as `98b9b167c325f0643a9331f31dc4545541fb73c8`; exact-head Tests run `45922059846` succeeded; A-Gate/Gate 3 A1200/A1201 APPROVED and R-Gate R3 ACCEPT.
+
+### Release state
+
+This document is part of the release-cut PR. The cut is not yet merged, tagged, or published. The release workflow will test the eventual merge commit and handle tagging and publication.
+
 ## [6.6.3] - 2026-11-26
 
 ### Added
