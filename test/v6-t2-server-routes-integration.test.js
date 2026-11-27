@@ -8,6 +8,7 @@ const os = require('node:os');
 const { DatabaseSync } = require('node:sqlite');
 const store = require('../lib/store');
 const { handleRequest, _v6PinnedLookup } = require('../server');
+const { bindProject } = require('./_shared-docs-callers');
 
 // v6 Train 2 (BRIDGE-2b, Car V60-T2-W2-ROUTES): live HTTP wiring for
 // lib/v6/b2-conversation-layer.js (#2982), lib/v6/b4-telemetry-header.js
@@ -874,6 +875,59 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
     it('POST /api/sprint-waves/sync requires operator/Master authorization', async () => {
       const res = await post('/api/sprint-waves/sync', {}, { operator: false });
       assert.ok([401, 403].includes(res.statusCode), res.body);
+    });
+  });
+
+  // #3325 (PRR-A R-Gate Round 1, BLOCKING 1): `?projectId=` must not let a
+  // caller read a DIFFERENT project's docs/releases -- the exact
+  // cross-project document disclosure this guards against. Each project
+  // gets a real `docs/releases/vX.Y.Z.md` under its own path, with a
+  // version only that project's own checkout carries, so a leaked read is
+  // directly observable in `snapshot.reports`.
+  describe('GET /api/sprint-waves ?projectId= authorization (#3325, PRR-A R-Gate Round 1 BLOCKING 1)', () => {
+    let projectA;
+    let projectB;
+    let boundA;
+
+    before(() => {
+      projectA = store.projects.create({ name: `scope-proj-a-${Date.now()}`, path: path.join(tempDir, 'scope-proj-a') });
+      projectB = store.projects.create({ name: `scope-proj-b-${Date.now()}`, path: path.join(tempDir, 'scope-proj-b') });
+      for (const [project, version, title] of [[projectA, 'v1.1.1', 'Project A Release'], [projectB, 'v2.2.2', 'Project B Release']]) {
+        const releasesDir = path.join(project.path, 'docs', 'releases');
+        fs.mkdirSync(releasesDir, { recursive: true });
+        fs.writeFileSync(path.join(releasesDir, `${version}.md`), `# ${title}\n`);
+      }
+      boundA = bindProject(projectA);
+    });
+
+    function reportIds(res) {
+      return json(res).snapshot.reports.map((r) => r.id);
+    }
+
+    it('a project session naming its OWN projectId reads its own reports, unaffected', async () => {
+      const res = await get(`/api/sprint-waves?projectId=${projectA.id}`, { operator: false, headers: boundA.headers });
+      assert.equal(res.statusCode, 200, res.body);
+      assert.deepEqual(reportIds(res), ['v1.1.1']);
+    });
+
+    it('a project session naming ANOTHER project\'s id is refused the disclosure, falling back to its own reports instead', async () => {
+      const res = await get(`/api/sprint-waves?projectId=${projectB.id}`, { operator: false, headers: boundA.headers });
+      assert.equal(res.statusCode, 200, res.body);
+      const ids = reportIds(res);
+      assert.ok(!ids.includes('v2.2.2'), `must not disclose project B's report; got ${JSON.stringify(ids)}`);
+      assert.deepEqual(ids, ['v1.1.1'], 'falls back to the caller\'s own bound project, not an empty/unconfigured read');
+    });
+
+    it('an unbound caller naming a project id gets no disclosure either, falling back to this server\'s own default', async () => {
+      const res = await get(`/api/sprint-waves?projectId=${projectB.id}`, { operator: false });
+      assert.equal(res.statusCode, 200, res.body);
+      assert.ok(!reportIds(res).includes('v2.2.2'), 'an unbound caller must not be able to read project B\'s reports by naming its id');
+    });
+
+    it('the operator naming a project id IS honoured -- unrestricted, consistent with how the operator is treated everywhere else', async () => {
+      const res = await get(`/api/sprint-waves?projectId=${projectB.id}`);
+      assert.equal(res.statusCode, 200, res.body);
+      assert.deepEqual(reportIds(res), ['v2.2.2']);
     });
   });
 });

@@ -2736,3 +2736,80 @@ describe('#3089 verifyFastFollowKaizenLinks', () => {
     assert.throws(() => e5Kaizen.verifyFastFollowKaizenLinks(db, null), TypeError);
   });
 });
+
+describe('native-sprint-tracker: sprintDataFromWaveRuns scope filtering (#3325 Fleet/Workspace Document & Wave Isolation)', () => {
+  const run = (id, createdAt, status, cars, metadata = {}, fleetId = 'f') => ({
+    id, fleetId, status, createdAt, metadata, waves: [Object.keys(cars)],
+    cars: Object.fromEntries(Object.entries(cars).map(([cid, c]) => [cid, { id: cid, status: 'pending', payload: {}, startedAt: null, completedAt: null, ...c }]))
+  });
+
+  it('with no scope given, behaves exactly as before #3325 (every run eligible)', () => {
+    const runs = {
+      a: run('a', 1, 'active', { carA: {} }, { projectId: 1 }),
+      b: run('b', 2, 'complete', { carB: {} }, { projectId: 2 })
+    };
+    assert.deepEqual(tracker.sprintDataFromWaveRuns(runs, 'current').cars.map((c) => c.id), ['carA']);
+    assert.deepEqual(tracker.sprintDataFromWaveRuns(runs, 'current', {}).cars.map((c) => c.id), ['carA']);
+  });
+
+  it('a scoped projectId excludes a same-version run belonging to a different project -- the #3325 cross-fleet leak', () => {
+    // Both runs resolve 'current' to their own newest active run, and both
+    // happen to tag the same metadata.version -- exactly the collision a
+    // request scoped by projectId must not let the OTHER project answer.
+    const runs = {
+      mine: run('mine', 1, 'active', { carMine: {} }, { projectId: 1, version: '1.0.0' }),
+      theirs: run('theirs', 2, 'active', { carTheirs: {} }, { projectId: 2, version: '1.0.0' })
+    };
+    assert.deepEqual(
+      tracker.sprintDataFromWaveRuns(runs, 'current', { projectId: 1 }).cars.map((c) => c.id), ['carMine']
+    );
+    assert.deepEqual(
+      tracker.sprintDataFromWaveRuns(runs, 'current', { projectId: 2 }).cars.map((c) => c.id), ['carTheirs']
+    );
+    assert.deepEqual(
+      tracker.sprintDataFromWaveRuns(runs, '1.0.0', { projectId: 1 }).cars.map((c) => c.id), ['carMine']
+    );
+  });
+
+  it('a run with no metadata.projectId at all is excluded once a projectId scope is given', () => {
+    const runs = { untagged: run('untagged', 1, 'active', { carA: {} }) };
+    // 'current' with nothing eligible answers the empty sprint (never a
+    // thrown error or the untagged run); a NAMED version with nothing
+    // eligible answers null, same as an unknown version always has.
+    assert.deepEqual(tracker.sprintDataFromWaveRuns(runs, 'current', { projectId: 1 }),
+      tracker.sprintDataFromWaveRuns({}, 'current', { projectId: 1 }));
+    assert.equal(tracker.sprintDataFromWaveRuns(
+      { untagged: run('untagged', 1, 'active', { carA: {} }, { version: '1.0.0' }) }, '1.0.0', { projectId: 1 }
+    ), null);
+  });
+
+  it('a scoped fleetId excludes a run tagged for a different fleet, independent of projectId', () => {
+    const runs = {
+      tiltA: run('tiltA', 1, 'active', { carA: {} }, {}, 'TiLT-Fleet'),
+      tiltB: run('tiltB', 2, 'active', { carB: {} }, {}, 'TangleClaw-Shared')
+    };
+    assert.deepEqual(
+      tracker.sprintDataFromWaveRuns(runs, 'current', { fleetId: 'TiLT-Fleet' }).cars.map((c) => c.id), ['carA']
+    );
+    assert.deepEqual(
+      tracker.sprintDataFromWaveRuns(runs, 'current', { fleetId: 'TangleClaw-Shared' }).cars.map((c) => c.id), ['carB']
+    );
+  });
+
+  it('projectId and fleetId both narrow together -- a run must match both when both are given', () => {
+    const runs = {
+      match: run('match', 1, 'active', { carA: {} }, { projectId: 1 }, 'TiLT-Fleet'),
+      wrongFleet: run('wrongFleet', 2, 'active', { carB: {} }, { projectId: 1 }, 'TangleClaw-Shared'),
+      wrongProject: run('wrongProject', 3, 'active', { carC: {} }, { projectId: 2 }, 'TiLT-Fleet')
+    };
+    assert.deepEqual(
+      tracker.sprintDataFromWaveRuns(runs, 'current', { projectId: 1, fleetId: 'TiLT-Fleet' }).cars.map((c) => c.id),
+      ['carA']
+    );
+  });
+
+  it('an empty runs map scoped to a projectId answers the empty "current" sprint, not an unscoped run', () => {
+    assert.deepEqual(tracker.sprintDataFromWaveRuns({}, 'current', { projectId: 1 }),
+      { version: null, cars: [], lanes: [], pullRequests: [], waves: [], learnings: [], releaseCommit: null });
+  });
+});

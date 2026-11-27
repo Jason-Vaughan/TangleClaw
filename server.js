@@ -9707,9 +9707,112 @@ route('GET', '/api/v6/legacy-projects/:legacyProjectId', (req, res, params) => {
 
 // ── E5: Closed-Loop Kaizen Ledger (#2980) ──
 
+/**
+ * The v6 logical project ids a numeric TangleClaw (legacy) project is
+ * entitled to act under (#3325 addendum, PRR-A R-Gate Round 1, BLOCKING 2):
+ * resolved through `v6_legacy_project_view`, the one real mapping from a
+ * `projects.id` to the v6 resource(s)/logical project(s) provisioned for
+ * it (`lib/store/_schema.js`'s own auto-provisioning trigger). Empty when
+ * this project has no v6 presence at all yet -- never a wildcard, and never
+ * guessed from the numeric id itself (e.g. assuming `'lp-' || projectId`),
+ * since a project can also belong to a multi-project fleet's own logical
+ * project, not only its auto-provisioned one.
+ * @param {number} projectId
+ * @returns {string[]}
+ */
+function _v6LogicalProjectIdsForLegacyProject(projectId) {
+  return v6Db().prepare('SELECT DISTINCT logical_project_id FROM v6_legacy_project_view WHERE legacy_project_id = ?')
+    .all(projectId).map((r) => r.logical_project_id);
+}
+
+/**
+ * Admit the operator, the Project Master, or any bound project session to a
+ * Kaizen ledger route (#3324), and say which logical project id(s) that
+ * caller may act under (#3325 addendum, PRR-A R-Gate Round 1, BLOCKING 2):
+ * Gate 4 ingestion and Gate 0 disposition are driven by `tc kaizen` from
+ * Obsr/PM sessions, not only the operator dashboard, so this family cannot
+ * gate on {@link operatorProjectCaller}'s operator-only need -- but a bound
+ * project session is not thereby trusted with every OTHER project's items
+ * on this (global, project-agnostic) ledger; each route below checks the
+ * returned scope against the item/body it is about to read or write.
+ * Writes `res` and returns `null` only when the caller may not use this
+ * route family at all (an unbound or invalid caller, via
+ * {@link operatorProjectCaller}'s own refusal); a project session with no
+ * v6 presence yet (`allowedLogicalProjectIds` empty) still passes this gate
+ * -- it can simply act on nothing, which the per-item check enforces. Named
+ * to end in `Caller` and returns a value a bare `if (!scope) return;`
+ * reads correctly (truthy object or `null`, never `{ok: false}`) so this
+ * route family's guard matches the same closed-world grammar
+ * `test/v6-master-release-qualification.test.js`'s static route-security
+ * check requires of every `/api/v6` route's first statement.
+ * @param {http.IncomingMessage} req - The request
+ * @param {http.ServerResponse} res - The response, written only on refusal
+ * @param {string} action - What the route does
+ * @returns {{allowedLogicalProjectIds: (string[]|null)}|null}
+ *   `allowedLogicalProjectIds` is `null` for the operator/Master (every
+ *   item, unrestricted), else the bound project's own resolved ids.
+ */
+function kaizenScopeCaller(req, res, action) {
+  const access = sharedDocsAccess.resolveAccess(req);
+  if (access.kind === sharedDocsAccess.KINDS.OPERATOR || access.kind === sharedDocsAccess.KINDS.MASTER) {
+    return { allowedLogicalProjectIds: null };
+  }
+  if (access.kind === sharedDocsAccess.KINDS.PROJECT) {
+    return { allowedLogicalProjectIds: _v6LogicalProjectIdsForLegacyProject(access.projectId) };
+  }
+  operatorProjectCaller(req, res, action);
+  return null;
+}
+
+/**
+ * Whether a kaizen-scoped caller (as {@link kaizenScopeCaller} resolved it) may
+ * act on `logicalProjectId` (#3325 addendum, PRR-A R-Gate Round 1, BLOCKING
+ * 2). `null` for `allowed` means unrestricted (the operator/Master); an
+ * array requires exact membership, including when `logicalProjectId` itself
+ * is not a string (an item/request naming no project at all is nobody's to
+ * claim by membership -- only the operator/Master may touch it).
+ * @param {string[]|null} allowed
+ * @param {*} logicalProjectId
+ * @returns {boolean}
+ */
+function _v6KaizenOwns(allowed, logicalProjectId) {
+  if (allowed === null) return true;
+  return typeof logicalProjectId === 'string' && allowed.includes(logicalProjectId);
+}
+
+/**
+ * Fetch a Kaizen item and verify the caller's scope owns it (#3325 addendum,
+ * PRR-A R-Gate Round 1, BLOCKING 2) -- folds "no such item" and "found, but
+ * not this caller's project" into the same 404 the sibling wave-run route
+ * (`GET /api/v6/projects/:id/wave-runs/:runId`) already uses for the
+ * identical reason, under two distinct codes, so neither answer by itself
+ * confirms which case it was. Writes `res` and returns null on either
+ * refusal.
+ * @param {http.ServerResponse} res
+ * @param {string} id
+ * @param {string[]|null} allowedLogicalProjectIds
+ * @returns {object|null}
+ */
+function _v6RequireOwnedKaizenItem(res, id, allowedLogicalProjectIds) {
+  const item = e5.getItem(v6Db(), id);
+  if (!item) {
+    errorResponse(res, 404, `Kaizen item "${id}" not found`, 'NOT_FOUND');
+    return null;
+  }
+  if (!_v6KaizenOwns(allowedLogicalProjectIds, item.logical_project_id)) {
+    errorResponse(res, 404, `Kaizen item "${id}" not found for this project`, 'ITEM_NOT_IN_PROJECT');
+    return null;
+  }
+  return item;
+}
+
 route('POST', '/api/v6/kaizen/items', (req, res, _params, body) => {
-  if (!operatorProjectCaller(req, res, 'detect a Kaizen item')) return;
+  const scope = kaizenScopeCaller(req, res, 'detect a Kaizen item');
+  if (!scope) return;
   const b = _v6Body(body);
+  if (!_v6KaizenOwns(scope.allowedLogicalProjectIds, b.logicalProjectId)) {
+    return errorResponse(res, 403, 'logicalProjectId must be one of your own project\'s v6 logical projects', 'FORBIDDEN');
+  }
   _v6Respond(res, e5.detectItem(v6Db(), {
     originSprint: b.originSprint, findingId: b.findingId, defectCategory: b.defectCategory,
     rootCause: b.rootCause, originEvidenceRefs: b.originEvidenceRefs, correctiveActionSpec: b.correctiveActionSpec,
@@ -9720,14 +9823,17 @@ route('POST', '/api/v6/kaizen/items', (req, res, _params, body) => {
 });
 
 route('GET', '/api/v6/kaizen/items/:id', (req, res, params) => {
-  if (!operatorProjectCaller(req, res, 'read a Kaizen item')) return;
-  const item = e5.getItem(v6Db(), params.id);
-  if (!item) return errorResponse(res, 404, `Kaizen item "${params.id}" not found`, 'NOT_FOUND');
+  const scope = kaizenScopeCaller(req, res, 'read a Kaizen item');
+  if (!scope) return;
+  const item = _v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds);
+  if (!item) return;
   jsonResponse(res, 200, item);
 });
 
 route('GET', '/api/v6/kaizen/items/:id/measurements', (req, res, params) => {
-  if (!operatorProjectCaller(req, res, 'read a Kaizen item\'s measurements')) return;
+  const scope = kaizenScopeCaller(req, res, 'read a Kaizen item\'s measurements');
+  if (!scope) return;
+  if (!_v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds)) return;
   jsonResponse(res, 200, e5.listMeasurements(v6Db(), params.id));
 });
 
@@ -9738,7 +9844,9 @@ route('GET', '/api/v6/kaizen/items/:id/measurements', (req, res, params) => {
 // can reach either state without the 4-Class proof rules/close precondition
 // actually running.
 route('PATCH', '/api/v6/kaizen/items/:id/state', (req, res, params, body) => {
-  if (!operatorProjectCaller(req, res, 'change a Kaizen item\'s lifecycle state')) return;
+  const scope = kaizenScopeCaller(req, res, 'change a Kaizen item\'s lifecycle state');
+  if (!scope) return;
+  if (!_v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds)) return;
   const b = _v6Body(body);
   let result;
   if (b.nextState === 'Effectiveness Measured') result = e5.markProvenEffective(v6Db(), { id: params.id });
@@ -9748,7 +9856,9 @@ route('PATCH', '/api/v6/kaizen/items/:id/state', (req, res, params, body) => {
 });
 
 route('POST', '/api/v6/kaizen/items/:id/measurements', (req, res, params, body) => {
-  if (!operatorProjectCaller(req, res, 'record a Kaizen measurement')) return;
+  const scope = kaizenScopeCaller(req, res, 'record a Kaizen measurement');
+  if (!scope) return;
+  if (!_v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds)) return;
   const b = _v6Body(body);
   _v6Respond(res, e5.recordMeasurement(v6Db(), {
     kaizenId: params.id, sprintVersion: b.sprintVersion, measurementKind: b.measurementKind,
@@ -9760,9 +9870,10 @@ route('POST', '/api/v6/kaizen/items/:id/measurements', (req, res, params, body) 
 // Dry-run: answers whether the 4-Class proof rules would pass right now,
 // without mutating anything — PATCH .../state is what actually commits.
 route('POST', '/api/v6/kaizen/items/:id/evaluate-effectiveness', (req, res, params) => {
-  if (!operatorProjectCaller(req, res, 'evaluate a Kaizen item\'s effectiveness')) return;
-  const item = e5.getItem(v6Db(), params.id);
-  if (!item) return errorResponse(res, 404, `Kaizen item "${params.id}" not found`, 'NOT_FOUND');
+  const scope = kaizenScopeCaller(req, res, 'evaluate a Kaizen item\'s effectiveness');
+  if (!scope) return;
+  const item = _v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds);
+  if (!item) return;
   _v6Respond(res, e5.canMarkProvenEffective(item, e5.listMeasurements(v6Db(), params.id)));
 });
 
@@ -9775,24 +9886,42 @@ route('POST', '/api/v6/kaizen/items/:id/evaluate-effectiveness', (req, res, para
 // lib/v6/e5-kaizen-ledger.js, which this car's file envelope does not
 // include.
 route('POST', '/api/v6/kaizen/items/:id/mark-regressed', (req, res, params) => {
-  if (!operatorProjectCaller(req, res, 'mark a Kaizen item regressed')) return;
-  const item = e5.getItem(v6Db(), params.id);
-  if (item && item.lifecycle_state === 'Closed') {
+  const scope = kaizenScopeCaller(req, res, 'mark a Kaizen item regressed');
+  if (!scope) return;
+  const item = _v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds);
+  if (!item) return;
+  if (item.lifecycle_state === 'Closed') {
     return _v6Respond(res, { ok: false, code: 'INVALID_TRANSITION' });
   }
   _v6Respond(res, e5.markRegressed(v6Db(), { id: params.id }));
 });
 
 route('POST', '/api/v6/kaizen/items/:id/gate0-disposition', (req, res, params, body) => {
-  if (!operatorProjectCaller(req, res, 'set a Kaizen item\'s Gate 0 disposition')) return;
+  const scope = kaizenScopeCaller(req, res, 'set a Kaizen item\'s Gate 0 disposition');
+  if (!scope) return;
+  if (!_v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds)) return;
   const b = _v6Body(body);
   _v6Respond(res, e5.setGate0Disposition(v6Db(), { id: params.id, disposition: b.disposition, rationale: b.rationale }));
 });
 
-route('GET', '/api/v6/kaizen/gate0-feed', (req, res) => {
-  if (!operatorProjectCaller(req, res, 'read the Gate 0 Kaizen feed')) return;
+route('GET', '/api/v6/kaizen/items', (req, res) => {
+  const scope = kaizenScopeCaller(req, res, 'list Kaizen items');
+  if (!scope) return;
   const query = parseQuery(reqUrl(req).search);
-  jsonResponse(res, 200, e5.gate0Feed(v6Db(), { logicalProjectId: query.logicalProjectId || undefined }));
+  const rows = typeof e5.listItems === 'function' ? e5.listItems(v6Db(), query) : e5.gate0Feed(v6Db(), { logicalProjectId: query.logicalProjectId || undefined });
+  const visible = scope.allowedLogicalProjectIds === null
+    ? rows : rows.filter((r) => _v6KaizenOwns(scope.allowedLogicalProjectIds, r.logical_project_id));
+  jsonResponse(res, 200, visible);
+});
+
+route('GET', '/api/v6/kaizen/gate0-feed', (req, res) => {
+  const scope = kaizenScopeCaller(req, res, 'read the Gate 0 Kaizen feed');
+  if (!scope) return;
+  const query = parseQuery(reqUrl(req).search);
+  const rows = e5.gate0Feed(v6Db(), { logicalProjectId: query.logicalProjectId || undefined });
+  const visible = scope.allowedLogicalProjectIds === null
+    ? rows : rows.filter((r) => _v6KaizenOwns(scope.allowedLogicalProjectIds, r.logical_project_id));
+  jsonResponse(res, 200, visible);
 });
 
 // ── Sprint Report Validator v3 (#2979) ──
@@ -11198,15 +11327,90 @@ const ROADMAP_SYNC_STATUS_DEFAULT_PATH = '/Users/jasonvaughan/Documents/Projects
 const SPRINT_REPORTS_HUB_DEFAULT_PATH = '/Users/jasonvaughan/Documents/Projects/Shared/TangleClaw-Shared/sprint-reports/index.html';
 
 /**
- * Bare `X.Y.Z` versions this checkout's own `docs/releases/*.md` files name
+ * The scope a sprint-waves/reports/github-activity request resolves to
+ * (#3325 Fleet/Workspace Document & Wave Isolation): which project's and
+ * which group's data to read, instead of always this server's own checkout
+ * and its own fleet's shared TangleClaw-Shared directory. Query params win
+ * when given (`?projectId=`, `?fleetId=`, `?groupId=`); a `projectId` left
+ * unstated falls back to the caller's own bound project (a `project`-kind
+ * launch binding, {@link sharedDocsAccess.resolveAccess}) -- never to the
+ * operator's or an unbound caller's, since neither names a project to
+ * resolve. `groupId` left unstated resolves to the first of the resolved
+ * project's own groups that actually carries a `sharedDir` (a project can
+ * belong to several groups; only one needs to be the shared-docs group a
+ * fleet's LANE_QUEUE.md/roadmap2-data.json/sprint-reports/ live under).
+ * Every field is null when it could not be resolved, which is also the
+ * answer for a request naming no projectId at all and bound to no project
+ * (the operator's own dashboard, every caller before #3325) -- every
+ * scoped dep below treats a null `projectPath`/`sharedDir` as "use this
+ * server's own checkout / this server's own configured shared dir",
+ * unchanged from before #3325.
+ *
+ * An explicit `?projectId=`/`?groupId=` is honoured only for a caller who
+ * may actually see it (PRR-A R-Gate Round 1, BLOCKING 1): the operator or
+ * the Project Master (every project/group, consistent with how both are
+ * treated everywhere else in this file), or a bound project session naming
+ * its OWN id. These routes answer any caller, bound or not (#3087), so
+ * trusting the query value outright would let an unauthenticated request
+ * read a DIFFERENT project's CHANGELOG.md/LANE_QUEUE.md/roadmap data/sprint
+ * reports simply by naming it -- the exact cross-project disclosure this
+ * guards against. An unauthorized value is dropped, falling back to the
+ * caller's own bound default (or null) exactly as if it had named nothing,
+ * never answered with a refusal that would itself confirm the id resolves
+ * to something.
+ * @param {object} req - The request (`headers`, and whatever query string it carries)
+ * @returns {{projectId: (number|null), fleetId: (string|null), groupId: (string|null),
+ *   projectPath: (string|null), sharedDir: (string|null)}}
+ */
+function _v6ResolveSprintScope(req) {
+  const query = parseQuery(reqUrl(req).search);
+  const access = sharedDocsAccess.resolveAccess(req);
+  const isGlobalReader = access.kind === sharedDocsAccess.KINDS.OPERATOR || access.kind === sharedDocsAccess.KINDS.MASTER;
+  const boundProjectId = access.kind === sharedDocsAccess.KINDS.PROJECT ? access.projectId : null;
+
+  const requestedProjectId = /^\d+$/.test(String(query.projectId || '')) ? Number(query.projectId) : null;
+  const projectId = requestedProjectId !== null && (isGlobalReader || requestedProjectId === boundProjectId)
+    ? requestedProjectId
+    : boundProjectId;
+
+  const fleetId = typeof query.fleetId === 'string' && query.fleetId ? query.fleetId : null;
+  let groupId = typeof query.groupId === 'string' && query.groupId ? query.groupId : null;
+  // Same authorization as projectId above, via the identical predicate
+  // `GET /api/shared-docs` already gates a group read on (server.js, the
+  // `sharedDocsAccess.canSeeGroup` call near its `query.groupId` handling).
+  if (groupId !== null && !sharedDocsAccess.canSeeGroup(access, groupId)) groupId = null;
+  let projectPath = null;
+  if (projectId !== null) {
+    const project = store.projects.get(projectId);
+    projectPath = project ? project.path : null;
+    if (groupId === null) {
+      const owned = store.projectGroups.getByProject(projectId).find((g) => g.sharedDir);
+      if (owned) groupId = owned.id;
+    }
+  }
+  let sharedDir = null;
+  if (groupId !== null) {
+    const group = store.projectGroups.get(groupId);
+    sharedDir = group ? group.sharedDir : null;
+  }
+  return { projectId, fleetId, groupId, projectPath, sharedDir };
+}
+
+/**
+ * Bare `X.Y.Z` versions a checkout's own `docs/releases/*.md` files name
  * (#3134, factored out of {@link _v6LoadRoadmapData} for #3162's own shipped-
- * versions source, which needs the exact same listing). Empty when the
- * directory does not exist in this checkout.
+ * versions source, which needs the exact same listing). Reads
+ * `scope.projectPath`'s own `docs/releases/` when resolved (#3325), else
+ * this server's own (`TANGLECLAW_DOCS_RELEASES_DIR` or `__dirname`'s),
+ * unchanged from before #3325. Empty when the directory does not exist.
+ * @param {{projectPath?: (string|null)}} [scope]
  * @returns {string[]}
  */
-function _v6DocsReleaseVersions() {
+function _v6DocsReleaseVersions(scope = {}) {
   try {
-    const docsReleasesDir = process.env.TANGLECLAW_DOCS_RELEASES_DIR || path.join(__dirname, 'docs', 'releases');
+    const docsReleasesDir = scope.projectPath
+      ? path.join(scope.projectPath, 'docs', 'releases')
+      : (process.env.TANGLECLAW_DOCS_RELEASES_DIR || path.join(__dirname, 'docs', 'releases'));
     return fs.readdirSync(docsReleasesDir)
       .map((f) => /^v?(\d+\.\d+(?:\.\d+)?)[.-]/.exec(f)).filter(Boolean).map((m) => m[1]);
   } catch {
@@ -11222,18 +11426,22 @@ function _v6DocsReleaseVersions() {
  * if those ever ship in a later commit than the version bump itself).
  * Deduplicated; bare (no leading `v`). Never throws: an unreadable
  * `CHANGELOG.md` or `version.json` simply contributes nothing, same as an
- * unreadable `docs/releases/` already does.
+ * unreadable `docs/releases/` already does. Reads `scope.projectPath`'s own
+ * `CHANGELOG.md`/`version.json` when resolved (#3325), else this server's
+ * own (`__dirname`'s), unchanged from before #3325.
+ * @param {{projectPath?: (string|null)}} [scope]
  * @returns {string[]}
  */
-function _v6ShippedVersions() {
+function _v6ShippedVersions(scope = {}) {
   const nativeSprintTracker = require('./lib/native-sprint-tracker');
-  const versions = new Set(_v6DocsReleaseVersions());
+  const root = scope.projectPath || __dirname;
+  const versions = new Set(_v6DocsReleaseVersions(scope));
   try {
-    const changelogText = fs.readFileSync(path.join(__dirname, 'CHANGELOG.md'), 'utf8');
+    const changelogText = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
     for (const v of nativeSprintTracker.parseShippedVersionsFromChangelog(changelogText)) versions.add(v);
   } catch { /* CHANGELOG.md unreadable -- docs/releases and version.json still contribute */ }
   try {
-    const current = JSON.parse(fs.readFileSync(path.join(__dirname, 'version.json'), 'utf8')).version;
+    const current = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8')).version;
     if (typeof current === 'string' && current) versions.add(current.replace(/^v/, ''));
   } catch { /* version.json unreadable */ }
   return [...versions];
@@ -11279,11 +11487,16 @@ function _v6ReportVersionKey(entry) {
  * links that this checkout's `docs/releases/` does not already name (a
  * retrospective spans a version RANGE and has no `docs/releases/*.md` file
  * of its own at all -- the hub is the only source for those). Sorted
- * newest-first by {@link _v6ReportVersionKey}.
+ * newest-first by {@link _v6ReportVersionKey}. Reads `scope.projectPath`'s
+ * own `docs/releases/` and `scope.sharedDir`'s own reports hub when resolved
+ * (#3325), else this server's own, unchanged from before #3325.
+ * @param {{projectPath?: (string|null), sharedDir?: (string|null)}} [scope]
  * @returns {Array<{id: string, version: (string|null), title: string, url: string, kind: string}>}
  */
-function _v6ReportsCatalog() {
-  const docsReleasesDir = process.env.TANGLECLAW_DOCS_RELEASES_DIR || path.join(__dirname, 'docs', 'releases');
+function _v6ReportsCatalog(scope = {}) {
+  const docsReleasesDir = scope.projectPath
+    ? path.join(scope.projectPath, 'docs', 'releases')
+    : (process.env.TANGLECLAW_DOCS_RELEASES_DIR || path.join(__dirname, 'docs', 'releases'));
   let files;
   try {
     files = fs.readdirSync(docsReleasesDir);
@@ -11324,7 +11537,7 @@ function _v6ReportsCatalog() {
   // Hub-linked directories this checkout's own docs/releases/ does not
   // already cover -- chiefly multi-version retrospectives, which have no
   // docs/releases/*.md file of their own at all.
-  const hubHtml = _v6LoadReportsHubHtml();
+  const hubHtml = _v6LoadReportsHubHtml(scope);
   if (typeof hubHtml === 'string') {
     const known = new Set(out.map((r) => r.id));
     for (const m of hubHtml.matchAll(/<a\s+href="([^"]+)"[^>]*>([^<]*)<\/a>/gi)) {
@@ -11358,16 +11571,19 @@ function _v6ReportsCatalog() {
  * (`docs/release-process.md`'s own chain: "an annotated vX.Y.Z tag"). `git
  * rev-list -n 1` resolves an annotated tag to the commit it points at, not
  * the tag object itself. Returns null for `'current'`, an untagged version,
- * or when `git` itself is unavailable -- never throws.
+ * or when `git` itself is unavailable -- never throws. Resolves the tag
+ * against `scope.projectPath`'s own checkout when given (#3325), else this
+ * server's own (`__dirname`'s), unchanged from before #3325.
  * @param {string} version - `'current'` or `vX.Y.Z`/`X.Y.Z`.
+ * @param {{projectPath?: (string|null)}} [scope]
  * @returns {string|null}
  */
-function _v6ReleaseCommitFor(version) {
+function _v6ReleaseCommitFor(version, scope = {}) {
   if (version === 'current') return null;
   const tag = `v${String(version).replace(/^v/, '')}`;
   try {
     return require('node:child_process').execFileSync('git', ['rev-list', '-n', '1', tag], {
-      cwd: __dirname, encoding: 'utf8'
+      cwd: scope.projectPath || __dirname, encoding: 'utf8'
     }).trim() || null;
   } catch {
     return null;
@@ -11382,14 +11598,18 @@ function _v6ReleaseCommitFor(version) {
  * {@link module:lib/native-sprint-tracker.validateRoadmapSyncStatus}: "could
  * not read the status file" fails closed exactly like a status file that
  * reads unhealthy, never like one that was never asked about at all (which
- * is what omitting the `getSyncStatus` dep entirely means instead).
+ * is what omitting the `getSyncStatus` dep entirely means instead). Reads
+ * `scope.sharedDir`'s own `roadmap-board/public/roadmap/roadmap-sync-status.json`
+ * when resolved (#3325), else this server's own, unchanged from before #3325.
+ * @param {{sharedDir?: (string|null)}} [scope]
  * @returns {*}
  */
-function _v6LoadRoadmapSyncStatus() {
+function _v6LoadRoadmapSyncStatus(scope = {}) {
   try {
-    return JSON.parse(fs.readFileSync(
-      process.env.TANGLECLAW_ROADMAP_SYNC_STATUS_PATH || ROADMAP_SYNC_STATUS_DEFAULT_PATH, 'utf8'
-    ));
+    const statusPath = scope.sharedDir
+      ? path.join(scope.sharedDir, 'roadmap-board', 'public', 'roadmap', 'roadmap-sync-status.json')
+      : (process.env.TANGLECLAW_ROADMAP_SYNC_STATUS_PATH || ROADMAP_SYNC_STATUS_DEFAULT_PATH);
+    return JSON.parse(fs.readFileSync(statusPath, 'utf8'));
   } catch {
     return null;
   }
@@ -11398,12 +11618,18 @@ function _v6LoadRoadmapSyncStatus() {
 /**
  * The Sprint Reports Hub's own `index.html` text, or null when this machine
  * cannot read it (#3166) -- same degrade-gracefully contract as
- * {@link _v6LoadRoadmapSyncStatus}.
+ * {@link _v6LoadRoadmapSyncStatus}. Reads `scope.sharedDir`'s own
+ * `sprint-reports/index.html` when resolved (#3325), else this server's
+ * own, unchanged from before #3325.
+ * @param {{sharedDir?: (string|null)}} [scope]
  * @returns {string|null}
  */
-function _v6LoadReportsHubHtml() {
+function _v6LoadReportsHubHtml(scope = {}) {
   try {
-    return fs.readFileSync(process.env.TANGLECLAW_SPRINT_REPORTS_HUB_PATH || SPRINT_REPORTS_HUB_DEFAULT_PATH, 'utf8');
+    const hubPath = scope.sharedDir
+      ? path.join(scope.sharedDir, 'sprint-reports', 'index.html')
+      : (process.env.TANGLECLAW_SPRINT_REPORTS_HUB_PATH || SPRINT_REPORTS_HUB_DEFAULT_PATH);
+    return fs.readFileSync(hubPath, 'utf8');
   } catch {
     return null;
   }
@@ -11416,20 +11642,24 @@ function _v6LoadReportsHubHtml() {
  * {@link _v6LoadReportsHubHtml}, and the same parent directory
  * {@link SPRINT_REPORTS_HUB_DEFAULT_PATH} already names (the hub's own
  * `index.html` sits directly beside every version's own report
- * directory). `version` is validated against
- * {@link module:lib/native-sprint-tracker.SPRINT_VERSION_RE} before it
- * ever reaches a path -- `'current'` and anything malformed answer null
- * rather than resolving a path at all, since neither names a real report
- * directory and letting either reach `path.join` unchecked is how a
- * path-traversal segment would reach the filesystem.
+ * directory) -- or `scope.sharedDir`'s own `sprint-reports/` when resolved
+ * (#3325), else this server's own, unchanged from before #3325. `version`
+ * is validated against {@link module:lib/native-sprint-tracker.SPRINT_VERSION_RE}
+ * before it ever reaches a path -- `'current'` and anything malformed
+ * answer null rather than resolving a path at all, since neither names a
+ * real report directory and letting either reach `path.join` unchecked is
+ * how a path-traversal segment would reach the filesystem.
  * @param {string} version
+ * @param {{sharedDir?: (string|null)}} [scope]
  * @returns {string|null}
  */
-function _v6LoadSprintReportHtml(version) {
+function _v6LoadSprintReportHtml(version, scope = {}) {
   const { SPRINT_VERSION_RE } = require('./lib/native-sprint-tracker');
   if (typeof version !== 'string' || version === 'current' || !SPRINT_VERSION_RE.test(version)) return null;
   try {
-    const reportsHubPath = process.env.TANGLECLAW_SPRINT_REPORTS_HUB_PATH || SPRINT_REPORTS_HUB_DEFAULT_PATH;
+    const reportsHubPath = scope.sharedDir
+      ? path.join(scope.sharedDir, 'sprint-reports', 'index.html')
+      : (process.env.TANGLECLAW_SPRINT_REPORTS_HUB_PATH || SPRINT_REPORTS_HUB_DEFAULT_PATH);
     const dir = `v${version.replace(/^v/, '')}`;
     return fs.readFileSync(path.join(path.dirname(reportsHubPath), dir, 'index.html'), 'utf8');
   } catch {
@@ -11443,11 +11673,17 @@ function _v6LoadSprintReportHtml(version) {
  * read it, else a minimal roadmap this checkout can build from its own
  * `docs/releases/*.md` and a readable `LANE_QUEUE.md` — never fabricated,
  * and never cached, so an edit to either source is reflected on the very
- * next request.
+ * next request. Reads `scope.sharedDir`'s own
+ * `roadmap-board/roadmap2-data.json`/`LANE_QUEUE.md` and `scope.projectPath`'s
+ * own `docs/releases/` when resolved (#3325), else this server's own,
+ * unchanged from before #3325.
+ * @param {{projectPath?: (string|null), sharedDir?: (string|null)}} [scope]
  * @returns {{data: object, repo: (string|null), source: string}}
  */
-function _v6LoadRoadmapData() {
-  const roadmapPath = process.env.TANGLECLAW_ROADMAP2_DATA_PATH || ROADMAP2_DATA_DEFAULT_PATH;
+function _v6LoadRoadmapData(scope = {}) {
+  const roadmapPath = scope.sharedDir
+    ? path.join(scope.sharedDir, 'roadmap-board', 'roadmap2-data.json')
+    : (process.env.TANGLECLAW_ROADMAP2_DATA_PATH || ROADMAP2_DATA_DEFAULT_PATH);
   try {
     const parsed = JSON.parse(fs.readFileSync(roadmapPath, 'utf8'));
     if (parsed && Array.isArray(parsed.releases)) {
@@ -11456,10 +11692,13 @@ function _v6LoadRoadmapData() {
   } catch { /* unreadable, missing, or not this shape -- fall through to the fallback below */ }
 
   const nativeSprintTracker = require('./lib/native-sprint-tracker');
-  const docsReleaseVersions = _v6DocsReleaseVersions();
+  const docsReleaseVersions = _v6DocsReleaseVersions(scope);
   let laneQueueText = null;
   try {
-    laneQueueText = fs.readFileSync(process.env.TANGLECLAW_LANE_QUEUE_PATH || LANE_QUEUE_DEFAULT_PATH, 'utf8');
+    const laneQueuePath = scope.sharedDir
+      ? path.join(scope.sharedDir, 'LANE_QUEUE.md')
+      : (process.env.TANGLECLAW_LANE_QUEUE_PATH || LANE_QUEUE_DEFAULT_PATH);
+    laneQueueText = fs.readFileSync(laneQueuePath, 'utf8');
   } catch { /* no shared lane queue visible from this checkout/machine */ }
 
   return {
@@ -11476,10 +11715,13 @@ function _v6LoadRoadmapData() {
  * data: works unauthenticated (subject to GitHub's lower rate limit for
  * that), and attaches a vault-backed token when this server has one bound
  * for the repo. Fails a single call closed rather than the whole response.
+ * Resolves the repo from `scope`'s own roadmap data when given (#3325), else
+ * this server's own, unchanged from before #3325.
+ * @param {{projectPath?: (string|null), sharedDir?: (string|null)}} [scope]
  * @returns {Promise<object>}
  */
-async function _v6SprintGithubActivity() {
-  const repo = _v6LoadRoadmapData().repo;
+async function _v6SprintGithubActivity(scope = {}) {
+  const repo = _v6LoadRoadmapData(scope).repo;
   if (!repo) return { ok: false, error: 'No repo configured in the loaded roadmap data', code: 'NOT_CONFIGURED' };
   const token = _v6GithubSecretStore.get(`vault:${repo.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`);
   const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'TangleClaw-v6', 'X-GitHub-Api-Version': '2022-11-28' };
@@ -11533,14 +11775,20 @@ async function _v6SprintGithubActivity() {
   const { createSprintWaveRouter } = require('./lib/routes/sprint-wave-routes');
   const waveRuns = () => new c3Waves.SqliteSchedulerStore(v6Db()).read().runs;
   const sprintWaveDeps = {
-    getSprintData: () => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), 'current'),
-    getSprintDataForVersion: (version) => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), version),
-    getRoadmapData: () => _v6LoadRoadmapData(),
-    getGithubActivity: () => _v6SprintGithubActivity(),
+    // #3325: `resolveScope` is the one dep every scoped call below is fed
+    // from, so the DB/launch-binding lookups it needs (store.projects,
+    // store.projectGroups, sharedDocsAccess) stay here rather than reaching
+    // into the router module, which the router's own JSDoc deliberately
+    // keeps free of a live database or network call.
+    resolveScope: (req) => _v6ResolveSprintScope(req),
+    getSprintData: (scope) => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), 'current', scope),
+    getSprintDataForVersion: (version, scope) => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), version, scope),
+    getRoadmapData: (scope) => _v6LoadRoadmapData(scope),
+    getGithubActivity: (scope) => _v6SprintGithubActivity(scope),
     // #3162/#3164.
-    getShippedVersions: () => _v6ShippedVersions(),
-    getReports: () => _v6ReportsCatalog(),
-    getReleaseCommit: (version) => _v6ReleaseCommitFor(version),
+    getShippedVersions: (scope) => _v6ShippedVersions(scope),
+    getReports: (scope) => _v6ReportsCatalog(scope),
+    getReleaseCommit: (version, scope) => _v6ReleaseCommitFor(version, scope),
     authorizeSync: (req, res) => {
       if (resolveControlCaller(req).kind === 'master') return true;
       return Boolean(_requireOperatorWrite(req, res, {
@@ -11568,12 +11816,12 @@ async function _v6SprintGithubActivity() {
   const syncStatusPath = process.env.TANGLECLAW_ROADMAP_SYNC_STATUS_PATH || ROADMAP_SYNC_STATUS_DEFAULT_PATH;
   const reportsHubPath = process.env.TANGLECLAW_SPRINT_REPORTS_HUB_PATH || SPRINT_REPORTS_HUB_DEFAULT_PATH;
   if (fs.existsSync(syncStatusPath) || fs.existsSync(reportsHubPath)) {
-    sprintWaveDeps.getSyncStatus = () => _v6LoadRoadmapSyncStatus();
-    sprintWaveDeps.getReportsHubHtml = () => _v6LoadReportsHubHtml();
+    sprintWaveDeps.getSyncStatus = (scope) => _v6LoadRoadmapSyncStatus(scope);
+    sprintWaveDeps.getReportsHubHtml = (scope) => _v6LoadReportsHubHtml(scope);
     // #3175 (Ruling A871): same mount-time guard as the two deps above --
     // wired only when this machine can actually reach the shared
     // `sprint-reports/` checkout a version's report would live under.
-    sprintWaveDeps.getSprintReportHtml = (version) => _v6LoadSprintReportHtml(version);
+    sprintWaveDeps.getSprintReportHtml = (version, scope) => _v6LoadSprintReportHtml(version, scope);
   }
   const sprintWaves = createSprintWaveRouter(sprintWaveDeps);
   for (const endpoint of sprintWaves.endpoints) {
