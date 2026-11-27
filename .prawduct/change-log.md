@@ -173,6 +173,20 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   recorded-event cases; a second identical pending send preserved alongside an
   already-matched one). Critic `verify-resolutions` after `8a341083`: 0 blocking, 0 findings,
   1 observation (this change-log entry's own gap — resolved by this entry).
+- PRR-A R-Gate R3 (`92431716`): REQUEST CHANGES — 1 BLOCKING. The R2 fix's own
+  one-pending-per-signal consumption treated `turnConsumed`/`eventConsumed` as fully
+  independent, but the trailing live turn and the trailing recorded event can be two
+  READINGS of the exact SAME echo (`arrangeRecorded` above already draws a recorded event
+  once, via its matching live turn, for precisely this overlap) — so one real echo matching
+  both signals wrongly consumed TWO identical pending items (one via each signal) instead of
+  one. Fixed in `1e714a0a`: `turnEventOverlap` detects when the trailing turn and trailing
+  event `sameMessage`-match each other, in which case consuming either now consumes both;
+  two genuinely DIFFERENT trailing turn/event texts still consume independently (verified by
+  a new negative test). Regression tests added for both the overlapping-signals case and the
+  genuinely-distinct case. Critic `verify-resolutions` after `1e714a0a`
+  (`rev-20261127T184648Z-d806a652`): 0 blocking, 0 findings, 1 observation (this entry's own
+  gap — resolved by this entry; hand-traced `turnConsumed`/`eventConsumed`/`turnEventOverlap`
+  through every covered scenario including the R1/R2 cases and confirmed the logic holds).
 
 ## 2026-11-24 — v6.6.0 release cut (Milestone #94), Car V660-W2-REL
 
