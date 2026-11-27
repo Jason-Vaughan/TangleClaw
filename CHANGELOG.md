@@ -4,6 +4,37 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.6.7] - 2026-11-27
+
+### Added
+- Added a standalone memory-backup module (`lib/backup.js`) and CLI (`node scripts/backup-db.js create|verify|inspect|restore|prune`) that snapshots `~/.claude/projects/*/memory/` correction memory (and configurable engine memory directories, plus an optional extra file such as a SQLite database) into a timestamped, SHA-256-manifested backup directory, with fail-closed restore (verifies integrity before writing anything) and a retention helper for scheduled invocations — callable on demand, from `launchd`/`cron`, or a pre-update hook (#3314).
+- Added a configurable host storage warning threshold (`diskWarningThresholdPercent`, default 85%, range 50-98%, or 0/null to disable) to Global Settings (`GET`/`PATCH /api/config`, also accepted under the alias `storageWarningThresholdPct`). `GET /api/system/health` now measures the host's writable data volume and reports a `disk-space` condition (fired at or above the threshold, or at the fixed 95% critical ceiling regardless of the operator's own setting) plus a top-level `disk: {totalBytes, availBytes, usedPct, thresholdPct, status}` summary, with a deduplicated warning log on the clear-to-fired transition. (#3318, following the 2026-11-26 disk-fill outage, #3315)
+- Global Settings workspace (#3319): the Global Settings modal is rebuilt from a skinny 440px
+  dialog into a full-screen workspace (`public/index.html`'s `#globalSettingsModal`, same
+  `position:fixed; inset:0` inline-style-over-CSS-class technique Session Settings (#3214)
+  already uses) with a left-hand category rail — General & Server, Storage & System Health,
+  Engines & Quotas, Security & Auth, Backups & Maintenance, Bridge & Notifications — plus a
+  search box that filters every category's fields at once and a deep-linkable `#settings/
+  <category>` hash. Every existing control, id and save/load handler
+  (`openGlobalSettings`/`closeGlobalSettings`/`saveGlobalSettings`) is preserved unchanged,
+  just re-bucketed into the new categories. Also adds a Storage Warning Threshold (%) input
+  (default 85, range 50&ndash;98) in Storage & System Health, bound to #3318's
+  `diskWarningThresholdPercent` setting.
+
+### Fixed
+- Canonical hook path & TCC bootstrap test determinism (#3313, #3300): `lib/engines.js#syncEngineHooks`
+  now resolves `{{TANGLECLAW_DIR}}` against `lib/tangleclaw-home.js`'s one machine-stable
+  install root, never the checkout `lib/engines.js` happens to be running from — a mutable
+  builder/lane checkout resetting, switching branch, or being deleted mid-sprint could otherwise
+  orphan an already-written project hook. `_syncCanonicalHookScripts` keeps a byte-for-byte,
+  refresh-if-drifted copy of the hook scripts at that canonical root (mirroring
+  `lib/git-template.js`'s own convention), and any previously-written hook naming a different
+  root self-heals on its very next sync (logged distinctly as a migration). Separately,
+  `test/tmux-tcc.test.js` gains `waitForHasSession`, a bounded poll replacing 12 immediate
+  attach-proxy-readiness assertions that could flake under slow CI I/O even with the file's
+  existing whole-test contention retry.
+- Fixed browser/ttyd connection stability flapping (disconnected -> reconnected with no real outage): raised ttyd's WebSocket ping interval from its 5s default to 30s (fresh installs via the plist; existing installs via `lib/ttyd-bind.js`'s own reconciliation, alongside its existing `--interface` pinning), set `setNoDelay`/`setKeepAlive` on the `/terminal` proxy's sockets, cached `buildSessionUsageReadings`'s per-session pane/model reads and `liveLaunchBlocker`'s per-session tmux reads (both identity-safe against a reused session id) and `enrichProject`'s per-project plugin-governance check, and added an opt-in `disconnectThreshold`/`flapWindowMs` debounce to `tcCreateApi`'s `setConnected` wrapper (default off, so every existing caller is unaffected). (#3332)
+
 ## [6.6.6] - 2026-11-27
 
 ### Added
