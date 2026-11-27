@@ -2521,7 +2521,7 @@
     stream = `<div id="v6ChatStream" class="v6-chat-stream" tabindex="0">${stream}
       <ol id="v6ChatLive" class="v6-conversation-stream v6-chat-live-turns" aria-label="Live replies">${liveTurnsMarkup(liveTurns, name, chat.verbosity, chat.thumbs, chat.unfurls)}</ol>
       <ol id="v6ChatRecordedTail" class="v6-conversation-stream v6-chat-recorded-tail">${tail}</ol>
-      <ol id="v6ChatPending" class="v6-conversation-stream v6-chat-pending">${pendingMarkup(chat.pending, chat.lastSent, chat.thumbs, chat.unfurls)}</ol>
+      <ol id="v6ChatPending" class="v6-conversation-stream v6-chat-pending">${pendingMarkup(chat.pending, chat.lastSent, chat.thumbs, chat.unfurls, liveTurns, v.events)}</ol>
       <button type="button" id="v6ChatJumpLatest" class="v6-chat-jump-latest"${chat.streamPinned === false ? '' : ' hidden'}
         style="position:sticky;bottom:8px;left:100%;transform:translateX(-100%);z-index:5;white-space:nowrap;"
         aria-label="Jump to newest messages">↓ Newest</button>
@@ -2600,6 +2600,12 @@
         <div class="v6-chat-actions">
           ${liveSession ? `<span id="v6ChatMedusaSlot" class="v6-chat-medusa-slot">${medusaIndicatorMarkup(chat.medusa)}</span>` : ''}
           ${startButton}${startFleetButton}${delegatePicker}${toDelegate}
+          <button type="button" id="v6ChatToggleUnderHood" class="btn btn-secondary btn-small v6-chat-icon-btn v6-chat-toggle-under-hood"
+            aria-pressed="${chat.hoodOpen ? 'true' : 'false'}" aria-controls="v6ChatUnderHood"
+            title="${chat.hoodOpen ? 'Hide Under the Hood' : 'Show Under the Hood (Raw CLI & Tool Activity)'}"
+            aria-label="${chat.hoodOpen ? 'Hide Under the Hood' : 'Show Under the Hood'}">
+            <span aria-hidden="true">🔧 Under the Hood</span><span id="v6ChatToggleUnderHoodCount" class="v6-chat-tucked-count"${chat.hideHoodTraffic !== false || !chat.hoodOpen ? ' hidden' : ''}>${tuckedCountText(tuckedTurns(liveTurns, chat.verbosity).length)}</span><span id="v6ChatToggleUnderHoodStatus" class="v6-uth-status${chatBusyLabel(chat) ? ' v6-uth-status--busy' : ''}" aria-hidden="true">${chatBusyLabel(chat) ? 'Working' : ''}</span>
+          </button>
           <a class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood" href="${escapeHtml(hoodHref)}" title="Open Hood (Live Terminal)" aria-label="Open Hood (Live Terminal)"><span aria-hidden="true">&gt;_</span></a>
           ${iconButton('v6ChatHistory', escapeHtml(`History and recents for ${name}`), '🕓')}
           ${iconButton('v6ChatRefresh', 'Refresh conversation', '↻')}
@@ -2613,7 +2619,7 @@
         </div>
       </header>
       ${offlineBody || `${stream}
-      <details id="v6ChatUnderHood" class="v6-chat-under-hood${chat.hideHoodTraffic !== false ? ' is-traffic-hidden' : ''}"${chat.hoodOpen ? ' open' : ''}${
+      <details id="v6ChatUnderHood" class="v6-chat-under-hood${chat.hideHoodTraffic !== false ? ' is-traffic-hidden' : ''}"${chat.hoodOpen ? ' open' : ' hidden'}${
         // #3135: a dark-palette modal overlay, in lieu of a style.css rule
         // (reserved for Wave 2's own Car) — inline, so it costs nothing when not active.
         chat.hoodFullScreen ? ' style="position:fixed;inset:0;z-index:9000;width:100%;height:100%;max-width:none;max-height:none;'
@@ -2769,14 +2775,34 @@
   /**
    * #3181: a footer that means the engine is at rest, not working \u2014 the
    * Claude Code / Codex idle markers already named elsewhere, Antigravity's
-   * "Press up to edit queued messages" and its "new task?/clear to save"
-   * hint, an interactive menu's own `\u2191/\u2193 Navigate` line, and a status bar's
-   * trailing "| Model | NN% left". A background `/tasks` daemon tray row
+   * "new task?/clear to save" hint, and an interactive menu's own
+   * `\u2191/\u2193 Navigate` line. A background `/tasks` daemon tray row
    * (`\u25CF [HH:MM:SS] ... running`) rendered just above one of these never
    * gets the chance to clear `activity` on its own, since nothing after it
    * says the session went idle \u2014 this line does that instead.
+   *
+   * #3330: "Press up to edit queued messages" and the trailing status-bar
+   * chrome ("| Model | NN% left") used to be in this same at-rest set, on
+   * the same reasoning \u2014 but both are shown WHILE a turn is still
+   * running (Antigravity draws them as its own live status bar, not an
+   * idle-shell prompt), so treating either as "went idle" cleared a live
+   * spinner mid-turn. Dropped from here; the queued-messages line moved to
+   * {@link LIVE_QUEUED_INPUT_RE} as the opposite signal (busy, not idle),
+   * and the model/%-left chrome is simply inert now \u2014 neither sets nor
+   * clears `activity` \u2014 the same way `LIVE_BUSY`'s own right-hand chrome
+   * stripping already treats it.
    */
-  const LIVE_AT_REST_FOOTER_RE = /\?\s*for shortcuts\b|^Press up to edit queued messages\b|\bnew task\?\s*\/clear to save\b|\u2191\/\u2193\s*Navigate\b|\|\s*(?:Opus|Sonnet|Haiku|Claude|GPT|Gemini)\b[^|]*\|\s*\d+%\s*left\s*$/i;
+  const LIVE_AT_REST_FOOTER_RE = /\?\s*for shortcuts\b|\bnew task\?\s*\/clear to save\b|\u2191\/\u2193\s*Navigate\b/i;
+
+  /**
+   * #3330: Antigravity's own queued-input hint \u2014 shown WHILE a turn is
+   * actively running and the operator has typed (or force-sent) a follow-up
+   * prompt into the CLI's own buffer before the current turn finished. Proof
+   * a turn is in flight, the opposite of an at-rest footer: recognized so a
+   * read landing on just this line (no spinner glyph in the same batch)
+   * still marks `activity` busy instead of leaving it `null`.
+   */
+  const LIVE_QUEUED_INPUT_RE = /^Press up to edit queued messages\b|\(alt\+m to send immediately\)/i;
 
   /** A prompt line: `> text`, `❯ text` or `› text`, possibly inside a box border. */
   const LIVE_PROMPT = /^(?:│\s*)?(?:>|❯|›)\s?(.*?)\s*│?$/;
@@ -3219,11 +3245,17 @@
         block = null;
         return;
       }
-      // #3181: an at-rest footer (idle markers, the queued-message hint)
-      // means the session went idle since whatever last set `activity` —
-      // a background `/tasks` daemon tray row rendered just above one of
-      // these never gets another chance to clear it on its own.
+      // #3181: an at-rest footer (idle markers) means the session went idle
+      // since whatever last set `activity` — a background `/tasks` daemon
+      // tray row rendered just above one of these never gets another
+      // chance to clear it on its own.
       if (LIVE_AT_REST_FOOTER_RE.test(text)) activity = null;
+      // #3330: the opposite signal — the operator queued a follow-up while
+      // THIS turn is still running. Keeps whatever genuine spinner label is
+      // already set (same fallback pattern `esc to (cancel|interrupt)`
+      // below uses), or falls back to a generic one so a read landing on
+      // just this line still shows busy.
+      if (LIVE_QUEUED_INPUT_RE.test(text)) { activity = activity || 'Working…'; return; }
       if (LIVE_BUSY.test(text) && !/Thought for/i.test(text)) {
         if (/^esc to (cancel|interrupt)\b/i.test(text)) {
           // #3181: a menu's own cancel hint never reads as busy; otherwise
@@ -3825,17 +3857,77 @@
 
   /**
    * The message being sent, at the bottom of the chat until it settles
-   * (#3079 item 6), unless the chat already shows it as recorded.
+   * (#3079 item 6), unless the chat already shows it as recorded — either
+   * `endSend` settled it (`lastSent`), or (#3326) a live pane peek already
+   * echoed it as the TRAILING user turn, or the conversation's own
+   * trailing recorded event already is it (trailing-only on both: matching
+   * an older turn/event with the same or similar text would wrongly
+   * suppress a legitimate new send repeating earlier words). Without this,
+   * a send in flight briefly rendered TWICE: once as a live `is-user` turn
+   * (as soon as a peek poll saw the pane echo) and again here — the exact
+   * same words stacked on top of each other until the record/reload cycle
+   * (~1-3s) finished.
    * @param {{id: *, text: string}|null|undefined} pending
    * @param {{id: *}|null|undefined} lastSent
    * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
    * @param {Object<string, object>} [unfurls] - Unfurl state by URL (#3107).
+   * @param {Array<{role?: string, text?: string}>} [liveTurns] - (#3326) The live pane's own turns.
+   * @param {Array<{role?: string, content?: string}>} [events] - (#3326) The conversation's recorded events.
    * @returns {string} HTML list item, or ''.
    */
-  function pendingMarkup(pending, lastSent, thumbs, unfurls) {
+  function pendingMarkup(pending, lastSent, thumbs, unfurls, liveTurns, events) {
+    const turns = Array.isArray(liveTurns) ? liveTurns : [];
+    const evs = Array.isArray(events) ? events : [];
+    // #3326: a pending send is hidden only when it is genuinely echoed by
+    // the TRAILING live turn or the TRAILING recorded event — never by an
+    // older one with matching text, since re-sending words that repeat an
+    // earlier turn/event must not suppress a brand-new, still-unechoed
+    // send. "Trailing" means the array's own actual last entry: a scan
+    // that walked backward past a non-`user` entry to find the nearest
+    // `user` one would keep reading an ALREADY-ANSWERED turn/event (one an
+    // assistant reply follows) as trailing.
+    //
+    // Matching is still by content, not a stable send/echo identity, so it
+    // cannot tell "the pane echoed THIS pending send" apart from "the
+    // operator force-sent the identical words again before the first one
+    // settled." Favoring a possibly-redundant bubble over silently
+    // dropping a legitimate new send: each trailing signal is consumed by
+    // at most the first (chronologically earliest) matching pending item.
+    const lastTurn = turns[turns.length - 1];
+    const trailingUserTurn = (lastTurn && lastTurn.role === 'user') ? lastTurn : null;
+    const lastEvent = evs[evs.length - 1];
+    const trailingUserEvent = (lastEvent && lastEvent.role === 'user') ? lastEvent : null;
+    // The trailing turn and the trailing event can be two READINGS of the
+    // exact same physical echo — `arrangeRecorded` above explicitly draws
+    // a recorded event once, via its matching live turn, for precisely
+    // this overlap. Treating `turnConsumed`/`eventConsumed` as fully
+    // independent would let ONE real
+    // echo consume TWO identical pending items (one via each signal)
+    // instead of one — `turnEventOverlap` makes consuming either consume
+    // both whenever they describe the same message, while two genuinely
+    // DIFFERENT trailing turn/event texts still consume independently.
+    const turnEventOverlap = Boolean(trailingUserTurn && trailingUserEvent && sameMessage(trailingUserEvent.content, trailingUserTurn.text));
+    let turnConsumed = false;
+    let eventConsumed = false;
     // One bubble per send on its way (#3082: a forced send can overlap another).
-    const list = (Array.isArray(pending) ? pending : [pending])
-      .filter((p) => p && typeof p.text === 'string' && !(lastSent && lastSent.id === p.id));
+    const list = (Array.isArray(pending) ? pending : [pending]).filter((p) => {
+      if (!p || typeof p.text !== 'string') return false;
+      if (lastSent && lastSent.id === p.id) return false;
+      const matchesTurn = !turnConsumed && trailingUserTurn && sameMessage(p.text, trailingUserTurn.text);
+      const matchesEvent = !eventConsumed && trailingUserEvent && sameMessage(trailingUserEvent.content, p.text);
+      if (!matchesTurn && !matchesEvent) return true;
+      // Consume only the signal(s) THIS item actually matched — setting
+      // `turnConsumed` unconditionally on any match would spend it on an
+      // item that only matched the EVENT, leaving a later, genuinely
+      // distinct pending item that matches the TURN unable to consume it
+      // (and the mirror case for `eventConsumed`), so that later item's
+      // own real echo would never get suppressed. Both are still consumed
+      // together exactly when they overlap (one echo, not two).
+      if (matchesTurn) turnConsumed = true;
+      if (matchesEvent) eventConsumed = true;
+      if (turnEventOverlap) { turnConsumed = true; eventConsumed = true; }
+      return false;
+    });
     return list.map((p) => `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${messageMarkup(p.text, thumbs, unfurls)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`).join('');
   }
 
@@ -3850,9 +3942,24 @@
    * @returns {string} HTML list items.
    */
   function liveTurnsMarkup(turns, name, verbosity, thumbs, unfurls) {
-    return (Array.isArray(turns) ? turns : []).filter((t) => shownInChat(t, verbosity)).map((t) => (
-      `<li class="v6-conversation-event is-${escapeHtml(t && t.role)} is-live">${chatRoleMarkup(t && t.role, name)}<span class="v6-conversation-content">${messageMarkup(t && t.text, thumbs, unfurls)}</span></li>`
-    )).join('');
+    const list = (Array.isArray(turns) ? turns : []).filter((t) => shownInChat(t, verbosity));
+    // #3330: the trailing run of consecutive `user` turns with no assistant
+    // reply after them yet — a follow-up prompt sent while an earlier one
+    // is still running stacks up exactly this way, with no visual
+    // indication otherwise that the engine is busy on the first one and
+    // the rest are only queued. `from` is the run's own first (oldest, the
+    // one actually being worked) index; anything stacked after it is
+    // waiting.
+    let from = list.length;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i] && list[i].role === 'user') from = i; else break;
+    }
+    return list.map((t, i) => {
+      const status = i < from ? '' : (i === from
+        ? '<span class="v6-chat-turn-status v6-chat-turn-status--processing" aria-hidden="true">● Processing…</span>'
+        : '<span class="v6-chat-turn-status v6-chat-turn-status--queued" aria-hidden="true">⏳ Queued — waiting for current turn to finish</span>');
+      return `<li class="v6-conversation-event is-${escapeHtml(t && t.role)} is-live">${chatRoleMarkup(t && t.role, name)}<span class="v6-conversation-content">${messageMarkup(t && t.text, thumbs, unfurls)}</span>${status}</li>`;
+    }).join('');
   }
 
   /** A reply reporting a hold, a failure, an error or a refusal (#3082). */
@@ -4658,12 +4765,17 @@
   }
 
   /**
-   * What the chat is busy with (#3057, extended by #3167): what the engine
-   * reports from the live pane text, else — across all 4 engines, since
-   * this reads the server's own `GET /api/sessions/:name/status` signal
-   * rather than the pane — `Working` while that status names one of the
-   * genuinely-working reasons above, else `Working` while a send is on its
-   * way.
+   * What the chat is busy with (#3057, extended by #3167, #3330): what the
+   * engine reports from the live pane text, else — across all 4 engines,
+   * since this reads the server's own `GET /api/sessions/:name/status`
+   * signal rather than the pane — `Working` while that status names one of
+   * the genuinely-working reasons above, else `Working` while a send is on
+   * its way, else (#3330) `Working` while the pane's own trailing live turn
+   * is a `user` prompt with no reply after it yet — a stacked follow-up
+   * sent while an earlier turn is still running is exactly this shape, and
+   * without this fallback the busy bar could clear between the pane's own
+   * spinner lines even though the conversation still has an unanswered
+   * prompt sitting at its tail.
    * @param {object} chat - A conversation view's `chat`; `chat.statusBusy`
    *   is `isSessionStatusBusy(status)` from the session status poll (#3167).
    * @returns {string|null}
@@ -4682,7 +4794,10 @@
         && (extractCliGates(rawLines) || rawLines.some((l) => /↑\/↓\s*Navigate\b/i.test(l)));
       if (!waitingOnOperator) return 'Working';
     }
-    return chat && chat.send && chat.send.kind === 'pending' ? 'Working' : null;
+    if (chat && chat.send && chat.send.kind === 'pending') return 'Working';
+    const turns = live && Array.isArray(live.turns) ? live.turns : null;
+    if (turns && turns.length && turns[turns.length - 1] && turns[turns.length - 1].role === 'user') return 'Working';
+    return null;
   }
 
   /** Trailing dots a busy label ends with; the animated ones replace them (#3057). */
@@ -8123,6 +8238,21 @@
     let projectRows = new Map();
     // Engine id -> {status}, from /api/models/status, for the sidebar badges (#3053).
     let engineHealth = {};
+    // #3327: the raw payload each setter below most recently applied,
+    // serialized — `setProjects`/`setTree`/`setEngineHealth` are background
+    // polls (`refreshSidebarStatus`, ~every 12s) that previously forced a
+    // full `render()` (replacing the ENTIRE page) even when the poll came
+    // back with exactly the same rows/tree/health as before, which is the
+    // common case: flexing the layout and re-docking `.v6-chat-header` for
+    // no visible change at all. A no-op here when the signature matches is
+    // always behavior-safe (an unconditional render would redraw the exact
+    // same DOM anyway) — unlike `setTelemetry`, which several existing
+    // tests (see `renderUnlessSelectionActive`'s own callers) deliberately
+    // force to redraw even for structurally-identical-but-distinct data, so
+    // it keeps its own always-render contract and is left out of this.
+    let lastProjectsSignature = null;
+    let lastTreeSignature = null;
+    let lastEngineHealthSignature = null;
     let filterText = '';
     let filterEngine = '';
     let selectedGroups = new Set(tabPrefs.get('tc_v6_selected_groups', [], isStringArray));
@@ -8457,6 +8587,25 @@
     let peekPinned = true;
     let lastStreamScrollTop = 0;
     let lastPeekScrollTop = 0;
+    // #3327: whether a mouse/pointer button is down anywhere in the shell
+    // right now — a 'mousedown' momentarily collapses whatever selection
+    // the operator had before a fresh drag extends it, so a background
+    // poll's deferred render firing on that transient collapse (via
+    // 'selectionchange') would wipe the selection out from under the drag.
+    // Stays true for a short cooldown after 'mouseup'/'copy' too, since the
+    // selection a drag or a copy just finished is exactly the one a render
+    // landing on the very next tick would still be most likely to disturb.
+    let isPointerSelecting = false;
+    let pointerSelectionCooldownUntil = 0;
+    const POINTER_SELECTION_COOLDOWN_MS = 300;
+    // #3327: a short window after a genuine 'wheel'/'touchmove'/'pointerdown'
+    // on `#v6ChatStream`/`#v6ChatPeek` themselves, used to tell a real user
+    // scroll apart from a 'scroll' event the browser fires for some other
+    // reason (a resize, an async thumbnail/unfurl growing the pane's content
+    // underneath an untouched scrollTop) — see `wireStreamPin`/`wirePeekPin`.
+    let streamUserScrollUntil = 0;
+    let peekUserScrollUntil = 0;
+    const USER_SCROLL_WINDOW_MS = 400;
     // #3200: this render's own `createChatScrollCoordinator()` handle —
     // disconnected and replaced every time `wireChatScrollCoordinator` runs
     // again (every render, via `wireControls`), since the `ResizeObserver`
@@ -8980,28 +9129,43 @@
     }
 
     /**
-     * The chat stream's own follow-bottom state (#3135, refined #3191):
-     * scrolling up turns `streamPinned` off, and scrolling back down near
-     * the bottom (by hand, or via the pill below) turns it back on — never
-     * a poll or a redraw either way. The pill itself jumps straight to the
-     * newest line and re-pins.
+     * The chat stream's own follow-bottom state (#3135, refined #3191, fixed
+     * #3327): scrolling up turns `streamPinned` off, and scrolling back down
+     * near the bottom (by hand, or via the pill below) turns it back on —
+     * never a poll or a redraw either way. The pill itself jumps straight to
+     * the newest line and re-pins.
      *
-     * #3191: unpinning additionally requires `scrollTop` to have genuinely
-     * DECREASED by more than a few pixels since the last 'scroll' event —
-     * not just that the gap from the bottom is now large. A poll or an
+     * #3191 unpinned only once `scrollTop` had DECREASED by more than a few
+     * pixels since the last 'scroll' event, specifically so a poll or an
      * async thumbnail/unfurl growing `scrollHeight` underneath a pane whose
-     * `scrollTop` the operator never touched widens that gap on its own,
-     * and the old distance-only check misread that as the operator having
-     * scrolled away.
+     * `scrollTop` the operator never touched (which widens the gap from the
+     * bottom on its own) would not be misread as the operator having
+     * scrolled away. #3327: that per-event delta threshold also silently
+     * swallowed slow trackpad scrolling — a 1-4px-per-tick upward drag never
+     * clears a 4px delta on any single event, so `streamPinned` never turns
+     * off no matter how far the operator actually scrolls, and the very next
+     * poll (or a `ResizeObserver` firing) then snaps them straight back to
+     * the bottom. Fixed by keeping #3191's actual goal — ignore a 'scroll'
+     * event that was NOT caused by the operator's own hand — but detecting
+     * that directly (a recent 'wheel'/'touchmove'/'pointerdown' on this
+     * exact element, `streamUserScrollUntil`) instead of inferring it from
+     * the event's own size: within that window, any upward movement, or
+     * simply being `> 24`px from the bottom, unpins; outside it (a
+     * programmatic/layout-driven 'scroll'), only the distance-based re-pin
+     * near the bottom still applies.
      */
     function wireStreamPin() {
       const streamEl = doc.getElementById('v6ChatStream');
       if (streamEl) {
         lastStreamScrollTop = streamEl.scrollTop;
+        const markUserScroll = () => { streamUserScrollUntil = Date.now() + USER_SCROLL_WINDOW_MS; };
+        streamEl.addEventListener('wheel', markUserScroll, { passive: true });
+        streamEl.addEventListener('touchmove', markUserScroll, { passive: true });
+        streamEl.addEventListener('pointerdown', markUserScroll);
         streamEl.addEventListener('scroll', () => {
           const distanceFromBottom = streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight;
           if (distanceFromBottom <= 24) streamPinned = true;
-          else if (streamEl.scrollTop < lastStreamScrollTop - 4) streamPinned = false;
+          else if (Date.now() < streamUserScrollUntil) streamPinned = false;
           lastStreamScrollTop = streamEl.scrollTop;
           paintStreamPinIndicator();
         });
@@ -9024,10 +9188,19 @@
      * of these two panes to its bottom must go through here, or the next
      * genuine scroll event compares against a stale baseline and reads a
      * real upward scroll as having gone nowhere (or the reverse).
+     *
+     * #3327: never actually jumps `el` if the operator currently has an
+     * active, non-collapsed text selection inside it — snapping `scrollTop`
+     * to the bottom out from under a selection the operator is reading or
+     * about to copy is exactly as disruptive as a full `render()` would be,
+     * just narrower in scope. `streamPinned`/`peekPinned` themselves stay
+     * true either way, so the jump still happens on the next call once the
+     * selection clears.
      * @param {HTMLElement|null} el
      * @param {boolean} isPeek
      */
     function pinTracked(el, track) {
+      if (hasActiveSelectionIn(el)) return;
       pinToBottom(el);
       if (!el) return;
       if (track === 'peek') lastPeekScrollTop = el.scrollTop;
@@ -9089,19 +9262,49 @@
     }
 
     /**
-     * The Under the Hood group's own follow-bottom state (#3191): the same
-     * upward-scroll-only unpin {@link wireStreamPin} uses, tracked off
-     * `#v6ChatPeek`'s own scroll as the group's representative pane, plus
-     * the drawer's `toggle` event re-arming the whole group.
+     * Open or close `#v6ChatUnderHood` (#3328): closed means completely
+     * `hidden` (no summary bar, no resize handle, zero vertical space taken
+     * in the center stack between `#v6ChatStream` and the composer); open
+     * means `hidden` cleared and the `<details>` itself opened. Both the new
+     * top-header toggle (`#v6ChatToggleUnderHood`) and every existing way
+     * the drawer opens (the Medusa badge, a Waiting-On jump) go through
+     * here, so none of them can clear `open` without also clearing
+     * `hidden` (or set it without setting `hidden` back).
+     * @param {boolean} open
+     */
+    function setUnderHoodOpen(open) {
+      const next = Boolean(open);
+      const hood = doc.getElementById('v6ChatUnderHood');
+      if (hood) {
+        hood.open = next;
+        hood.hidden = !next;
+        if (typeof hood.setAttribute === 'function' && typeof hood.removeAttribute === 'function') {
+          if (next) hood.removeAttribute('hidden'); else hood.setAttribute('hidden', '');
+          if (next) hood.setAttribute('open', ''); else hood.removeAttribute('open');
+        }
+      }
+      chatHoodOpen = next;
+      prefs.set('tc_v6_chat_under_hood_open', next);
+    }
+
+    /**
+     * The Under the Hood group's own follow-bottom state (#3191, fixed
+     * #3327 the same way as {@link wireStreamPin} — see its doc comment):
+     * tracked off `#v6ChatPeek`'s own scroll as the group's representative
+     * pane, plus the drawer's `toggle` event re-arming the whole group.
      */
     function wirePeekPin() {
       const peekEl = doc.getElementById('v6ChatPeek');
       if (peekEl) {
         lastPeekScrollTop = peekEl.scrollTop;
+        const markUserScroll = () => { peekUserScrollUntil = Date.now() + USER_SCROLL_WINDOW_MS; };
+        peekEl.addEventListener('wheel', markUserScroll, { passive: true });
+        peekEl.addEventListener('touchmove', markUserScroll, { passive: true });
+        peekEl.addEventListener('pointerdown', markUserScroll);
         peekEl.addEventListener('scroll', () => {
           const distanceFromBottom = peekEl.scrollHeight - peekEl.scrollTop - peekEl.clientHeight;
           if (distanceFromBottom <= 24) peekPinned = true;
-          else if (peekEl.scrollTop < lastPeekScrollTop - 4) peekPinned = false;
+          else if (Date.now() < peekUserScrollUntil) peekPinned = false;
           lastPeekScrollTop = peekEl.scrollTop;
         });
       }
@@ -9566,6 +9769,14 @@
           render();
         });
       }
+      const toggleUnderHoodBtn = doc.getElementById('v6ChatToggleUnderHood');
+      if (toggleUnderHoodBtn) {
+        toggleUnderHoodBtn.addEventListener('click', () => {
+          setUnderHoodOpen(!chatHoodOpen); // #3328
+          if (chatHoodOpen) rearmPeekPin(); // newly opened: start at the newest line, same as the Medusa badge/Waiting-On jump do.
+          render();
+        });
+      }
       const form = doc.getElementById('v6ChatForm');
       if (form) {
         form.addEventListener('submit', (evt) => {
@@ -9578,8 +9789,20 @@
       const hood = doc.getElementById('v6ChatUnderHood');
       if (hood) {
         hood.addEventListener('toggle', (evt) => {
+          // #3328: closed and hidden are now the same state — collapsing
+          // the drawer by its own <summary> (not just the top-header
+          // toggle or the Medusa badge) hides it completely too, so there
+          // is one source of truth (`chatHoodOpen`) for all three entry
+          // points instead of `hidden` drifting out of sync with `open`.
           chatHoodOpen = Boolean(evt && evt.target && evt.target.open);
           prefs.set('tc_v6_chat_under_hood_open', chatHoodOpen);
+          const target = evt && evt.target;
+          if (target) {
+            target.hidden = !chatHoodOpen;
+            if (typeof target.setAttribute === 'function' && typeof target.removeAttribute === 'function') {
+              if (chatHoodOpen) target.removeAttribute('hidden'); else target.setAttribute('hidden', '');
+            }
+          }
         });
         // #3135: Escape closes Full Screen — UNLESS Interactive Mode just
         // consumed it as a raw key instead (that handler, below, stops the
@@ -9866,25 +10089,23 @@
           ? doc.body.querySelector(`.v6-waiting-on-${sectionKey}`) : null;
         if (section) section.className = `v6-waiting-on-section v6-waiting-on-${sectionKey}${has ? ' has-items' : ''}${folded.has(sectionKey) ? ' is-collapsed' : ''}`;
       };
-      const gc = doc.getElementById('v6ChatGateChoice');
-      if (gc) gc.innerHTML = cliGateMarkup(model.gate) + multiChoiceMarkup(model.choice);
-      const countEl = doc.getElementById('v6ChatWaitingOnYouCount');
-      if (countEl) countEl.innerHTML = String(waitingOnYouCount(model));
+      // #3327: every slot below goes through paintIfChanged — a raw
+      // innerHTML assignment here wiped any active selection inside these
+      // panels on every poll (`paintWaitingOnExtras` runs alongside
+      // `paintRecorded`/`setLive`, several-second cadence).
+      paintIfChanged(doc.getElementById('v6ChatGateChoice'), cliGateMarkup(model.gate) + multiChoiceMarkup(model.choice));
+      paintIfChanged(doc.getElementById('v6ChatWaitingOnYouCount'), String(waitingOnYouCount(model)));
       // #3131 (PRR-B R1 blocking 1b): each of these three replaces its
       // WHOLE wrap — the Clear button and (for Todo) the subhead included
       // — so a poll that crosses the 0/1-vs->1 boundary never leaves
       // either stale; before this they lived outside the list element
       // this function used to update alone.
-      const youClearWrap = doc.getElementById('v6WaitingOnYouClearWrap');
-      if (youClearWrap) youClearWrap.innerHTML = youClearMarkup(model.direct.length);
+      paintIfChanged(doc.getElementById('v6WaitingOnYouClearWrap'), youClearMarkup(model.direct.length));
       setSectionClass('you', waitingOnYouCount(model) > 0);
-      const todoWrap = doc.getElementById('v6ChatTodoWrap');
-      if (todoWrap) todoWrap.innerHTML = todoWrapMarkup(model.todo);
-      const aiWrap = doc.getElementById('v6ChatAiWrap');
-      if (aiWrap) aiWrap.innerHTML = aiWrapMarkup(model.ai);
+      paintIfChanged(doc.getElementById('v6ChatTodoWrap'), todoWrapMarkup(model.todo));
+      paintIfChanged(doc.getElementById('v6ChatAiWrap'), aiWrapMarkup(model.ai));
       setSectionClass('ai', model.ai.length > 0);
-      const fleetWrap = doc.getElementById('v6ChatWaitingOnFleet');
-      if (fleetWrap) fleetWrap.innerHTML = fleetSectionsMarkup(model.fleet, folded);
+      paintIfChanged(doc.getElementById('v6ChatWaitingOnFleet'), fleetSectionsMarkup(model.fleet, folded));
       const panel = doc.getElementById('v6ChatWaitingOn');
       if (panel) {
         const anyItems = waitingOnYouCount(model) > 0 || model.ai.length > 0 || model.fleet.length > 0;
@@ -9918,15 +10139,7 @@
      * Force sends it now while its ✕ drops it from the queue.
      */
     function wireWaitingOn() {
-      const openHood = () => {
-        const hood = doc.getElementById('v6ChatUnderHood');
-        if (hood) {
-          hood.open = true;
-          if (typeof hood.setAttribute === 'function') hood.setAttribute('open', '');
-        }
-        chatHoodOpen = true;
-        prefs.set('tc_v6_chat_under_hood_open', true);
-      };
+      const openHood = () => setUnderHoodOpen(true); // #3328: also clears `hidden`.
       const each = (sel, fn) => {
         (typeof doc.querySelectorAll === 'function' ? doc.querySelectorAll(sel) : []).forEach(fn);
       };
@@ -10203,6 +10416,11 @@
       const tucked = tuckedTurns(live && Array.isArray(live.turns) ? live.turns : [], verbosity);
       paintIfChanged(doc.getElementById('v6ChatTucked'), tuckedMarkup(tucked, thumbsNow(), unfurlsNow()));
       paintIfChanged(doc.getElementById('v6ChatTuckedCount'), escapeHtml(tuckedCountText(tucked.length)));
+      // #3330: the top-header toggle's own count badge mirrors the drawer
+      // summary's — otherwise it only ever updates on a full render(),
+      // which #3327's own no-op fix makes rare, leaving it
+      // stuck for the life of a long conversation.
+      paintIfChanged(doc.getElementById('v6ChatToggleUnderHoodCount'), escapeHtml(tuckedCountText(tucked.length)));
       // #3107 (PRR-A R1 C1/C2): this innerHTML assignment destroys whatever
       // listeners wireControls()'s last full render attached to any
       // .v6-chat-unfurl-btn/.v6-chat-local-ref-copy inside #v6ChatTucked —
@@ -10284,10 +10502,11 @@
       if (!view) return;
       const chat = view.chat || {};
       const name = String((view.project && view.project.name) || '');
-      const parts = arrangeRecorded(view.events, chat.live && Array.isArray(chat.live.turns) ? chat.live.turns : [], chat.lastSent);
+      const liveTurns = chat.live && Array.isArray(chat.live.turns) ? chat.live.turns : [];
+      const parts = arrangeRecorded(view.events, liveTurns, chat.lastSent);
       paintIfChanged(doc.getElementById('v6ChatRecorded'), recordedEventsMarkup(parts.head, name, chat.thumbs, chat.unfurls));
       paintIfChanged(doc.getElementById('v6ChatRecordedTail'), recordedEventsMarkup(parts.tail, name, chat.thumbs, chat.unfurls));
-      paintIfChanged(doc.getElementById('v6ChatPending'), pendingMarkup(pendingSends.filter((p) => p.key === chatTargetKey()), chat.lastSent, chat.thumbs, chat.unfurls));
+      paintIfChanged(doc.getElementById('v6ChatPending'), pendingMarkup(pendingSends.filter((p) => p.key === chatTargetKey()), chat.lastSent, chat.thumbs, chat.unfurls, liveTurns, view.events));
       wireRichPreviews(); // #3107 (PRR-A R1 C1/C2): same reason as paintTucked's own call.
       // #3191: recorded/pending content grows #v6ChatStream — re-pin it
       // (and the peek group, harmlessly, if it also stayed pinned).
@@ -10330,13 +10549,7 @@
       const btn = doc.getElementById('v6ChatMedusa');
       if (!btn) return;
       btn.addEventListener('click', () => {
-        const hood = doc.getElementById('v6ChatUnderHood');
-        if (hood) {
-          hood.open = true;
-          if (typeof hood.setAttribute === 'function') hood.setAttribute('open', '');
-        }
-        chatHoodOpen = true;
-        prefs.set('tc_v6_chat_under_hood_open', true);
+        setUnderHoodOpen(true); // #3328: also clears `hidden`.
         // #3191: the operator clicked THIS to see the traffic — reveal it,
         // even if "Hide Medusa & fleet chatter" was (as it is by default) on.
         if (hideHoodTraffic) applyHideHoodTraffic(false);
@@ -11106,40 +11319,48 @@
       win.addEventListener('hashchange', handleHashChange);
     }
 
-    // #3287: setEngineHealth/setProjects/setTree/setTelemetry are background
-    // polls that used to call the full render() (replacing the ENTIRE page's
-    // innerHTML) unconditionally, regardless of the operator mid-selection
-    // in the chat. They keep rendering on every call (several existing
-    // tests rely on exactly that — e.g. "a shell redraw sends the live
-    // stats home first" calls setTelemetry with structurally-identical-but-
-    // distinct data specifically to force a redraw, and "the draft survives
-    // a re-render that is not a send" relies on setTelemetry(null) always
-    // re-rendering to prove a live composer draft is captured first — so
-    // this is deliberately NOT gated on whether the new value differs from
-    // the old one). What changes here is only WHEN: when the operator has
-    // an active, non-collapsed selection inside `#v6ChatStream` or
-    // `#v6ChatPeek`, the render is deferred (never dropped) via
-    // `backgroundRenderPending`, flushed by `handleSelectionChange` once
-    // the selection clears.
+    // #3287 (widened #3327): setEngineHealth/setProjects/setTree/setTelemetry
+    // are background polls that used to call the full render() (replacing
+    // the ENTIRE page's innerHTML) unconditionally, regardless of the
+    // operator mid-selection anywhere on screen. They keep rendering on
+    // every call (several existing tests rely on exactly that — e.g. "a
+    // shell redraw sends the live stats home first" calls setTelemetry with
+    // structurally-identical-but-distinct data specifically to force a
+    // redraw, and "the draft survives a re-render that is not a send"
+    // relies on setTelemetry(null) always re-rendering to prove a live
+    // composer draft is captured first — so this is deliberately NOT gated
+    // on whether the new value differs from the old one). What changes here
+    // is only WHEN: when the operator has an active, non-collapsed
+    // selection anywhere inside the shell `root` (#3327: not just the chat
+    // stream/peek panes — the sidebar, Switchboard, Waiting-On, Under the
+    // Hood and the Workspace panels all count too), or has a mouse/pointer
+    // button down (or just released one / just copied — see
+    // `isPointerSelecting`/`pointerSelectionCooldownUntil`), the render is
+    // deferred (never dropped) via `backgroundRenderPending`, flushed by
+    // `handleSelectionChange` once the selection clears and the cooldown
+    // passes.
     let backgroundRenderPending = false;
 
     /**
      * Whether calling the full render() right now would risk dropping an
-     * active, non-collapsed selection inside the chat (#3287) — render()
-     * replaces the whole page's innerHTML, so unlike {@link paintIfChanged}
-     * there is no narrower region to spare; the whole call must wait.
+     * active, non-collapsed selection, or disturbing an in-progress mouse
+     * drag that is extending one, anywhere in the shell (#3287, widened
+     * #3327) — render() replaces the whole page's innerHTML, so unlike
+     * {@link paintIfChanged} there is no narrower region to spare; the
+     * whole call must wait.
      * @returns {boolean}
      */
     function fullRenderWouldDropSelection() {
-      if (!detail || detail.kind !== 'conversation') return false;
-      return hasActiveSelectionIn(doc.getElementById('v6ChatStream')) || hasActiveSelectionIn(doc.getElementById('v6ChatPeek'));
+      if (isPointerSelecting || Date.now() < pointerSelectionCooldownUntil) return true;
+      return hasActiveSelectionIn(root);
     }
 
     /**
-     * render(), unless the operator currently has an active selection
-     * inside the chat (#3287) — then it is deferred, not dropped:
-     * `backgroundRenderPending` makes the next call here, or the next
-     * `handleSelectionChange` once the selection clears, actually run it.
+     * render(), unless the operator currently has an active selection or
+     * in-progress mouse drag anywhere in the shell (#3287, widened #3327) —
+     * then it is deferred, not dropped: `backgroundRenderPending` makes the
+     * next call here, or the next `handleSelectionChange` once the
+     * selection clears, actually run it.
      * @returns {void}
      */
     function renderUnlessSelectionActive() {
@@ -11148,7 +11369,7 @@
       render();
     }
 
-    /** Flush a render a background poll deferred, once its blocking selection is gone (#3287). */
+    /** Flush a render a background poll deferred, once its blocking selection/drag/cooldown is gone (#3287, widened #3327). */
     function handleSelectionChange() {
       if (!backgroundRenderPending || fullRenderWouldDropSelection()) return;
       backgroundRenderPending = false;
@@ -11156,6 +11377,54 @@
     }
     if (doc && typeof doc.addEventListener === 'function') {
       doc.addEventListener('selectionchange', handleSelectionChange);
+    }
+
+    /**
+     * #3327: track whether a mouse/pointer button is currently down
+     * anywhere in the shell, and start a short cooldown after it is
+     * released (or after a 'copy') — both `fullRenderWouldDropSelection`
+     * reasons to defer a background render, on top of the plain
+     * `hasActiveSelectionIn(root)` check: a 'mousedown' momentarily
+     * collapses the previous selection before a fresh drag extends it
+     * (firing 'selectionchange' with a collapsed selection mid-drag, which
+     * `hasActiveSelectionIn` alone would read as "nothing to protect"), and
+     * the instant after 'mouseup'/'copy' is exactly when a deferred render
+     * landing on the very next tick is most likely to disturb the
+     * selection the operator just finished making.
+     */
+    function armPointerSelectionCooldown() {
+      pointerSelectionCooldownUntil = Date.now() + POINTER_SELECTION_COOLDOWN_MS;
+      // A click with no drag never fires another 'selectionchange' once the
+      // cooldown above expires, so nothing else would flush a render a poll
+      // deferred during it — schedule the flush check directly.
+      if (win && typeof win.setTimeout === 'function') win.setTimeout(handleSelectionChange, POINTER_SELECTION_COOLDOWN_MS);
+      else handleSelectionChange();
+    }
+    // #3327: the press starts inside the shell, so
+    // `root` is the right scope for 'mousedown'/'pointerdown' — but the
+    // RELEASE that must clear `isPointerSelecting` does not necessarily
+    // land there. A drag that extends past `root`'s own edge (or past the
+    // viewport) releases the button over some OTHER element, or none at
+    // all, and a 'mouseup'/'pointerup' listener scoped to `root` only ever
+    // fires for an event that bubbles THROUGH `root` — which a release
+    // outside its subtree never does. Left stuck `true`, every background
+    // render would defer forever, the exact failure mode this guard exists
+    // to prevent, just permanent instead of transient. Release listeners go
+    // on `win` instead — mouse/pointer events bubble all the way to the
+    // window in every real browser, so a release anywhere in the document
+    // still reaches it; 'blur' is the fallback for whatever route
+    // otherwise fires neither (losing window focus mid-drag — alt-tab, a
+    // native file picker).
+    const releasePointerSelecting = () => { isPointerSelecting = false; armPointerSelectionCooldown(); };
+    if (root && typeof root.addEventListener === 'function') {
+      root.addEventListener('mousedown', () => { isPointerSelecting = true; });
+      root.addEventListener('pointerdown', () => { isPointerSelecting = true; });
+      root.addEventListener('copy', () => { armPointerSelectionCooldown(); });
+    }
+    if (win && typeof win.addEventListener === 'function') {
+      win.addEventListener('mouseup', releasePointerSelecting);
+      win.addEventListener('pointerup', releasePointerSelecting);
+      win.addEventListener('blur', releasePointerSelecting);
     }
 
     render();
@@ -11187,12 +11456,27 @@
         const known = [...selectedGroups].filter((id) => tree.some((p) => String(p.id) === id));
         return known.length === 1 ? known[0] : null;
       },
-      /** @param {Object<string, {status?: string}>|null} health - Engine id -> status (#3053). */
+      /**
+       * @param {Object<string, {status?: string}>|null} health - Engine id -> status (#3053).
+       * #3327: a no-op when `health` serializes identically to the last
+       * call — see the `lastEngineHealthSignature` declaration above.
+       */
       setEngineHealth(health) {
+        const sig = JSON.stringify(health || null);
+        if (sig === lastEngineHealthSignature) return;
+        lastEngineHealthSignature = sig;
         engineHealth = health && typeof health === 'object' ? health : {};
         renderUnlessSelectionActive();
       },
+      /**
+       * #3327: a no-op when `rows` serializes identically to the last call
+       * — see the `lastProjectsSignature` declaration above.
+       * @param {Array<object>} rows
+       */
       setProjects(rows) {
+        const sig = JSON.stringify(Array.isArray(rows) ? rows : []);
+        if (sig === lastProjectsSignature) return;
+        lastProjectsSignature = sig;
         projectRows = new Map((Array.isArray(rows) ? rows : [])
           .filter((r) => r && r.id != null).map((r) => [String(r.id), r]));
         renderUnlessSelectionActive();
@@ -11210,7 +11494,15 @@
         pendingStartFleetMembers = null;
         return v;
       },
+      /**
+       * #3327: a no-op when `nextTree` serializes identically to the last
+       * call — see the `lastTreeSignature` declaration above.
+       * @param {Array<*>} nextTree
+       */
       setTree(nextTree) {
+        const sig = JSON.stringify(nextTree || []);
+        if (sig === lastTreeSignature) return;
+        lastTreeSignature = sig;
         tree = buildHierarchyTree(nextTree || []);
         renderUnlessSelectionActive();
       },
@@ -11325,8 +11617,9 @@
         detail = Object.assign({}, detail, {
           view: Object.assign({}, detail.view, { chat: Object.assign({}, detail.view.chat, { peek, live, medusa, thumbs, statusBusy }) })
         });
-        const traffic = doc.getElementById('v6ChatSwitchboard');
-        if (traffic) traffic.innerHTML = switchboardMarkup(switchboardItems(detail.view.events, live));
+        // #3327: through paintIfChanged — a raw assignment wiped any active
+        // selection inside the switchboard list on every 4s live poll.
+        paintIfChanged(doc.getElementById('v6ChatSwitchboard'), switchboardMarkup(switchboardItems(detail.view.events, live)));
         paintMedusa(medusa);
         // #3135 (PRR-B R1 blocking 2a): a plain innerHTML replace here
         // dropped the live-CLI indicator every 4s poll while Interactive
@@ -11356,6 +11649,14 @@
         if (uth) {
           uth.className = `v6-uth-status${label ? ' v6-uth-status--busy' : ''}`;
           uth.textContent = label ? 'Working' : '';
+        }
+        // #3330: the top-header toggle's own busy badge mirrors the
+        // drawer summary's #v6UthStatus — same reason as paintTucked's
+        // count mirror above.
+        const headerUth = doc.getElementById('v6ChatToggleUnderHoodStatus');
+        if (headerUth) {
+          headerUth.className = `v6-uth-status${label ? ' v6-uth-status--busy' : ''}`;
+          headerUth.textContent = label ? 'Working' : '';
         }
       },
       /**
