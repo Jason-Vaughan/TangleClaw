@@ -7708,6 +7708,18 @@ describe('turns in the order they happened, and a composer that empties on Enter
     const html = G.tcV6ConversationViewMarkup(view([ev(1, 'event text')], [{ role: 'user', text: 'turn text' }], { pending }));
     assert.doesNotMatch(html, /is-pending/, 'both are genuinely distinct echoes, so both pending items are correctly suppressed');
   });
+
+  // #3326 (PRR-A R-Gate R4 BLOCKING): the R3 fix unconditionally consumed
+  // BOTH signals on any match, so an item that matched only the EVENT
+  // (first in pending order) wrongly spent `turnConsumed` too — leaving a
+  // LATER item that genuinely matches the distinct trailing TURN unable to
+  // consume it, so that later echo was never suppressed. Same bug, mirror
+  // order of the test above.
+  it('with a DIFFERENT trailing turn and trailing event in the REVERSE order (event-matching item first), each still independently suppresses its own matching pending item', () => {
+    const pending = [{ id: 20, text: 'event text' }, { id: 21, text: 'turn text' }];
+    const html = G.tcV6ConversationViewMarkup(view([ev(1, 'event text')], [{ role: 'user', text: 'turn text' }], { pending }));
+    assert.doesNotMatch(html, /is-pending/, 'the first item only matches the event; the second genuinely matches the distinct trailing turn and must still be suppressed');
+  });
 });
 
 describe('sending, through the controller (#3079 item 6)', () => {

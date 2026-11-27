@@ -3925,8 +3925,17 @@
       const matchesTurn = !turnConsumed && trailingUserTurn && sameMessage(p.text, trailingUserTurn.text);
       const matchesEvent = !eventConsumed && trailingUserEvent && sameMessage(trailingUserEvent.content, p.text);
       if (!matchesTurn && !matchesEvent) return true;
-      turnConsumed = true;
-      eventConsumed = turnEventOverlap || Boolean(matchesEvent);
+      // #3326 (PRR-A R-Gate R4 BLOCKING): consume only the signal(s) THIS
+      // item actually matched — setting `turnConsumed` unconditionally
+      // here (R3's own bug) spent it on an item that only matched the
+      // EVENT, leaving a later, genuinely distinct pending item that
+      // matches the TURN wrongly unable to consume it (and the mirror case
+      // for `eventConsumed`), so that later item's own real echo never
+      // suppressed it. Both are still consumed together exactly when they
+      // overlap (one echo, not two).
+      if (matchesTurn) turnConsumed = true;
+      if (matchesEvent) eventConsumed = true;
+      if (turnEventOverlap) { turnConsumed = true; eventConsumed = true; }
       return false;
     });
     return list.map((p) => `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${messageMarkup(p.text, thumbs, unfurls)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`).join('');
