@@ -10,6 +10,7 @@ const store = require('../lib/store');
 const engines = require('../lib/engines');
 const portScanner = require('../lib/port-scanner');
 const porthub = require('../lib/porthub');
+const logger = require('../lib/logger');
 
 // See the note in test/master.test.js: the injected base URL derives its port
 // from TANGLECLAW_PORT before config (#654), and a TangleClaw-launched dev
@@ -54,6 +55,8 @@ describe('engines', () => {
   let tempDir;
   let tempRulesPath;
 
+  const _realCanonicalInstallRoot = engines._internal.canonicalInstallRoot;
+
   before(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-engines-test-'));
     store._setBasePath(tempDir);
@@ -63,10 +66,17 @@ describe('engines', () => {
     tempRulesPath = path.join(tempDir, 'global-rules.md');
     fs.writeFileSync(tempRulesPath, '# Global Rules\n\nThese rules apply to all projects managed by TangleClaw.\n\n- Test seed for engine config generation\n');
     store.globalRules._setBundledGlobalRulesPath(tempRulesPath);
+    // #3313 — every `syncEngineHooks` call in this file would otherwise
+    // write real copies of the hook scripts to the developer's actual
+    // `~/.tangleclaw/data/hooks/`. Redirect to the same scratch dir for
+    // the whole file; any describe block exercising the canonical-path
+    // behavior itself overrides this further, per-test.
+    engines._internal.canonicalInstallRoot = () => path.join(tempDir, 'fake-tangleclaw-home');
   });
 
   after(() => {
     store.globalRules._resetBundledGlobalRulesPath();
+    engines._internal.canonicalInstallRoot = _realCanonicalInstallRoot;
     store.close();
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
@@ -3590,7 +3600,7 @@ describe('engines', () => {
       }
     });
 
-    it('resolves {{TANGLECLAW_DIR}} in the baseline entry on disk', () => {
+    it('resolves {{TANGLECLAW_DIR}} to the canonical install root, never this checkout (#3313)', () => {
       writeProjConfig({ engine: 'claude', silentPrime: true });
       engines.syncEngineHooks(projectDir);
 
@@ -3601,9 +3611,208 @@ describe('engines', () => {
       // shape of the quoting around it: a shape match confirms only the quoting
       // someone chose, and `"$HOME/x"` satisfies one while still expanding.
       // `test/engines-hook-shell-safety.test.js` proves the safety property by
-      // running each emitted command through a real `/bin/sh`.
-      assert.ok(cmd.includes(path.join(__dirname, '..')), 'the install root must be substituted in');
-      assert.match(cmd, /\/data\/hooks\/sessionstart-prime-claude\.sh$/)
+      // running each emitted command through a real `/bin/sh`. The resolved
+      // root is the canonical one (#3313), never this test file's own
+      // checkout — a mutable lane/builder checkout must never be the value a
+      // written hook names.
+      assert.ok(cmd.includes(engines._canonicalInstallRoot()), 'the canonical install root must be substituted in');
+      assert.ok(!cmd.includes(path.join(__dirname, '..')), 'this checkout must never be the value a written hook names');
+      assert.match(cmd, /\/data\/hooks\/sessionstart-prime-claude\.sh$/);
+    });
+
+    describe('canonical hook script sync and non-canonical migration (#3313)', () => {
+      let canonicalRoot;
+      let realCanonicalInstallRoot;
+
+      beforeEach(() => {
+        canonicalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-canonical-root-'));
+        realCanonicalInstallRoot = engines._internal.canonicalInstallRoot;
+        engines._internal.canonicalInstallRoot = () => canonicalRoot;
+      });
+
+      afterEach(() => {
+        engines._internal.canonicalInstallRoot = realCanonicalInstallRoot;
+        fs.rmSync(canonicalRoot, { recursive: true, force: true });
+      });
+
+      it('_syncCanonicalHookScripts copies every TC_HOOK_SCRIPTS entry that actually ships, executable and byte-identical to the real source', () => {
+        const result = engines._syncCanonicalHookScripts();
+        assert.equal(result.dir, engines._canonicalHooksDir());
+        assert.deepEqual(result.failed, []);
+        for (const script of engines._TC_HOOK_SCRIPTS) {
+          const sourcePath = path.join(__dirname, '..', 'data', 'hooks', script);
+          const destPath = path.join(result.dir, script);
+          if (!fs.existsSync(sourcePath)) {
+            // Not every TC_HOOK_SCRIPTS entry ships today (the codex pair is
+            // listed for ownership-recognition only) — this is the one real
+            // assertion that matters for them: never copied, never a failure.
+            assert.ok(!fs.existsSync(destPath), `${script} has no source and must not be copied`);
+            continue;
+          }
+          assert.ok(fs.readFileSync(destPath).equals(fs.readFileSync(sourcePath)), `${script} copied byte-for-byte`);
+          assert.equal(fs.statSync(destPath).mode & 0o755, 0o755, `${script} is executable`);
+        }
+      });
+
+      it('_syncCanonicalHookScripts is idempotent: a second call with unchanged source touches nothing', () => {
+        engines._syncCanonicalHookScripts();
+        const before = fs.statSync(path.join(engines._canonicalHooksDir(), engines._TC_HOOK_SCRIPTS[0])).mtimeMs;
+        const second = engines._syncCanonicalHookScripts();
+        assert.deepEqual(second.refreshed, [], 'byte-identical content is not rewritten');
+        const after = fs.statSync(path.join(engines._canonicalHooksDir(), engines._TC_HOOK_SCRIPTS[0])).mtimeMs;
+        assert.equal(after, before, 'mtime must not churn on a no-op sync');
+      });
+
+      it('_syncCanonicalHookScripts refreshes a script whose canonical copy has drifted', () => {
+        engines._syncCanonicalHookScripts();
+        const destPath = path.join(engines._canonicalHooksDir(), engines._TC_HOOK_SCRIPTS[0]);
+        fs.writeFileSync(destPath, '#!/bin/sh\necho drifted\n');
+        const result = engines._syncCanonicalHookScripts();
+        assert.deepEqual(result.refreshed, [engines._TC_HOOK_SCRIPTS[0]]);
+        const sourcePath = path.join(__dirname, '..', 'data', 'hooks', engines._TC_HOOK_SCRIPTS[0]);
+        assert.ok(fs.readFileSync(destPath).equals(fs.readFileSync(sourcePath)), 'drifted copy restored to the real source');
+      });
+
+      it('syncEngineHooks writes a hook command rooted at the canonical install root, and the canonical copy exists on disk', () => {
+        writeProjConfig({ engine: 'claude', silentPrime: true });
+        engines.syncEngineHooks(projectDir);
+
+        const cmd = readSettings().hooks.SessionStart[0].hooks[0].command;
+        assert.ok(cmd.includes(canonicalRoot));
+        assert.ok(fs.existsSync(path.join(engines._canonicalHooksDir(), 'sessionstart-prime-claude.sh')),
+          'syncEngineHooks itself triggers the canonical-copy sync, not just a test fixture');
+      });
+
+      it('_hasNonCanonicalHookEntry: true for a TangleClaw-owned entry naming a different root, false once canonical', () => {
+        const stale = {
+          SessionStart: [{
+            matcher: 'startup|clear|compact',
+            hooks: [{ type: 'command', command: `'/Users/someone/TangleClaw-Builder1'/data/hooks/sessionstart-prime-claude.sh` }]
+          }]
+        };
+        assert.equal(engines._hasNonCanonicalHookEntry(stale, canonicalRoot), true);
+        const canonical = {
+          SessionStart: [{
+            matcher: 'startup|clear|compact',
+            hooks: [{ type: 'command', command: `'${canonicalRoot}'/data/hooks/sessionstart-prime-claude.sh` }]
+          }]
+        };
+        assert.equal(engines._hasNonCanonicalHookEntry(canonical, canonicalRoot), false);
+      });
+
+      it('_hasNonCanonicalHookEntry: false for a foreign (non-TangleClaw) entry naming any root at all', () => {
+        const foreign = {
+          PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '/some/other/tool/lint.sh' }] }]
+        };
+        assert.equal(engines._hasNonCanonicalHookEntry(foreign, canonicalRoot), false);
+      });
+
+      it('migrates an existing hook pointing at a non-canonical root to the canonical one on the very next sync, and logs the migration distinctly', () => {
+        // Simulate a project whose hook was written by a prior sync running from
+        // a now-stale builder/lane checkout, before this fix existed.
+        const claudeDir = path.join(projectDir, '.claude');
+        fs.mkdirSync(claudeDir, { recursive: true });
+        const staleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-stale-lane-'));
+        const logged = [];
+        logger.setConsoleStream({ write: (line) => { logged.push(String(line)); return true; } });
+        try {
+          fs.writeFileSync(path.join(claudeDir, engines.LOCAL_SETTINGS_BASENAME), JSON.stringify({
+            hooks: {
+              SessionStart: [{
+                matcher: 'startup|clear|compact',
+                hooks: [{ type: 'command', command: `'${staleRoot}'/data/hooks/sessionstart-prime-claude.sh` }]
+              }]
+            }
+          }));
+          writeProjConfig({ engine: 'claude', silentPrime: true });
+
+          engines.syncEngineHooks(projectDir);
+
+          const cmd = readSettings().hooks.SessionStart[0].hooks[0].command;
+          assert.ok(cmd.includes(canonicalRoot), 'the stale lane root is replaced by the canonical one');
+          assert.ok(!cmd.includes(staleRoot), 'the stale lane root does not survive the sync');
+          assert.ok(
+            logged.some((line) => line.includes('Migrating a TangleClaw hook that named a non-canonical install root')),
+            'the migration is logged as a distinct event, not silently folded into an ordinary resync'
+          );
+        } finally {
+          logger.setConsoleStream(null);
+          fs.rmSync(staleRoot, { recursive: true, force: true });
+        }
+      });
+
+      it('does NOT log a migration when the existing hook already names the canonical root', () => {
+        writeProjConfig({ engine: 'claude', silentPrime: true });
+        engines.syncEngineHooks(projectDir); // first sync: nothing to migrate, writes the canonical entry
+        const logged = [];
+        logger.setConsoleStream({ write: (line) => { logged.push(String(line)); return true; } });
+        try {
+          engines.syncEngineHooks(projectDir); // second sync: already canonical
+          assert.ok(
+            !logged.some((line) => line.includes('Migrating a TangleClaw hook')),
+            'an already-canonical entry must not be reported as a migration'
+          );
+        } finally {
+          logger.setConsoleStream(null);
+        }
+      });
+
+      describe('fail-safe: a missing canonical script never ships a hook that would fail (#3313, R-Gate R1 WARNING, PR #3339)', () => {
+        it('_dropUnavailableHookEntries drops every entry when the canonical dir has no scripts at all', () => {
+          const baseline = { SessionStart: [{ matcher: 'startup|clear|compact', hooks: [{ type: 'command', command: `{{TANGLECLAW_DIR}}/data/hooks/sessionstart-prime-claude.sh` }] }] };
+          const result = engines._dropUnavailableHookEntries(baseline, projectDir);
+          assert.ok(!result.SessionStart, 'no usable script -- no hook, rather than one guaranteed to fail');
+        });
+
+        it('_dropUnavailableHookEntries keeps an entry whose script is actually present at the canonical path', () => {
+          engines._syncCanonicalHookScripts(); // real copy lands at the (overridden) canonicalRoot for this describe block
+          const baseline = { SessionStart: [{ matcher: 'startup|clear|compact', hooks: [{ type: 'command', command: `{{TANGLECLAW_DIR}}/data/hooks/sessionstart-prime-claude.sh` }] }] };
+          const result = engines._dropUnavailableHookEntries(baseline, projectDir);
+          assert.deepEqual(result, baseline, 'an available script\'s entry is passed through unchanged');
+        });
+
+        it('_dropUnavailableHookEntries drops only the entries whose own script is missing, keeping the rest', () => {
+          engines._syncCanonicalHookScripts(); // only the real (claude) pair lands; the codex pair never ships
+          const baseline = {
+            SessionStart: [
+              { matcher: 'startup|clear|compact', hooks: [{ type: 'command', command: `{{TANGLECLAW_DIR}}/data/hooks/sessionstart-prime-claude.sh` }] },
+              { matcher: 'startup|clear|compact', hooks: [{ type: 'command', command: `{{TANGLECLAW_DIR}}/data/hooks/sessionstart-prime-codex.sh` }] }
+            ]
+          };
+          const result = engines._dropUnavailableHookEntries(baseline, projectDir);
+          assert.equal(result.SessionStart.length, 1);
+          assert.match(result.SessionStart[0].hooks[0].command, /sessionstart-prime-claude\.sh/);
+        });
+
+        it('syncEngineHooks writes no SessionStart hook at all when the canonical sync has no usable prior copy to fall back on', () => {
+          // A canonicalInstallRoot whose parent path component is a FILE, not a
+          // directory: fs.mkdirSync(..., {recursive: true}) fails with ENOTDIR,
+          // so _syncCanonicalHookScripts never creates the dir and no script is
+          // ever written there -- a genuine "sync failed, nothing usable exists"
+          // case, not merely an empty-but-creatable directory.
+          const blockerFile = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-hook-blocker-'));
+          const blockerPath = path.join(blockerFile, 'not-a-directory');
+          fs.writeFileSync(blockerPath, 'this is a file, not a directory');
+          const saved = engines._internal.canonicalInstallRoot;
+          engines._internal.canonicalInstallRoot = () => blockerPath;
+          try {
+            writeProjConfig({ engine: 'claude', silentPrime: true });
+            engines.syncEngineHooks(projectDir);
+            // Nothing to write and no prior file: syncEngineHooks correctly
+            // creates no file at all here, rather than an empty placeholder
+            // (see _reconcileHooksFile's own "no file to add it to" case) --
+            // the settings file's absence is itself the proof no hook shipped.
+            const localFile = path.join(projectDir, '.claude', engines.LOCAL_SETTINGS_BASENAME);
+            if (fs.existsSync(localFile)) {
+              const settings = JSON.parse(fs.readFileSync(localFile, 'utf8'));
+              assert.ok(!settings.hooks || !settings.hooks.SessionStart, 'no hook is written when no usable canonical script exists');
+            }
+          } finally {
+            engines._internal.canonicalInstallRoot = saved;
+            fs.rmSync(blockerFile, { recursive: true, force: true });
+          }
+        });
+      });
     });
 
     it('does not run for non-claude engines even with silentPrime enabled', () => {
