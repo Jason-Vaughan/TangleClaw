@@ -6,19 +6,19 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [6.6.3] - 2026-11-26
 
-## Added
+### Added
 
 - **Fleet membership management** (#3262): adds domain operations and a self-contained V6 fleets router for adding and removing existing workspace projects, with an active-session removal safeguard. The router is not yet mounted in the live server; that is follow-up work.
 - **Fleet delegate assignment helper** (#3263): adds a domain helper for updating coordinator roles and member configuration. It is not wired to a route or UI, and the control-assignment authority matrix remains outside this change; integration remains open.
 - **Configurable fleet SDLC policy** (#3265): adds a policy validator, hierarchy resolver, and car-admission evaluator for GitHub/local/no issue backends and roadmap-triage requirements. A dispatch-admission caller is separate follow-up work.
 - **Wave look-ahead eligibility** (#3268): adds a validator for satisfied dependencies, disjoint file scopes, and a current-main base, and reports whether an eligible car may merge after the release cut.
 
-## Improved
+### Improved
 
 - **Safe wave parallelization** (#3264): adds a default-on `maximizeSafeParallelization` policy and reviewer/integrator-capacity checks to parallel-wave validation.
 - **Project attachment options** (#3289): `attachProject` now honors a contained `options.path` and validates an explicit `options.engine`. V6 wizard discovery and forwarding these fields through the attach route remain follow-up work.
 
-## Verification
+### Verification
 
 - PR #3310 (#3262): merge `39c768517bbfa68b63b8e3fa39cc98606f65fd29`; exact-head Tests run `45896203290` succeeded; A-Gate/Gate 3 A1173/A1174 and R-Gate ACCEPT.
 - PR #3312 (#3289): merge `013bc636cff8b70fd25fee370642fad6849668cf`; exact-head Tests run `45898912511` succeeded; A-Gate/Gate 3 A1188/A1189 and R-Gate R2 ACCEPT.
@@ -27,7 +27,7 @@ All notable changes to TangleClaw are documented in this file.
 - PR #3302 (#3264, #3268): merge `9b68338e099dd759e08ba42716ff59a282b0fe3f`; exact-head Tests run `45914522253` succeeded; A-Gate/Gate 3 A1194/A1195 and R-Gate R2 ACCEPT.
 - Train-wide O-Gate is satisfied under Rule #283 / Ruling A1158.
 
-## Release state
+### Release state
 
 This document is part of the release-cut PR. The cut is not yet merged, tagged, or published. The release workflow will test the eventual merge commit and handle tagging/publication; this PR does not create a tag or publish a release.
 
