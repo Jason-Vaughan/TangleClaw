@@ -840,6 +840,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       await settle();
       const streamEl = doc.getElementById('v6ChatStream');
       assert.ok(streamEl, 'the stream must be mounted');
+      streamEl.dispatch('wheel'); // #3327: proves the 'scroll' below is the operator's own
       withStreamGeometry(streamEl, { scrollTop: 100, scrollHeight: 1000, clientHeight: 400 });
       streamEl.dispatch('scroll'); // establishes lastStreamScrollTop = 100, still far from bottom
       withStreamGeometry(streamEl, { scrollTop: 50, scrollHeight: 1000, clientHeight: 400 }); // scrolled UP by 50px
@@ -856,6 +857,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       const { doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
       await settle();
       const streamEl = doc.getElementById('v6ChatStream');
+      streamEl.dispatch('wheel'); // #3327: proves the 'scroll' below is the operator's own
       withStreamGeometry(streamEl, { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
       streamEl.dispatch('scroll');
       withStreamGeometry(streamEl, { scrollTop: 50, scrollHeight: 1000, clientHeight: 400 });
@@ -876,6 +878,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       const { win, doc, settle } = mountShell(`#/resources/${projectA}/conversation`);
       await settle();
       const streamElA = doc.getElementById('v6ChatStream');
+      streamElA.dispatch('wheel'); // #3327: proves the 'scroll' below is the operator's own
       withStreamGeometry(streamElA, { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
       streamElA.dispatch('scroll');
       withStreamGeometry(streamElA, { scrollTop: 50, scrollHeight: 1000, clientHeight: 400 });
@@ -920,6 +923,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       const { root, doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
       await settle();
       const idSuffix = findMemberRenameIdSuffix(root, projectId);
+      doc.getElementById('v6ChatStream').dispatch('wheel'); // #3327: proves the 'scroll' below is the operator's own
       withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
       doc.getElementById('v6ChatStream').dispatch('scroll');
       withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 77, scrollHeight: 1000, clientHeight: 400 });
@@ -956,6 +960,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       const { root, doc, settle } = mountShell(`#/resources/${projectId}/conversation`);
       await settle();
       const idSuffix = findMemberRenameIdSuffix(root, projectId);
+      doc.getElementById('v6ChatStream').dispatch('wheel'); // #3327: proves the 'scroll' below is the operator's own
       withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
       doc.getElementById('v6ChatStream').dispatch('scroll');
       withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 77, scrollHeight: 1000, clientHeight: 400 });
@@ -1029,6 +1034,7 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
 
       // Unpin the stream with a specific reading position, so the toggle
       // transitions below have something real to preserve or disturb.
+      doc.getElementById('v6ChatStream').dispatch('wheel'); // #3327: proves the 'scroll' below is the operator's own
       withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 500, scrollHeight: 1000, clientHeight: 400 });
       doc.getElementById('v6ChatStream').dispatch('scroll');
       withStreamGeometry(doc.getElementById('v6ChatStream'), { scrollTop: 77, scrollHeight: 1000, clientHeight: 400 });

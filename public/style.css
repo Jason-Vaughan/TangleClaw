@@ -4816,6 +4816,18 @@ p.v6-history-secret {
   font-size: 16px;
   text-decoration: none;
 }
+/* #3328: Under the Hood moved from a permanently-parked middle drawer bar
+   into this top-header toggle — min-width dropped (it carries a text label,
+   not just an icon) and its "on" state gets the same live-accent border the
+   drawer's own LIVE CLI indicator already uses elsewhere in this view. */
+.v6-chat-toggle-under-hood {
+  min-width: auto;
+  font-size: 13px;
+}
+.v6-chat-toggle-under-hood[aria-pressed="true"] {
+  border-color: #9CF732;
+  color: #9CF732;
+}
 .v6-chat-to-delegate {
   text-decoration: none;
 }
@@ -5377,6 +5389,32 @@ p.v6-history-secret {
 }
 @media (prefers-reduced-motion: reduce) {
   .v6-uth-status--busy::before { animation: none; }
+}
+/* #3330: a stacked follow-up prompt sent while an earlier turn is still
+   running used to render as a bare `user` bubble, indistinguishable from
+   one the engine already answered — these pills mark which turn is
+   actually being worked (reuses `.v6-uth-status--busy`'s own pulse) and
+   which is only waiting. */
+.v6-chat-turn-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.75em;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.v6-chat-turn-status--processing {
+  border: 1.5px solid var(--tc-venom-green, #9CF732);
+  background: rgba(156, 247, 50, 0.12);
+  color: var(--tc-venom-green, #9CF732);
+}
+.v6-chat-turn-status--queued {
+  border: 1.5px solid var(--border-color, #2a2f36);
+  color: var(--text-secondary, #8b949e);
+  opacity: 0.85;
 }
 .v6-chat-composer {
   display: flex;

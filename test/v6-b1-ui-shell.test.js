@@ -2236,6 +2236,40 @@ describe('tcV6HoodKeyAction — Interactive CLI Mode\'s keystroke mapping (#3135
   });
 });
 
+// #3327 item 1: `refreshSidebarStatus` polls `setProjects`/`setTree`/
+// `setEngineHealth` roughly every 12s even when nothing changed, and each
+// one used to force a full render() (destroy + recreate root.innerHTML,
+// un-dock and re-dock .v6-chat-header) unconditionally — a no-op here is
+// always behavior-safe (an unconditional render of unchanged state would
+// redraw the exact same DOM anyway), unlike `setTelemetry`, which keeps its
+// own always-render contract (see the "sends the live stats home first"
+// test below) and is deliberately left out of this.
+describe('background sidebar polls no-op on an unchanged payload instead of forcing a full render (#3327)', () => {
+  it('setProjects/setTree/setEngineHealth each skip the render when the payload serializes the same as last time', () => {
+    const renders = [];
+    const { shell } = mountShell({ onRender: () => renders.push(1) });
+    const afterMount = renders.length;
+    shell.setProjects([{ id: 1, name: 'P' }]);
+    assert.equal(renders.length, afterMount + 1, 'first real payload still renders');
+    shell.setProjects([{ id: 1, name: 'P' }]); // same content, fresh array/object references
+    assert.equal(renders.length, afterMount + 1, 'identical payload is a no-op');
+    shell.setProjects([{ id: 1, name: 'Changed' }]);
+    assert.equal(renders.length, afterMount + 2, 'a real change still renders');
+
+    const afterProjects = renders.length;
+    shell.setTree([{ id: 't1', displayName: 'T', fleets: [] }]);
+    assert.equal(renders.length, afterProjects + 1);
+    shell.setTree([{ id: 't1', displayName: 'T', fleets: [] }]);
+    assert.equal(renders.length, afterProjects + 1, 'identical tree payload is a no-op');
+
+    const afterTree = renders.length;
+    shell.setEngineHealth({ claude: { status: 'ok' } });
+    assert.equal(renders.length, afterTree + 1);
+    shell.setEngineHealth({ claude: { status: 'ok' } });
+    assert.equal(renders.length, afterTree + 1, 'identical engine-health payload is a no-op');
+  });
+});
+
 describe('Project Delegate Chat, end to end through the shell and live controller (#3047)', () => {
   /**
    * A shell wired to a live controller the way public/ui.js wires them, with
@@ -2487,6 +2521,68 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     input.dispatch('input');
     m.shell.setTelemetry(null);
     assert.match(m.root.innerHTML, /<textarea id="v6ChatInput"[^>]*>half typed<\/textarea>/);
+  });
+
+  // #3327 item 2: a background poll must defer its full render() while the
+  // operator has an active selection ANYWHERE in the shell — the sidebar,
+  // Switchboard, Waiting-On, Under the Hood, Workspace panels — not only
+  // inside #v6ChatStream/#v6ChatPeek, which is all the original #3287 fix
+  // checked.
+  it('a background poll defers the full render while an active selection exists anywhere in the shell, then flushes once it clears', async () => {
+    const m = mountChat();
+    await m.settle();
+    m.root.contains = () => true; // stand-in: a selection exists somewhere under root
+    m.doc.getSelection = () => ({ isCollapsed: false, rangeCount: 1, anchorNode: {}, focusNode: {} });
+    const before = m.root.innerHTML;
+    m.shell.setTelemetry({ scope: 'global', metrics: { activeSessions: { value: 2, confidence: 'observed' } } });
+    assert.equal(m.root.innerHTML, before, 'deferred, not applied, while the selection is active');
+    m.doc.getSelection = () => null;
+    m.shell.setTelemetry({ scope: 'global', metrics: { activeSessions: { value: 3, confidence: 'observed' } } });
+    assert.notEqual(m.root.innerHTML, before, 'the next call, with the selection cleared, actually renders');
+  });
+
+  // #3327 item 3: a 2px-per-tick slow trackpad scroll never crossed the OLD
+  // per-event `scrollTop < lastStreamScrollTop - 4` delta threshold, so
+  // `streamPinned` stuck `true` no matter how far the operator actually
+  // scrolled, and the next poll/resize snapped them straight back to the
+  // bottom. The fix detects genuine user-scroll intent directly (a recent
+  // 'wheel' on the pane) instead of inferring it from one event's size.
+  it('slow trackpad scrolling (2px per tick) unpins the stream instead of being swallowed by a per-event delta threshold', async () => {
+    const m = mountChat();
+    await m.settle();
+    const streamEl = m.doc.getElementById('v6ChatStream');
+    streamEl.scrollHeight = 1000;
+    streamEl.clientHeight = 200;
+    streamEl.scrollTop = 800; // distance from bottom: 0 — pinned
+    streamEl.dispatch('wheel');
+    for (let i = 0; i < 20; i++) {
+      streamEl.scrollTop -= 2; // 20 ticks of 2px = 40px, each below the old 4px-per-event threshold
+      streamEl.dispatch('scroll');
+    }
+    const pill = m.doc.getElementById('v6ChatJumpLatest');
+    assert.equal(pill.hidden, false, 'the jump-to-latest pill reappears once unpinned — 40px from the bottom now, all via sub-threshold ticks');
+  });
+
+  // #3328: clicking the new top-header toggle flips the drawer between
+  // completely hidden (zero space in the center stack) and open/visible,
+  // and the choice persists like the drawer's own native toggle already did.
+  it('clicking the top-header Under the Hood toggle hides/shows the drawer and persists the choice (#3328)', async () => {
+    const m = mountChat();
+    await m.settle();
+    // The click handler's own direct hidden/open mutation is for the
+    // instant before render() runs — render() immediately follows and
+    // rebuilds the whole subtree FROM `chatHoodOpen`, so the markup string
+    // (not the mini-dom's attribute-blind element, see test/_mini-dom.js's
+    // own doc comment) is what actually proves the real end state here.
+    assert.match(m.root.innerHTML, /<details id="v6ChatUnderHood"[^>]* hidden>/, 'starts hidden');
+    m.doc.getElementById('v6ChatToggleUnderHood').dispatch('click');
+    assert.match(m.root.innerHTML, /<details id="v6ChatUnderHood"[^>]* open>/);
+    assert.doesNotMatch(m.root.innerHTML, /<details id="v6ChatUnderHood"[^>]* hidden/);
+    assert.equal(JSON.parse(m.storage.getItem('tc_v6_chat_under_hood_open')), true);
+    m.doc.getElementById('v6ChatToggleUnderHood').dispatch('click');
+    assert.match(m.root.innerHTML, /<details id="v6ChatUnderHood"[^>]* hidden>/);
+    assert.doesNotMatch(m.root.innerHTML, /<details id="v6ChatUnderHood"[^>]* open/);
+    assert.equal(JSON.parse(m.storage.getItem('tc_v6_chat_under_hood_open')), false);
   });
 });
 
@@ -2865,7 +2961,10 @@ describe('tcV6ExtractLiveTurns: terminal-echoed/wrapped prompts never duplicate 
     const lines = ['❯ do the next thing', '▸ fix the other bug too', '(alt+m to send immediately)'];
     const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
     assert.deepEqual(out.turns, [{ role: 'user', text: 'do the next thing' }]);
-    assert.equal(out.activity, null);
+    // #3330: "(alt+m to send immediately)" is now recognized as positive
+    // evidence a turn is actively running with a queued follow-up, not
+    // merely dropped chrome — reverses this test's own old expectation.
+    assert.match(out.activity, /Working/);
   });
 
   it('still reads Antigravity/Codex\'s own "▸ Thought for …" recap as chrome (the engine-specific rule), not the new queued-prompt exclusion', () => {
@@ -3027,6 +3126,36 @@ describe('Above-the-Hood chat view (#3052)', () => {
     assert.ok(html.indexOf('ship the release') < html.indexOf('The branch is clean.'), 'recorded events come first');
   });
 
+  // #3330: a follow-up prompt sent while an earlier one is still running
+  // used to render as a bare `user` bubble, indistinguishable from one the
+  // engine already answered. The trailing run of unanswered `user` turns
+  // gets an explicit status pill: the oldest is being worked, anything
+  // stacked after it is only queued.
+  it('marks the oldest unanswered stacked user turn Processing and later ones Queued', () => {
+    const html = G.tcV6ConversationViewMarkup(view({ live: { turns: [
+      { role: 'user', text: 'first prompt' },
+      { role: 'user', text: 'second prompt' },
+      { role: 'user', text: 'third prompt' }
+    ], question: null, activity: null } }));
+    const first = html.indexOf('first prompt');
+    const second = html.indexOf('second prompt');
+    const third = html.indexOf('third prompt');
+    const processingAt = html.indexOf('Processing');
+    assert.ok(first < processingAt && processingAt < second, 'Processing sits on the oldest (first) stacked turn');
+    assert.equal((html.match(/Queued — waiting for current turn to finish/g) || []).length, 2, 'the 2 later turns are both Queued');
+    assert.ok(second < html.indexOf('Queued', second) && html.indexOf('Queued', second) < third);
+  });
+
+  it('a single unanswered user turn (not stacked) still gets Processing, and a turn with its own reply gets neither pill', () => {
+    const lone = G.tcV6ConversationViewMarkup(view({ live: { turns: [{ role: 'user', text: 'solo prompt' }], question: null, activity: null } }));
+    assert.match(lone, /Processing/);
+    assert.doesNotMatch(lone, /Queued/);
+    const answered = G.tcV6ConversationViewMarkup(view({ live: { turns: [
+      { role: 'user', text: 'answered prompt' }, { role: 'assistant', text: 'here you go' }
+    ], question: null, activity: null } }));
+    assert.doesNotMatch(answered, /Processing|Queued/);
+  });
+
   it('pins the question the assistant is waiting on, and shows what it is busy doing, above the composer', () => {
     const html = G.tcV6ConversationViewMarkup(view({ live: { turns: [], question: 'Should I <push>?', activity: 'Running command' } }));
     assert.match(html, /<div id="v6ChatQuestion" class="v6-chat-question is-asking"[^>]*>[\s\S]*Should I &lt;push&gt;\?/);
@@ -3103,8 +3232,21 @@ describe('Above-the-Hood chat view (#3052)', () => {
     // #3191: "Hide Medusa & fleet chatter" defaults to checked, so
     // `is-traffic-hidden` is on the drawer and the tucked-count badge and
     // both fleet-chatter sections carry `hidden` by default too.
-    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood is-traffic-hidden">\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count" hidden><\/span>\s*<span id="v6UthStatus" class="v6-uth-status" aria-hidden="true"><\/span>\s*<button type="button" id="v6ChatHoodFullScreen"[\s\S]*?<\/button>\s*<button type="button" id="v6ChatHoodInteractive"[\s\S]*?<\/button>\s*<\/summary>\s*<div id="v6ChatHoodResizeTop"[^>]*data-chat-resizer="hood-top"[^>]*>[\s\S]*?<\/div>\s*<fieldset class="v6-chat-verbosity">[\s\S]*?<\/fieldset>\s*<section class="v6-chat-tucked" aria-label="Replies tucked away" hidden>[\s\S]*?<\/section>\s*<section class="v6-chat-switchboard" aria-label="Switchboard and Medusa traffic" hidden>[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
+    // #3328: closed now also carries `hidden` -- zero summary bar sits in the
+    // center stack between the stream and the composer until the operator
+    // opens it from the new top-header toggle (or the Medusa badge).
+    assert.match(closed, /<details id="v6ChatUnderHood" class="v6-chat-under-hood is-traffic-hidden" hidden>\s*<summary>🔧 Under the Hood \(Raw CLI &amp; Tool Activity\) <span id="v6ChatTuckedCount" class="v6-chat-tucked-count" hidden><\/span>\s*<span id="v6UthStatus" class="v6-uth-status" aria-hidden="true"><\/span>\s*<button type="button" id="v6ChatHoodFullScreen"[\s\S]*?<\/button>\s*<button type="button" id="v6ChatHoodInteractive"[\s\S]*?<\/button>\s*<\/summary>\s*<div id="v6ChatHoodResizeTop"[^>]*data-chat-resizer="hood-top"[^>]*>[\s\S]*?<\/div>\s*<fieldset class="v6-chat-verbosity">[\s\S]*?<\/fieldset>\s*<section class="v6-chat-tucked" aria-label="Replies tucked away" hidden>[\s\S]*?<\/section>\s*<section class="v6-chat-switchboard" aria-label="Switchboard and Medusa traffic" hidden>[\s\S]*?<\/section>\s*<pre id="v6ChatPeek"/);
     assert.match(G.tcV6ConversationViewMarkup(view({ peek: { lines: [] }, hoodOpen: true })), /<details id="v6ChatUnderHood" class="v6-chat-under-hood is-traffic-hidden" open>/);
+  });
+
+  // #3328: the top-header toggle button mirrors the drawer's own open state
+  // via aria-pressed, instead of the drawer being permanently parked in the
+  // center stack (open or collapsed) regardless of whether it's in use.
+  it('the top-header Under the Hood toggle reflects whether the drawer is open (#3328)', () => {
+    const closed = G.tcV6ConversationViewMarkup(view({ peek: { lines: [] } }));
+    assert.match(closed, /<button type="button" id="v6ChatToggleUnderHood"[^>]*aria-pressed="false"/);
+    const open = G.tcV6ConversationViewMarkup(view({ peek: { lines: [] }, hoodOpen: true }));
+    assert.match(open, /<button type="button" id="v6ChatToggleUnderHood"[^>]*aria-pressed="true"/);
   });
 
   it('wraps both streams in one scroll container', () => {
@@ -3226,6 +3368,7 @@ describe('the chat stream stays pinned to its newest line (#3135)', () => {
     const { doc } = mountStream();
     const stream = doc.getElementById('v6ChatStream');
     assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true, 'pinned by default, so the pill starts hidden');
+    stream.dispatch('wheel'); // #3327: a 'scroll' only unpins once a recent wheel/touchmove/pointerdown proves the operator caused it
     stream.scrollTop = 500; // scrollHeight(900) - scrollTop(500) - clientHeight(300) = 100 > 24
     stream.dispatch('scroll');
     assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false);
@@ -3234,10 +3377,11 @@ describe('the chat stream stays pinned to its newest line (#3135)', () => {
   it('scrolling back within 24px of the bottom by hand re-pins and hides the pill again', () => {
     const { doc } = mountStream();
     const stream = doc.getElementById('v6ChatStream');
+    stream.dispatch('wheel');
     stream.scrollTop = 500;
     stream.dispatch('scroll');
     assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false);
-    stream.scrollTop = 890; // 900 - 890 - 300 is negative: within the 24px band
+    stream.scrollTop = 890; // 900 - 890 - 300 is negative: within the 24px band — re-pins unconditionally, no wheel needed
     stream.dispatch('scroll');
     assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, true);
   });
@@ -3245,6 +3389,7 @@ describe('the chat stream stays pinned to its newest line (#3135)', () => {
   it('clicking the pill jumps straight to the newest line and re-pins', () => {
     const { doc } = mountStream();
     const stream = doc.getElementById('v6ChatStream');
+    stream.dispatch('wheel');
     stream.scrollTop = 200;
     stream.dispatch('scroll');
     assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false);
@@ -3272,6 +3417,7 @@ describe('the chat stream stays pinned to its newest line (#3135)', () => {
   it('switching to a different chat always starts pinned, even if the last one was scrolled away', () => {
     const { doc, shell } = mountStream();
     const stream = doc.getElementById('v6ChatStream');
+    stream.dispatch('wheel');
     stream.scrollTop = 500;
     stream.dispatch('scroll');
     assert.equal(doc.getElementById('v6ChatJumpLatest').hidden, false);
@@ -3324,6 +3470,7 @@ describe('the chat frame\'s scroll-position coordinator (#3200)', () => {
   it('toggling Under the Hood while the stream is NOT pinned preserves its exact scroll position instead of jumping it', () => {
     const { doc } = mountStream();
     const stream = doc.getElementById('v6ChatStream');
+    stream.dispatch('wheel'); // #3327: proves this 'scroll' is the operator's own
     stream.scrollTop = 500;
     stream.dispatch('scroll'); // genuinely scrolled away by hand -> streamPinned = false
     const hood = doc.getElementById('v6ChatUnderHood');
@@ -3359,6 +3506,7 @@ describe('the chat frame\'s scroll-position coordinator (#3200)', () => {
     }
     const { doc } = mountStream({ ResizeObserver: FakeResizeObserver });
     const stream = doc.getElementById('v6ChatStream');
+    stream.dispatch('wheel'); // #3327: proves this 'scroll' is the operator's own
     stream.scrollTop = 500;
     stream.dispatch('scroll'); // streamPinned = false
     observers[0].cb();
@@ -4118,16 +4266,34 @@ describe('tcV6ExtractLiveTurns clears stale activity instead of reading 4 false-
     }
   });
 
-  it('an Antigravity background /tasks daemon row never leaves activity stuck on once an at-rest footer follows', () => {
+  it('an Antigravity background /tasks daemon row never leaves activity stuck on once a genuine at-rest footer follows', () => {
     const shortcuts = plain(G.tcV6ExtractLiveTurns(
       ['> go', '● [10:21:47] node .../server.mjs running', '? for shortcuts          auto · Gemini 4 Argon · medium · 4 task(s) · /tasks'],
       'antigravity', []
     ));
     assert.equal(shortcuts.activity, null);
+  });
+
+  // #3330: reverses half of #3181's own fix above — "Press up to edit
+  // queued messages" is Antigravity's live status bar WHILE a turn is
+  // still running (the operator queued a follow-up), not an idle-shell
+  // prompt, so it must no longer clear `activity`; it is now itself
+  // positive evidence the turn is in flight.
+  it('"Press up to edit queued messages" is busy evidence, not an at-rest footer (#3330)', () => {
     const queued = plain(G.tcV6ExtractLiveTurns(
-      ['> go', '● [10:21:47] node .../server.mjs running', 'Press up to edit queued messages'], 'antigravity', []
+      ['> go', 'Press up to edit queued messages'], 'antigravity', []
     ));
-    assert.equal(queued.activity, null);
+    assert.match(queued.activity, /Working/);
+    const withAltM = plain(G.tcV6ExtractLiveTurns(
+      ['> go', 'Press up to edit queued messages (alt+m to send immediately)'], 'antigravity', []
+    ));
+    assert.match(withAltM.activity, /Working/);
+    // A genuine spinner label already set survives — the queued hint never
+    // overwrites it with the generic fallback.
+    const withSpinnerThenQueued = plain(G.tcV6ExtractLiveTurns(
+      ['> go', '✻ Thinking…', 'Press up to edit queued messages'], 'antigravity', []
+    ));
+    assert.match(withSpinnerThenQueued.activity, /Thinking/);
   });
 
   it('an Antigravity active status bar keeps the spinner\'s own label instead of its right-hand model/task chrome', () => {
@@ -4161,6 +4327,17 @@ describe('tcV6IsSessionStatusBusy & tcV6ChatBusyLabel: a CLI gate or menu on scr
   it('chatBusyLabel still returns Working for a genuinely busy status with no gate or menu on screen', () => {
     const chat = { statusBusy: true, live: { activity: null, rawLines: ['✻ Thinking…'] } };
     assert.equal(G.tcV6ChatBusyLabel(chat), 'Working');
+  });
+
+  // #3330: with no spinner, no statusBusy, and no send in flight, a
+  // trailing `user` live turn with no reply after it yet is still busy
+  // evidence on its own — the exact shape a stacked follow-up prompt takes.
+  it('chatBusyLabel falls back to Working when the trailing live turn is an unanswered user prompt (#3330)', () => {
+    const stacked = { live: { activity: null, turns: [{ role: 'user', text: 'a' }, { role: 'user', text: 'b' }] } };
+    assert.equal(G.tcV6ChatBusyLabel(stacked), 'Working');
+    const answered = { live: { activity: null, turns: [{ role: 'user', text: 'a' }, { role: 'assistant', text: 'reply' }] } };
+    assert.equal(G.tcV6ChatBusyLabel(answered), null);
+    assert.equal(G.tcV6ChatBusyLabel({ live: { activity: null, turns: [] } }), null);
   });
 });
 
@@ -5285,7 +5462,10 @@ describe('Under the Hood: Full Screen and Interactive CLI Mode (#3135)', () => {
     const { doc, root, keydowns } = mountLiveHood();
     assert.doesNotMatch(root.innerHTML, /id="v6ChatUnderHood" class="v6-chat-under-hood is-traffic-hidden" style="position:fixed/);
     doc.getElementById('v6ChatHoodFullScreen').dispatch('click');
-    assert.match(root.innerHTML, /id="v6ChatUnderHood" class="v6-chat-under-hood is-traffic-hidden" style="position:fixed[^"]*"/);
+    // #3328: closed (chat.hoodOpen stays false here — this click never
+    // touches it) now also carries `hidden`, between the class and the
+    // Full Screen inline style.
+    assert.match(root.innerHTML, /id="v6ChatUnderHood" class="v6-chat-under-hood is-traffic-hidden" hidden style="position:fixed[^"]*"/);
     assert.doesNotMatch(root.innerHTML, /<details id="v6ChatUnderHood"[^>]* open/, 'the click never also opened/closed the drawer');
     assert.match(root.innerHTML, /id="v6ChatHoodFullScreen"[^>]*title="Exit Full Screen"/);
     keydowns.get('v6ChatUnderHood')({ key: 'Escape' });
@@ -7306,6 +7486,35 @@ describe('turns in the order they happened, and a composer that empties on Enter
     assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*&lt;b&gt;hi&lt;\/b&gt;[\s\S]*Sending…/);
     assert.doesNotMatch(html, /<b>hi/);
     assert.doesNotMatch(G.tcV6ConversationViewMarkup(view([ev(1, '<b>hi</b>')], [], { pending, lastSent: { id: 7, text: '<b>hi</b>' } })), /is-pending/);
+  });
+
+  // #3326: before `endSend`/`recordUserEvent` settle (~1-3s), a live peek
+  // poll can already echo the sent message into `live.turns` as a `user`
+  // turn — without this, it rendered TWICE: once there, is-live, and again
+  // here, is-pending, stacked on top of each other.
+  it('a pending message already echoed as a live user turn is not drawn a second time (#3326)', () => {
+    const pending = { id: 9, text: 'hello world' };
+    const html = G.tcV6ConversationViewMarkup(view([], [{ role: 'user', text: 'hello world' }], { pending }));
+    assert.doesNotMatch(html, /is-pending/);
+    assert.equal((html.match(/hello world/g) || []).length, 1);
+  });
+
+  // #3326: the trailing recorded event can also beat the live-turn echo —
+  // caught the same way, without needing `lastSent` to have settled yet.
+  it('a pending message already matching the conversation\'s trailing recorded event is not drawn a second time (#3326)', () => {
+    const pending = { id: 9, text: 'hello again' };
+    const html = G.tcV6ConversationViewMarkup(view([ev(1, 'hello again')], [], { pending }));
+    assert.doesNotMatch(html, /is-pending/);
+  });
+
+  // #3326: an UNRELATED pending send (a different message, forced through
+  // while this one is still settling) keeps its own bubble — the dedup
+  // must not suppress every pending item just because ANY live turn exists.
+  it('an unrelated pending message keeps its own bubble alongside a different live turn (#3326)', () => {
+    const pending = { id: 9, text: 'second message' };
+    const html = G.tcV6ConversationViewMarkup(view([], [{ role: 'user', text: 'first message' }], { pending }));
+    assert.match(html, /is-pending/);
+    assert.match(html, /second message/);
   });
 });
 
@@ -10943,6 +11152,7 @@ describe('Car V657-W1-A: UTH traffic filter, scroll pinning, multi-tab fleet syn
     it('scrolling up by hand stops a later targeted redraw from re-pinning it', () => {
       const { doc, shell } = mountWithPeek();
       const peek = doc.getElementById('v6ChatPeek');
+      peek.dispatch('wheel'); // #3327: proves this 'scroll' is the operator's own
       peek.scrollTop = 500; // 900 - 500 - 300 = 100 > 24, and below lastPeekScrollTop(900) - 4
       peek.dispatch('scroll');
       shell.setLive({ peek: { lines: ['x', 'y', 'z'] }, live: null });

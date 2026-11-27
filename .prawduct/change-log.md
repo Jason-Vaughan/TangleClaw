@@ -41,6 +41,60 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-27 — v6 chat UX: scroll/selection corruption, dedup send bubble, header UTH toggle, queued-turn indicator, Car V666-W1-A
+
+<!-- prawduct: type=fixed | scope=v666-w1-a -->
+
+- Fixed #3327 (12s background sidebar polls forcing a full `root.innerHTML` redraw and
+  header re-dock even when nothing changed, plus selections/mouse-drags only being
+  protected inside `#v6ChatStream`/`#v6ChatPeek`, plus slow trackpad scrolling never
+  crossing the old per-event unpin delta threshold): added a serialized no-op check to
+  `setProjects`/`setTree`/`setEngineHealth` (left `setTelemetry` out — it has an existing
+  test-enforced always-redraw contract this would have broken); widened
+  `fullRenderWouldDropSelection` to `hasActiveSelectionIn(root)` plus a new
+  `isPointerSelecting`/cooldown pair covering the whole shell, not just the two chat
+  panes; routed `#v6ChatSwitchboard` and every `paintWaitingOnExtras()` slot through
+  `paintIfChanged`; and replaced `wireStreamPin`/`wirePeekPin`'s per-event
+  `scrollTop`-delta heuristic with a direct `wheel`/`touchmove`/`pointerdown`
+  user-scroll-intent window.
+- Fixed #3326 (a just-sent message briefly rendered twice — once as a live pane echo,
+  once as the still-pending bubble): `pendingMarkup` now also excludes a pending send
+  matched by a live `user` turn or the conversation's trailing recorded event, not only
+  `lastSent`.
+- Fixed #3328 (Under the Hood permanently parked in the center stack, open or
+  collapsed): added `#v6ChatToggleUnderHood` to the chat's top header, and `chatHoodOpen
+  === false` now also sets `hidden` on the `<details>` itself (every existing way the
+  drawer opens routes through one new `setUnderHoodOpen` helper so `open`/`hidden` can't
+  drift apart).
+- Fixed #3330 (the busy indicator clearing mid-turn, and stacked follow-up prompts
+  rendering as indistinguishable bare bubbles): split `LIVE_AT_REST_FOOTER_RE` — Antigravity's
+  "Press up to edit queued messages" and the model/%-left status-bar chrome no longer clear
+  `activity` (the queued-messages line is now itself positive busy evidence via the new
+  `LIVE_QUEUED_INPUT_RE`); `chatBusyLabel` falls back to busy when the trailing live turn is
+  an unanswered `user` prompt; `liveTurnsMarkup` marks the oldest unanswered stacked `user`
+  turn "● Processing…" and later ones "⏳ Queued — waiting for current turn to finish".
+  Deliberately did not implement the Force/✕ controls tying a queued badge into the
+  existing `Waiting on: AI` queue — flagged as a scoped omission, not attempted.
+- Each fix reverses part of an EARLIER fix's own test-enforced behavior where the two
+  genuinely conflicted, not silently: #3330 reverses half of #3181's "Press up to edit
+  queued messages is an at-rest footer" (that line is Antigravity's live status bar
+  while a turn runs, not an idle-shell prompt — #3181's OTHER at-rest markers are
+  unchanged); #3328 reverses the `<details>` always showing its closed `<summary>` bar.
+  `setTelemetry`'s own always-redraw-on-identical-data contract (an existing test
+  deliberately exercises it) was intentionally left alone for #3327 rather than
+  reversed, since nothing in that issue's root-cause text names it as the poll causing
+  the symptom (`refreshSidebarStatus` calls only `setProjects`/`setTree`/`setEngineHealth`).
+- Verified with `node --test test/v6-b1-ui-shell.test.js` (839/839) plus the adjacent
+  v6-shell-touching suites (`native-sprint-tracker`, `projects-attach-unregistered`,
+  `v6-browser-shell-and-conversation-e2e`, `v6-b2-conversation-layer`,
+  `v6-conversation-readability`, `v6-engine-usage-health-indicator`,
+  `v6-fleet-wave-and-report-e2e`, `v6-interactive-choices`, `v6-lifecycle-stage-progress`,
+  `v6-ui-shell-mount-wiring`, `v6-ssot-charter-viewer`, `v6-v620-server-routes-integration`,
+  `v6-v610-server-routes-integration`, `v6-uth-traffic-filter`) — 692/692, after updating
+  the scroll-pin fixtures in both files to dispatch a `wheel` event before the `scroll`
+  event they use to simulate an upward user scroll (the new user-scroll-intent gate's
+  direct consequence).
+
 ## 2026-11-24 — v6.6.0 release cut (Milestone #94), Car V660-W2-REL
 
 <!-- prawduct: type=internal | scope=v660-release -->
