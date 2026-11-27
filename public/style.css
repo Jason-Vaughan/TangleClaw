@@ -1754,6 +1754,105 @@ body.master-popout-mode #masterPanelFullscreenBtn {
   padding-right: 4px;
   margin-right: -4px;
 }
+
+/* #3319: Global Settings workspace — same flex-column plumbing as
+   .settings-modal (title+actions pinned, one scrolling region between
+   them), plus a left-hand category rail beside the content pane inside
+   that one scrolling region. */
+.modal-content.global-settings-modal {
+  max-width: 100vw;
+  max-height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.modal-content.global-settings-modal > .modal-title,
+.modal-content.global-settings-modal > .modal-actions {
+  flex-shrink: 0;
+}
+.gs-workspace-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.gs-workspace-search {
+  flex: 1 1 240px;
+  max-width: 360px;
+  font-size: 0.9em;
+}
+.gs-workspace-close {
+  margin-left: auto;
+}
+.gs-workspace-row {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 18px;
+  overflow: hidden;
+}
+.gs-category-rail {
+  flex: 0 0 auto;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  padding-right: 4px;
+  border-right: 1px solid var(--border, #333);
+}
+.gs-category-rail-item {
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 0.92em;
+  color: var(--text);
+  cursor: pointer;
+}
+.gs-category-rail-item:hover {
+  background: var(--elevated-bg);
+}
+.gs-category-rail-item.is-active {
+  background: var(--primary);
+  color: #000;
+  font-weight: 600;
+}
+.gs-workspace-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-right: -4px;
+}
+/* A category section not currently selected, or one the search filter has
+   no match in, is removed from layout entirely — never just visually
+   dimmed, so a hidden section's own ids (duplicated nowhere else) never
+   shift the content pane's scroll height while off screen. */
+.gs-category-section[hidden] {
+  display: none;
+}
+/* Narrow viewport: the rail collapses to a horizontal scrollable strip
+   above the content instead of a fixed-width column stealing a third of
+   the screen on a phone. */
+@media (max-width: 720px) {
+  .gs-workspace-row {
+    flex-direction: column;
+  }
+  .gs-category-rail {
+    width: auto;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-bottom: 1px solid var(--border, #333);
+    padding-bottom: 4px;
+  }
+  .gs-category-rail-item {
+    white-space: nowrap;
+  }
+}
 /* Capability toggles (Silent prime / Feature Index / Project Map / Auto version
    bump) — two-up on a wide modal, each cell a toggle + its hint. An empty
    container (e.g. silent-prime hidden for a non-capable engine) collapses to a

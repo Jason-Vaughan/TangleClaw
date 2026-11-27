@@ -1024,9 +1024,16 @@ describe('the Operator Bridge panel (#2031)', () => {
       const cleared = [];
       const page = {
         document: { getElementById: (id) => (id === 'globalSettingsModal' ? { classList: { remove() {} } } : { id }) },
-        tcForgetOperatorBridge: (el) => cleared.push(el.id)
+        tcForgetOperatorBridge: (el) => cleared.push(el.id),
+        // #3319: closeGlobalSettings also drops its deep-link hash via
+        // these two free references — stubbed here, as a null/no-op hash,
+        // so this isolated lift of closeGlobalSettings ALONE still runs;
+        // the real behavior of _gsActiveCategoryFromHash/the hash-clearing
+        // branch is covered directly in test/global-settings-workspace-ui.test.js.
+        _gsActiveCategoryFromHash: () => null
       };
       page.window = page;
+      page.history = { replaceState: () => {} };
       vm.createContext(page);
       vm.runInContext(`${close}\ncloseGlobalSettings();`, page);
       assert.deepEqual(cleared, ['gsOperatorBridgeSection']);

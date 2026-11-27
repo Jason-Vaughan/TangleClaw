@@ -85,6 +85,7 @@
     "test/global-engine-settings-ui.test.js",
     "test/global-rules-boundary.test.js",
     "test/global-rules-reset-button.test.js",
+    "test/global-settings-workspace-ui.test.js",
     "test/governance-drift-badge.test.js",
     "test/governance-methodology-capability.test.js",
     "test/handoff-lockfile.test.js",
