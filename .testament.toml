@@ -314,6 +314,7 @@ files = [
   "test/v6-interactive-choices.test.js",
   "test/v6-lifecycle-stage-progress.test.js",
   "test/v6-providers-contract.test.js",
+  "test/v6-sprint-car-status-sync.test.js",
   "test/v6-sprint-report-validator-v3.test.js",
   "test/v6-ui-shell-mount-wiring.test.js",
   "test/v6-usage-popover-and-composer-layout.test.js",
