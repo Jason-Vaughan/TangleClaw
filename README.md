@@ -18,7 +18,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
 
-**Latest release:** `v6.6.4` — “adds configurable engine failover, delegate succession, runtime lifecycle progress, and a project settings parity endpoint” ([release status](docs/releases/v6.6.4.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.6.4` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.6.4/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
+**Latest release:** `v6.6.5` — “adds sprint report governance, intake-to-release traceability, and a V6 feature showcase” ([release status](docs/releases/v6.6.5.md) · [📊 **Autonomous Sprint Reports Hub**](https://jason-vaughan.github.io/TangleClaw/reports/) · [`v6.6.5` Sprint Report](https://jason-vaughan.github.io/TangleClaw/reports/v6.6.5/) · [`v5.68.0–v5.71.0` 4-Sprint Kaizen Retrospective](https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/)).
 
 One AI coding agent is easy. Five are not. They forget what the last session decided, edit the same files, fight over the same ports, and wait silently for an answer you did not know they needed. You end up watching terminals.
 
@@ -52,7 +52,7 @@ TangleClaw is developed with TangleClaw. Its own Builder, Project Manager and re
 
 ```bash
 # macOS. What the installer does, and what you need first: Quick Start, below
-git clone --branch v6.6.4 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.6.5 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw && ./deploy/install.sh
 ```
 
@@ -204,7 +204,7 @@ Most importantly, TangleClaw enforces strict safety boundaries, ensuring that wh
 ## Quick Start
 
 ```bash
-git clone --branch v6.6.4 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v6.6.5 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw
 ./deploy/install.sh
 ```

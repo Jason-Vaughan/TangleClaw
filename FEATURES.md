@@ -28,6 +28,15 @@ further down this file (#3290).
 - **Ephemeral launch-secret scrubbing** — see `v6.6.0`'s own entry below.
 - Each `v6.x.y` section below is this index's real, line-free record of what shipped in that version.
 
+## v6.6.5 — Sprint reporting, intake traceability, and the V6 feature showcase
+
+- **Sprint report gate and Kaizen viewer** (#3266) — `lib/sprint-report-gate.js#evaluateReportGate`/`#evaluateTrainGate` and `public/v6-kaizen-reports-view.js`: configurable Gate 4 completion decisions and a standalone version/train report view; live-page wiring remains follow-up work.
+- **Sprint car status sync** (#3267) — `lib/v6/sprint-car-status-sync.js#deriveCarStatus`: derives five lifecycle states from PR, scheduler, and workload receipts, with a blocked overlay.
+- **Sprint report coverage audit** (#3274) — `docs/releases/v6.6-status.md`: point-in-time train status and sprint-report coverage audit.
+- **Project documentation SSOT and charter** (#3275) — `lib/project-docs-ssot.js` and `public/v6-ssot-charter-view.js`: customizable manifest, charter schema, and standalone reader; V6 shell mounting remains follow-up work.
+- **Intake-to-release traceability** (#3279) — `scripts/verify-intake-traceability.js`: repeatable audit from V6 intake references to release evidence.
+- **V6 feature showcase** (#3290) — `README.md`, `website/src/app/page.tsx`, and this index: audience, feature matrix, and V6 architecture/capabilities summaries.
+
 ## v6.6.4 — Engine failover, delegate succession, lifecycle progress, and settings parity
 
 - **Configurable engine fallback chains** (#3271) — `lib/engine-fallback-chain.js`: per-member primary, secondary, and tertiary engine/model/effort profiles with deterministic outage triggers, bounded retries, and return-to-primary behavior; Fleet settings UI and live health checks remain follow-up work.
