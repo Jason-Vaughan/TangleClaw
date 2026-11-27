@@ -98,6 +98,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   (full-viewport layout, rail switching, cross-category search, hash deep-linking, close/
   Escape), accepted with the same "no browser tooling in this headless lane" rationale as
   VRF-008.
+- Post-R1 fix (own-initiative, not a Critic finding): sibling car #3318 (`diskWarningThresholdPercent`/
+  `storageWarningThresholdPct`) merged to `origin/main` (PR #3341, `58bb55bc`) while this car was
+  mid-review. Read its `lib/routes/config.js` diff directly before rebasing: the merged PATCH route
+  treats `diskWarningThresholdPercent` as the one canonical field and `storageWarningThresholdPct`
+  as an alias — but refuses 400 ("the same setting; send only one") if a body sends BOTH. This
+  car's `saveGlobalSettings()` was sending both unconditionally (written defensively before
+  #3318 landed, when neither name existed in the allowlist yet) — every save of Global Settings
+  would have 400'd once rebased onto the new main. Fixed to send only `diskWarningThresholdPercent`.
+  The read-side fallback (`c.diskWarningThresholdPercent ?? c.storageWarningThresholdPct`) and the
+  `storageThresholdPersists` caveat check are unaffected by this and still correct — `GET
+  /api/config` now always mirrors the value under both names, so the caveat self-clears exactly
+  as designed.
 - New `test/global-settings-workspace-ui.test.js` (40 cases): markup/CSS structural
   assertions (matching this file's own established convention for `public/ui.js`, per
   `test/settings-credential.test.js`'s comment) plus behavioral coverage of the new rail/

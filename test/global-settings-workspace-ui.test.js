@@ -226,7 +226,7 @@ describe('Rail/search wiring happens exactly once, not on every open (#3319)', (
   });
 });
 
-describe('saveGlobalSettings() sends the new field defensively (#3319/#3318)', () => {
+describe('saveGlobalSettings() sends the storage threshold under its canonical name only (#3319/#3318)', () => {
   let fn;
 
   before(() => {
@@ -234,9 +234,9 @@ describe('saveGlobalSettings() sends the new field defensively (#3319/#3318)', (
     fn = liftDeclaration(src, 'async function saveGlobalSettings(');
   });
 
-  it('sends both candidate backend field names, so persistence starts working under whichever name lands', () => {
+  it('sends only diskWarningThresholdPercent — PATCH /api/config refuses 400 if both names are present', () => {
     assert.match(fn, /diskWarningThresholdPercent:\s*storageThresholdPct/);
-    assert.match(fn, /storageWarningThresholdPct:\s*storageThresholdPct/);
+    assert.doesNotMatch(fn, /storageWarningThresholdPct:/);
   });
 
   it('clamps a manually-typed out-of-range or non-numeric value before sending it', () => {

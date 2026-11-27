@@ -5810,22 +5810,19 @@ function openGlobalSettings() {
 
   const scannerIntervalSec = Math.round((c.portScannerIntervalMs || 60000) / 1000);
 
-  // #3319/#3318: the host storage warning threshold, surfaced here even
-  // though the field it binds to (lib/routes/config.js's `allowedFields`
-  // allowlist, Car V667-W1-B, a sibling car in the same file-disjoint
-  // wave) has not landed yet — Save already includes it in the PATCH body
-  // below, so persistence starts working automatically the moment that
-  // allowlist update merges, with no further change needed here. Two
-  // candidate field names were named for this setting; read whichever is
-  // present, defaulting to 85 (the documented default) when neither is.
+  // #3319/#3318: the host storage warning threshold. diskWarningThresholdPercent
+  // is the one canonical stored field (lib/routes/config.js); GET /api/config
+  // also mirrors it under storageWarningThresholdPct as an accepted alias, so
+  // reading either name works regardless of which sibling car (#3318) landed
+  // first — defaulting to 85 (the documented default) when neither is present.
   const storageWarningThresholdPct = Math.min(98, Math.max(50,
     parseInt(c.diskWarningThresholdPercent ?? c.storageWarningThresholdPct ?? 85, 10) || 85));
-  // Critic cumulative review, Car V667-W1-A: with no visible signal, saving
-  // this looked live but silently did nothing until #3318 landed — an
-  // operator would see it "revert" next time Settings opens. Self-clearing:
-  // once #3318's allowlist entry starts returning either field name from
-  // GET /api/config, this reads true and the caveat below disappears with
-  // no further change needed here.
+  // Critic cumulative review, Car V667-W1-A: before #3318 merged, saving this
+  // field looked live but silently did nothing — an operator would see it
+  // "revert" next time Settings opened, with no signal why. Now that #3318 has
+  // landed, GET /api/config always returns the field, so this reads true and
+  // the caveat below never renders — kept rather than removed, since it still
+  // protects a future state where the field is absent again (e.g. a rollback).
   const storageThresholdPersists =
     c.diskWarningThresholdPercent !== undefined || c.storageWarningThresholdPct !== undefined;
 
@@ -6346,15 +6343,13 @@ async function saveGlobalSettings() {
     stripAiCoauthors: document.getElementById('gsStripAiCoauthors').checked,
     serviceTokenEnabled: document.getElementById('gsServiceTokenEnabled').checked,
     tailscaleMode: document.getElementById('gsTailscaleMode').checked,
-    // Sent under both candidate names (#3318's backend allowlist, a
-    // sibling car, had not landed either name as of this write) so
-    // persistence starts working the moment that allowlist update merges,
-    // under whichever name it actually lands as, with no further change
-    // needed here. A server that doesn't yet recognize either key skips
-    // it silently (lib/routes/config.js's own documented allowlist
-    // behavior) rather than erroring.
-    diskWarningThresholdPercent: storageThresholdPct,
-    storageWarningThresholdPct: storageThresholdPct
+    // #3318 (sibling car, merged after this one was originally written):
+    // diskWarningThresholdPercent is the one canonical stored field;
+    // storageWarningThresholdPct is PATCH /api/config's accepted alias for
+    // it, but the route refuses 400 if a body names BOTH ("the same
+    // setting; send only one") — sending only the canonical name here
+    // avoids that refusal outright rather than relying on the alias path.
+    diskWarningThresholdPercent: storageThresholdPct
   };
 
   // Send this ONLY when the operator actually moved the switch.
