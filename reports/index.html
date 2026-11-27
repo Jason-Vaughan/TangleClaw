@@ -256,6 +256,7 @@
     <div class="nav-links" style="align-items:center;gap:0.75rem;">
       <label for="topnav-report-picker" style="color:var(--text-muted);font-size:0.82rem;font-weight:700;">Jump to Report (88):</label>
       <select id="topnav-report-picker" aria-label="Select a Sprint Report" onchange="if(this.value)window.location.href=this.value" style="background:var(--bg-card-alt);color:var(--text);border:1px solid var(--cyan);border-radius:8px;padding:0.38rem 0.65rem;font-size:0.84rem;font-weight:600;max-width:390px;cursor:pointer;">
+          <option value="./v6.6.7/">📡 [Live Sprint] v6.6.7 — Live Wave &amp; Gate Tracker</option>
           <option value="./v6.6.6/">📡 [Live Sprint] v6.6.6 — Live Wave &amp; Gate Tracker</option>
           <option value="./v6.6.5/" selected>🟢 [Latest Release] v6.6.5 — Live 5-Status Car/Train Sync, Kaizen &amp; Reports, SSOT Documentation View</option>
           <option value="./v6.6.4/">📄 [Settled Gate 4 Report] v6.6.4 — Engine Fallback, Delegate Succession, Lifecycle Stage Progress, Settings Parity</option>
@@ -390,6 +391,7 @@
         </div>
         <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;flex:1;max-width:560px;justify-content:flex-end;">
           <select id="hero-report-picker" aria-label="Quick Report Picker" onchange="if(this.value)window.location.href=this.value" style="flex:1;min-width:260px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-hi);border-radius:10px;padding:0.55rem 0.8rem;font-size:0.9rem;font-weight:600;cursor:pointer;">
+          <option value="./v6.6.7/">📡 [Live Sprint] v6.6.7 — Live Wave &amp; Gate Tracker</option>
           <option value="./v6.6.6/">📡 [Live Sprint] v6.6.6 — Live Wave &amp; Gate Tracker</option>
           <option value="./v6.6.5/" selected>🟢 [Latest Release] v6.6.5 — Live 5-Status Car/Train Sync, Kaizen &amp; Reports, SSOT Documentation View</option>
           <option value="./v6.6.4/">📄 [Settled Gate 4 Report] v6.6.4 — Engine Fallback, Delegate Succession, Lifecycle Stage Progress, Settings Parity</option>
@@ -490,23 +492,23 @@
       <article class="report-card" style="border-color:rgba(56,189,248,0.65);background:linear-gradient(135deg,rgba(15,23,42,0.96),rgba(14,116,144,0.18));">
         <div class="report-header">
           <div>
-            <span class="badge badge-cyan">● Live Sprint In Progress · Updated 2026-11-27 19:47 UTC</span>
-            <h2 class="report-title"><a href="./v6.6.6/">TangleClaw <code>v6.6.6</code> — Live Wave &amp; Gate Tracker</a></h2>
+            <span class="badge badge-cyan">● Live Sprint In Progress · Updated 2026-11-27 20:02 UTC</span>
+            <h2 class="report-title"><a href="./v6.6.7/">TangleClaw <code>v6.6.7</code> — Live Wave &amp; Gate Tracker</a></h2>
           </div>
           <span class="badge badge-purple">0/0 Cars Merged · 0 In Review</span>
         </div>
         <p style="color:#cbd5e1; margin:0;">
           <strong>Live Sprint Telemetry (Auto-Synced from <code>LANE_QUEUE.md</code>):</strong> TangleClaw Live Lane Queue — Easy-Wins Train `v6.6.6` -&gt; `v6.6.7` (ACTIVE).
-          Current wave status: <code>ACTIVE — WAVE 1 IN FLIGHT (Cars V666-W1-A..D dispatched 2026-11-27T16:20:00Z under Operator Autonomous Go; zero-clobber look-ahead to v6.6.7 armed)</code>.
+          Current wave status: <code>ACTIVE — v6.6.6 W2-REL MERGED TO MAIN (PR #3340 -&gt; c67e072c); v6.6.7 WAVE 1 IN FLIGHT (PR #3339 MERGING AT I-GATE; PR #3338 REBASING ONTO c67e072c; Cars V667-W1-A &amp; V667-W1-B BUILDING)</code>.
           Open the live interactive report below to inspect real-time car progress, Builder/PRR lane assignments, and gate statuses as waves progress.
         </p>
         <div class="meta-pills">
           <span class="badge badge-cyan">0 Chartered Wave Rows</span>
           <span class="badge badge-green">0 Merged · 0 In Review</span>
-          <span class="badge badge-purple">State: ACTIVE — WAVE 1 IN FLIGHT (Cars V666-W1-A..D dispatched 2026-11-27T16:20:00Z under Operator Autonomous Go; zero-clobber look-ahead to v6.6.7 armed)</span>
+          <span class="badge badge-purple">State: ACTIVE — v6.6.6 W2-REL MERGED TO MAIN (PR #3340 -&gt; c67e072c); v6.6.7 WAVE 1 IN FLIGHT (PR #3339 MERGING AT I-GATE; PR #3338 REBASING ONTO c67e072c; Cars V667-W1-A &amp; V667-W1-B BUILDING)</span>
         </div>
         <div class="actions">
-          <a class="btn btn-primary" href="./v6.6.6/">📡 Open v6.6.6 Live Sprint Tracker →</a>
+          <a class="btn btn-primary" href="./v6.6.7/">📡 Open v6.6.7 Live Sprint Tracker →</a>
         </div>
       </article>
       <!-- LIVE_SPRINT_CARD_END -->
@@ -1053,7 +1055,7 @@
           <a href="./v6.2.8/"><code>v6.2.8</code></a>,
           <a href="./v6.2.9/"><code>v6.2.9</code></a>, and
           <a href="./v6.2.10/"><code>v6.2.10</code></a>.
-        , <a href="./v6.4.1/"><code>v6.4.1</code></a>, <a href="./v6.5.1/"><code>v6.5.1</code></a>, <a href="./v6.5.8/"><code>v6.5.8</code></a>, <a href="./v6.5.9/"><code>v6.5.9</code></a>, <a href="./v6.6.1/"><code>v6.6.1</code></a>, <a href="./v6.6.2/"><code>v6.6.2</code></a>, <a href="./v6.6.3/"><code>v6.6.3</code></a>, <a href="./v6.6.4/"><code>v6.6.4</code></a>, <a href="./v6.6.5/"><code>v6.6.5</code></a></p>
+        , <a href="./v6.4.1/"><code>v6.4.1</code></a>, <a href="./v6.5.1/"><code>v6.5.1</code></a>, <a href="./v6.5.8/"><code>v6.5.8</code></a>, <a href="./v6.5.9/"><code>v6.5.9</code></a>, <a href="./v6.6.1/"><code>v6.6.1</code></a>, <a href="./v6.6.2/"><code>v6.6.2</code></a>, <a href="./v6.6.3/"><code>v6.6.3</code></a>, <a href="./v6.6.4/"><code>v6.6.4</code></a>, <a href="./v6.6.5/"><code>v6.6.5</code></a>, <a href="./v6.6.6/"><code>v6.6.6</code></a></p>
       </article>
       <!-- v6.2.1 Card -->
       <article class="report-card">
