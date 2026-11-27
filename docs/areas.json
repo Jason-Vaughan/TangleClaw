@@ -271,6 +271,13 @@
         "lib/upstream-observer.js"
       ]
     },
+    "backup": {
+      "label": "area:backup",
+      "why": "The standalone memory-backup module (#3314): archiving, verifying, inspecting, restoring, and pruning timestamped snapshots of ~/.claude/projects/*/memory/ and configurable engine memory directories. A pure Node module with its own SHA-256 manifest verification, deliberately independent of lib/update-applier.js's own, separate pre-update SQLite backup.",
+      "paths": [
+        "lib/backup.js"
+      ]
+    },
     "checkouts": {
       "label": "area:checkouts",
       "why": "Checkout state, freshness and fleet, git probes, GitHub facts and checks, CI status and branch retirement.",
