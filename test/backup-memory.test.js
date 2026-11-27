@@ -123,6 +123,35 @@ describe('createMemoryBackup', () => {
     assert.deepEqual(manifest.files.map((f) => f.relPath), ['claude-projects-memory/TC-Lane-D/MEMORY.md']);
   });
 
+  // PRR-B R-Gate Round 1 WARNING on PR #3338: the per-entry symlink skip
+  // above never covered the WALK'S OWN ROOT -- a project's memory/ directory
+  // itself (never an entry found by readdirSync on something else) could be
+  // a symlink and still get followed.
+  it('never follows a memory/ directory that is itself a symlink', () => {
+    const outsideDir = path.join(tmpDir, 'outside-secret-dir');
+    fs.mkdirSync(outsideDir, { recursive: true });
+    fs.writeFileSync(path.join(outsideDir, 'secret.md'), 'must never be archived\n');
+    fs.mkdirSync(path.join(claudeProjectsDir, 'TC-Lane-D'), { recursive: true });
+    fs.symlinkSync(outsideDir, path.join(claudeProjectsDir, 'TC-Lane-D', 'memory'));
+
+    const { manifest } = backup.createMemoryBackup({ claudeProjectsDir, backupsRoot });
+    assert.deepEqual(manifest.files, []);
+    assert.deepEqual(manifest.projects, []);
+  });
+
+  it('never follows an extraMemoryDirs root that is itself a symlink', () => {
+    const outsideDir = path.join(tmpDir, 'outside-secret-dir-2');
+    fs.mkdirSync(outsideDir, { recursive: true });
+    fs.writeFileSync(path.join(outsideDir, 'secret.md'), 'must never be archived\n');
+    const engineMemoryLink = path.join(tmpDir, 'engine-memory-link');
+    fs.symlinkSync(outsideDir, engineMemoryLink);
+
+    const { manifest } = backup.createMemoryBackup({
+      claudeProjectsDir, backupsRoot, extraMemoryDirs: [{ label: 'other-engine', dir: engineMemoryLink }]
+    });
+    assert.deepEqual(manifest.files, []);
+  });
+
   it('refuses to overwrite an existing backup directory for the same timestamp', () => {
     const now = new Date('2026-11-27T18:00:00.000Z');
     backup.createMemoryBackup({ claudeProjectsDir, backupsRoot, now });
@@ -158,6 +187,43 @@ describe('verifyMemoryBackup', () => {
     const result = backup.verifyMemoryBackup(bogusDir);
     assert.equal(result.ok, false);
     assert.ok(result.error.includes('manifest.json') || result.error.includes('ENOENT'));
+  });
+
+  // PRR-B R-Gate Round 1 BLOCKING on PR #3338: a crafted manifest can be
+  // entirely self-consistent (its own files really do match its own
+  // recorded SHA-256 digests) while its relPath escapes the backup's own
+  // files/ directory via `../` segments -- the digest check alone cannot
+  // catch this, since it never asked whether the PATH itself is safe.
+  it('refuses (as invalid, never as missing) a manifest entry whose relPath escapes files/', () => {
+    const bogusDir = path.join(tmpDir, 'crafted-backup');
+    fs.mkdirSync(path.join(bogusDir, 'files'), { recursive: true });
+    const outside = path.join(tmpDir, 'outside-secret.md');
+    fs.writeFileSync(outside, 'real content, really matching its own digest\n');
+    const bytes = fs.readFileSync(outside);
+    const escapingRelPath = '../../outside-secret.md';
+    fs.writeFileSync(path.join(bogusDir, 'manifest.json'), JSON.stringify({
+      version: 1,
+      files: [{ relPath: escapingRelPath, bytes: bytes.length, sha256: backup._sha256(bytes) }]
+    }));
+
+    const result = backup.verifyMemoryBackup(bogusDir);
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.invalid, [escapingRelPath]);
+    assert.deepEqual(result.missing, [], 'an escaping path is its own category, never mistaken for merely missing');
+    assert.deepEqual(result.mismatched, []);
+  });
+});
+
+describe('_resolveContained', () => {
+  it('accepts a path that stays inside baseDir, including the exact base itself', () => {
+    const base = path.join(tmpDir, 'base');
+    assert.equal(backup._resolveContained(base, 'a/b.md'), path.join(base, 'a', 'b.md'));
+    assert.equal(backup._resolveContained(base, ''), base);
+  });
+
+  it('refuses a relPath that escapes baseDir via .. segments', () => {
+    const base = path.join(tmpDir, 'base', 'nested');
+    assert.throws(() => backup._resolveContained(base, '../../escaped.md'), /escapes its intended root/);
   });
 });
 
@@ -241,6 +307,47 @@ describe('restoreMemoryBackup', () => {
 
     assert.throws(() => backup.restoreMemoryBackup(backupDir, { claudeProjectsDir: restoreTarget }), /integrity verification failed/);
     assert.equal(fs.existsSync(restoreTarget), false);
+  });
+
+  it('refuses a manifest whose relPath escapes files/, writing nothing (PRR-B R-Gate Round 1 BLOCKING)', () => {
+    const bogusDir = path.join(tmpDir, 'crafted-backup');
+    fs.mkdirSync(path.join(bogusDir, 'files'), { recursive: true });
+    const outside = path.join(tmpDir, 'planted.md');
+    fs.writeFileSync(outside, 'planted\n');
+    const bytes = fs.readFileSync(outside);
+    fs.writeFileSync(path.join(bogusDir, 'manifest.json'), JSON.stringify({
+      version: 1,
+      files: [{ relPath: '../../planted.md', bytes: bytes.length, sha256: backup._sha256(bytes) }]
+    }));
+    const restoreTarget = path.join(tmpDir, 'restored-claude-projects');
+
+    assert.throws(() => backup.restoreMemoryBackup(bogusDir, { claudeProjectsDir: restoreTarget }), /integrity verification failed/);
+    assert.equal(fs.existsSync(restoreTarget), false);
+  });
+
+  it('refuses a same-manifest escape that stays inside files/ but escapes claudeProjectsDir on the destination side', () => {
+    // A relPath that resolves safely against files/ (so verifyMemoryBackup's
+    // own SOURCE-side check alone would not catch it) but whose project
+    // segment ("..") escapes claudeProjectsDir once reinterpreted as a
+    // restore destination -- exactly why destination containment needs its
+    // own, separate check, not a single check reused for both sides.
+    const bogusDir = path.join(tmpDir, 'crafted-backup-2');
+    const plantedAbs = path.join(bogusDir, 'files', 'outside', 'memory', 'x.md');
+    fs.mkdirSync(path.dirname(plantedAbs), { recursive: true });
+    fs.writeFileSync(plantedAbs, 'planted\n');
+    const bytes = fs.readFileSync(plantedAbs);
+    const relPath = 'claude-projects-memory/../outside/memory/x.md';
+    fs.writeFileSync(path.join(bogusDir, 'manifest.json'), JSON.stringify({
+      version: 1,
+      files: [{ relPath, bytes: bytes.length, sha256: backup._sha256(bytes) }]
+    }));
+    // Sanity: the source side really does consider this contained, so this
+    // test is exercising the destination-side check specifically.
+    assert.equal(backup.verifyMemoryBackup(bogusDir).ok, true);
+    const restoreTarget = path.join(tmpDir, 'restored-claude-projects');
+
+    assert.throws(() => backup.restoreMemoryBackup(bogusDir, { claudeProjectsDir: restoreTarget }), /escapes its intended root/);
+    assert.equal(fs.existsSync(path.join(tmpDir, 'memory')), false, 'the escaped write must never have happened');
   });
 });
 
