@@ -8005,11 +8005,18 @@ function handleUpgrade(req, socket, head) {
   // network link) is noticed instead of sitting open indefinitely. Both calls
   // are safe no-ops on `proxySocket` in caddy mode (a unix-domain socket has
   // no Nagle/keepalive to tune, but Node does not throw for asking), so
-  // neither needs its own branch on `target.socketPath`.
-  socket.setNoDelay(true);
-  socket.setKeepAlive(true, 15000);
-  proxySocket.setNoDelay(true);
-  proxySocket.setKeepAlive(true, 15000);
+  // neither needs its own branch on `target.socketPath` -- but `socket` here
+  // is whatever the server's own 'upgrade' listener handed this function,
+  // and test/api-auth-session.test.js's own WebSocket-upgrade suite drives
+  // handleUpgrade with a plain stream.PassThrough stand-in (never a real
+  // net.Socket) for both the client and upstream side, which has neither
+  // method at all -- guarded rather than called unconditionally so a mock
+  // shaped like only the parts this function actually reads elsewhere does
+  // not throw on the two it previously assumed every socket has.
+  if (typeof socket.setNoDelay === 'function') socket.setNoDelay(true);
+  if (typeof socket.setKeepAlive === 'function') socket.setKeepAlive(true, 15000);
+  if (typeof proxySocket.setNoDelay === 'function') proxySocket.setNoDelay(true);
+  if (typeof proxySocket.setKeepAlive === 'function') proxySocket.setKeepAlive(true, 15000);
 
   // Counts the terminal attach when ttyd accepts the upgrade, and its detach
   // on close, for release-candidate certification's PTY-use target (#1949).
