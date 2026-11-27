@@ -53,7 +53,11 @@ function plain(value) {
 
 /**
  * A minimal, injectable stand-in for `window` — just enough `location.hash`
- * and `hashchange` plumbing for {@link tcCreateV6Shell} to drive itself.
+ * and `hashchange` plumbing for {@link tcCreateV6Shell} to drive itself,
+ * plus a generic `dispatch` (#3327 PRR-A R-Gate R1) for the window-level
+ * 'mouseup'/'pointerup'/'blur' listeners the pointer-selection guard wires
+ * here — mirroring the mini-DOM element's own `.dispatch(type)` so a test
+ * can fire either the same way.
  * @param {string} [initialHash]
  * @returns {object}
  */
@@ -73,7 +77,12 @@ function makeFakeWindow(initialHash) {
       if (!listeners[type]) return;
       listeners[type] = listeners[type].filter((f) => f !== fn);
     },
-    _fireHashChange() { (listeners.hashchange || []).slice().forEach((fn) => fn()); }
+    _fireHashChange() { (listeners.hashchange || []).slice().forEach((fn) => fn()); },
+    dispatch(type) {
+      const fns = listeners[type] || [];
+      fns.slice().forEach((fn) => fn({ type }));
+      return fns.length > 0;
+    }
   };
 }
 
@@ -2563,7 +2572,7 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     await m.settle();
     const before = m.root.innerHTML;
     m.root.dispatch('mousedown');
-    m.root.dispatch('mouseup');
+    m.win.dispatch('mouseup'); // #3327 (PRR-A R-Gate R1 WARNING): release listens on `win`, not `root` — see its own comment
     m.shell.setTelemetry({ scope: 'global', metrics: { activeSessions: { value: 12, confidence: 'observed' } } });
     assert.equal(m.root.innerHTML, before, 'still deferred immediately after mouseup, inside the cooldown');
 
@@ -2571,9 +2580,33 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     await m2.settle();
     const before2 = m2.root.innerHTML;
     m2.root.dispatch('pointerdown');
-    m2.root.dispatch('pointerup');
+    m2.win.dispatch('pointerup');
     m2.shell.setTelemetry({ scope: 'global', metrics: { activeSessions: { value: 13, confidence: 'observed' } } });
     assert.equal(m2.root.innerHTML, before2, 'pointerdown/pointerup behaves the same as mousedown/mouseup');
+  });
+
+  it('a release OUTSIDE root (a drag that ends past the shell\'s own edge) still clears isPointerSelecting, not left stuck forever (#3327, PRR-A R-Gate R1 WARNING)', async () => {
+    const m = mountChat();
+    await m.settle();
+    m.root.dispatch('mousedown');
+    // The release never reaches `root` at all here — simulating exactly the
+    // bug: a drag ending past the shell's own edge, or past the viewport.
+    m.win.dispatch('mouseup');
+    await new Promise((resolve) => { setTimeout(resolve, 350); }); // > POINTER_SELECTION_COOLDOWN_MS
+    const before = m.root.innerHTML;
+    m.shell.setTelemetry({ scope: 'global', metrics: { activeSessions: { value: 17, confidence: 'observed' } } });
+    assert.notEqual(m.root.innerHTML, before, 'cleared and cooldown elapsed — not deferred forever');
+  });
+
+  it('losing window focus mid-drag (blur) also clears isPointerSelecting, the fallback for a release that fires neither mouseup nor pointerup', async () => {
+    const m = mountChat();
+    await m.settle();
+    m.root.dispatch('mousedown');
+    m.win.dispatch('blur');
+    await new Promise((resolve) => { setTimeout(resolve, 350); });
+    const before = m.root.innerHTML;
+    m.shell.setTelemetry({ scope: 'global', metrics: { activeSessions: { value: 18, confidence: 'observed' } } });
+    assert.notEqual(m.root.innerHTML, before, 'cleared and cooldown elapsed — not deferred forever');
   });
 
   it('a copy event arms the same post-release cooldown, deferring the very next background render', async () => {
@@ -2589,7 +2622,7 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     const m = mountChat();
     await m.settle();
     m.root.dispatch('mousedown');
-    m.root.dispatch('mouseup');
+    m.win.dispatch('mouseup');
     await new Promise((resolve) => { setTimeout(resolve, 350); }); // > POINTER_SELECTION_COOLDOWN_MS (300ms)
     const before = m.root.innerHTML;
     m.shell.setTelemetry({ scope: 'global', metrics: { activeSessions: { value: 15, confidence: 'observed' } } });
@@ -7601,6 +7634,27 @@ describe('turns in the order they happened, and a composer that empties on Enter
     const html = G.tcV6ConversationViewMarkup(view([], [{ role: 'user', text: 'first message' }], { pending }));
     assert.match(html, /is-pending/);
     assert.match(html, /second message/);
+  });
+
+  // #3326 (PRR-A R-Gate R1 BLOCKING): matching against ANY live user turn,
+  // not just the trailing one, meant re-sending text that repeats an OLDER
+  // turn wrongly suppressed the NEW pending bubble before the pane had
+  // echoed/settled THIS send at all — only the trailing turn is actual
+  // evidence this particular send landed.
+  it('a pending send repeating an OLDER live turn\'s exact words is not suppressed by it', () => {
+    const pending = { id: 10, text: 'same wording' };
+    const html = G.tcV6ConversationViewMarkup(view([], [
+      { role: 'user', text: 'same wording' },
+      { role: 'assistant', text: 'ok' },
+      { role: 'user', text: 'something else entirely' }
+    ], { pending }));
+    assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*same wording/);
+  });
+
+  it('a pending send repeating an OLDER recorded event\'s exact words is not suppressed by it', () => {
+    const pending = { id: 11, text: 'repeat me' };
+    const html = G.tcV6ConversationViewMarkup(view([ev(1, 'repeat me'), ev(2, 'something else entirely')], [], { pending }));
+    assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*repeat me/);
   });
 });
 

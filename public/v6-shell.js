@@ -3859,11 +3859,14 @@
    * The message being sent, at the bottom of the chat until it settles
    * (#3079 item 6), unless the chat already shows it as recorded — either
    * `endSend` settled it (`lastSent`), or (#3326) a live pane peek already
-   * echoed it as a user turn, or the conversation's own trailing recorded
-   * event already is it. Without this, a send in flight briefly rendered
-   * TWICE: once as a live `is-user` turn (as soon as a peek poll saw the
-   * pane echo) and again here — the exact same words stacked on top of
-   * each other until the record/reload cycle (~1-3s) finished.
+   * echoed it as the TRAILING user turn, or the conversation's own
+   * trailing recorded event already is it (trailing-only on both: matching
+   * an older turn/event with the same or similar text would wrongly
+   * suppress a legitimate new send repeating earlier words). Without this,
+   * a send in flight briefly rendered TWICE: once as a live `is-user` turn
+   * (as soon as a peek poll saw the pane echo) and again here — the exact
+   * same words stacked on top of each other until the record/reload cycle
+   * (~1-3s) finished.
    * @param {{id: *, text: string}|null|undefined} pending
    * @param {{id: *}|null|undefined} lastSent
    * @param {Object<string, string>} [thumbs] - Attached image name → `blob:` URL.
@@ -3875,6 +3878,18 @@
   function pendingMarkup(pending, lastSent, thumbs, unfurls, liveTurns, events) {
     const turns = Array.isArray(liveTurns) ? liveTurns : [];
     const evs = Array.isArray(events) ? events : [];
+    // #3326 (PRR-A R-Gate R1 BLOCKING): matched against ANY `user` turn in
+    // `liveTurns` originally — re-sending text that repeats an OLDER turn
+    // (or one `sameMessage`'s fuzzy long-prompt-prefix match treats as
+    // equal) would wrongly match that stale turn and suppress the NEW
+    // pending bubble before the pane has echoed/settled it at all. Only
+    // the TRAILING `user` turn — the one the pane most recently showed —
+    // is actually evidence that THIS send landed; same trailing-only
+    // reasoning `trailingUserEvent` below already applies to events.
+    let trailingUserTurn = null;
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i] && turns[i].role === 'user') { trailingUserTurn = turns[i]; break; }
+    }
     let trailingUserEvent = null;
     for (let i = evs.length - 1; i >= 0; i--) {
       if (evs[i] && evs[i].role === 'user') { trailingUserEvent = evs[i]; break; }
@@ -3883,7 +3898,7 @@
     const list = (Array.isArray(pending) ? pending : [pending])
       .filter((p) => p && typeof p.text === 'string'
         && !(lastSent && lastSent.id === p.id)
-        && !turns.some((t) => t && t.role === 'user' && sameMessage(p.text, t.text))
+        && !(trailingUserTurn && sameMessage(p.text, trailingUserTurn.text))
         && !(trailingUserEvent && sameMessage(trailingUserEvent.content, p.text)));
     return list.map((p) => `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${messageMarkup(p.text, thumbs, unfurls)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`).join('');
   }
@@ -11357,12 +11372,31 @@
       if (win && typeof win.setTimeout === 'function') win.setTimeout(handleSelectionChange, POINTER_SELECTION_COOLDOWN_MS);
       else handleSelectionChange();
     }
+    // #3327 (PRR-A R-Gate R1 WARNING): the press starts inside the shell, so
+    // `root` is the right scope for 'mousedown'/'pointerdown' — but the
+    // RELEASE that must clear `isPointerSelecting` does not necessarily
+    // land there. A drag that extends past `root`'s own edge (or past the
+    // viewport) releases the button over some OTHER element, or none at
+    // all, and a 'mouseup'/'pointerup' listener scoped to `root` only ever
+    // fires for an event that bubbles THROUGH `root` — which a release
+    // outside its subtree never does. Left stuck `true`, every background
+    // render would defer forever, the exact failure mode this guard exists
+    // to prevent, just permanent instead of transient. Release listeners go
+    // on `win` instead — mouse/pointer events bubble all the way to the
+    // window in every real browser, so a release anywhere in the document
+    // still reaches it; 'blur' is the fallback for whatever route
+    // otherwise fires neither (losing window focus mid-drag — alt-tab, a
+    // native file picker).
+    const releasePointerSelecting = () => { isPointerSelecting = false; armPointerSelectionCooldown(); };
     if (root && typeof root.addEventListener === 'function') {
       root.addEventListener('mousedown', () => { isPointerSelecting = true; });
       root.addEventListener('pointerdown', () => { isPointerSelecting = true; });
-      root.addEventListener('mouseup', () => { isPointerSelecting = false; armPointerSelectionCooldown(); });
-      root.addEventListener('pointerup', () => { isPointerSelecting = false; armPointerSelectionCooldown(); });
       root.addEventListener('copy', () => { armPointerSelectionCooldown(); });
+    }
+    if (win && typeof win.addEventListener === 'function') {
+      win.addEventListener('mouseup', releasePointerSelecting);
+      win.addEventListener('pointerup', releasePointerSelecting);
+      win.addEventListener('blur', releasePointerSelecting);
     }
 
     render();
