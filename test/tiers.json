@@ -306,6 +306,7 @@
     "test/v6-providers-contract.test.js",
     "test/v6-sprint-car-status-sync.test.js",
     "test/v6-sprint-report-validator-v3.test.js",
+    "test/v6-ssot-charter-viewer.test.js",
     "test/v6-ui-shell-mount-wiring.test.js",
     "test/v6-usage-popover-and-composer-layout.test.js",
     "test/v6-uth-traffic-filter.test.js",
