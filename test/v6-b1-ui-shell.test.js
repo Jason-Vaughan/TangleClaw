@@ -2541,6 +2541,61 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     assert.notEqual(m.root.innerHTML, before, 'the next call, with the selection cleared, actually renders');
   });
 
+  // #3327 (Critic R1 blocking 1): isPointerSelecting/pointerSelectionCooldownUntil
+  // and the mousedown/pointerdown/mouseup/pointerup/copy listeners on `root`
+  // had no coverage at all — including the exact scenario the production
+  // code's own comment names: a mousedown transiently collapses the
+  // PREVIOUS selection before a fresh drag extends it, so
+  // hasActiveSelectionIn alone would read that instant as "nothing to
+  // protect" and let a deferred render through mid-drag.
+  it('a mousedown anywhere in the shell defers a background render even while hasActiveSelectionIn sees nothing (mid-drag collapse)', async () => {
+    const m = mountChat();
+    await m.settle();
+    const before = m.root.innerHTML;
+    m.doc.getSelection = () => ({ isCollapsed: true, rangeCount: 1, anchorNode: {}, focusNode: {} }); // collapsed: a drag in progress, not yet extended
+    m.root.dispatch('mousedown');
+    m.shell.setTelemetry({ scope: 'global', metrics: { activeSessions: { value: 11, confidence: 'observed' } } });
+    assert.equal(m.root.innerHTML, before, 'deferred purely on isPointerSelecting — hasActiveSelectionIn(root) alone would say false here');
+  });
+
+  it('mouseup/pointerup clear isPointerSelecting but still defer the very next render, inside the post-release cooldown', async () => {
+    const m = mountChat();
+    await m.settle();
+    const before = m.root.innerHTML;
+    m.root.dispatch('mousedown');
+    m.root.dispatch('mouseup');
+    m.shell.setTelemetry({ scope: 'global', metrics: { activeSessions: { value: 12, confidence: 'observed' } } });
+    assert.equal(m.root.innerHTML, before, 'still deferred immediately after mouseup, inside the cooldown');
+
+    const m2 = mountChat();
+    await m2.settle();
+    const before2 = m2.root.innerHTML;
+    m2.root.dispatch('pointerdown');
+    m2.root.dispatch('pointerup');
+    m2.shell.setTelemetry({ scope: 'global', metrics: { activeSessions: { value: 13, confidence: 'observed' } } });
+    assert.equal(m2.root.innerHTML, before2, 'pointerdown/pointerup behaves the same as mousedown/mouseup');
+  });
+
+  it('a copy event arms the same post-release cooldown, deferring the very next background render', async () => {
+    const m = mountChat();
+    await m.settle();
+    const before = m.root.innerHTML;
+    m.root.dispatch('copy');
+    m.shell.setTelemetry({ scope: 'global', metrics: { activeSessions: { value: 14, confidence: 'observed' } } });
+    assert.equal(m.root.innerHTML, before, 'deferred immediately after a copy — the selection just made/copied is the one most likely to be disturbed');
+  });
+
+  it('once the post-release cooldown genuinely elapses, a later background render is no longer deferred', async () => {
+    const m = mountChat();
+    await m.settle();
+    m.root.dispatch('mousedown');
+    m.root.dispatch('mouseup');
+    await new Promise((resolve) => { setTimeout(resolve, 350); }); // > POINTER_SELECTION_COOLDOWN_MS (300ms)
+    const before = m.root.innerHTML;
+    m.shell.setTelemetry({ scope: 'global', metrics: { activeSessions: { value: 15, confidence: 'observed' } } });
+    assert.notEqual(m.root.innerHTML, before, 'the cooldown has elapsed, so this one actually renders');
+  });
+
   // #3327 item 3: a 2px-per-tick slow trackpad scroll never crossed the OLD
   // per-event `scrollTop < lastStreamScrollTop - 4` delta threshold, so
   // `streamPinned` stuck `true` no matter how far the operator actually
@@ -2583,6 +2638,37 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     assert.match(m.root.innerHTML, /<details id="v6ChatUnderHood"[^>]* hidden>/);
     assert.doesNotMatch(m.root.innerHTML, /<details id="v6ChatUnderHood"[^>]* open/);
     assert.equal(JSON.parse(m.storage.getItem('tc_v6_chat_under_hood_open')), false);
+  });
+
+  // #3330 (Critic R1 blocking 2): the header toggle's own busy badge and
+  // tucked-count badge were only ever computed on a full render() — #3327's
+  // own no-op fix makes that rare, so without this they could freeze for
+  // the whole life of a long conversation. setLive() is the ~4s live poll's
+  // own targeted update path (never a full render), so proving it reaches
+  // these two spans is the real regression test.
+  it('a live poll (setLive) keeps the top-header toggle\'s busy badge and tucked count fresh, not only a full render (#3330)', async () => {
+    const m = mountChat();
+    await m.settle();
+    const status = m.doc.getElementById('v6ChatToggleUnderHoodStatus');
+    const count = m.doc.getElementById('v6ChatToggleUnderHoodCount');
+    // The mini-DOM's innerHTML parser only extracts ids (test/_mini-dom.js's
+    // own doc comment) — it never reflects a markup string's `class` onto
+    // the element, so the INITIAL class/text is not asserted here; what
+    // matters is that setLive's own property writes reach this span.
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'assistant', text: 'x' }], activity: 'Thinking…' } });
+    assert.match(status.className, /v6-uth-status--busy/);
+    assert.equal(status.textContent, 'Working');
+    m.shell.setLive({ peek: null, live: { turns: [{ role: 'assistant', text: 'x' }], activity: null } });
+    assert.doesNotMatch(status.className, /v6-uth-status--busy/);
+    assert.equal(status.textContent, '');
+    m.shell.setLive({ peek: null, live: { turns: [
+      { role: 'assistant', text: 'milestone', trigger: 'switchboard' },
+      { role: 'assistant', text: 'chatter', trigger: 'switchboard' }
+    ], activity: null } });
+    // The header's own copy must track the drawer summary's #v6ChatTuckedCount
+    // exactly — same tucked-turns count, same text.
+    assert.equal(count.innerHTML, m.doc.getElementById('v6ChatTuckedCount').innerHTML);
+    assert.notEqual(count.innerHTML, '', 'and it is not simply empty either');
   });
 });
 

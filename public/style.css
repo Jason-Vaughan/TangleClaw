@@ -4825,8 +4825,8 @@ p.v6-history-secret {
   font-size: 13px;
 }
 .v6-chat-toggle-under-hood[aria-pressed="true"] {
-  border-color: #9CF732;
-  color: #9CF732;
+  border-color: var(--tc-venom-green, #9CF732);
+  color: var(--tc-venom-green, #9CF732);
 }
 .v6-chat-to-delegate {
   text-decoration: none;

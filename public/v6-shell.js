@@ -2604,7 +2604,7 @@
             aria-pressed="${chat.hoodOpen ? 'true' : 'false'}" aria-controls="v6ChatUnderHood"
             title="${chat.hoodOpen ? 'Hide Under the Hood' : 'Show Under the Hood (Raw CLI & Tool Activity)'}"
             aria-label="${chat.hoodOpen ? 'Hide Under the Hood' : 'Show Under the Hood'}">
-            <span aria-hidden="true">🔧 Under the Hood</span><span id="v6ChatToggleUnderHoodCount" class="v6-chat-tucked-count"${chat.hideHoodTraffic !== false || !chat.hoodOpen ? ' hidden' : ''}>${tuckedCountText(tuckedTurns(liveTurns, chat.verbosity).length)}</span><span class="v6-uth-status${chatBusyLabel(chat) ? ' v6-uth-status--busy' : ''}" aria-hidden="true">${chatBusyLabel(chat) ? 'Working' : ''}</span>
+            <span aria-hidden="true">🔧 Under the Hood</span><span id="v6ChatToggleUnderHoodCount" class="v6-chat-tucked-count"${chat.hideHoodTraffic !== false || !chat.hoodOpen ? ' hidden' : ''}>${tuckedCountText(tuckedTurns(liveTurns, chat.verbosity).length)}</span><span id="v6ChatToggleUnderHoodStatus" class="v6-uth-status${chatBusyLabel(chat) ? ' v6-uth-status--busy' : ''}" aria-hidden="true">${chatBusyLabel(chat) ? 'Working' : ''}</span>
           </button>
           <a class="btn btn-secondary btn-small v6-chat-icon-btn v6-open-hood" href="${escapeHtml(hoodHref)}" title="Open Hood (Live Terminal)" aria-label="Open Hood (Live Terminal)"><span aria-hidden="true">&gt;_</span></a>
           ${iconButton('v6ChatHistory', escapeHtml(`History and recents for ${name}`), '🕓')}
@@ -10373,6 +10373,11 @@
       const tucked = tuckedTurns(live && Array.isArray(live.turns) ? live.turns : [], verbosity);
       paintIfChanged(doc.getElementById('v6ChatTucked'), tuckedMarkup(tucked, thumbsNow(), unfurlsNow()));
       paintIfChanged(doc.getElementById('v6ChatTuckedCount'), escapeHtml(tuckedCountText(tucked.length)));
+      // #3330 (Critic R1 blocking 2): the top-header toggle's own count badge
+      // mirrors the drawer summary's — otherwise it only ever updates on a
+      // full render(), which #3327's own no-op fix makes rare, leaving it
+      // stuck for the life of a long conversation.
+      paintIfChanged(doc.getElementById('v6ChatToggleUnderHoodCount'), escapeHtml(tuckedCountText(tucked.length)));
       // #3107 (PRR-A R1 C1/C2): this innerHTML assignment destroys whatever
       // listeners wireControls()'s last full render attached to any
       // .v6-chat-unfurl-btn/.v6-chat-local-ref-copy inside #v6ChatTucked —
@@ -11582,6 +11587,14 @@
         if (uth) {
           uth.className = `v6-uth-status${label ? ' v6-uth-status--busy' : ''}`;
           uth.textContent = label ? 'Working' : '';
+        }
+        // #3330 (Critic R1 blocking 2): the top-header toggle's own busy
+        // badge mirrors the drawer summary's #v6UthStatus — same reason as
+        // paintTucked's count mirror above.
+        const headerUth = doc.getElementById('v6ChatToggleUnderHoodStatus');
+        if (headerUth) {
+          headerUth.className = `v6-uth-status${label ? ' v6-uth-status--busy' : ''}`;
+          headerUth.textContent = label ? 'Working' : '';
         }
       },
       /**
