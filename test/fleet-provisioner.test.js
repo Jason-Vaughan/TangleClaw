@@ -282,6 +282,35 @@ describe('provisionFleet', () => {
         'the discharged marker must be removed once the real attach completes');
     });
 
+    // PRR-B R-Gate Round 3 WARNING on PR #3334: simulates a retry resuming a
+    // member a PRIOR retry already got as far as _finishInterruptedAttach
+    // for (project.json written) before THAT retry was itself interrupted
+    // before config/trust-rule/rule seeding ran. project.json existing must
+    // not stop this from still being recognized and finished.
+    it('resumes a member whose project.json already exists but seeding never completed', async () => {
+      const pm = makePmProject('Ariadne-PM');
+      makeCoordinator(pm);
+      const interrupted = makeInterruptedAttach('Ariadne-Arc', { engine: 'claude', markerPmId: pm.id });
+      // What a prior retry's _finishInterruptedAttach would have left behind:
+      // project.json written, marker still present (not yet removed — that
+      // only happens once seeding also finishes), no trust rule seeded yet.
+      store.projectConfig.save(interrupted.path, { ...store.projectConfig.load(interrupted.path), engine: 'claude' });
+      assert.equal(fs.existsSync(path.join(interrupted.path, '.tangleclaw', 'project.json')), true,
+        'sanity: project.json already exists, unlike the plain interrupted-attach case');
+      assert.equal(store.sessionRules.listActiveForProject(interrupted.id).length, 0,
+        'sanity: seeding genuinely never ran');
+
+      const result = await fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc' }]);
+
+      assert.equal(result.provisioned[0].created, false);
+      const config = store.projectConfig.load(interrupted.path);
+      assert.equal(config.medusaEnabled, true, 'the member config seeding that never ran before must run now');
+      assert.equal(store.sessionRules.listActiveForProject(interrupted.id).length, 1,
+        'the trust-rule floor that never ran before must be seeded now');
+      assert.equal(fs.existsSync(path.join(interrupted.path, '.tangleclaw', '.fleet-provisioner-marker.json')), false,
+        'the marker is finally discharged now that the whole operation has actually finished');
+    });
+
     it('does not treat a bare directory with no .git as an interrupted attach', () => {
       const dir = path.join(tmpDir, 'no-git-no-config');
       fs.mkdirSync(dir, { recursive: true });
@@ -366,6 +395,12 @@ describe('provisionFleet', () => {
     // wrote to .tangleclaw/project.json — not the global default engine a
     // detached SQLite-only patch used to leave behind.
     assert.equal(childConfig.engine, 'claude', 'project.json must carry the requested engine, not the default');
+    // PRR-B R-Gate Round 3 WARNING: the ordinary, uninterrupted create path
+    // used to leave the provisioning marker behind forever (only the
+    // recovery path ever removed it) — it must be gone once this whole
+    // operation finishes normally too.
+    assert.equal(fs.existsSync(path.join(child.path, '.tangleclaw', '.fleet-provisioner-marker.json')), false,
+      'the marker must not linger after a normal, uninterrupted provision');
   });
 
   it('passes a member\'s engine straight into attachProject, so project.json and SQLite agree (#3322)', async () => {
