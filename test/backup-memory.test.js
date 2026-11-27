@@ -232,6 +232,24 @@ describe('verifyMemoryBackup', () => {
     assert.deepEqual(result.missing, [], 'an escaping path is its own category, never mistaken for merely missing');
     assert.deepEqual(result.mismatched, []);
   });
+
+  // PRR-B R-Gate Round 3 BLOCKING repro, verbatim: backupDir/files replaced
+  // with a symlink to an outside directory holding a file that matches the
+  // manifest's own relPath AND recorded digest -- the digest alone cannot
+  // catch this, since the attacker controls that outside file too.
+  it('refuses when backupDir/files itself has been replaced with a symlink', () => {
+    seedProjectMemory('TC-Lane-D', { 'MEMORY.md': 'real content\n' });
+    const { backupDir } = backup.createMemoryBackup({ claudeProjectsDir, backupsRoot });
+    const outsideFiles = path.join(tmpDir, 'outside-files-dir');
+    fs.mkdirSync(path.join(outsideFiles, 'claude-projects-memory', 'TC-Lane-D'), { recursive: true });
+    fs.writeFileSync(path.join(outsideFiles, 'claude-projects-memory', 'TC-Lane-D', 'MEMORY.md'), 'real content\n');
+    fs.rmSync(path.join(backupDir, 'files'), { recursive: true, force: true });
+    fs.symlinkSync(outsideFiles, path.join(backupDir, 'files'));
+
+    const result = backup.verifyMemoryBackup(backupDir);
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.invalid, ['claude-projects-memory/TC-Lane-D/MEMORY.md']);
+  });
 });
 
 describe('_resolveContained', () => {
@@ -268,6 +286,20 @@ describe('_assertNoSymlinkComponent / _resolveContainedPhysical', () => {
       () => backup._resolveContainedPhysical(base, 'project/memory/x.md'),
       /is a symlink/
     );
+  });
+
+  // PRR-B R-Gate Round 3 BLOCKING: the Round 2 fix only checked components
+  // BUILT FROM relPath -- baseDir itself being the symlink went uncaught,
+  // since lstat on a path under a symlinked parent still resolves to the
+  // real target transparently.
+  it('refuses when baseDir itself is a symlink', () => {
+    const outside = path.join(tmpDir, 'outside-base');
+    fs.mkdirSync(outside, { recursive: true });
+    const symlinkedBase = path.join(tmpDir, 'base-is-a-symlink');
+    fs.symlinkSync(outside, symlinkedBase);
+
+    assert.doesNotThrow(() => backup._resolveContained(symlinkedBase, 'file.md'), 'lexically this looks contained');
+    assert.throws(() => backup._assertNoSymlinkComponent(symlinkedBase, 'file.md'), /is a symlink/);
   });
 
   it('accepts a path whose components do not exist yet', () => {
@@ -422,6 +454,24 @@ describe('restoreMemoryBackup', () => {
       /is a symlink/
     );
     assert.equal(fs.existsSync(path.join(outside, 'MEMORY.md')), false, 'must never have written through the symlink');
+  });
+
+  // PRR-B R-Gate Round 3 BLOCKING, the other named repro: the restore
+  // ROOT itself (claudeProjectsDir, not just a project's own memory/ below
+  // it) being a symlink.
+  it('refuses to restore when claudeProjectsDir itself is a symlink', () => {
+    seedProjectMemory('TC-Lane-D', { 'MEMORY.md': 'x\n' });
+    const { backupDir } = backup.createMemoryBackup({ claudeProjectsDir, backupsRoot });
+    const outside = path.join(tmpDir, 'planted-via-root-symlink');
+    fs.mkdirSync(outside, { recursive: true });
+    const symlinkedRestoreTarget = path.join(tmpDir, 'restore-root-is-a-symlink');
+    fs.symlinkSync(outside, symlinkedRestoreTarget);
+
+    assert.throws(
+      () => backup.restoreMemoryBackup(backupDir, { claudeProjectsDir: symlinkedRestoreTarget }),
+      /is a symlink/
+    );
+    assert.equal(fs.existsSync(path.join(outside, 'TC-Lane-D')), false, 'must never have written through the symlinked root');
   });
 });
 
