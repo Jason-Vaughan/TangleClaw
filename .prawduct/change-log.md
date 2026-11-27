@@ -156,6 +156,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   still be suppressed — pre-existing shape, not a regression from this branch); the new
   `win`-level listeners introduce no cleanup gap (`tcCreateV6Shell` has exactly one non-test
   call site, instantiated once per page load).
+- PRR-A R-Gate R2 (`478698de`): REQUEST CHANGES — 1 BLOCKING, two parts. (1) The R1 fix's own
+  "trailing user turn/event" search walked backward PAST a non-`user` entry to find the
+  nearest `user` one, instead of requiring the array's actual LAST entry to be `user` — so a
+  matching turn/event an ASSISTANT REPLY had already answered still read as "trailing" and
+  could suppress a brand-new send repeating that now-answered text; this is exactly Critic
+  R2's own "pre-existing shape" observation above, escalated to blocking once the backward-
+  scan bug made it concretely reachable, not a separate issue. (2) Per PRR-A's own resolution
+  guidance (favor showing a possibly-redundant bubble over dropping a legitimate new send,
+  since text alone cannot distinguish "the pane echoed THIS send" from "the operator
+  force-sent the identical words again") rather than full send/echo identity tracking. Fixed
+  in `8a341083`: `trailingUserTurn`/`trailingUserEvent` are now only ever the array's real
+  last entry; each trailing signal is consumed by at most the first (earliest) matching
+  pending item, so a second genuinely-new identical pending send is preserved. Regression
+  tests added for both (assistant-followed-old-match, for both the live-turn and
+  recorded-event cases; a second identical pending send preserved alongside an
+  already-matched one). Critic `verify-resolutions` after `8a341083`: 0 blocking, 0 findings,
+  1 observation (this change-log entry's own gap — resolved by this entry).
 
 ## 2026-11-24 — v6.6.0 release cut (Milestone #94), Car V660-W2-REL
 
