@@ -256,7 +256,6 @@
     <div class="nav-links" style="align-items:center;gap:0.75rem;">
       <label for="topnav-report-picker" style="color:var(--text-muted);font-size:0.82rem;font-weight:700;">Jump to Report (88):</label>
       <select id="topnav-report-picker" aria-label="Select a Sprint Report" onchange="if(this.value)window.location.href=this.value" style="background:var(--bg-card-alt);color:var(--text);border:1px solid var(--cyan);border-radius:8px;padding:0.38rem 0.65rem;font-size:0.84rem;font-weight:600;max-width:390px;cursor:pointer;">
-          <option value="./v6.6.6/">📡 [Live Sprint] v6.6.6 — Live Wave &amp; Gate Tracker</option>
           <option value="./v6.6.5/" selected>🟢 [Latest Release] v6.6.5 — Live 5-Status Car/Train Sync, Kaizen &amp; Reports, SSOT Documentation View</option>
           <option value="./v6.6.4/">📄 [Settled Gate 4 Report] v6.6.4 — Engine Fallback, Delegate Succession, Lifecycle Stage Progress, Settings Parity</option>
           <option value="./v6.6.3/">📄 [Settled Gate 4 Report] v6.6.3 — Fleet Membership, Delegate Authority, Wave Scheduler</option>
@@ -346,7 +345,7 @@
           <option value="./v5.35.0/">📄 v5.35.0  Autonomous Multi-Agent Sprint Report</option>
           <option value="./v5.34.0/">📄 v5.34.0  Autonomous Multi-Agent Sprint Report</option>
       </select>
-      <a class="btn btn-primary" style="padding:0.36rem 0.75rem;font-size:0.82rem;" href="./v6.6.0/">v6.6.0 (Latest) →</a>
+      <a class="btn btn-primary" style="padding:0.36rem 0.75rem;font-size:0.82rem;" href="./v6.6.5/">v6.6.5 (Latest) →</a>
       <a class="btn" style="padding:0.36rem 0.75rem;font-size:0.82rem;" href="./v6.5.8-v6.6.0-retrospective/">v6.5.8–v6.6.0 Train Retro</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/">Public Roadmap</a>
       <a href="https://github.com/Jason-Vaughan/TangleClaw/releases" target="_blank" rel="noopener">GitHub Releases</a>
@@ -363,13 +362,13 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">Published Sprint Reports</div>
-          <div class="kpi-val">83 Reports</div>
-          <div class="kpi-sub"><code>v5.34.0</code>–<code>v6.6.0</code> + <code>v6.5.8–v6.6.0</code>, <code>v6.2.2–v6.4.0</code>, <code>v6.0.0–v6.2.1</code>, <code>v5.68.0–v5.71.0</code>, <code>v5.65.0–v5.66.0</code>, <code>v5.62.0–v5.64.0</code>, <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
+          <div class="kpi-val">88 Reports</div>
+          <div class="kpi-sub"><code>v5.34.0</code>–<code>v6.6.5</code> + <code>v6.5.8–v6.6.0</code>, <code>v6.2.2–v6.4.0</code>, <code>v6.0.0–v6.2.1</code>, <code>v5.68.0–v5.71.0</code>, <code>v5.65.0–v5.66.0</code>, <code>v5.62.0–v5.64.0</code>, <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
-          <div class="kpi-val">478 PRs Merged</div>
-          <div class="kpi-sub"><strong>203 waves</strong> across 83 reports · <code>v6.5.8–v6.6.0</code> 6-leg train delivered <strong>35/35 true-merged cars</strong> across 6 consecutive autonomous releases</div>
+          <div class="kpi-val">504 PRs Merged</div>
+          <div class="kpi-sub"><strong>213 waves</strong> across 88 reports · <code>v6.6.1–v6.6.5</code> 5-leg train delivered <strong>26/26 true-merged cars</strong> across 5 consecutive autonomous releases</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Verification &amp; Testament Pool</div>
@@ -390,7 +389,6 @@
         </div>
         <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;flex:1;max-width:560px;justify-content:flex-end;">
           <select id="hero-report-picker" aria-label="Quick Report Picker" onchange="if(this.value)window.location.href=this.value" style="flex:1;min-width:260px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-hi);border-radius:10px;padding:0.55rem 0.8rem;font-size:0.9rem;font-weight:600;cursor:pointer;">
-          <option value="./v6.6.6/">📡 [Live Sprint] v6.6.6 — Live Wave &amp; Gate Tracker</option>
           <option value="./v6.6.5/" selected>🟢 [Latest Release] v6.6.5 — Live 5-Status Car/Train Sync, Kaizen &amp; Reports, SSOT Documentation View</option>
           <option value="./v6.6.4/">📄 [Settled Gate 4 Report] v6.6.4 — Engine Fallback, Delegate Succession, Lifecycle Stage Progress, Settings Parity</option>
           <option value="./v6.6.3/">📄 [Settled Gate 4 Report] v6.6.3 — Fleet Membership, Delegate Authority, Wave Scheduler</option>
@@ -486,56 +484,116 @@
     </section>
 
     <div class="report-list">
-      <!-- LIVE_SPRINT_CARD_START -->
-      <article class="report-card" style="border-color:rgba(56,189,248,0.65);background:linear-gradient(135deg,rgba(15,23,42,0.96),rgba(14,116,144,0.18));">
+      <!-- v6.6.5 Card -->
+      <article class="report-card">
         <div class="report-header">
           <div>
-            <span class="badge badge-cyan">● Live Sprint In Progress · Updated 2026-11-27 06:48 UTC</span>
-            <h2 class="report-title"><a href="./v6.6.6/">TangleClaw <code>v6.6.6</code> — Live Wave &amp; Gate Tracker</a></h2>
+            <span class="badge badge-green">● Latest Release · Nov 27, 2026 (Rulings A1186–A1209)</span>
+            <h2 class="report-title"><a href="./v6.6.5/">TangleClaw <code>v6.6.5</code>: “Wave J (Leg 5 of 5) — Live 5-Status Car/Train Sync, In-Product Kaizen &amp; Reports Viewer, SSOT Documentation View &amp; Historical Report/Requirements Audit”</a></h2>
           </div>
-          <span class="badge badge-purple">0/0 Cars Merged · 0 In Review</span>
+          <span class="badge badge-cyan">Tag v6.6.5 → 8c9e1c6a · 5/5 True Merges (#3296, #3304, #3305, #3308, #3323) &amp; Milestone #111 Closed</span>
         </div>
         <p style="color:#cbd5e1; margin:0;">
-          <strong>Live Sprint Telemetry (Auto-Synced from <code>LANE_QUEUE.md</code>):</strong> TangleClaw Live Lane Queue — Easy-Wins Train `v6.6.6` -&gt; `v6.6.7`.
-          Current wave status: <code>PRE-SPRINT READY — v6.6.1-v6.6.5 archived to archive/LANE_QUEUE-v6.6.1-v6.6.5.md (SHA-256: d98fbb136bddfec95b895c92ad3f142ea1298a3ee22975eec5271e969dabad8a); Section 0 Kaizen Gate 0 dispositioned; awaiting PM continuity takeover &amp; A-Gate</code>.
-          Open the live interactive report below to inspect real-time car progress, Builder/PRR lane assignments, and gate statuses as waves progress.
+          Delivered Real-Time 5-Status Car &amp; Train Lifecycle Synchronization across roadmap, <code>LANE_QUEUE.md</code> &amp; UI in <code>lib/v6/sprint-car-status-sync.js</code> (<code>#3267</code>, <code>PR #3308</code> / <code>PR #3304</code>), Configurable Mandatory Sprint Report Gate &amp; In-Product Kaizen &amp; Reports Primary Viewer in <code>lib/sprint-report-gate.js</code> &amp; <code>public/v6-kaizen-reports-view.js</code> (<code>#3266</code>, <code>PR #3304</code>), Standard Customizable Project/Fleet Documentation Structure &amp; Dedicated SSOT Central-Pane Reader in <code>lib/project-docs-ssot.js</code> &amp; <code>public/v6-ssot-charter-view.js</code> (<code>#3275</code>, <code>PR #3305</code>), Historical Sprint Report Coverage Audit &amp; End-to-End Intake-to-Release Requirements Traceability Verifier in <code>scripts/verify-intake-traceability.js</code> (<code>#3274</code>, <code>#3279</code>, <code>#3290</code>, <code>PR #3296</code>), and Single-Stream Release Cut <code>v6.6.5</code> (<code>PR #3323</code> &rarr; <code>main @ 8c9e1c6a69aa993133da6d296524b16a9258da50</code>).
         </p>
         <div class="meta-pills">
-          <span class="badge badge-cyan">0 Chartered Wave Rows</span>
-          <span class="badge badge-green">0 Merged · 0 In Review</span>
-          <span class="badge badge-purple">State: PRE-SPRINT READY — v6.6.1-v6.6.5 archived to archive/LANE_QUEUE-v6.6.1-v6.6.5.md (SHA-256: d98fbb136bddfec95b895c92ad3f142ea1298a3ee22975eec5271e969dabad8a); Section 0 Kaizen Gate 0 dispositioned; awaiting PM continuity takeover &amp; A-Gate</span>
+          <span class="badge badge-green">5/5 True Merges (#3296, #3304, #3305, #3308, #3323)</span>
+          <span class="badge badge-cyan">Tests CI 45933140165 &amp; Release Workflow 45934944446 Passing</span>
+          <span class="badge badge-purple">Milestone #111: 6/6 Issues Closed (#3266, #3267, #3274, #3275, #3279, #3290)</span>
+          <span class="badge badge-green">Live :3102 Updated @ 8c9e1c6a &amp; Gate 4 Certified</span>
         </div>
         <div class="actions">
-          <a class="btn btn-primary" href="./v6.6.6/">📡 Open v6.6.6 Live Sprint Tracker →</a>
+          <a class="btn btn-primary" href="./v6.6.5/">Open v6.6.5 Sprint Report →</a>
         </div>
       </article>
-      <!-- LIVE_SPRINT_CARD_END -->
-      <a class="report-card" href="./v6.6.5/" data-release="v6.6.5">
-        <div class="card-top"><span class="version-badge">v6.6.5</span><span class="status-pill settled">Settled</span></div>
-        <span class="badge badge-green">● Latest Release · Nov 27, 2026 (PR #3323; Gate 4 certified)</span>
-        <h3>TangleClaw Sprint v6.6.5 — Gate 4 Sprint Report</h3>
-        <p class="card-desc">Published and validated Gate 4 report for v6.6.5; release tag v6.6.5 is deployed on :3102.</p>
-      </a>
-      <a class="report-card" href="./v6.6.4/" data-release="v6.6.4">
-        <div class="card-top"><span class="version-badge">v6.6.4</span><span class="status-pill settled">Settled</span></div>
-        <h3>TangleClaw Sprint v6.6.4 — Gate 4 Sprint Report</h3>
-        <p class="card-desc">Published and validated Gate 4 report for v6.6.4.</p>
-      </a>
-      <a class="report-card" href="./v6.6.3/" data-release="v6.6.3">
-        <div class="card-top"><span class="version-badge">v6.6.3</span><span class="status-pill settled">Settled</span></div>
-        <h3>TangleClaw Sprint v6.6.3 — Gate 4 Sprint Report</h3>
-        <p class="card-desc">Published and validated Gate 4 report for v6.6.3.</p>
-      </a>
-      <a class="report-card" href="./v6.6.2/" data-release="v6.6.2">
-        <div class="card-top"><span class="version-badge">v6.6.2</span><span class="status-pill settled">Settled</span></div>
-        <h3>TangleClaw Sprint v6.6.2 — Gate 4 Sprint Report</h3>
-        <p class="card-desc">Published and validated Gate 4 report for v6.6.2.</p>
-      </a>
-      <a class="report-card" href="./v6.6.1/" data-release="v6.6.1">
-        <div class="card-top"><span class="version-badge">v6.6.1</span><span class="status-pill settled">Settled</span></div>
-        <h3>TangleClaw Sprint v6.6.1 — Gate 4 Sprint Report</h3>
-        <p class="card-desc">Published and validated Gate 4 report for v6.6.1.</p>
-      </a>
+      <!-- v6.6.4 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-green">● Prior Release · Nov 27, 2026 (Rulings A1126–A1201)</span>
+            <h2 class="report-title"><a href="./v6.6.4/">TangleClaw <code>v6.6.4</code>: “Wave I (Leg 4 of 5) — Member Engine Fallback Chains, Delegate Role Succession, Startup/Wrap Stage Visualization &amp; Settings API Parity”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v6.6.4 → 332fb2c0 · 5/5 True Merges (#3294, #3303, #3306, #3311, #3321) &amp; Milestone #110 Closed</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Delivered Per-Member Engine Fallback Chains (<code>Primary &rarr; Secondary &rarr; Tertiary</code>) and automated quota/outage failover runtime in <code>lib/engine-fallback-chain.js</code> &amp; <code>lib/model-switch.js</code> (<code>#3271</code>, <code>PR #3311</code>), Formal Delegate Role Succession &amp; Surrogate Hierarchy (<code>PM &rarr; Architect / Surrogate</code>) in <code>lib/delegate-succession.js</code> (<code>#3272</code>, <code>PR #3303</code>), Granular Startup (<code>Stage 1..5</code>) &amp; Wrap Stage Progress Visualization in <code>public/v6-lifecycle-stage-progress.js</code> (<code>#3277</code>, <code>PR #3306</code>), Complete Settings API Parity across global, fleet, workspace &amp; session configurations in <code>lib/routes/settings-parity.js</code> (<code>#3278</code>, <code>PR #3294</code>), and Single-Stream Release Cut <code>v6.6.4</code> (<code>PR #3321</code> &rarr; <code>main @ 332fb2c0cc2d7e3f5389a5c5f6c7b01a97b12097</code>).
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-green">5/5 True Merges (#3294, #3303, #3306, #3311, #3321)</span>
+          <span class="badge badge-cyan">Tests CI 45923806409 &amp; Release Workflow 45925814912 Passing</span>
+          <span class="badge badge-purple">Milestone #110: 4/4 Issues Closed (#3271, #3272, #3277, #3278)</span>
+          <span class="badge badge-green">Gate 4 Final Release Audit Certified</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v6.6.4/">Open v6.6.4 Sprint Report →</a>
+        </div>
+      </article>
+      <!-- v6.6.3 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-green">● Prior Release · Nov 27, 2026 (Rulings A1111–A1195)</span>
+            <h2 class="report-title"><a href="./v6.6.3/">TangleClaw <code>v6.6.3</code>: “Wave H (Leg 3 of 5) — Post-Creation Fleet Membership, Explicit Delegate Authority, Safe Parallelization Guard &amp; Look-Ahead Scheduler”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v6.6.3 → 6f719ce9 · 6/6 True Merges (#3292, #3298, #3302, #3310, #3312, #3320) &amp; Milestone #109 Closed</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Delivered Post-Creation Fleet Membership Management (add/join/detach/archive members with immediate Medusa roster reflection) in <code>lib/fleet-membership.js</code> &amp; <code>lib/routes/v6-fleets.js</code> (<code>#3262</code>, <code>PR #3310</code>) plus unregistered local clone attach flow in <code>lib/projects.js</code> (<code>#3289</code>, <code>PR #3312</code>), Explicit Fleet Delegate Assignment (Primary Coordinator / PM &amp; Technical Authority / Architect) in <code>lib/delegate-assignment.js</code> (<code>#3263</code>, <code>PR #3298</code>), Configurable Maximum Safe Parallelization Validator &amp; Idle-Builder Multi-Version Look-Ahead Scheduler in <code>lib/v6/c3-wave-scheduler.js</code> (<code>#3264</code>, <code>#3268</code>, <code>PR #3302</code>), Authoritative Fleet SDLC Issue-Tracking &amp; Roadmap Policy in <code>lib/fleet-sdlc-policy.js</code> (<code>#3265</code>, <code>PR #3292</code>), and Single-Stream Release Cut <code>v6.6.3</code> (<code>PR #3320</code> &rarr; <code>main @ 6f719ce9459838b9425651d76578d377e0fe5290</code>).
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-green">6/6 True Merges (#3292, #3298, #3302, #3310, #3312, #3320)</span>
+          <span class="badge badge-cyan">Tests CI 45917581101 &amp; Release Workflow 45919832498 Passing</span>
+          <span class="badge badge-purple">Milestone #109: 6/6 Issues Closed (#3262, #3263, #3264, #3265, #3268, #3289)</span>
+          <span class="badge badge-green">Gate 4 Final Release Audit Certified</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v6.6.3/">Open v6.6.3 Sprint Report →</a>
+        </div>
+      </article>
+      <!-- v6.6.2 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-green">● Prior Release · Nov 26, 2026 (Rulings A1178–A1193)</span>
+            <h2 class="report-title"><a href="./v6.6.2/">TangleClaw <code>v6.6.2</code>: “Wave G (Leg 2 of 5) — Interactive CLI Choices (1–5), Peek Under the Hood Filter Accuracy, Chat Readability, Footer Health &amp; P1 Disk-Cap Guard”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v6.6.2 → c96d27b8 · 6/6 True Merges (#3295, #3297, #3301, #3309, #3316, #3317) &amp; Milestone #108 Closed</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Delivered Interactive Numbered Choices (<code>1–5</code>), Confirmation Prompts &amp; “Chat About This” CLI equivalence in <code>public/v6-interactive-choices.js</code> (<code>#3259</code>, <code>PR #3309</code>), Peek Under the Hood Show/Suppress Traffic Filter &amp; wrapped URL stitching in <code>public/v6-uth-filter.js</code> &amp; <code>public/v6-shell.js</code> (<code>#3261</code>, <code>#3287</code>, <code>#3291</code>, <code>PR #3295</code>), V6 Conversation Typography, Markdown Hierarchy &amp; Embedded Preview Margin Polish in <code>public/style.css</code> (<code>#3260</code>, <code>PR #3297</code>), Bottom-Right Footer Per-Engine Health Indicators &amp; Hover Diagnostics in <code>public/api-helper.js</code> (<code>#3269</code>, <code>PR #3301</code>), P1 SQLite Backup Retention &amp; <code>tc-test-*</code> Temp-Dir Cleanup Guard (<code>#3315</code>, <code>PR #3316</code>), and Single-Stream Release Cut <code>v6.6.2</code> (<code>PR #3317</code> &rarr; <code>main @ c96d27b8a131a7b2f0cbbb4b32cd49d8a48d8f39</code>).
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-green">6/6 True Merges (#3295, #3297, #3301, #3309, #3316, #3317)</span>
+          <span class="badge badge-cyan">Tests CI 45909216054 &amp; Release Workflow 45911556258 Passing</span>
+          <span class="badge badge-purple">Milestone #108: 7/7 Issues Closed (#3259, #3260, #3261, #3269, #3287, #3291, #3315)</span>
+          <span class="badge badge-green">Gate 4 Final Release Audit Certified</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v6.6.2/">Open v6.6.2 Sprint Report →</a>
+        </div>
+      </article>
+      <!-- v6.6.1 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-green">● Prior Release · Nov 26, 2026 (Rulings A1115–A1162)</span>
+            <h2 class="report-title"><a href="./v6.6.1/">TangleClaw <code>v6.6.1</code>: “Wave F (Leg 1 of 5) — Codex TCC Native Startup &amp; Model Verification, Stage 2 Test Isolation &amp; Critical UI Shell Fixes”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v6.6.1 → cb378808 · 5/5 True Merges (#3286, #3288, #3293, #3299, #3307) &amp; Milestone #107 Closed</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Delivered Codex TCC Native Startup <code>paneId</code> Resolution &amp; Isolated CLI Profile Model Compatibility Harness in <code>lib/tmux.js</code>, <code>lib/profile-reconciler.js</code> &amp; <code>lib/sessions.js</code> (<code>#3257</code>, <code>#3273</code>, <code>PR #3299</code>), Stage 2 <code>test-touched</code> Real-Tmux Test Isolation in <code>scripts/test-touched.js</code> (<code>#3254</code>, <code>PR #3286</code>), V6 Shell Offline Conversation History &amp; Start Card Callback Wiring in <code>public/ui.js</code> (<code>#3258</code>, <code>PR #3293</code>), Bottom-Right Usage Popover Viewport Clamp &amp; Prompt Composer Bottom-Padding Reclamation in <code>public/style.css</code> (<code>#3270</code>, <code>#3276</code>, <code>PR #3288</code>), and Single-Stream Release Cut <code>v6.6.1</code> (<code>PR #3307</code> &rarr; <code>main @ cb37880859266ca02ed08406e27b56dbe87a6858</code>).
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-green">5/5 True Merges (#3286, #3288, #3293, #3299, #3307)</span>
+          <span class="badge badge-cyan">Tests CI 45891047074 &amp; Release Workflow 45893725226 Passing</span>
+          <span class="badge badge-purple">Milestone #107: 6/6 Issues Closed (#3254, #3257, #3258, #3270, #3273, #3276)</span>
+          <span class="badge badge-green">Gate 4 Final Release Audit Certified</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v6.6.1/">Open v6.6.1 Sprint Report →</a>
+        </div>
+      </article>
 <!-- v6.6.0 Card -->
       <article class="report-card">
         <div class="report-header">
