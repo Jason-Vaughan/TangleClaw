@@ -54,7 +54,7 @@ function plain(value) {
 /**
  * A minimal, injectable stand-in for `window` — just enough `location.hash`
  * and `hashchange` plumbing for {@link tcCreateV6Shell} to drive itself,
- * plus a generic `dispatch` (#3327 PRR-A R-Gate R1) for the window-level
+ * plus a generic `dispatch` (#3327) for the window-level
  * 'mouseup'/'pointerup'/'blur' listeners the pointer-selection guard wires
  * here — mirroring the mini-DOM element's own `.dispatch(type)` so a test
  * can fire either the same way.
@@ -2550,11 +2550,11 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     assert.notEqual(m.root.innerHTML, before, 'the next call, with the selection cleared, actually renders');
   });
 
-  // #3327 (Critic R1 blocking 1): isPointerSelecting/pointerSelectionCooldownUntil
-  // and the mousedown/pointerdown/mouseup/pointerup/copy listeners on `root`
-  // had no coverage at all — including the exact scenario the production
-  // code's own comment names: a mousedown transiently collapses the
-  // PREVIOUS selection before a fresh drag extends it, so
+  // #3327: isPointerSelecting/pointerSelectionCooldownUntil and the
+  // mousedown/pointerdown/mouseup/pointerup/copy listeners on `root`,
+  // including the exact scenario the production code's own comment
+  // names: a mousedown transiently collapses the PREVIOUS selection
+  // before a fresh drag extends it, so
   // hasActiveSelectionIn alone would read that instant as "nothing to
   // protect" and let a deferred render through mid-drag.
   it('a mousedown anywhere in the shell defers a background render even while hasActiveSelectionIn sees nothing (mid-drag collapse)', async () => {
@@ -2572,7 +2572,7 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     await m.settle();
     const before = m.root.innerHTML;
     m.root.dispatch('mousedown');
-    m.win.dispatch('mouseup'); // #3327 (PRR-A R-Gate R1 WARNING): release listens on `win`, not `root` — see its own comment
+    m.win.dispatch('mouseup'); // #3327: release listens on `win`, not `root` — see its own comment
     m.shell.setTelemetry({ scope: 'global', metrics: { activeSessions: { value: 12, confidence: 'observed' } } });
     assert.equal(m.root.innerHTML, before, 'still deferred immediately after mouseup, inside the cooldown');
 
@@ -2585,7 +2585,7 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     assert.equal(m2.root.innerHTML, before2, 'pointerdown/pointerup behaves the same as mousedown/mouseup');
   });
 
-  it('a release OUTSIDE root (a drag that ends past the shell\'s own edge) still clears isPointerSelecting, not left stuck forever (#3327, PRR-A R-Gate R1 WARNING)', async () => {
+  it('a release OUTSIDE root (a drag that ends past the shell\'s own edge) still clears isPointerSelecting, not left stuck forever (#3327)', async () => {
     const m = mountChat();
     await m.settle();
     m.root.dispatch('mousedown');
@@ -2673,7 +2673,7 @@ describe('Project Delegate Chat, end to end through the shell and live controlle
     assert.equal(JSON.parse(m.storage.getItem('tc_v6_chat_under_hood_open')), false);
   });
 
-  // #3330 (Critic R1 blocking 2): the header toggle's own busy badge and
+  // #3330: the header toggle's own busy badge and
   // tucked-count badge were only ever computed on a full render() — #3327's
   // own no-op fix makes that rare, so without this they could freeze for
   // the whole life of a long conversation. setLive() is the ~4s live poll's
@@ -7636,11 +7636,11 @@ describe('turns in the order they happened, and a composer that empties on Enter
     assert.match(html, /second message/);
   });
 
-  // #3326 (PRR-A R-Gate R1 BLOCKING): matching against ANY live user turn,
-  // not just the trailing one, meant re-sending text that repeats an OLDER
-  // turn wrongly suppressed the NEW pending bubble before the pane had
-  // echoed/settled THIS send at all — only the trailing turn is actual
-  // evidence this particular send landed.
+  // #3326: matching against ANY live user turn, not just the trailing
+  // one, would mean re-sending text that repeats an OLDER turn wrongly
+  // suppresses the NEW pending bubble before the pane has echoed/settled
+  // THIS send at all — only the trailing turn is actual evidence this
+  // particular send landed.
   it('a pending send repeating an OLDER live turn\'s exact words is not suppressed by it', () => {
     const pending = { id: 10, text: 'same wording' };
     const html = G.tcV6ConversationViewMarkup(view([], [
@@ -7657,12 +7657,12 @@ describe('turns in the order they happened, and a composer that empties on Enter
     assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*repeat me/);
   });
 
-  // #3326 (PRR-A R-Gate R2 BLOCKING): the R1 fix's own "trailing user
-  // event" search walked backward PAST a non-user entry to find the
-  // nearest user one, instead of checking whether the array's actual last
-  // entry is user — so a matching user event an ASSISTANT REPLY already
-  // answered still read as "trailing" and could suppress a brand-new send
-  // repeating that now-answered text.
+  // #3326: the "trailing user event" search must check whether the
+  // array's actual last entry is user, never walk backward past a
+  // non-user entry to find the nearest user one — otherwise a matching
+  // user event an ASSISTANT REPLY already answered would still read as
+  // "trailing" and suppress a brand-new send repeating that now-answered
+  // text.
   it('an old matching recorded event followed by an assistant reply is no longer "trailing" and does not suppress a new identical pending send', () => {
     const pending = { id: 12, text: 'repeat me' };
     const html = G.tcV6ConversationViewMarkup(view([ev(1, 'repeat me'), { seq: 2, role: 'assistant', content: 'done' }], [], { pending }));
@@ -7675,11 +7675,10 @@ describe('turns in the order they happened, and a composer that empties on Enter
     assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*repeat me/);
   });
 
-  // #3326 (PRR-A R-Gate R2 BLOCKING, resolution guidance): a genuinely
-  // trailing, unanswered turn/event is still matched by TEXT, not a stable
-  // send/echo identity, so it cannot tell "the pane echoed THIS pending
-  // send" apart from "the operator force-sent the identical words again
-  // before the first settled." Per PRR-A's own guidance, favor showing a
+  // #3326: a genuinely trailing, unanswered turn/event is still matched
+  // by TEXT, not a stable send/echo identity, so it cannot tell "the pane
+  // echoed THIS pending send" apart from "the operator force-sent the
+  // identical words again before the first settled." Favoring a
   // possibly-redundant bubble over dropping a legitimate new send: each
   // trailing signal is consumed by at most the FIRST (chronologically
   // earliest) matching pending item, never a second one with the same text.
@@ -7690,12 +7689,11 @@ describe('turns in the order they happened, and a composer that empties on Enter
     assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*same text/);
   });
 
-  // #3326 (PRR-A R-Gate R3 BLOCKING): the trailing live turn and the
-  // trailing recorded event can be two readings of the exact SAME echo
-  // (arrangeRecorded draws a recorded event once, via its matching live
-  // turn, for precisely this overlap) — treating turnConsumed/eventConsumed
-  // as fully independent let that ONE real echo consume TWO identical
-  // pending items instead of one.
+  // #3326: the trailing live turn and the trailing recorded event can be
+  // two readings of the exact SAME echo (arrangeRecorded draws a recorded
+  // event once, via its matching live turn, for precisely this overlap) —
+  // treating turnConsumed/eventConsumed as fully independent would let
+  // that ONE real echo consume TWO identical pending items instead of one.
   it('with BOTH a trailing live turn AND a trailing recorded event showing the SAME text, only ONE of two identical pending items is suppressed', () => {
     const pending = [{ id: 16, text: 'same text' }, { id: 17, text: 'same text' }];
     const html = G.tcV6ConversationViewMarkup(view([ev(1, 'same text')], [{ role: 'user', text: 'same text' }], { pending }));
@@ -7709,12 +7707,12 @@ describe('turns in the order they happened, and a composer that empties on Enter
     assert.doesNotMatch(html, /is-pending/, 'both are genuinely distinct echoes, so both pending items are correctly suppressed');
   });
 
-  // #3326 (PRR-A R-Gate R4 BLOCKING): the R3 fix unconditionally consumed
-  // BOTH signals on any match, so an item that matched only the EVENT
-  // (first in pending order) wrongly spent `turnConsumed` too — leaving a
-  // LATER item that genuinely matches the distinct trailing TURN unable to
-  // consume it, so that later echo was never suppressed. Same bug, mirror
-  // order of the test above.
+  // #3326: consuming BOTH signals on any match, rather than only the
+  // signal(s) each pending item actually matched, would let an item that
+  // matches only the EVENT (first in pending order) wrongly spend
+  // `turnConsumed` too — leaving a LATER item that genuinely matches the
+  // distinct trailing TURN unable to consume it, so that later echo would
+  // never get suppressed. Same shape, mirror order of the test above.
   it('with a DIFFERENT trailing turn and trailing event in the REVERSE order (event-matching item first), each still independently suppresses its own matching pending item', () => {
     const pending = [{ id: 20, text: 'event text' }, { id: 21, text: 'turn text' }];
     const html = G.tcV6ConversationViewMarkup(view([ev(1, 'event text')], [{ role: 'user', text: 'turn text' }], { pending }));

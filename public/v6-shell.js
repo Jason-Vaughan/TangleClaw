@@ -3878,39 +3878,30 @@
   function pendingMarkup(pending, lastSent, thumbs, unfurls, liveTurns, events) {
     const turns = Array.isArray(liveTurns) ? liveTurns : [];
     const evs = Array.isArray(events) ? events : [];
-    // #3326 (PRR-A R-Gate R1/R2 BLOCKING): two distinct bugs in the
-    // original "trailing user turn/event" fix, both now closed:
+    // #3326: a pending send is hidden only when it is genuinely echoed by
+    // the TRAILING live turn or the TRAILING recorded event — never by an
+    // older one with matching text, since re-sending words that repeat an
+    // earlier turn/event must not suppress a brand-new, still-unechoed
+    // send. "Trailing" means the array's own actual last entry: a scan
+    // that walked backward past a non-`user` entry to find the nearest
+    // `user` one would keep reading an ALREADY-ANSWERED turn/event (one an
+    // assistant reply follows) as trailing.
     //
-    // 1. R1 matched against ANY `user` turn in `liveTurns`/`events`, so
-    //    re-sending text that repeated an OLDER one wrongly suppressed the
-    //    NEW pending bubble. R2 found the R1 fix's OWN "trailing" search
-    //    still walked backward PAST a non-`user` entry looking for the
-    //    nearest `user` one, instead of checking whether the array's own
-    //    LAST entry is `user` — so an assistant reply landing after the
-    //    matching user turn/event did not stop it from still being read as
-    //    "trailing" and suppressing a brand-new send that happens to
-    //    repeat that now-ANSWERED text. Fixed: `trailingUserTurn`/
-    //    `trailingUserEvent` are only ever the array's actual last entry,
-    //    never a scan past later entries of any other role.
-    // 2. Even genuinely trailing-and-unanswered text is still matched by
-    //    CONTENT, not by a stable send/echo identity, so it cannot tell
-    //    apart "the pane echoed THIS pending send" from "the operator
-    //    force-sent the identical words again before the first one
-    //    settled" — a second, truly NEW pending item with the same text.
-    //    Per PRR-A's own resolution guidance, favor showing a possibly-
-    //    redundant bubble over silently dropping a legitimate new send:
-    //    each trailing signal is consumed by at most ONE pending item (the
-    //    earliest, since `pending` is chronological), so a second pending
-    //    item with the same text is never hidden by the same signal twice.
+    // Matching is still by content, not a stable send/echo identity, so it
+    // cannot tell "the pane echoed THIS pending send" apart from "the
+    // operator force-sent the identical words again before the first one
+    // settled." Favoring a possibly-redundant bubble over silently
+    // dropping a legitimate new send: each trailing signal is consumed by
+    // at most the first (chronologically earliest) matching pending item.
     const lastTurn = turns[turns.length - 1];
     const trailingUserTurn = (lastTurn && lastTurn.role === 'user') ? lastTurn : null;
     const lastEvent = evs[evs.length - 1];
     const trailingUserEvent = (lastEvent && lastEvent.role === 'user') ? lastEvent : null;
-    // #3326 (PRR-A R-Gate R3 BLOCKING): the trailing turn and the trailing
-    // event can be two READINGS of the exact same physical echo —
-    // `arrangeRecorded` above explicitly draws a recorded event once, via
-    // its matching live turn, for precisely this overlap. Treating
-    // `turnConsumed`/`eventConsumed` as fully independent let ONE real
+    // The trailing turn and the trailing event can be two READINGS of the
+    // exact same physical echo — `arrangeRecorded` above explicitly draws
+    // a recorded event once, via its matching live turn, for precisely
+    // this overlap. Treating `turnConsumed`/`eventConsumed` as fully
+    // independent would let ONE real
     // echo consume TWO identical pending items (one via each signal)
     // instead of one — `turnEventOverlap` makes consuming either consume
     // both whenever they describe the same message, while two genuinely
@@ -3925,14 +3916,13 @@
       const matchesTurn = !turnConsumed && trailingUserTurn && sameMessage(p.text, trailingUserTurn.text);
       const matchesEvent = !eventConsumed && trailingUserEvent && sameMessage(trailingUserEvent.content, p.text);
       if (!matchesTurn && !matchesEvent) return true;
-      // #3326 (PRR-A R-Gate R4 BLOCKING): consume only the signal(s) THIS
-      // item actually matched — setting `turnConsumed` unconditionally
-      // here (R3's own bug) spent it on an item that only matched the
-      // EVENT, leaving a later, genuinely distinct pending item that
-      // matches the TURN wrongly unable to consume it (and the mirror case
-      // for `eventConsumed`), so that later item's own real echo never
-      // suppressed it. Both are still consumed together exactly when they
-      // overlap (one echo, not two).
+      // Consume only the signal(s) THIS item actually matched — setting
+      // `turnConsumed` unconditionally on any match would spend it on an
+      // item that only matched the EVENT, leaving a later, genuinely
+      // distinct pending item that matches the TURN unable to consume it
+      // (and the mirror case for `eventConsumed`), so that later item's
+      // own real echo would never get suppressed. Both are still consumed
+      // together exactly when they overlap (one echo, not two).
       if (matchesTurn) turnConsumed = true;
       if (matchesEvent) eventConsumed = true;
       if (turnEventOverlap) { turnConsumed = true; eventConsumed = true; }
@@ -10426,9 +10416,9 @@
       const tucked = tuckedTurns(live && Array.isArray(live.turns) ? live.turns : [], verbosity);
       paintIfChanged(doc.getElementById('v6ChatTucked'), tuckedMarkup(tucked, thumbsNow(), unfurlsNow()));
       paintIfChanged(doc.getElementById('v6ChatTuckedCount'), escapeHtml(tuckedCountText(tucked.length)));
-      // #3330 (Critic R1 blocking 2): the top-header toggle's own count badge
-      // mirrors the drawer summary's — otherwise it only ever updates on a
-      // full render(), which #3327's own no-op fix makes rare, leaving it
+      // #3330: the top-header toggle's own count badge mirrors the drawer
+      // summary's — otherwise it only ever updates on a full render(),
+      // which #3327's own no-op fix makes rare, leaving it
       // stuck for the life of a long conversation.
       paintIfChanged(doc.getElementById('v6ChatToggleUnderHoodCount'), escapeHtml(tuckedCountText(tucked.length)));
       // #3107 (PRR-A R1 C1/C2): this innerHTML assignment destroys whatever
@@ -11410,7 +11400,7 @@
       if (win && typeof win.setTimeout === 'function') win.setTimeout(handleSelectionChange, POINTER_SELECTION_COOLDOWN_MS);
       else handleSelectionChange();
     }
-    // #3327 (PRR-A R-Gate R1 WARNING): the press starts inside the shell, so
+    // #3327: the press starts inside the shell, so
     // `root` is the right scope for 'mousedown'/'pointerdown' — but the
     // RELEASE that must clear `isPointerSelecting` does not necessarily
     // land there. A drag that extends past `root`'s own edge (or past the
@@ -11660,9 +11650,9 @@
           uth.className = `v6-uth-status${label ? ' v6-uth-status--busy' : ''}`;
           uth.textContent = label ? 'Working' : '';
         }
-        // #3330 (Critic R1 blocking 2): the top-header toggle's own busy
-        // badge mirrors the drawer summary's #v6UthStatus — same reason as
-        // paintTucked's count mirror above.
+        // #3330: the top-header toggle's own busy badge mirrors the
+        // drawer summary's #v6UthStatus — same reason as paintTucked's
+        // count mirror above.
         const headerUth = doc.getElementById('v6ChatToggleUnderHoodStatus');
         if (headerUth) {
           headerUth.className = `v6-uth-status${label ? ' v6-uth-status--busy' : ''}`;

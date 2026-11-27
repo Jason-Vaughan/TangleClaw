@@ -187,6 +187,22 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   (`rev-20261127T184648Z-d806a652`): 0 blocking, 0 findings, 1 observation (this entry's own
   gap — resolved by this entry; hand-traced `turnConsumed`/`eventConsumed`/`turnEventOverlap`
   through every covered scenario including the R1/R2 cases and confirmed the logic holds).
+- PRR-A R-Gate R4 (`961ec1e6`): REQUEST CHANGES — 1 BLOCKING. The R3 overlap fix set
+  `turnConsumed = true` unconditionally on ANY match (turn, event, or overlap), so an item
+  that matched only the trailing EVENT (first in pending order) wrongly spent `turnConsumed`
+  too — leaving a LATER, genuinely distinct pending item that matches the trailing TURN
+  unable to consume it, so that later item's own real echo was never suppressed (mirror bug
+  for `eventConsumed` on the reverse order). Fixed in `de86662b`: each flag is set only when
+  its OWN signal actually matched (`matchesTurn` → `turnConsumed`, `matchesEvent` →
+  `eventConsumed`), with both still set together when `turnEventOverlap` is true. Added the
+  reverse-order regression test PRR-A requested. Critic `verify-resolutions` after
+  `de86662b`: 0 blocking, 0 findings, 3 observations — this entry's own gap (resolved by this
+  entry) and two instances of a review-round-labeled comment the same observation already
+  flagged once before and I had been adding MORE of instead of stripping (resolved below:
+  swept every `#3326`/`#3327`/`#3330` comment this branch added and replaced the
+  "PRR-A R-Gate RN BLOCKING"/"Critic RN blocking N" framing with the plain issue number and
+  the technical reasoning alone — pre-existing labeled comments elsewhere in these files,
+  from unrelated prior cars, were left untouched).
 
 ## 2026-11-24 — v6.6.0 release cut (Milestone #94), Car V660-W2-REL
 
