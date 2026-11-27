@@ -104,6 +104,26 @@ describe('createMemoryBackup', () => {
     );
   });
 
+  // PRR-B R-Gate Round 2 WARNING on PR #3338: an unrestricted label would
+  // let _copyIntoBundle's `${label}/${relPath}` join escape files/ via `..`
+  // during CREATE -- the same class of escape, on the write side this time.
+  it('refuses a path-traversal extraMemoryDirs label, writing nothing outside the backup', () => {
+    const otherEngineMemory = path.join(tmpDir, 'other-engine-brain');
+    fs.mkdirSync(otherEngineMemory, { recursive: true });
+    fs.writeFileSync(path.join(otherEngineMemory, 'notes.md'), 'notes\n');
+
+    for (const badLabel of ['../../../tmp/evil', 'a/b', '.', '..', '.hidden']) {
+      assert.throws(
+        () => backup.createMemoryBackup({
+          claudeProjectsDir, backupsRoot, extraMemoryDirs: [{ label: badLabel, dir: otherEngineMemory }]
+        }),
+        TypeError,
+        `label "${badLabel}" must be refused`
+      );
+    }
+    assert.equal(fs.existsSync(backupsRoot), false, 'validation must run before any backup directory is even created');
+  });
+
   it('succeeds with an empty manifest when claudeProjectsDir does not exist yet', () => {
     const { manifest, verification } = backup.createMemoryBackup({
       claudeProjectsDir: path.join(tmpDir, 'does-not-exist'), backupsRoot
@@ -224,6 +244,42 @@ describe('_resolveContained', () => {
   it('refuses a relPath that escapes baseDir via .. segments', () => {
     const base = path.join(tmpDir, 'base', 'nested');
     assert.throws(() => backup._resolveContained(base, '../../escaped.md'), /escapes its intended root/);
+  });
+});
+
+describe('_assertNoSymlinkComponent / _resolveContainedPhysical', () => {
+  // PRR-B R-Gate Round 2 BLOCKING on PR #3338: a path that is LEXICALLY
+  // contained (_resolveContained accepts it) can still have an existing
+  // intermediate component be a symlink pointing anywhere -- path.resolve
+  // has no concept of the real filesystem at all.
+  it('refuses when an existing intermediate component is a symlink', () => {
+    const base = path.join(tmpDir, 'base');
+    fs.mkdirSync(base, { recursive: true });
+    const outside = path.join(tmpDir, 'outside');
+    fs.mkdirSync(outside, { recursive: true });
+    fs.symlinkSync(outside, path.join(base, 'project'));
+
+    assert.doesNotThrow(() => backup._resolveContained(base, 'project/memory/x.md'), 'lexically this looks contained');
+    assert.throws(
+      () => backup._assertNoSymlinkComponent(base, 'project/memory/x.md'),
+      /is a symlink/
+    );
+    assert.throws(
+      () => backup._resolveContainedPhysical(base, 'project/memory/x.md'),
+      /is a symlink/
+    );
+  });
+
+  it('accepts a path whose components do not exist yet', () => {
+    const base = path.join(tmpDir, 'base2');
+    fs.mkdirSync(base, { recursive: true });
+    assert.doesNotThrow(() => backup._assertNoSymlinkComponent(base, 'brand-new/dir/file.md'));
+  });
+
+  it('accepts a path whose existing components are real directories, not symlinks', () => {
+    const base = path.join(tmpDir, 'base3');
+    fs.mkdirSync(path.join(base, 'project', 'memory'), { recursive: true });
+    assert.doesNotThrow(() => backup._assertNoSymlinkComponent(base, 'project/memory/x.md'));
   });
 });
 
@@ -348,6 +404,24 @@ describe('restoreMemoryBackup', () => {
 
     assert.throws(() => backup.restoreMemoryBackup(bogusDir, { claudeProjectsDir: restoreTarget }), /escapes its intended root/);
     assert.equal(fs.existsSync(path.join(tmpDir, 'memory')), false, 'the escaped write must never have happened');
+  });
+
+  // PRR-B R-Gate Round 2 BLOCKING: a lexically-safe restore destination can
+  // still have an existing <project>/memory already be a symlink elsewhere.
+  it('refuses to restore through an existing symlinked <project>/memory destination', () => {
+    seedProjectMemory('TC-Lane-D', { 'MEMORY.md': 'x\n' });
+    const { backupDir } = backup.createMemoryBackup({ claudeProjectsDir, backupsRoot });
+    const restoreTarget = path.join(tmpDir, 'restored-claude-projects');
+    const outside = path.join(tmpDir, 'planted-via-symlink');
+    fs.mkdirSync(path.join(restoreTarget, 'TC-Lane-D'), { recursive: true });
+    fs.mkdirSync(outside, { recursive: true });
+    fs.symlinkSync(outside, path.join(restoreTarget, 'TC-Lane-D', 'memory'));
+
+    assert.throws(
+      () => backup.restoreMemoryBackup(backupDir, { claudeProjectsDir: restoreTarget }),
+      /is a symlink/
+    );
+    assert.equal(fs.existsSync(path.join(outside, 'MEMORY.md')), false, 'must never have written through the symlink');
   });
 });
 
