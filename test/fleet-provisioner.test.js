@@ -271,7 +271,33 @@ describe('provisionFleet', () => {
       const dir = path.join(tmpDir, 'no-git-no-config');
       fs.mkdirSync(dir, { recursive: true });
       const project = store.projects.create({ name: 'Ariadne-Bare', path: dir });
-      assert.equal(fp._isIncompleteAttach(project), false);
+      assert.equal(fp._isIncompleteAttach(project, upstreamDir), false);
+    });
+
+    // PRR-B R-Gate Round 1 BLOCKING on PR #3334: shape alone (missing
+    // project.json + a real .git clone) is not durable proof of OWNERSHIP —
+    // a different coordinator's own interrupted attach, or an unrelated repo
+    // that merely looks the same, must still be refused as a collision, not
+    // silently adopted into this fleet with this fleet's own config/rules.
+    it('refuses (does not reconcile) a same-shaped attach cloned from a DIFFERENT origin', async () => {
+      const pm = makePmProject('Ariadne-PM');
+      makeCoordinator(pm);
+      const foreignUpstream = path.join(tmpDir, 'foreign-upstream');
+      _initRepo(foreignUpstream);
+      const foreign = makeInterruptedAttach2('Ariadne-Arc', foreignUpstream);
+      assert.equal(fs.existsSync(path.join(foreign.path, '.tangleclaw', 'project.json')), false,
+        'sanity: same shape as a real interrupted attach — no project.json');
+
+      await assert.rejects(fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc' }]), { code: 'NAME_COLLISION' });
+      assert.equal(fs.existsSync(path.join(foreign.path, '.tangleclaw', 'project.json')), false,
+        'must not have been silently reconciled/adopted');
+
+      /** Same shape as makeInterruptedAttach, but cloned from an arbitrary origin. */
+      function makeInterruptedAttach2(name, fromUpstream) {
+        const destPath = path.join(projectsDir, name);
+        execFileSync('git', ['clone', '--quiet', fromUpstream, destPath], { env: GIT_ENV, stdio: 'pipe' });
+        return store.projects.create({ name, path: destPath });
+      }
     });
   });
 
