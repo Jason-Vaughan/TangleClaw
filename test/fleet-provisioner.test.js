@@ -237,22 +237,35 @@ describe('provisionFleet', () => {
   describe('#3322: resuming a member whose attach was interrupted mid-provision', () => {
     /**
      * Simulate exactly what a real interrupted `_provisionOne` leaves behind:
-     * a real `git clone` of the upstream repo (so `.git` is real content, not
-     * a test shortcut) registered in SQLite (the one step `attachProject`
-     * completes before the point this bug describes it being cut off), but
-     * with no `.tangleclaw/project.json` and no trust rule — because nothing
-     * after `store.projects.create()` ever ran.
+     * a real `git clone` (so `.git` is real content, not a test shortcut)
+     * registered in SQLite (the one step `attachProject` completes before
+     * the point this bug describes it being cut off), with no
+     * `.tangleclaw/project.json` and no trust rule — because nothing after
+     * `store.projects.create()` ever ran — and, unless `markerPmId` is
+     * omitted, the same provisioning marker `_writeProvisioningMarker` would
+     * have written right after a real `_cloneSibling` succeeded.
+     * @param {string} name
+     * @param {object} [opts]
+     * @param {string} [opts.engine]
+     * @param {string} [opts.fromUpstream] - Defaults to the shared upstream.
+     * @param {number} [opts.markerPmId] - Omit to simulate no marker at all.
      */
-    function makeInterruptedAttach(name, engine) {
+    function makeInterruptedAttach(name, { engine, fromUpstream = upstreamDir, markerPmId } = {}) {
       const destPath = path.join(projectsDir, name);
-      execFileSync('git', ['clone', '--quiet', upstreamDir, destPath], { env: GIT_ENV, stdio: 'pipe' });
+      execFileSync('git', ['clone', '--quiet', fromUpstream, destPath], { env: GIT_ENV, stdio: 'pipe' });
+      if (markerPmId !== undefined) {
+        const markerDir = path.join(destPath, '.tangleclaw');
+        fs.mkdirSync(markerDir, { recursive: true });
+        fs.writeFileSync(path.join(markerDir, '.fleet-provisioner-marker.json'),
+          JSON.stringify({ pmProjectId: markerPmId, createdAt: new Date().toISOString() }) + '\n');
+      }
       return store.projects.create({ name, path: destPath, engine });
     }
 
-    it('reconciles it instead of refusing 409 NAME_COLLISION', async () => {
+    it('reconciles it instead of refusing 409 NAME_COLLISION, and discharges the marker', async () => {
       const pm = makePmProject('Ariadne-PM');
       makeCoordinator(pm);
-      const interrupted = makeInterruptedAttach('Ariadne-Arc', 'claude');
+      const interrupted = makeInterruptedAttach('Ariadne-Arc', { engine: 'claude', markerPmId: pm.id });
       assert.equal(fs.existsSync(path.join(interrupted.path, '.tangleclaw', 'project.json')), false,
         'sanity: the simulated interruption really left no project.json');
 
@@ -265,13 +278,15 @@ describe('provisionFleet', () => {
       assert.equal(config.medusaEnabled, true, 'reconciliation still merges this fleet\'s member config');
       const rules = store.sessionRules.listActiveForProject(interrupted.id);
       assert.equal(rules.length, 1, 'the trust-rule floor must be seeded on the resumed member too');
+      assert.equal(fs.existsSync(path.join(interrupted.path, '.tangleclaw', '.fleet-provisioner-marker.json')), false,
+        'the discharged marker must be removed once the real attach completes');
     });
 
     it('does not treat a bare directory with no .git as an interrupted attach', () => {
       const dir = path.join(tmpDir, 'no-git-no-config');
       fs.mkdirSync(dir, { recursive: true });
       const project = store.projects.create({ name: 'Ariadne-Bare', path: dir });
-      assert.equal(fp._isIncompleteAttach(project, upstreamDir), false);
+      assert.equal(fp._isIncompleteAttach(project, upstreamDir, 1), false);
     });
 
     // PRR-B R-Gate Round 1 BLOCKING on PR #3334: shape alone (missing
@@ -284,20 +299,38 @@ describe('provisionFleet', () => {
       makeCoordinator(pm);
       const foreignUpstream = path.join(tmpDir, 'foreign-upstream');
       _initRepo(foreignUpstream);
-      const foreign = makeInterruptedAttach2('Ariadne-Arc', foreignUpstream);
+      const foreign = makeInterruptedAttach('Ariadne-Arc', { fromUpstream: foreignUpstream, markerPmId: pm.id });
       assert.equal(fs.existsSync(path.join(foreign.path, '.tangleclaw', 'project.json')), false,
         'sanity: same shape as a real interrupted attach — no project.json');
 
       await assert.rejects(fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc' }]), { code: 'NAME_COLLISION' });
       assert.equal(fs.existsSync(path.join(foreign.path, '.tangleclaw', 'project.json')), false,
         'must not have been silently reconciled/adopted');
+    });
 
-      /** Same shape as makeInterruptedAttach, but cloned from an arbitrary origin. */
-      function makeInterruptedAttach2(name, fromUpstream) {
-        const destPath = path.join(projectsDir, name);
-        execFileSync('git', ['clone', '--quiet', fromUpstream, destPath], { env: GIT_ENV, stdio: 'pipe' });
-        return store.projects.create({ name, path: destPath });
-      }
+    // PRR-B R-Gate Round 2 BLOCKING on PR #3334: an `origin` match alone only
+    // proves "the same shared repository", not "THIS PM's own call produced
+    // it" — a different coordinator's interrupted checkout of the IDENTICAL
+    // repository (same origin) must still refuse, and so must a same-origin
+    // clone this module never touched at all (no marker ever written).
+    it('refuses a same-origin attach whose marker names a DIFFERENT PM project', async () => {
+      const pm = makePmProject('Ariadne-PM');
+      makeCoordinator(pm);
+      const otherPm = makePmProject('Zig-PM');
+      const foreign = makeInterruptedAttach('Ariadne-Arc', { markerPmId: otherPm.id });
+
+      await assert.rejects(fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc' }]), { code: 'NAME_COLLISION' });
+      assert.equal(fs.existsSync(path.join(foreign.path, '.tangleclaw', 'project.json')), false,
+        'must not have been silently reconciled/adopted into the WRONG fleet');
+    });
+
+    it('refuses a same-origin attach with no provisioning marker at all', async () => {
+      const pm = makePmProject('Ariadne-PM');
+      makeCoordinator(pm);
+      const foreign = makeInterruptedAttach('Ariadne-Arc', {});
+
+      await assert.rejects(fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc' }]), { code: 'NAME_COLLISION' });
+      assert.equal(fs.existsSync(path.join(foreign.path, '.tangleclaw', 'project.json')), false);
     });
   });
 
