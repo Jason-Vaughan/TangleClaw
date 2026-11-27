@@ -19,7 +19,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { initRepo: _tcInitRepo } = require('./_temp-repo');
+const { initRepo: _tcInitRepo, cloneRepo: _tcCloneRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -225,6 +225,144 @@ describe('provisionFleet', () => {
     await assert.rejects(fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc' }]), { code: 'NAME_COLLISION' });
   });
 
+  it('refuses a leftover partial-clone directory cleanly, rather than a raw git error (#3322)', async () => {
+    const pm = makePmProject('Ariadne-PM');
+    makeCoordinator(pm);
+    const destPath = path.join(projectsDir, 'Ariadne-Arc');
+    fs.mkdirSync(destPath, { recursive: true });
+    fs.writeFileSync(path.join(destPath, 'partial.tmp'), 'leftover from an interrupted clone\n');
+    await assert.rejects(fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc' }]), { code: 'DEST_DIR_EXISTS' });
+  });
+
+  describe('#3322: resuming a member whose attach was interrupted mid-provision', () => {
+    /**
+     * Simulate exactly what a real interrupted `_provisionOne` leaves behind:
+     * a real `git clone` (so `.git` is real content, not a test shortcut)
+     * registered in SQLite (the one step `attachProject` completes before
+     * the point this bug describes it being cut off), with no
+     * `.tangleclaw/project.json` and no trust rule — because nothing after
+     * `store.projects.create()` ever ran — and, unless `markerPmId` is
+     * omitted, the same provisioning marker `_writeProvisioningMarker` would
+     * have written right after a real `_cloneSibling` succeeded.
+     * @param {string} name
+     * @param {object} [opts]
+     * @param {string} [opts.engine]
+     * @param {string} [opts.fromUpstream] - Defaults to the shared upstream.
+     * @param {number} [opts.markerPmId] - Omit to simulate no marker at all.
+     */
+    function makeInterruptedAttach(name, { engine, fromUpstream = upstreamDir, markerPmId } = {}) {
+      const destPath = path.join(projectsDir, name);
+      _tcCloneRepo(fromUpstream, destPath, [], { env: GIT_ENV });
+      if (markerPmId !== undefined) {
+        const markerDir = path.join(destPath, '.tangleclaw');
+        fs.mkdirSync(markerDir, { recursive: true });
+        fs.writeFileSync(path.join(markerDir, '.fleet-provisioner-marker.json'),
+          JSON.stringify({ pmProjectId: markerPmId, createdAt: new Date().toISOString() }) + '\n');
+      }
+      return store.projects.create({ name, path: destPath, engine });
+    }
+
+    it('reconciles it instead of refusing 409 NAME_COLLISION, and discharges the marker', async () => {
+      const pm = makePmProject('Ariadne-PM');
+      makeCoordinator(pm);
+      const interrupted = makeInterruptedAttach('Ariadne-Arc', { engine: 'claude', markerPmId: pm.id });
+      assert.equal(fs.existsSync(path.join(interrupted.path, '.tangleclaw', 'project.json')), false,
+        'sanity: the simulated interruption really left no project.json');
+
+      const result = await fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc' }]);
+
+      assert.equal(result.provisioned[0].created, false);
+      assert.equal(result.provisioned[0].projectId, interrupted.id);
+      const config = store.projectConfig.load(interrupted.path);
+      assert.equal(config.engine, 'claude', 'the finished project.json must carry the engine SQLite already had');
+      assert.equal(config.medusaEnabled, true, 'reconciliation still merges this fleet\'s member config');
+      const rules = store.sessionRules.listActiveForProject(interrupted.id);
+      assert.equal(rules.length, 1, 'the trust-rule floor must be seeded on the resumed member too');
+      assert.equal(fs.existsSync(path.join(interrupted.path, '.tangleclaw', '.fleet-provisioner-marker.json')), false,
+        'the discharged marker must be removed once the real attach completes');
+    });
+
+    // PRR-B R-Gate Round 3 WARNING on PR #3334: simulates a retry resuming a
+    // member a PRIOR retry already got as far as _finishInterruptedAttach
+    // for (project.json written) before THAT retry was itself interrupted
+    // before config/trust-rule/rule seeding ran. project.json existing must
+    // not stop this from still being recognized and finished.
+    it('resumes a member whose project.json already exists but seeding never completed', async () => {
+      const pm = makePmProject('Ariadne-PM');
+      makeCoordinator(pm);
+      const interrupted = makeInterruptedAttach('Ariadne-Arc', { engine: 'claude', markerPmId: pm.id });
+      // What a prior retry's _finishInterruptedAttach would have left behind:
+      // project.json written, marker still present (not yet removed — that
+      // only happens once seeding also finishes), no trust rule seeded yet.
+      store.projectConfig.save(interrupted.path, { ...store.projectConfig.load(interrupted.path), engine: 'claude' });
+      assert.equal(fs.existsSync(path.join(interrupted.path, '.tangleclaw', 'project.json')), true,
+        'sanity: project.json already exists, unlike the plain interrupted-attach case');
+      assert.equal(store.sessionRules.listActiveForProject(interrupted.id).length, 0,
+        'sanity: seeding genuinely never ran');
+
+      const result = await fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc' }]);
+
+      assert.equal(result.provisioned[0].created, false);
+      const config = store.projectConfig.load(interrupted.path);
+      assert.equal(config.medusaEnabled, true, 'the member config seeding that never ran before must run now');
+      assert.equal(store.sessionRules.listActiveForProject(interrupted.id).length, 1,
+        'the trust-rule floor that never ran before must be seeded now');
+      assert.equal(fs.existsSync(path.join(interrupted.path, '.tangleclaw', '.fleet-provisioner-marker.json')), false,
+        'the marker is finally discharged now that the whole operation has actually finished');
+    });
+
+    it('does not treat a bare directory with no .git as an interrupted attach', () => {
+      const dir = path.join(tmpDir, 'no-git-no-config');
+      fs.mkdirSync(dir, { recursive: true });
+      const project = store.projects.create({ name: 'Ariadne-Bare', path: dir });
+      assert.equal(fp._isIncompleteAttach(project, upstreamDir, 1), false);
+    });
+
+    // PRR-B R-Gate Round 1 BLOCKING on PR #3334: shape alone (missing
+    // project.json + a real .git clone) is not durable proof of OWNERSHIP —
+    // a different coordinator's own interrupted attach, or an unrelated repo
+    // that merely looks the same, must still be refused as a collision, not
+    // silently adopted into this fleet with this fleet's own config/rules.
+    it('refuses (does not reconcile) a same-shaped attach cloned from a DIFFERENT origin', async () => {
+      const pm = makePmProject('Ariadne-PM');
+      makeCoordinator(pm);
+      const foreignUpstream = path.join(tmpDir, 'foreign-upstream');
+      _initRepo(foreignUpstream);
+      const foreign = makeInterruptedAttach('Ariadne-Arc', { fromUpstream: foreignUpstream, markerPmId: pm.id });
+      assert.equal(fs.existsSync(path.join(foreign.path, '.tangleclaw', 'project.json')), false,
+        'sanity: same shape as a real interrupted attach — no project.json');
+
+      await assert.rejects(fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc' }]), { code: 'NAME_COLLISION' });
+      assert.equal(fs.existsSync(path.join(foreign.path, '.tangleclaw', 'project.json')), false,
+        'must not have been silently reconciled/adopted');
+    });
+
+    // PRR-B R-Gate Round 2 BLOCKING on PR #3334: an `origin` match alone only
+    // proves "the same shared repository", not "THIS PM's own call produced
+    // it" — a different coordinator's interrupted checkout of the IDENTICAL
+    // repository (same origin) must still refuse, and so must a same-origin
+    // clone this module never touched at all (no marker ever written).
+    it('refuses a same-origin attach whose marker names a DIFFERENT PM project', async () => {
+      const pm = makePmProject('Ariadne-PM');
+      makeCoordinator(pm);
+      const otherPm = makePmProject('Zig-PM');
+      const foreign = makeInterruptedAttach('Ariadne-Arc', { markerPmId: otherPm.id });
+
+      await assert.rejects(fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc' }]), { code: 'NAME_COLLISION' });
+      assert.equal(fs.existsSync(path.join(foreign.path, '.tangleclaw', 'project.json')), false,
+        'must not have been silently reconciled/adopted into the WRONG fleet');
+    });
+
+    it('refuses a same-origin attach with no provisioning marker at all', async () => {
+      const pm = makePmProject('Ariadne-PM');
+      makeCoordinator(pm);
+      const foreign = makeInterruptedAttach('Ariadne-Arc', {});
+
+      await assert.rejects(fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc' }]), { code: 'NAME_COLLISION' });
+      assert.equal(fs.existsSync(path.join(foreign.path, '.tangleclaw', 'project.json')), false);
+    });
+  });
+
   it('clones, registers and configures a new sibling from the PM\'s own origin', async () => {
     const pm = makePmProject('Ariadne-PM');
     makeCoordinator(pm);
@@ -253,6 +391,30 @@ describe('provisionFleet', () => {
     assert.equal(childConfig.medusaWake, true);
     assert.equal(childConfig.defaultLaunchMode, 'bypassPermissions');
     assert.deepEqual(childConfig.workloadNudge, { enabled: true, coordinatorProject: 'Ariadne-PM' });
+    // #3322: the engine SQLite records must match what attachProject itself
+    // wrote to .tangleclaw/project.json — not the global default engine a
+    // detached SQLite-only patch used to leave behind.
+    assert.equal(childConfig.engine, 'claude', 'project.json must carry the requested engine, not the default');
+    // PRR-B R-Gate Round 3 WARNING: the ordinary, uninterrupted create path
+    // used to leave the provisioning marker behind forever (only the
+    // recovery path ever removed it) — it must be gone once this whole
+    // operation finishes normally too.
+    assert.equal(fs.existsSync(path.join(child.path, '.tangleclaw', '.fleet-provisioner-marker.json')), false,
+      'the marker must not linger after a normal, uninterrupted provision');
+  });
+
+  it('passes a member\'s engine straight into attachProject, so project.json and SQLite agree (#3322)', async () => {
+    const pm = makePmProject('Ariadne-PM');
+    makeCoordinator(pm);
+    const config = store.config.load();
+    config.defaultEngine = 'antigravity';
+    store.config.save(config);
+
+    const result = await fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc', engine: 'claude' }]);
+    const child = store.projects.get(result.provisioned[0].projectId);
+    assert.equal(child.engineId, 'claude', 'SQLite must record the requested engine');
+    const childConfig = store.projectConfig.load(child.path);
+    assert.equal(childConfig.engine, 'claude', 'project.json must agree with SQLite, not fall back to the global default');
   });
 
   it('always seeds the ratified onboarding trust-rule floor on a new child, deduplicated by tag', async () => {
@@ -270,6 +432,22 @@ describe('provisionFleet', () => {
     makeBoundAssignment(result.provisioned[0].projectId, pm.id);
     await fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc' }]);
     assert.equal(store.sessionRules.listActiveForProject(result.provisioned[0].projectId).length, 1);
+  });
+
+  it('rejects the redundant proposed trust rule attachProject seeds on its own, leaving no duplicate (#3322)', async () => {
+    const pm = makePmProject('Ariadne-PM');
+    makeCoordinator(pm);
+    const onboardingRules = require('../lib/project-onboarding-rules');
+    const result = await fp.provisionFleet(pm.id, [{ name: 'Ariadne-Arc' }]);
+    const childId = result.provisioned[0].projectId;
+
+    const all = store.sessionRules.list({ projectId: childId });
+    const trustRuleRows = all.filter((r) => r.content.includes(onboardingRules.TRUST_RULE_TAG));
+    const active = trustRuleRows.filter((r) => r.status === 'active');
+    const rejected = trustRuleRows.filter((r) => r.status === 'rejected');
+    assert.equal(active.length, 1, 'exactly one active trust-rule copy');
+    assert.equal(rejected.length, 1, 'the attachProject-seeded proposal must be rejected, not left pending');
+    assert.equal(rejected[0].createdBy, 'ai', 'the rejected row is the one attachProject itself proposed');
   });
 
   it('seeds caller-supplied common and per-member rule content as active, system-authored rules, alongside the trust floor', async () => {

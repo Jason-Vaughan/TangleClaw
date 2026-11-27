@@ -704,7 +704,11 @@ describe('launch-mode settings', () => {
       // Anchor on the modal's own status element so the pin fails if
       // _submitSettings alone regresses to close-on-error (a bare
       // "Save failed" match would stay green via the OpenClaw modal's path).
-      assert.match(ui, /getElementById\('projectRulesStatus'\)[\s\S]{0,200}Save failed: \$\{api\.lastError/);
+      // #3329/#3331 (PR for #3322/#3329/#3331): moved off `#projectRulesStatus`
+      // (bottom of the scrolling #settingsBody, out of view from the sticky
+      // Save button) onto `_settingsSaveStatusEl()`'s sticky-footer element —
+      // this pin follows that move rather than asserting the old location.
+      assert.match(ui, /_settingsSaveStatusEl\(\)[\s\S]{0,200}Save failed: \$\{api\.lastError/);
     });
   });
 });

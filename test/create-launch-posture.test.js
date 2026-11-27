@@ -370,10 +370,18 @@ describe('#1304 — Create opens Settings instead of auto-launching, with a Save
      * @returns {{run: Function, calls: object}}
      */
     function buildSubmitSettingsHarness({ target, apiResult }) {
-      const calls = { closeSettings: 0, loadProjects: 0, launchProject: [] };
+      const calls = { closeSettings: 0, loadProjects: 0, launchProject: [], saveStatus: [] };
+      // #3329/#3331: _submitSettings now writes a rejected save's message
+      // through `_settingsSaveStatusEl`/`_clearSettingsSaveStatus` (the
+      // sticky-footer status beside Save) instead of reaching into
+      // `document` directly — stubbed here the same way `closeSettings` and
+      // the other collaborators already are, rather than re-lifting their
+      // source too.
+      const fakeStatusEl = { textContent: '', className: '', classList: { remove: () => {} } };
       const src = `let settingsTarget = ${JSON.stringify(target)};\n${liftDeclaration(UI_SRC, 'async function _submitSettings(')}\nreturn _submitSettings;`;
       const run = new Function(
         'document', 'apiMutate', 'api', 'closeSettings', 'renderSettingsWarnings', 'loadProjects', 'launchProject',
+        '_settingsSaveStatusEl', '_clearSettingsSaveStatus',
         src
       )(
         { getElementById: () => null },
@@ -382,9 +390,11 @@ describe('#1304 — Create opens Settings instead of auto-launching, with a Save
         () => { calls.closeSettings++; },
         () => {},
         async () => { calls.loadProjects++; },
-        async (name) => { calls.launchProject.push(name); }
+        async (name) => { calls.launchProject.push(name); },
+        () => fakeStatusEl,
+        () => { calls.saveStatus.push('cleared'); }
       );
-      return { run, calls };
+      return { run, calls, fakeStatusEl };
     }
 
     it('launches the project after a successful save when launchAfter is true', async () => {
@@ -412,6 +422,20 @@ describe('#1304 — Create opens Settings instead of auto-launching, with a Save
       const { run, calls } = buildSubmitSettingsHarness({ target: 'old-name', apiResult: { warnings: [] } });
       await run({ engine: 'claude', name: 'new-name' }, true);
       assert.deepEqual(calls.launchProject, ['new-name']);
+    });
+
+    it('writes a rejected save\'s message into the sticky-footer status element (#3329/#3331)', async () => {
+      const { run, calls, fakeStatusEl } = buildSubmitSettingsHarness({ target: 'my-proj', apiResult: null });
+      await run({ model: 'claude-sonnet-5' }, false);
+      assert.ok(fakeStatusEl.textContent.includes('Save failed'));
+      assert.equal(fakeStatusEl.className, 'rules-status rules-status-err');
+      assert.equal(calls.saveStatus.length, 0, 'the status must not be cleared on a rejected save');
+    });
+
+    it('clears the sticky-footer status element on a successful save', async () => {
+      const { run, calls } = buildSubmitSettingsHarness({ target: 'my-proj', apiResult: { warnings: [] } });
+      await run({ model: 'claude-sonnet-5' }, false);
+      assert.deepEqual(calls.saveStatus, ['cleared']);
     });
   });
 
