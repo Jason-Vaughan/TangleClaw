@@ -1296,6 +1296,77 @@ describe('the session keeps its blocker (#2128)', () => {
           assert.equal(sessions.liveLaunchBlocker(store.sessions.get(s.id), store.projects.get(project.id)).code, 'trust_required');
         });
       });
+
+      describe('liveLaunchBlocker: readyAt fast path and the TTL cache (#3332)', () => {
+        beforeEach(() => {
+          sessions._resetLiveLaunchBlockerCacheForTests();
+        });
+        afterEach(() => {
+          sessions._resetLiveLaunchBlockerCacheForTests();
+        });
+
+        it('once the session\'s own launch sequence attests readyAt, the pane is never read at all', () => {
+          const s = start();
+          store.sessions.setLaunchBlocker(s.id, BLOCKER);
+          // A minimal real launch_sequences row with ready_at already stamped --
+          // same minimal column set test/launch-ready.test.js's own fixtures use.
+          store.getDb().prepare(
+            `INSERT INTO launch_sequences (launch_id, session_id, project_id, engine_id, page_budget,
+               applicability, preflight, source_manifest, ready_at)
+             VALUES (?, ?, ?, 'claude', 8000, 'applicable', '{"verdict":"ok"}', '{}', datetime('now'))`
+          ).run(`test-launch-${s.id}`, s.id, project.id);
+          let reads = 0;
+          tmux.capturePane = () => { reads += 1; return served(TRUST_DIALOG); };
+          assert.equal(sessions.liveLaunchBlocker(store.sessions.get(s.id), store.projects.get(project.id)), null,
+            'a ready session\'s stored blocker is a startup artifact, not a live condition');
+          assert.equal(reads, 0, 'readyAt means this never needed the pane at all');
+        });
+
+        it('a second call within the TTL serves the cached answer with no new pane read', () => {
+          const s = start();
+          store.sessions.setLaunchBlocker(s.id, BLOCKER);
+          let reads = 0;
+          tmux.capturePane = () => { reads += 1; return served(TRUST_DIALOG); };
+          const active = store.sessions.get(s.id);
+          const projectRow = store.projects.get(project.id);
+          const first = sessions.liveLaunchBlocker(active, projectRow);
+          assert.equal(reads, 1);
+          const second = sessions.liveLaunchBlocker(active, projectRow);
+          assert.equal(reads, 1, 'a fresh-enough cache entry must not trigger a second pane read');
+          assert.deepEqual(second, first);
+        });
+
+        it('{skipCacheRead: true} always re-reads the pane, even within the TTL -- the sweep\'s own contract', () => {
+          const s = start();
+          store.sessions.setLaunchBlocker(s.id, BLOCKER);
+          let reads = 0;
+          tmux.capturePane = () => { reads += 1; return served(TRUST_DIALOG); };
+          const active = store.sessions.get(s.id);
+          const projectRow = store.projects.get(project.id);
+          sessions.liveLaunchBlocker(active, projectRow);
+          assert.equal(reads, 1);
+          sessions.liveLaunchBlocker(active, projectRow, { skipCacheRead: true });
+          assert.equal(reads, 2, 'skipCacheRead must bypass the cache read, never serve a stale answer to a retrying sweep');
+        });
+
+        it('a session id reused by a DIFFERENT session is never served the old session\'s cached blocker', () => {
+          const s1 = start();
+          store.sessions.setLaunchBlocker(s1.id, BLOCKER);
+          tmux.capturePane = () => served(TRUST_DIALOG);
+          const active1 = store.sessions.get(s1.id);
+          sessions.liveLaunchBlocker(active1, store.projects.get(project.id));
+
+          // A second, unrelated session with a DIFFERENT tmuxSession/startedAt,
+          // simulated as reusing s1's numeric id (the real shape a wrapped-then-
+          // reused session row would have, #3332).
+          const reused = { ...active1, tmuxSession: `${active1.tmuxSession}-reused`, startedAt: '2026-11-27 12:34:56', launchBlocker: BLOCKER };
+          let reads = 0;
+          tmux.capturePane = () => { reads += 1; return served(COMPOSER); };
+          const result = sessions.liveLaunchBlocker(reused, store.projects.get(project.id));
+          assert.equal(reads, 1, 'the id-reused session must get its OWN fresh pane read, never the old one\'s cached answer');
+          assert.equal(result, null, 'its own pane (COMPOSER, no dialog) is what actually answers it');
+        });
+      });
     });
 
     it('the project list\'s last-session answer carries it too', () => {

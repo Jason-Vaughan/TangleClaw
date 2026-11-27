@@ -1025,6 +1025,99 @@ describe('lib/usage-windows — buildSessionUsageReadings (#2787)', () => {
   });
 });
 
+describe('lib/usage-windows — buildSessionUsageReadings SWR cache (#3332)', () => {
+  // Deliberately NOT injecting capturePaneOutput/getActiveModel/now: that is
+  // exactly the production call shape the cache exists for
+  // (`_sessionUsageReadingCacheEligible`) — a call naming any of them opts
+  // out, per every OTHER test in this file. `tmux.readPaneAsync` is mocked
+  // the same way `lib/routes/sessions`'s own tests mock it, so this suite
+  // can count real capture calls without spawning a real tmux process.
+  const tmux = require('../lib/tmux');
+  const _readPaneAsync = tmux.readPaneAsync;
+  let captureCalls;
+
+  beforeEach(() => {
+    uw._resetSessionUsageReadingCacheForTests();
+    captureCalls = 0;
+    tmux.readPaneAsync = async () => { captureCalls += 1; return { cap: { lines: [`call-${captureCalls}`] }, err: null }; };
+  });
+
+  afterEach(() => {
+    tmux.readPaneAsync = _readPaneAsync;
+    uw._resetSessionUsageReadingCacheForTests();
+  });
+
+  const session = { id: 501, projectId: 10, engineId: 'claude', tmuxSession: 'cache-proj', startedAt: '2026-11-27 10:00:00' };
+  const CACHE_PROJECTS = new Map([[10, { id: 10, name: 'cache-proj', path: '/repo/cache-proj' }]]);
+
+  it('a second call within the TTL serves the cached reading with no new capture at all', async () => {
+    const first = await uw.buildSessionUsageReadings({ sessions: [session], projects: CACHE_PROJECTS });
+    assert.equal(captureCalls, 1);
+    const second = await uw.buildSessionUsageReadings({ sessions: [session], projects: CACHE_PROJECTS });
+    assert.equal(captureCalls, 1, 'a fresh-enough cache entry must not trigger a second capture');
+    assert.deepEqual(second, first);
+  });
+
+  it('a call past the TTL serves the stale reading immediately, then refreshes it in the background', async () => {
+    // Lowered rather than waited out: a test seam distinct from
+    // capturePaneOutput/getActiveModel/getCalibration/now, so this call
+    // stays cache-ELIGIBLE (#3332) -- exercising the real cache engine on a
+    // cheap clock, not bypassing it the way injecting `opts.now` would.
+    uw._setSessionUsageReadingSwrTtlMsForTests(10);
+    await uw.buildSessionUsageReadings({ sessions: [session], projects: CACHE_PROJECTS });
+    assert.equal(captureCalls, 1);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    // Past the (now 10ms) TTL: this call must return WITHOUT waiting on a
+    // second capture (stale-while-revalidate) -- it resolves before the
+    // background revalidation's own capture call could possibly have run.
+    const before = captureCalls;
+    const readings = await uw.buildSessionUsageReadings({ sessions: [{ ...session }], projects: CACHE_PROJECTS });
+    assert.equal(captureCalls, before + 1, 'exactly one capture started: the background revalidation, not a second foreground one');
+    assert.equal(readings[0].sessionId, session.id, 'the stale reading served is still a usable answer for this session');
+
+    await Promise.all(uw._pendingSessionUsageRevalidationsForTests());
+    assert.equal(captureCalls, 2, 'the background revalidation ran exactly once, now awaited to completion');
+    const cached = uw._sessionUsageReadingCacheForTests().get(session.id);
+    assert.ok(cached.reading.source !== undefined, 'the cache now holds the revalidated reading');
+  });
+
+  it('two concurrent calls past the TTL share ONE revalidation, not two', async () => {
+    uw._setSessionUsageReadingSwrTtlMsForTests(10);
+    await uw.buildSessionUsageReadings({ sessions: [session], projects: CACHE_PROJECTS });
+    assert.equal(captureCalls, 1);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    await Promise.all([
+      uw.buildSessionUsageReadings({ sessions: [session], projects: CACHE_PROJECTS }),
+      uw.buildSessionUsageReadings({ sessions: [session], projects: CACHE_PROJECTS })
+    ]);
+    await Promise.all(uw._pendingSessionUsageRevalidationsForTests());
+    assert.equal(captureCalls, 2, 'one revalidation serves both concurrent stale reads, never two stacked captures');
+  });
+
+  it('a session id reused by a DIFFERENT session (ended, then reused) is never served the old session\'s cached reading', async () => {
+    await uw.buildSessionUsageReadings({ sessions: [session], projects: CACHE_PROJECTS });
+    assert.equal(captureCalls, 1);
+    // Same numeric id, but a different tmux session and start time -- the
+    // real shape a wrapped-then-reused session row would have (#3332).
+    const reused = { ...session, tmuxSession: 'a-totally-different-session', startedAt: '2026-11-27 11:30:00' };
+    const readings = await uw.buildSessionUsageReadings({ sessions: [reused], projects: CACHE_PROJECTS });
+    assert.equal(captureCalls, 2, 'the id-reused session must get its OWN fresh capture, never the old one\'s cached reading');
+    assert.equal(readings[0].sessionId, reused.id);
+  });
+
+  it('_resetSessionUsageReadingCacheForTests actually empties the cache', async () => {
+    await uw.buildSessionUsageReadings({ sessions: [session], projects: CACHE_PROJECTS });
+    assert.ok(uw._sessionUsageReadingCacheForTests().size > 0);
+    uw._resetSessionUsageReadingCacheForTests();
+    assert.equal(uw._sessionUsageReadingCacheForTests().size, 0);
+  });
+
+  it('documents the real default TTL (#3332 tests lower it; production never overrides it)', () => {
+    assert.equal(uw.SESSION_USAGE_READING_SWR_TTL_MS, 5000);
+  });
+});
+
 describe('lib/routes/sessions — GET /api/usage/sessions (#2787)', () => {
   const sessionsRoutes = require('../lib/routes/sessions');
   const { matchRoute } = require('../lib/routes/_kernel');

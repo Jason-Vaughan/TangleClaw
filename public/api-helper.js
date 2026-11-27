@@ -279,7 +279,44 @@
   }
 
   function tcCreateApi(opts) {
-    const setConnected = (opts && opts.setConnected) || function () {};
+    const realSetConnected = (opts && opts.setConnected) || function () {};
+    // #3332: a single missed poll (a transient blip, a slow gateway hiccup)
+    // can flip a page to "disconnected" and back on the very next
+    // successful poll — visible flapping with no real outage. Both knobs
+    // below default OFF, so an existing caller (every page today, and
+    // test/frontend-api-errors.test.js / test/landing-unreachable-state.test.js,
+    // neither of which names either option) sees the exact pre-#3332
+    // behavior: `setConnected(false)` on the very first failure. A caller
+    // that wants debouncing opts in explicitly.
+    //
+    // `disconnectThreshold` (default 1 — fire on the first failure): require
+    // this many CONSECUTIVE failures before reporting disconnected.
+    const disconnectThreshold = (opts && Number.isInteger(opts.disconnectThreshold) && opts.disconnectThreshold > 1)
+      ? opts.disconnectThreshold : 1;
+    // `flapWindowMs` (default 0 — off): a failure arriving within this many
+    // ms of this SAME instance's last success is treated as a lone blip,
+    // not yet a real outage — it alone never reports disconnected, even
+    // when `disconnectThreshold` is 1; a second consecutive failure still
+    // does. Never suppresses recovery, and never applies before this
+    // instance has ever seen a success at all (a cold start with no known-
+    // good baseline is not a "flap").
+    const flapWindowMs = (opts && Number.isFinite(opts.flapWindowMs) && opts.flapWindowMs > 0) ? opts.flapWindowMs : 0;
+    let consecutiveFailures = 0;
+    let hasSucceededOnce = false;
+    let lastSuccessAt = 0;
+    const setConnected = (connected) => {
+      if (connected) {
+        consecutiveFailures = 0;
+        hasSucceededOnce = true;
+        lastSuccessAt = Date.now();
+        realSetConnected(true);
+        return;
+      }
+      consecutiveFailures += 1;
+      const withinFlapWindow = flapWindowMs > 0 && hasSucceededOnce && (Date.now() - lastSuccessAt) < flapWindowMs;
+      const effectiveThreshold = withinFlapWindow ? Math.max(disconnectThreshold, 2) : disconnectThreshold;
+      if (consecutiveFailures >= effectiveThreshold) realSetConnected(false);
+    };
 
     async function api(url, fetchOpts) {
       try {

@@ -28,6 +28,7 @@ files = [
   "test/adr-0026-contract.test.js",
   "test/adversarial.test.js",
   "test/advisor-control-bar.test.js",
+  "test/api-helper-csrf.test.js",
   "test/areas-map.test.js",
   "test/audit-dead-exports.test.js",
   "test/audit-source-readers.test.js",

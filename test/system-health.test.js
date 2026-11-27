@@ -29,7 +29,28 @@ setLevel('error');
 
 const systemHealth = require('../lib/system-health');
 
-const DARWIN = { platform: () => 'darwin', homedir: () => '/Users/op' };
+/**
+ * A `fs.statfsSync`-shaped answer for a given used-percent (#3318), at a
+ * fixed `bsize`/`blocks` so a test's own math is easy to eyeball.
+ * @param {number} usedPct
+ * @param {number} [blocks]
+ * @returns {{bsize: number, blocks: number, bavail: number}}
+ */
+function STATFS(usedPct, blocks = 1000) {
+  return { bsize: 4096, blocks, bavail: Math.round(blocks * (1 - usedPct / 100)) };
+}
+
+const DARWIN = {
+  platform: () => 'darwin', homedir: () => '/Users/op',
+  // #3318: deterministic "nothing to see here" defaults so every test in
+  // this file that spreads DARWIN gets a fixed, clear disk-space reading
+  // (10% used, well under the 85% default threshold) rather than this test
+  // MACHINE's own real, unpredictable disk usage — a test that wants to
+  // exercise disk-space logic itself overrides these three directly.
+  diskWarningThresholdPercent: () => 85,
+  basePath: () => '/fake/base',
+  statfs: () => STATFS(10)
+};
 
 /**
  * A healthy ttyd reading, in the shape `ttydWatcher.measureLeak` really returns.
@@ -719,7 +740,92 @@ describe('lib/system-health (#345)', () => {
     });
   });
 
+  describe('detectDiskSpace (#3318, the 2026-11-26 disk-fill outage, #3315)', () => {
+    it('is disabled, with a null disk summary, when the threshold is 0', () => {
+      const c = systemHealth.detectDiskSpace({ ...DARWIN, diskWarningThresholdPercent: () => 0, statfs: () => { throw new Error('must not be called'); } });
+      assert.equal(c.id, 'disk-space');
+      assert.equal(c.state, systemHealth.STATE_CLEAR);
+      assert.equal(c.disk, null);
+      assert.match(c.detail, /disabled/);
+    });
+
+    it('is disabled, with a null disk summary, when the threshold is null', () => {
+      const c = systemHealth.detectDiskSpace({ ...DARWIN, diskWarningThresholdPercent: () => null });
+      assert.equal(c.state, systemHealth.STATE_CLEAR);
+      assert.equal(c.disk, null);
+    });
+
+    it('is clear, with disk.status "ok", well under the threshold', () => {
+      const c = systemHealth.detectDiskSpace({ ...DARWIN, statfs: () => STATFS(40) });
+      assert.equal(c.state, systemHealth.STATE_CLEAR);
+      assert.equal(c.disk.status, 'ok');
+      assert.equal(c.disk.usedPct, 40);
+      assert.equal(c.disk.thresholdPct, 85);
+    });
+
+    it('fires, with disk.status "warning", at or above the operator\'s own threshold', () => {
+      const atThreshold = systemHealth.detectDiskSpace({ ...DARWIN, statfs: () => STATFS(85) });
+      assert.equal(atThreshold.state, systemHealth.STATE_FIRED);
+      assert.equal(atThreshold.disk.status, 'warning');
+
+      const aboveThreshold = systemHealth.detectDiskSpace({ ...DARWIN, statfs: () => STATFS(90) });
+      assert.equal(aboveThreshold.state, systemHealth.STATE_FIRED);
+      assert.equal(aboveThreshold.disk.status, 'warning');
+    });
+
+    it('fires, with disk.status "critical", at or above the FIXED 95% ceiling, regardless of the operator\'s own threshold', () => {
+      const c = systemHealth.detectDiskSpace({ ...DARWIN, diskWarningThresholdPercent: () => 98, statfs: () => STATFS(96) });
+      assert.equal(c.state, systemHealth.STATE_FIRED);
+      assert.equal(c.disk.status, 'critical');
+    });
+
+    it('a raised threshold moves the warning point, but never the critical ceiling', () => {
+      const raised = systemHealth.detectDiskSpace({ ...DARWIN, diskWarningThresholdPercent: () => 98, statfs: () => STATFS(96) });
+      assert.equal(raised.disk.thresholdPct, 98, 'the warning point moved to 98');
+      assert.equal(raised.disk.status, 'critical', 'but 96% is still above the fixed 95% ceiling, unmoved by the operator\'s own setting');
+      assert.equal(systemHealth.DISK_CRITICAL_THRESHOLD_PCT, 95);
+    });
+
+    it('is unknown, with a null disk summary, when the threshold probe itself throws', () => {
+      const c = systemHealth.detectDiskSpace({ ...DARWIN, diskWarningThresholdPercent: () => { throw new Error('config unreadable'); } });
+      assert.equal(c.state, systemHealth.STATE_UNKNOWN);
+      assert.equal(c.disk, null);
+      assert.match(c.detail, /config unreadable/);
+    });
+
+    it('is unknown, with a null disk summary, when the disk-usage probe itself throws', () => {
+      const c = systemHealth.detectDiskSpace({ ...DARWIN, statfs: () => { throw new Error('statfs failed: ENOENT'); } });
+      assert.equal(c.state, systemHealth.STATE_UNKNOWN);
+      assert.equal(c.disk, null);
+      assert.match(c.detail, /statfs failed/);
+    });
+
+    it('is unknown, never a divide-by-zero, when statfs answers no usable totals', () => {
+      const c = systemHealth.detectDiskSpace({ ...DARWIN, statfs: () => ({ bsize: 0, blocks: 0, bavail: 0 }) });
+      assert.equal(c.state, systemHealth.STATE_UNKNOWN);
+      assert.equal(c.disk, null);
+    });
+  });
+
   describe('getHealth', () => {
+    it('includes the top-level disk summary alongside the disk-space condition', async () => {
+      systemHealth._setProbes({
+        ...DARWIN, statfs: () => STATFS(40),
+        measureLeak: async () => { throw new Error('ps gone'); },
+        serverInfo: () => syncedInfo({ isStale: false }),
+        restartImpact: EXECUTABLE,
+        probeDir: async () => ({ entries: 3 })
+      });
+      systemHealth.warm();
+      await systemHealth._settleTtyd();
+      const health = await systemHealth.getHealth();
+      assert.ok(health.disk);
+      assert.equal(health.disk.usedPct, 40);
+      assert.equal(health.disk.status, 'ok');
+      const diskCondition = health.conditions.find((c) => c.id === 'disk-space');
+      assert.deepEqual(diskCondition.disk, health.disk, 'the top-level summary and the condition\'s own disk field never disagree');
+    });
+
     it('returns every condition with a timestamp, one broken probe never hiding the others', async () => {
       systemHealth._setProbes({
         ...DARWIN,
@@ -738,7 +844,9 @@ describe('lib/system-health (#345)', () => {
         ['full-disk-access', 'clear'],
         // No listener is running in this process, so the Bridge is not required
         // and the condition is measured-and-absent rather than unknown.
-        ['medusa-bridge', 'clear']
+        ['medusa-bridge', 'clear'],
+        // DARWIN's own fixed, deterministic 10%-used reading (#3318).
+        ['disk-space', 'clear']
       ]);
       for (const c of health.conditions) {
         assert.equal(typeof c.title, 'string');
@@ -874,7 +982,7 @@ describe('the Medusa Bridge condition (#1130)', () => {
       await systemHealth._settleTtyd();
       const { status, data } = await get('/api/system/health');
       assert.equal(status, 200);
-      assert.deepEqual(data.conditions.map((c) => c.state), ['fired', 'clear', 'unknown', 'clear']);
+      assert.deepEqual(data.conditions.map((c) => c.state), ['fired', 'clear', 'unknown', 'clear', 'clear']);
       assert.equal(data.conditions[0].remediation, systemHealth.TTYD_REMEDIATION);
       assert.equal(data.conditions[2].hint, systemHealth.FDA_HINT);
     });
