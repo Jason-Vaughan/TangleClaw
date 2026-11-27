@@ -19,7 +19,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { initRepo: _tcInitRepo } = require('./_temp-repo');
+const { initRepo: _tcInitRepo, cloneRepo: _tcCloneRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -252,7 +252,7 @@ describe('provisionFleet', () => {
      */
     function makeInterruptedAttach(name, { engine, fromUpstream = upstreamDir, markerPmId } = {}) {
       const destPath = path.join(projectsDir, name);
-      execFileSync('git', ['clone', '--quiet', fromUpstream, destPath], { env: GIT_ENV, stdio: 'pipe' });
+      _tcCloneRepo(fromUpstream, destPath, [], { env: GIT_ENV });
       if (markerPmId !== undefined) {
         const markerDir = path.join(destPath, '.tangleclaw');
         fs.mkdirSync(markerDir, { recursive: true });
