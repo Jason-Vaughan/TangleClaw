@@ -2101,6 +2101,7 @@ function openSettings(name, options) {
   document.getElementById('settingsSaveLaunchBtn').classList.toggle('hidden', !settingsOfferLaunch);
   const project = state.projects.find(p => p.name === name);
   if (!project) return;
+  _clearSettingsSaveStatus();
   const modal = document.getElementById('settingsModal');
   document.getElementById('settingsTitleText').textContent = `Project Settings — ${name}`;
   // #3214: a status badge beside the title, in the sticky header bar that
@@ -5211,7 +5212,12 @@ async function doSaveSettings(launchAfter = false) {
   // Eyes-open guard (client half — the server enforces the same rule): hiding
   // the picker while the effective default mode carries a warning removes the
   // red warning from the launch flow, so route through an explicit confirm.
-  if (body.defaultLaunchMode !== undefined || body.showLaunchModePicker !== undefined) {
+  // #3329/#3331: a selected (non-null) model shares the same server-side
+  // condition now (model + hidden picker + warning), so it is checked here
+  // too — model alone, with the picker left visible, needs no confirm at
+  // all, and clearing a model (null) never needs one either.
+  if (body.defaultLaunchMode !== undefined || body.showLaunchModePicker !== undefined
+    || (body.model !== undefined && body.model !== null)) {
     const effMode = body.defaultLaunchMode !== undefined
       ? body.defaultLaunchMode
       : ((project2 && project2.defaultLaunchMode) || 'default');
@@ -5220,6 +5226,11 @@ async function doSaveSettings(launchAfter = false) {
       : (project2 ? project2.showLaunchModePicker !== false : true);
     const guardProfile = tcResolveEngineProfile(state.engines, body.engine, project2 ? project2.engine : null);
     const modeConfig = guardProfile && guardProfile.launchModes && guardProfile.launchModes[effMode];
+    // `effShow`/`effMode` already fall back to the project's STORED posture
+    // when this PATCH doesn't touch those two fields — which is exactly the
+    // model-only-change case #3329/#3331 need caught: a stored hidden+warned
+    // posture confirmed once before still needs a fresh confirm now that a
+    // model is also about to ride along with it.
     if (!effShow && modeConfig && modeConfig.warning) {
       openBypassHiddenModal(body, effMode, modeConfig, settingsTarget, (b) => _submitSettings(b, launchAfter));
       return;
@@ -5227,6 +5238,41 @@ async function doSaveSettings(launchAfter = false) {
   }
 
   await _submitSettings(body, launchAfter);
+}
+
+/**
+ * The settings modal's sticky-footer save-status element, created once and
+ * reused — not part of `public/index.html`'s static markup (#3329/#3331 is
+ * scoped to `lib/fleet-provisioner.js`/`lib/projects.js`/`public/ui.js`
+ * only, never `public/index.html`, which `Car V667-W1-A` also touches in
+ * this same train), so it is built here and inserted into `.modal-actions`
+ * — right beside the sticky `Save Properties` button, where the operator is
+ * actually looking, rather than `#projectRulesStatus` at the bottom of the
+ * scrolling `#settingsBody`.
+ * @returns {HTMLElement|null} The status element, or null if the modal
+ *   markup is not present.
+ */
+function _settingsSaveStatusEl() {
+  let el = document.getElementById('settingsSaveStatus');
+  if (el) return el;
+  const actions = document.querySelector('#settingsModal .modal-actions');
+  if (!actions) return null;
+  el = document.createElement('span');
+  el.id = 'settingsSaveStatus';
+  el.className = 'rules-status hidden';
+  el.style.flex = '1';
+  el.style.textAlign = 'left';
+  el.style.margin = '0';
+  actions.insertBefore(el, actions.firstChild);
+  return el;
+}
+
+/** Hide and clear the settings save-status line — a fresh modal open/close starts clean. */
+function _clearSettingsSaveStatus() {
+  const el = _settingsSaveStatusEl();
+  if (!el) return;
+  el.textContent = '';
+  el.className = 'rules-status hidden';
 }
 
 /**
@@ -5245,7 +5291,7 @@ async function _submitSettings(body, launchAfter = false) {
   const launchName = (body && body.name) || settingsTarget;
   const res = await apiMutate(`/api/projects/${encodeURIComponent(settingsTarget)}`, 'PATCH', body);
   if (!res) {
-    const status = document.getElementById('projectRulesStatus');
+    const status = _settingsSaveStatusEl();
     if (status) {
       status.textContent = `Save failed: ${api.lastError || 'server rejected the update'}`;
       status.className = 'rules-status rules-status-err';
@@ -5253,6 +5299,7 @@ async function _submitSettings(body, launchAfter = false) {
     }
     return;
   }
+  _clearSettingsSaveStatus();
   closeSettings();
   renderSettingsWarnings(res.warnings);
   await loadProjects();

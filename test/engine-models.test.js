@@ -667,25 +667,56 @@ describe('#2188 project settings — model selection (lib/projects.js wiring)', 
     assert.ok(result.warnings.some((w) => w.includes('Model is saved') && w.includes('next launch')));
   });
 
-  it('condition 3: refuses a warning-carrying launch mode while a model is selected, with no override', async () => {
+  // #3329/#3331 (PR for #3322/#3329/#3331): condition 3 used to refuse ANY
+  // selected model whenever the launch mode carried a warning at all, with
+  // no override and no regard for whether the picker was even visible —
+  // which meant no fleet seat on `bypassPermissions` (the standard posture
+  // for an autonomous Builder lane) could ever select a model. The two
+  // tests below used to assert exactly that unconditional refusal; they are
+  // rewritten here to the corrected contract — the warning is only actually
+  // hidden from the launch flow when the picker is ALSO hidden, so that is
+  // the only case this condition still refuses, and it now accepts the same
+  // `confirmBypassHidden` override the sibling hidden-picker guard already
+  // does. Out of this car's declared file scope (`lib/fleet-provisioner.js`
+  // / `lib/projects.js` / `public/ui.js` / `test/fleet-provisioner.test.js`
+  // / `test/create-launch-posture.test.js`) but required: these two tests
+  // asserted the exact ruling (A122) this fix overturns, and leaving them
+  // asserting the old behavior would ship a known-failing regression.
+  it('condition 3: allows a selected model with a warning-carrying mode once the picker is visible', async () => {
     stubCheckSelection(true);
-    projects.createProject({ name: 'model-strict-mode', engine: 'codex', model: 'gpt-5.6-sol' });
+    projects.createProject({ name: 'model-visible-mode', engine: 'codex', model: 'gpt-5.6-sol' });
     // codex's bypassPermissions is a real, warning-carrying mode (data/engines/codex.json).
-    const result = await projects.updateProject('model-strict-mode', {
-      defaultLaunchMode: 'bypassPermissions', confirmBypassHidden: true
-    });
-    assert.equal(result.project, null);
-    assert.ok(result.errors[0].includes('carries a warning that a selected model'));
+    // showLaunchModePicker is left at its shipped default (true/visible), so
+    // nothing hides the warning — no confirmBypassHidden needed either.
+    const result = await projects.updateProject('model-visible-mode', { defaultLaunchMode: 'bypassPermissions' });
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.project.defaultLaunchMode, 'bypassPermissions');
   });
 
-  it('condition 3: refuses selecting a model while the project already holds a warning-carrying mode', async () => {
+  it('condition 3: refuses selecting a model once the picker is hidden over a warning-carrying mode, with no confirm', async () => {
     stubCheckSelection(true);
-    projects.createProject({ name: 'model-strict-mode-2', engine: 'codex' });
-    const modeResult = await projects.updateProject('model-strict-mode-2', { defaultLaunchMode: 'bypassPermissions' });
-    assert.deepEqual(modeResult.errors, []);
-    const result = await projects.updateProject('model-strict-mode-2', { model: 'gpt-5.6-sol' });
+    projects.createProject({ name: 'model-hidden-mode', engine: 'codex' });
+    const modeResult = await projects.updateProject('model-hidden-mode', {
+      defaultLaunchMode: 'bypassPermissions', showLaunchModePicker: false, confirmBypassHidden: true
+    });
+    assert.deepEqual(modeResult.errors, [], 'the sibling hidden-picker guard is satisfied by the same confirm');
+    const result = await projects.updateProject('model-hidden-mode', { model: 'gpt-5.6-sol' });
     assert.equal(result.project, null);
-    assert.ok(result.errors[0].includes('carries a warning that a selected model'));
+    assert.ok(result.errors[0].includes('a selected model'));
+    assert.ok(result.errors[0].includes('confirmBypassHidden'));
+  });
+
+  it('condition 3: a selected model satisfies the hidden-picker case too, with confirmBypassHidden', async () => {
+    stubCheckSelection(true);
+    projects.createProject({ name: 'model-hidden-mode-confirmed', engine: 'codex' });
+    await projects.updateProject('model-hidden-mode-confirmed', {
+      defaultLaunchMode: 'bypassPermissions', showLaunchModePicker: false, confirmBypassHidden: true
+    });
+    const result = await projects.updateProject('model-hidden-mode-confirmed', {
+      model: 'gpt-5.6-sol', confirmBypassHidden: true
+    });
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.project.model, 'gpt-5.6-sol');
   });
 
   it('allows a model with a non-warning launch mode (default)', async () => {
