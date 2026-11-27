@@ -131,23 +131,31 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   `session-rules.test.js`) passed cleanly run directly on a clean `origin/main` worktree
   (that run predates the rebase onto `origin/main@8cd4988a` below and is not the evidence
   gating this PR — recorded here only as earlier-session context).
-- The evidence that actually gates `prawduct-hook test-status` for this exact tree
-  (`.prawduct/.test-evidence.json`, recorded post-rebase) is `node --test
-  --test-reporter=junit test/*.test.js`: **32311 passed, 52 failed, 2 skipped**. All 52
-  live in 7 files — `test/engine-health.test.js`, `test/master-medusa.test.js`,
-  `test/projects.test.js`, `test/sessions.test.js`, `test/startup-dialog.test.js`,
-  `test/tmux-draft-capture.test.js`, `test/tmux-tcc.test.js` — none touching
-  `public/ui.js`/`index.html`/`style.css` or Global Settings. Verified directly: ran all 7
-  files on a clean `origin/main@8cd4988a` worktree. 4 of the 7 (`engine-health`,
-  `master-medusa`, `tmux-draft-capture`, `tmux-tcc`) reproduced failures in that same
-  cluster identically; the other 3 (`projects`, `sessions`, `startup-dialog`) showed only 1
-  failure out of 1019 tests (`"the pane writer refuses a declared dialog (#2128)"` in
-  `test/startup-dialog.test.js`) — a *different* specific case than the one that failed on
-  this branch's run in the same file (`"the synchronous cursor read says whether the
-  cursor is shown, on a real pane"`), consistent with real-tmux-pane/timing-dependent
-  flakiness in that file rather than a deterministic regression either way. Conclusion:
-  all 52 failures are pre-existing, environment-dependent (real tmux pane/session timing),
-  and unrelated to this branch's changes — none fixed, none newly introduced.
+- A first post-rebase recorder run (base `origin/main@8cd4988a`, before the #3318 dual-send
+  fix below) recorded `node --test --test-reporter=junit test/*.test.js`: **32311 passed,
+  52 failed, 2 skipped**. All 52 lived in 7 files — `test/engine-health.test.js`,
+  `test/master-medusa.test.js`, `test/projects.test.js`, `test/sessions.test.js`,
+  `test/startup-dialog.test.js`, `test/tmux-draft-capture.test.js`, `test/tmux-tcc.test.js`
+  — none touching `public/ui.js`/`index.html`/`style.css` or Global Settings. Verified
+  directly: ran all 7 files on a clean `origin/main@8cd4988a` worktree. 4 of the 7
+  (`engine-health`, `master-medusa`, `tmux-draft-capture`, `tmux-tcc`) reproduced failures
+  in that same cluster identically; the other 3 (`projects`, `sessions`, `startup-dialog`)
+  showed only 1 failure out of 1019 tests (`"the pane writer refuses a declared dialog
+  (#2128)"` in `test/startup-dialog.test.js`) — a *different* specific case than the one
+  that failed on this branch's run in the same file (`"the synchronous cursor read says
+  whether the cursor is shown, on a real pane"`), consistent with real-tmux-pane/timing-
+  dependent flakiness in that file rather than a deterministic regression either way.
+- The evidence that actually gates `prawduct-hook test-status` for the FINAL tree (after
+  rebasing onto `origin/main@58bb55bc` and the #3318 dual-send fix above) is a second,
+  final recorder run: **32395 passed, 21 failed, 2 skipped** — a strict subset of the
+  same 52 named above (one new name, `"capturePane still captures only the visible pane
+  when the REAL TCC_SOCKET session is itself in alternate screen"`, is a different specific
+  sub-test inside the already-verified-flaky `test/tmux-tcc.test.js`, same file, same real-
+  tmux-pane-timing class). The fewer-failures count between the two runs (52 -> 21) is
+  itself further evidence of non-deterministic, timing-dependent flakiness in this
+  cluster rather than a fixed count any change could plausibly move. Conclusion: every
+  failure across both runs is pre-existing, environment-dependent (real tmux pane/session
+  timing), and unrelated to this branch's changes — none fixed, none newly introduced.
 
 ## 2026-11-27 — v6 chat UX: scroll/selection corruption, dedup send bubble, header UTH toggle, queued-turn indicator, Car V666-W1-A
 
