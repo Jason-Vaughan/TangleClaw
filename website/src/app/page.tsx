@@ -35,7 +35,43 @@ export default function Home() {
     {
       title: "Local by design",
       desc: "TangleClaw runs on your hardware. Bring your existing AI accounts or local models. Built-in authentication, TLS integration, recovery controls, and PortHub help protect the operating environment."
+    },
+    {
+      title: "Portable multi-agent fleets",
+      desc: "Define a fleet once as a versioned Fleet Pack (PM, Architect, parallel Builders, dual reviewers, Integrator, Observer) and stand it up for software teams or non-SDLC fleets alike — creative studios, research cells, solo workspaces."
+    },
+    {
+      title: "Autonomous release trains",
+      desc: "File-disjoint parallel waves across lanes, idle-builder look-ahead onto the next version while the current one reviews, and a 4-gate merge broker (Architect, Observer, Reviewer, CI) pinned to the exact commit before anything lands."
     }
+  ];
+
+  const whoItsFor = [
+    {
+      title: "Solo technical founders & high-output engineers",
+      desc: "Turn one Mac into a 24/7 engineering organization that plans, codes, reviews, tests and ships multi-version release trains across several parallel agents, without babysitting terminals."
+    },
+    {
+      title: "Multi-engine AI power users",
+      desc: "Stop being locked into one subscription or rate-limit wall — combine Claude, Codex and Antigravity in one fleet, each seat running the model suited to its role, with failover when a quota resets."
+    },
+    {
+      title: "Engineering leads & security-conscious teams",
+      desc: "Keep source, credentials and session state on your own hardware, with mechanical merge-gate enforcement, an auditable switchboard log, and published sprint reports for every release."
+    },
+    {
+      title: "Multi-disciplinary AI studio operators",
+      desc: "Use portable Fleet Packs to stand up specialized agent teams beyond software engineering — media and animation studios, research and compliance cells, product operations."
+    }
+  ];
+
+  const v6Capabilities = [
+    { title: "Multi-agent fleet architecture", desc: "Versioned, portable Fleet Packs define a fleet once — PM, Architect, parallel Builders, dual reviewers, Integrator, Observer — reusable for software teams and non-SDLC fleets alike." },
+    { title: "Conversation-first workspace", desc: "A unified chat surface, a collapsible raw-CLI terminal view, a Sprints & Cars board, a Charter & Roadmap drawer, an interactive Sprint Reports hub, and a project/fleet wizard." },
+    { title: "Autonomous release trains", desc: "File-disjoint parallel waves, idle-builder look-ahead onto the next version, and a 4-gate merge broker pinned to the exact commit SHA before anything merges." },
+    { title: "Cross-engine orchestration", desc: "Claude, Codex, Antigravity and Aider run side by side over the Medusa switchboard, with live per-provider quota probing and delegate failover." },
+    { title: "Governed continuity", desc: "Generation-bound continuity capsules, managed coordinator rotations, and structured session wraps that survive context clears and machine restarts." },
+    { title: "Local-first security", desc: "Ephemeral launch-secret scrubbing, shared-document locking and attestation, PortHub collision prevention, and Tailscale/MagicDNS remote control — all on your own hardware." }
   ];
 
   const alsoIncluded = [
@@ -140,6 +176,30 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Who TangleClaw Is For (And Why) */}
+        <div id="who-its-for" className="w-full pt-16 border-t border-white/10">
+          <h2 className="text-3xl font-semibold tracking-tight mb-12 text-center">Who TangleClaw Is For (And Why)</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-12 max-w-4xl mx-auto">
+            {whoItsFor.map((persona, i) => (
+              <div key={i} className="flex flex-col">
+                <h3 className="text-xl font-semibold mb-3 text-zinc-100">{persona.title}</h3>
+                <p className="text-zinc-400 text-base leading-relaxed">{persona.desc}</p>
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-wrap justify-center gap-4 mt-12 text-sm">
+            <a href="https://jason-vaughan.github.io/TangleClaw/" target="_blank" rel="noopener noreferrer" className="px-5 py-2 rounded-full border border-white/10 text-zinc-300 hover:text-white hover:border-white/30 transition-colors">
+              Public Roadmap
+            </a>
+            <a href="https://jason-vaughan.github.io/TangleClaw/reports/" target="_blank" rel="noopener noreferrer" className="px-5 py-2 rounded-full border border-white/10 text-zinc-300 hover:text-white hover:border-white/30 transition-colors">
+              Autonomous Sprint Reports
+            </a>
+            <a href="https://github.com/Jason-Vaughan/TangleClaw/releases" target="_blank" rel="noopener noreferrer" className="px-5 py-2 rounded-full border border-white/10 text-zinc-300 hover:text-white hover:border-white/30 transition-colors">
+              GitHub Releases
+            </a>
+          </div>
+        </div>
+
         {/* Also Included (Compact) */}
         <div id="also-included" className="w-full pt-16 pb-16 border-t border-white/10">
           <h2 className="text-2xl font-semibold tracking-tight mb-8 text-center text-zinc-300">Also Included</h2>
@@ -148,6 +208,19 @@ export default function Home() {
               <div key={i} className="flex items-center">
                 <span className="text-green-500 mr-3 text-lg leading-none">•</span>
                 <span className="text-base">{item}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* V6 Architecture & Capabilities */}
+        <div id="v6-capabilities" className="w-full pt-16 border-t border-white/10">
+          <h2 className="text-3xl font-semibold tracking-tight mb-12 text-center">V6 Architecture &amp; Capabilities</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-10 max-w-4xl mx-auto">
+            {v6Capabilities.map((cap, i) => (
+              <div key={i} className="flex flex-col">
+                <h3 className="text-xl font-semibold mb-3 text-zinc-100">{cap.title}</h3>
+                <p className="text-zinc-400 text-base leading-relaxed">{cap.desc}</p>
               </div>
             ))}
           </div>
