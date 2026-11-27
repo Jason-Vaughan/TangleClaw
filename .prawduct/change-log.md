@@ -84,8 +84,9 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   deliberately exercises it) was intentionally left alone for #3327 rather than
   reversed, since nothing in that issue's root-cause text names it as the poll causing
   the symptom (`refreshSidebarStatus` calls only `setProjects`/`setTree`/`setEngineHealth`).
-- Verified with `node --test test/v6-b1-ui-shell.test.js` (839/839) plus the adjacent
-  v6-shell-touching suites (`native-sprint-tracker`, `projects-attach-unregistered`,
+- Verified with `node --test test/v6-b1-ui-shell.test.js` (844/844, after the Critic R1
+  fix round below added 5 tests) plus the adjacent v6-shell-touching suites
+  (`native-sprint-tracker`, `projects-attach-unregistered`,
   `v6-browser-shell-and-conversation-e2e`, `v6-b2-conversation-layer`,
   `v6-conversation-readability`, `v6-engine-usage-health-indicator`,
   `v6-fleet-wave-and-report-e2e`, `v6-interactive-choices`, `v6-lifecycle-stage-progress`,
@@ -93,7 +94,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   `v6-v610-server-routes-integration`, `v6-uth-traffic-filter`) — 692/692, after updating
   the scroll-pin fixtures in both files to dispatch a `wheel` event before the `scroll`
   event they use to simulate an upward user scroll (the new user-scroll-intent gate's
-  direct consequence).
+  direct consequence). Fixed the independent PR reviewer's own NOTE: this line originally
+  said 839/839, stale from before the Critic R1 fix round's 5 new tests landed.
+- Critic R1 (`/prawduct:critic`) found 2 BLOCKING on the first pass — no coverage for the
+  new `isPointerSelecting`/pointer-cooldown guard (including the mid-drag transient-
+  selection-collapse scenario its own comment names), and the header toggle's busy/count
+  badges only ever updating on a full `render()` while #3327's own no-op fix makes that
+  rare — plus 2 WARNING (stale test evidence; a hardcoded `#9CF732` instead of
+  `var(--tc-venom-green, #9CF732)`). Fixed all 4 in one commit (`110d8a93`); `verify-
+  resolutions` came back 0 blocking, 0 findings, 2 observations (both accepted on the
+  record: a review-round-labeled-comment style nit, and the already-planned recorder run
+  below) — nothing further required.
+- Full-suite test-evidence recorder (`prawduct-hook test-evidence record`) ran 32140
+  passed / 23 failed / 2 skipped. All 23 failures are in `test/engine-health.test.js` and
+  `test/tmux-draft-capture.test.js` (real-tmux-pane/draft-logging integration tests this
+  car's diff never touches) and reproduce IDENTICALLY (same 62 pass / 17 fail of the 79 in
+  those 2 files alone) on a clean `origin/main` worktree with none of this branch's
+  commits — confirmed pre-existing, not caused by this diff. `test-status` still reports
+  `stale` because it treats any failing test as not-green; the independent PR reviewer's
+  own WARNING on this is the same observation, not a new one.
+- Independent PR reviewer (`/prawduct:pr create` Step 3): 0 blocking, 2 warnings
+  (the test-evidence staleness above; issues #3327/#3326/#3328/#3330 reading `OPEN` on
+  GitHub right now, which is simply this PR's own pre-merge state — closing is the Merge
+  Flow's job, not a defect), 1 note (fixed: this entry's stale 839 count above).
 
 ## 2026-11-24 — v6.6.0 release cut (Milestone #94), Car V660-W2-REL
 
