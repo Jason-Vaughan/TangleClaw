@@ -110,16 +110,60 @@
   }
 
   /**
+   * {@link tcV6RenderKaizenDispositionsMarkup}'s disposition-kind labels —
+   * kept in sync with `lib/project-docs-ssot.js`'s own
+   * `KAIZEN_DISPOSITION_KINDS` by the shared test fixture, same as {@link
+   * CHARTER_SECTION_ORDER} above.
+   */
+  const KAIZEN_DISPOSITION_LABELS = Object.freeze({
+    ADOPTED_RULE: 'Adopted rule',
+    ADOPTED_GUARDRAIL: 'Adopted guardrail',
+    SCHEDULED_ISSUE: 'Scheduled issue',
+    DEFERRED_WITH_RATIONALE: 'Deferred (with rationale)'
+  });
+
+  /**
+   * Read-only rendering of the Charter's Section 0 Prior-Sprint Observer
+   * Kaizen Disposition table (#3324 AC#3) — one row per
+   * `charter.kaizenDispositions` entry, or nothing at all when the array
+   * is empty (no placeholder table for "nothing to disposition yet").
+   * @param {object[]} [rows]
+   * @returns {string} HTML, `''` when `rows` is empty.
+   */
+  function tcV6RenderKaizenDispositionsMarkup(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    if (!list.length) return '';
+    const body = list.map((row) => {
+      const label = KAIZEN_DISPOSITION_LABELS[row && row.disposition] || escapeHtml(row && row.disposition);
+      return '<tr>'
+        + `<td class="v6-kaizen-id">${escapeHtml(row && row.kaizenId)}</td>`
+        + `<td class="v6-kaizen-finding">${escapeHtml(row && row.finding)}</td>`
+        + `<td class="v6-kaizen-disposition" data-disposition="${escapeHtml(row && row.disposition)}">${label}</td>`
+        + `<td class="v6-kaizen-reference">${escapeHtml(row && row.reference)}</td>`
+        + '</tr>';
+    }).join('');
+    return '<section class="v6-charter-section v6-charter-kaizen-dispositions" data-charter-section="kaizenDispositions">'
+      + '<h4 class="v6-charter-section-title">Prior-Sprint Observer Kaizen Disposition Table</h4>'
+      + '<table class="v6-kaizen-dispositions-table">'
+      + '<thead><tr><th>Kaizen ID</th><th>Finding</th><th>Disposition</th><th>Reference</th></tr></thead>'
+      + `<tbody>${body}</tbody>`
+      + '</table></section>';
+  }
+
+  /**
    * Read-only rendering of the Functional Project Charter's seven
-   * structured sections (#3275 AC3), plus whichever runtime links
-   * (`fleetSettings`/`sessionRules`/`roadmap`) are set. An unsafe scheme
-   * (see {@link _tcV6IsSafeRuntimeLinkHref}) is neutralized to `#` rather
-   * than rejected outright, so a malformed link degrades to inert instead
-   * of hiding the whole runtime-links list.
-   * @param {{sections?: Object<string,string>, runtimeLinks?: {fleetSettings?: ?string, sessionRules?: ?string, roadmap?: ?string}}|null} charter
+   * structured sections (#3275 AC3), its Section 0 Kaizen disposition
+   * table when it carries any rows (#3324 AC#3), plus whichever runtime
+   * links (`fleetSettings`/`sessionRules`/`roadmap`) are set. An unsafe
+   * scheme (see {@link _tcV6IsSafeRuntimeLinkHref}) is neutralized to `#`
+   * rather than rejected outright, so a malformed link degrades to inert
+   * instead of hiding the whole runtime-links list.
+   * @param {{sections?: Object<string,string>, kaizenDispositions?: object[],
+   *   runtimeLinks?: {fleetSettings?: ?string, sessionRules?: ?string, roadmap?: ?string}}|null} charter
    * @returns {string} HTML.
    */
   function tcV6RenderCharterSectionsMarkup(charter) {
+    const kaizenMarkup = tcV6RenderKaizenDispositionsMarkup(charter && charter.kaizenDispositions);
     const sections = (charter && charter.sections) || {};
     const body = CHARTER_SECTION_ORDER.map((key) => {
       const text = String(sections[key] || '').trim();
@@ -138,7 +182,7 @@
       })
       .join('');
     const linksMarkup = linkItems ? `<ul class="v6-charter-runtime-links">${linkItems}</ul>` : '';
-    return `<div class="v6-charter-sections">${body}${linksMarkup}</div>`;
+    return `<div class="v6-charter-sections">${kaizenMarkup}${body}${linksMarkup}</div>`;
   }
 
   /**
@@ -162,6 +206,7 @@
 
   global.tcV6RenderSsotIndexMarkup = tcV6RenderSsotIndexMarkup;
   global.tcV6RenderSsotDocumentMarkup = tcV6RenderSsotDocumentMarkup;
+  global.tcV6RenderKaizenDispositionsMarkup = tcV6RenderKaizenDispositionsMarkup;
   global.tcV6RenderCharterSectionsMarkup = tcV6RenderCharterSectionsMarkup;
   global.tcV6MountSsotView = tcV6MountSsotView;
 })(typeof window !== 'undefined' ? window : globalThis);

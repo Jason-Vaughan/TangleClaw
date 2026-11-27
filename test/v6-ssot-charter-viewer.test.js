@@ -193,6 +193,53 @@ describe('Charter structured schema (#3275, V6-037)', () => {
   });
 });
 
+describe('Charter Section 0 — kaizenDispositions (#3324 AC#3)', () => {
+  const ROW = { kaizenId: 'KZ-v665-01', finding: 'Reports lacked exact dispatch timestamps', disposition: 'SCHEDULED_ISSUE', reference: '#3324' };
+
+  it('defaultCharter has an empty kaizenDispositions array', () => {
+    assert.deepEqual(ssot.defaultCharter().kaizenDispositions, []);
+  });
+
+  it('exposes the 4 recognized disposition kinds', () => {
+    assert.deepEqual([...ssot.KAIZEN_DISPOSITION_KINDS], ['ADOPTED_RULE', 'ADOPTED_GUARDRAIL', 'SCHEDULED_ISSUE', 'DEFERRED_WITH_RATIONALE']);
+  });
+
+  it('validateKaizenDispositions accepts a well-formed row for every recognized kind', () => {
+    for (const disposition of ssot.KAIZEN_DISPOSITION_KINDS) {
+      assert.equal(ssot.validateKaizenDispositions([{ ...ROW, disposition }]), true, disposition);
+    }
+  });
+
+  it('validateKaizenDispositions refuses a missing kaizenId, finding, or reference, or an unrecognized disposition', () => {
+    throwsCode(() => ssot.validateKaizenDispositions('nope'), 'KAIZEN_DISPOSITIONS_INVALID');
+    throwsCode(() => ssot.validateKaizenDispositions([{ ...ROW, kaizenId: '' }]), 'KAIZEN_DISPOSITION_ID_REQUIRED');
+    throwsCode(() => ssot.validateKaizenDispositions([{ ...ROW, finding: '' }]), 'KAIZEN_DISPOSITION_FINDING_REQUIRED');
+    throwsCode(() => ssot.validateKaizenDispositions([{ ...ROW, disposition: 'BOGUS' }]), 'KAIZEN_DISPOSITION_KIND_INVALID');
+    throwsCode(() => ssot.validateKaizenDispositions([{ ...ROW, reference: '' }]), 'KAIZEN_DISPOSITION_REFERENCE_REQUIRED');
+  });
+
+  it('renderCharterMarkdown writes no Section 0 heading/table when kaizenDispositions is empty', () => {
+    assert.doesNotMatch(ssot.renderCharterMarkdown(ssot.defaultCharter()), /Section 0/);
+  });
+
+  it('renderCharterMarkdown writes the table, before every other section, under the real ssot.KAIZEN_SECTION_HEADING — not a hand-copied guess', () => {
+    const md = ssot.renderCharterMarkdown({ ...ssot.defaultCharter(), kaizenDispositions: [ROW] });
+    assert.match(md, new RegExp(`## ${ssot.KAIZEN_SECTION_HEADING.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    assert.match(md, /\| KZ-v665-01 \| Reports lacked exact dispatch timestamps \| SCHEDULED_ISSUE \| #3324 \|/);
+    assert.ok(md.indexOf(ssot.KAIZEN_SECTION_HEADING) < md.indexOf('## Purpose'));
+  });
+
+  it('parseCharterMarkdown round-trips kaizenDispositions through renderCharterMarkdown', () => {
+    const charter = { ...ssot.defaultCharter(), kaizenDispositions: [ROW, { ...ROW, kaizenId: 'KZ-v665-02', disposition: 'ADOPTED_GUARDRAIL', reference: 'Guardrail 02' }] };
+    const parsed = ssot.parseCharterMarkdown(ssot.renderCharterMarkdown(charter));
+    assert.deepEqual(parsed.kaizenDispositions, charter.kaizenDispositions);
+  });
+
+  it('parseCharterMarkdown reads kaizenDispositions as [] when the document has no Section 0 table', () => {
+    assert.deepEqual(ssot.parseCharterMarkdown('## Purpose\n\nShip it.\n').kaizenDispositions, []);
+  });
+});
+
 describe('tcV6RenderSsotIndexMarkup / tcV6RenderSsotDocumentMarkup (#3275 AC2)', () => {
   const G = loadSsotView();
   const manifest = ssot.defaultDocsManifest();
@@ -263,6 +310,50 @@ describe('tcV6RenderCharterSectionsMarkup (#3275 AC3) — cross-checked against 
       assert.match(html, /href="#"/, unsafe);
       assert.doesNotMatch(html, /href="[^"]*(javascript|data|vbscript):/i, unsafe);
     }
+  });
+});
+
+describe('tcV6RenderKaizenDispositionsMarkup (#3324 AC#3) — cross-checked against the real lib/project-docs-ssot.js schema', () => {
+  const G = loadSsotView();
+  const ROW = { kaizenId: 'KZ-v665-01', finding: 'Reports lacked exact dispatch timestamps', disposition: 'SCHEDULED_ISSUE', reference: '#3324' };
+
+  it('renders "" for an empty/missing kaizenDispositions, no placeholder table', () => {
+    assert.equal(G.tcV6RenderKaizenDispositionsMarkup([]), '');
+    assert.equal(G.tcV6RenderKaizenDispositionsMarkup(undefined), '');
+  });
+
+  it('renders one table row per kaizenDispositions entry, escaped, with a human-readable disposition label', () => {
+    const html = G.tcV6RenderKaizenDispositionsMarkup([ROW]);
+    assert.match(html, /v6-kaizen-id">KZ-v665-01</);
+    assert.match(html, /v6-kaizen-finding">Reports lacked exact dispatch timestamps</);
+    assert.match(html, /data-disposition="SCHEDULED_ISSUE"/);
+    assert.match(html, />Scheduled issue</);
+    assert.match(html, /v6-kaizen-reference">#3324</);
+  });
+
+  it('escapes HTML in every cell', () => {
+    const html = G.tcV6RenderKaizenDispositionsMarkup([{ ...ROW, finding: '<img onerror=alert(1)>' }]);
+    assert.doesNotMatch(html, /<img/);
+    assert.match(html, /&lt;img onerror=alert\(1\)&gt;/);
+  });
+
+  it('has a human-readable label for every real ssot.KAIZEN_DISPOSITION_KINDS value — not a hand-copied guess', () => {
+    for (const disposition of ssot.KAIZEN_DISPOSITION_KINDS) {
+      const html = G.tcV6RenderKaizenDispositionsMarkup([{ ...ROW, disposition }]);
+      // The fallback path (an unrecognized kind) renders the raw, escaped
+      // disposition string in place of a label -- asserting the rendered
+      // text is NOT that raw string is what actually proves a real label
+      // exists for this kind, not merely that something rendered.
+      assert.doesNotMatch(html, new RegExp(`>${disposition}<`), `${disposition} must not fall back to its raw string`);
+    }
+  });
+
+  it('tcV6RenderCharterSectionsMarkup includes the Kaizen table, before the 7 sections, only when rows are present', () => {
+    const withRows = G.tcV6RenderCharterSectionsMarkup({ ...ssot.defaultCharter(), kaizenDispositions: [ROW] });
+    assert.match(withRows, /v6-charter-kaizen-dispositions/);
+    assert.ok(withRows.indexOf('v6-charter-kaizen-dispositions') < withRows.indexOf('v6-charter-section-title">Purpose'));
+    const withoutRows = G.tcV6RenderCharterSectionsMarkup(ssot.defaultCharter());
+    assert.doesNotMatch(withoutRows, /v6-charter-kaizen-dispositions/);
   });
 });
 
