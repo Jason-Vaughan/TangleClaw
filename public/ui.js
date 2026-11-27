@@ -5820,6 +5820,14 @@ function openGlobalSettings() {
   // present, defaulting to 85 (the documented default) when neither is.
   const storageWarningThresholdPct = Math.min(98, Math.max(50,
     parseInt(c.diskWarningThresholdPercent ?? c.storageWarningThresholdPct ?? 85, 10) || 85));
+  // Critic cumulative review, Car V667-W1-A: with no visible signal, saving
+  // this looked live but silently did nothing until #3318 landed — an
+  // operator would see it "revert" next time Settings opens. Self-clearing:
+  // once #3318's allowlist entry starts returning either field name from
+  // GET /api/config, this reads true and the caveat below disappears with
+  // no further change needed here.
+  const storageThresholdPersists =
+    c.diskWarningThresholdPercent !== undefined || c.storageWarningThresholdPct !== undefined;
 
   // #710 — rendered from the SERVER's resolved bind state (`bindState` on
   // /api/config), never re-derived here. The rules belong to the server: caddy
@@ -5929,6 +5937,7 @@ function openGlobalSettings() {
         Warn when the data volume holding projects and sessions crosses this percentage full
         (range 50&ndash;98, default 85). Evaluated against real disk capacity; an admin alert surfaces
         when the threshold is crossed.
+        ${storageThresholdPersists ? '' : '<br><strong>Not yet active:</strong> the backend setting this binds to has not shipped yet (#3318) — saving has no effect until it does, and this value will appear to revert the next time Settings opens.'}
       </div>
     </div>
     </section>
@@ -6079,8 +6088,6 @@ function openGlobalSettings() {
   // have 1; security has 2), so this toggles every section sharing a
   // category together, never just the first match.
   _gsShowCategory(_gsActiveCategoryFromHash() || 'general');
-  _gsWireCategoryRail();
-  _gsWireSearchFilter();
 
   // #235 — wire the restart button. Inline (rather than at page init)
   // because the button only exists once the modal opens. No-op when
@@ -6266,7 +6273,14 @@ function _gsShowCategory(category) {
   }
 }
 
-/** Click wiring for the category rail (#3319); called once per `openGlobalSettings()` since the rail is static markup, never rebuilt. */
+/**
+ * Click wiring for the category rail (#3319). `#gsCategoryRail`'s buttons are
+ * static markup in index.html, siblings of `#globalSettingsBody` rather than
+ * inside it, so `openGlobalSettings()`'s `body.innerHTML = ...` never rebuilds
+ * them — wired exactly once, at the bottom of this file's one-time event
+ * wiring, never from inside `openGlobalSettings()` itself (that would stack a
+ * fresh listener on every open, Critic cumulative review, Car V667-W1-A).
+ */
 function _gsWireCategoryRail() {
   document.querySelectorAll('.gs-category-rail-item').forEach((item) => {
     item.addEventListener('click', () => _gsShowCategory(item.getAttribute('data-gs-category')));
@@ -6300,7 +6314,7 @@ function _gsApplySearchFilter(query) {
   });
 }
 
-/** Input wiring for the search box (#3319); called once per `openGlobalSettings()`, same reason as `_gsWireCategoryRail`. */
+/** Input wiring for the search box (#3319), wired exactly once — same reason and same place as `_gsWireCategoryRail`. */
 function _gsWireSearchFilter() {
   const search = document.getElementById('gsSearchFilter');
   if (search) search.addEventListener('input', () => _gsApplySearchFilter(search.value));
@@ -9833,6 +9847,12 @@ $('globalSettingsModal').addEventListener('click', (e) => { if (e.target === e.c
 // same effect, added because a full-screen page (unlike the old 440px
 // dialog) has no backdrop click-outside area reachable without scrolling.
 $('globalSettingsCloseBtn').addEventListener('click', closeGlobalSettings);
+// #3319: the rail/search wiring itself, done once here rather than inside
+// openGlobalSettings() — the rail and search box are static markup outside
+// #globalSettingsBody, so re-running this on every open would stack a fresh
+// listener per open (Critic cumulative review, Car V667-W1-A).
+_gsWireCategoryRail();
+_gsWireSearchFilter();
 // #3319: Escape closes the workspace from anywhere in it, including while
 // focus is inside the search box — scoped to whether the modal is
 // currently `.open` so it never fires for an unrelated keypress while

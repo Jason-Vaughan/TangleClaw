@@ -181,10 +181,48 @@ describe('openGlobalSettings() re-bucketing and the new storage field (#3319)', 
     assert.match(src, /\?\?\s*c\.storageWarningThresholdPct\s*\?\?\s*85/);
   });
 
-  it('calls the rail/search wiring and initial category selection exactly once per open', () => {
+  it('shows a "not yet active" caveat on the storage field until the backend recognizes either field name (Critic finding, Car V667-W1-A)', () => {
+    assert.match(src, /storageThresholdPersists\s*=\s*\n?\s*c\.diskWarningThresholdPercent !== undefined \|\| c\.storageWarningThresholdPct !== undefined/);
+    const storageSection = fn.slice(
+      fn.indexOf('data-gs-category="storage"'),
+      fn.indexOf('</section>', fn.indexOf('data-gs-category="storage"'))
+    );
+    assert.match(storageSection, /storageThresholdPersists \? '' : '<br><strong>Not yet active:/);
+  });
+
+  it('selects the initial category on every open, but does NOT re-wire the rail/search box', () => {
     assert.match(fn, /_gsShowCategory\(_gsActiveCategoryFromHash\(\) \|\| 'general'\)/);
-    assert.match(fn, /_gsWireCategoryRail\(\);/);
-    assert.match(fn, /_gsWireSearchFilter\(\);/);
+    // Critic cumulative review, Car V667-W1-A: the rail and search box are
+    // static markup outside #globalSettingsBody, so wiring them from inside
+    // openGlobalSettings() would stack a fresh listener on every open. They
+    // are wired exactly once at module load instead — see the two "wires
+    // exactly once at module load" tests below.
+    assert.doesNotMatch(fn, /_gsWireCategoryRail\(\);/);
+    assert.doesNotMatch(fn, /_gsWireSearchFilter\(\);/);
+  });
+});
+
+describe('Rail/search wiring happens exactly once, not on every open (#3319)', () => {
+  let src;
+
+  before(() => {
+    src = fs.readFileSync(UI_PATH, 'utf8');
+  });
+
+  it('_gsWireCategoryRail() and _gsWireSearchFilter() are each called exactly once in the whole file', () => {
+    const wireRailCalls = (src.match(/_gsWireCategoryRail\(\);/g) || []).length;
+    const wireSearchCalls = (src.match(/_gsWireSearchFilter\(\);/g) || []).length;
+    assert.equal(wireRailCalls, 1, '_gsWireCategoryRail() must be called exactly once (module load), never from openGlobalSettings()');
+    assert.equal(wireSearchCalls, 1, '_gsWireSearchFilter() must be called exactly once (module load), never from openGlobalSettings()');
+  });
+
+  it('that one call site sits in the top-level event-wiring block, not inside a function', () => {
+    const idx = src.indexOf('_gsWireCategoryRail();');
+    assert.ok(idx > -1);
+    // Top-level statements in this file are not indented; a call wired
+    // inside openGlobalSettings() or any other function would be indented.
+    const lineStart = src.lastIndexOf('\n', idx) + 1;
+    assert.equal(src.slice(lineStart, idx), '', 'the call must be a top-level, unindented statement');
   });
 });
 

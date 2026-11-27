@@ -86,7 +86,19 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   lift did not provide — caught by running that file, not by inspection. Stubbed minimally
   in that file; the real hash-clearing behavior has its own direct coverage in the new test
   file below.
-- New `test/global-settings-workspace-ui.test.js` (37 cases): markup/CSS structural
+- Cumulative Critic R1 (2 warnings, fixed): (1) `_gsWireCategoryRail`/
+  `_gsWireSearchFilter` were called from inside `openGlobalSettings()`, stacking a fresh
+  listener on every open since the rail/search box are static markup never rebuilt by
+  that function — moved both calls to the file's one-time top-level event-wiring block
+  instead. (2) the Storage Warning Threshold field gave no signal that it does not persist
+  yet (pending #3318) — added a `storageThresholdPersists` check (true once either backend
+  field name appears in `GET /api/config`) and a "Not yet active" caveat in the hint text
+  that self-clears the moment #3318 lands, with no further change needed here. Also added
+  `.prawduct/operator-verification.md` VRF-009 for this car's visual/interaction surface
+  (full-viewport layout, rail switching, cross-category search, hash deep-linking, close/
+  Escape), accepted with the same "no browser tooling in this headless lane" rationale as
+  VRF-008.
+- New `test/global-settings-workspace-ui.test.js` (40 cases): markup/CSS structural
   assertions (matching this file's own established convention for `public/ui.js`, per
   `test/settings-credential.test.js`'s comment) plus behavioral coverage of the new rail/
   search/hash logic, lifted together with its module-level `const`/`let` state and run
@@ -100,12 +112,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   tracks no per-test-file registration at all — the file scope's mention of this file was a
   stale assumption, not something requiring a forced edit.
 - Verification: full `small`-tier suite plus a targeted regression sweep of every Global
-  Settings-adjacent test file green. A broader `medium`-tier pool run (`testament run
-  --suite medium`) surfaced 24 failures clustered on 3 shared pool hosts (monad-1,
-  brooks-nas, brooks-5950x), none touching `public/ui.js`/`index.html`/`style.css` or
-  Global Settings; a sample of 3 (`store.test.js`, `bridge-gateway.test.js`,
-  `session-rules.test.js`) passes cleanly run directly on a clean `origin/main` worktree,
-  confirming pool-environment flakiness rather than a regression from this branch.
+  Settings-adjacent test file green. An earlier, now-superseded `medium`-tier pool run
+  (`testament run --suite medium`) surfaced 24 failures clustered on 3 shared pool hosts
+  (monad-1, brooks-nas, brooks-5950x), none touching `public/ui.js`/`index.html`/
+  `style.css` or Global Settings; a sample of 3 (`store.test.js`, `bridge-gateway.test.js`,
+  `session-rules.test.js`) passed cleanly run directly on a clean `origin/main` worktree
+  (that run predates the rebase onto `origin/main@8cd4988a` below and is not the evidence
+  gating this PR — recorded here only as earlier-session context).
+- The evidence that actually gates `prawduct-hook test-status` for this exact tree
+  (`.prawduct/.test-evidence.json`, recorded post-rebase) is `node --test
+  --test-reporter=junit test/*.test.js`: **32311 passed, 52 failed, 2 skipped**. All 52
+  live in 7 files — `test/engine-health.test.js`, `test/master-medusa.test.js`,
+  `test/projects.test.js`, `test/sessions.test.js`, `test/startup-dialog.test.js`,
+  `test/tmux-draft-capture.test.js`, `test/tmux-tcc.test.js` — none touching
+  `public/ui.js`/`index.html`/`style.css` or Global Settings. Verified directly: ran all 7
+  files on a clean `origin/main@8cd4988a` worktree. 4 of the 7 (`engine-health`,
+  `master-medusa`, `tmux-draft-capture`, `tmux-tcc`) reproduced failures in that same
+  cluster identically; the other 3 (`projects`, `sessions`, `startup-dialog`) showed only 1
+  failure out of 1019 tests (`"the pane writer refuses a declared dialog (#2128)"` in
+  `test/startup-dialog.test.js`) — a *different* specific case than the one that failed on
+  this branch's run in the same file (`"the synchronous cursor read says whether the
+  cursor is shown, on a real pane"`), consistent with real-tmux-pane/timing-dependent
+  flakiness in that file rather than a deterministic regression either way. Conclusion:
+  all 52 failures are pre-existing, environment-dependent (real tmux pane/session timing),
+  and unrelated to this branch's changes — none fixed, none newly introduced.
 
 ## 2026-11-27 — v6 chat UX: scroll/selection corruption, dedup send bubble, header UTH toggle, queued-turn indicator, Car V666-W1-A
 
