@@ -4,6 +4,18 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.6.6] - 2026-11-27
+
+### Added
+
+- Closed-loop Observer Kaizen Gate 0/Gate 4 primitives (#3324): structured findings from settled sprint reports can be ingested idempotently into the Kaizen ledger, listed and dispositioned through the scoped `tc kaizen` commands, recorded in the Functional Charter, and enforced as a fail-closed Sprint N+1 admission check.
+
+### Fixed
+
+- Hardened fleet provisioning and project settings (#3322, #3329, #3331): provisioning now passes each member's requested engine through attachment, avoids duplicate onboarding trust-rule proposals, and safely resumes interrupted member setup. Project Settings now supports model/effort changes for bypass-permissions launch modes with the required confirmation, and keeps save errors beside the Save button.
+- Isolated sprint data by project and fleet (#3325): sprint-wave, sprint-report, and GitHub activity routes resolve the selected project's checkout and shared directory, honor project/fleet/group scope, and filter persisted wave runs so another fleet's data cannot appear in the response.
+- Fixed V6 chat selection, scrolling, and queued-message behavior (#3326, #3327, #3328, #3330): background refreshes no longer disrupt shell-wide text selection, slow trackpad scrolling no longer snaps to the bottom, sent messages no longer briefly duplicate, the closed Under the Hood drawer takes no space, and queued prompts retain clear processing status.
+
 ## [6.6.5] - 2026-11-27
 
 ### Added
