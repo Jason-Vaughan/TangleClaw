@@ -250,6 +250,25 @@ describe('ingestKaizenFromReport (#3324 AC#1)', () => {
     assert.equal(stored[1].defect_category, 'improve');
   });
 
+  it('reserves an explicit id before auto-numbering, so a following untagged finding never collides with it (R-Gate R1 BLOCKING, PR #3337)', (t) => {
+    const { db, tmpDir } = freshStore();
+    t.after(() => cleanup(tmpDir));
+    // The first (preserve) finding is explicitly tagged with exactly the id
+    // auto-numbering would otherwise generate for the SECOND (untagged,
+    // improve) finding -- the precise collision the finding reports: an
+    // explicit KZ-v665-01 followed by an untagged finding that would also
+    // generate KZ-v665-01, silently dropping the second finding once the
+    // first's id is already in `already`.
+    const tagged = REAL_SHAPE_HTML.replace('<div class="pm-item">', '<div class="pm-item" data-kaizen-id="KZ-v665-01">');
+    const result = ingestKaizenFromReport(db, { reportHtml: tagged, originSprint: 'v6.6.5' });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.ingested.map((i) => i.findingId), ['KZ-v665-01', 'KZ-v665-02']);
+    assert.deepEqual(result.skipped, [], 'the untagged finding must not be silently dropped');
+    const stored = e5.listByOriginSprint(db, 'v6.6.5');
+    assert.equal(stored.length, 2, 'both findings must be recorded, not just the explicitly tagged one');
+    assert.deepEqual(stored.map((s) => s.finding_id).sort(), ['KZ-v665-01', 'KZ-v665-02']);
+  });
+
   it('is idempotent: settling the same report twice never duplicates a row', (t) => {
     const { db, tmpDir } = freshStore();
     t.after(() => cleanup(tmpDir));
