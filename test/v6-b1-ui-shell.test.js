@@ -7689,6 +7689,25 @@ describe('turns in the order they happened, and a composer that empties on Enter
     assert.equal((html.match(/is-pending/g) || []).length, 1, 'the first pending item is matched by the trailing turn; the second is not suppressed by the same signal twice');
     assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*same text/);
   });
+
+  // #3326 (PRR-A R-Gate R3 BLOCKING): the trailing live turn and the
+  // trailing recorded event can be two readings of the exact SAME echo
+  // (arrangeRecorded draws a recorded event once, via its matching live
+  // turn, for precisely this overlap) — treating turnConsumed/eventConsumed
+  // as fully independent let that ONE real echo consume TWO identical
+  // pending items instead of one.
+  it('with BOTH a trailing live turn AND a trailing recorded event showing the SAME text, only ONE of two identical pending items is suppressed', () => {
+    const pending = [{ id: 16, text: 'same text' }, { id: 17, text: 'same text' }];
+    const html = G.tcV6ConversationViewMarkup(view([ev(1, 'same text')], [{ role: 'user', text: 'same text' }], { pending }));
+    assert.equal((html.match(/is-pending/g) || []).length, 1, 'the turn and the event describe one real echo, not two — only one pending item is consumed');
+    assert.match(html, /<ol id="v6ChatPending"[^>]*><li class="v6-conversation-event is-user is-pending">[\s\S]*same text/);
+  });
+
+  it('with a DIFFERENT trailing turn and trailing event, each still independently suppresses its own matching pending item', () => {
+    const pending = [{ id: 18, text: 'turn text' }, { id: 19, text: 'event text' }];
+    const html = G.tcV6ConversationViewMarkup(view([ev(1, 'event text')], [{ role: 'user', text: 'turn text' }], { pending }));
+    assert.doesNotMatch(html, /is-pending/, 'both are genuinely distinct echoes, so both pending items are correctly suppressed');
+  });
 });
 
 describe('sending, through the controller (#3079 item 6)', () => {

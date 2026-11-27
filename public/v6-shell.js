@@ -3906,21 +3906,28 @@
     const trailingUserTurn = (lastTurn && lastTurn.role === 'user') ? lastTurn : null;
     const lastEvent = evs[evs.length - 1];
     const trailingUserEvent = (lastEvent && lastEvent.role === 'user') ? lastEvent : null;
+    // #3326 (PRR-A R-Gate R3 BLOCKING): the trailing turn and the trailing
+    // event can be two READINGS of the exact same physical echo —
+    // `arrangeRecorded` above explicitly draws a recorded event once, via
+    // its matching live turn, for precisely this overlap. Treating
+    // `turnConsumed`/`eventConsumed` as fully independent let ONE real
+    // echo consume TWO identical pending items (one via each signal)
+    // instead of one — `turnEventOverlap` makes consuming either consume
+    // both whenever they describe the same message, while two genuinely
+    // DIFFERENT trailing turn/event texts still consume independently.
+    const turnEventOverlap = Boolean(trailingUserTurn && trailingUserEvent && sameMessage(trailingUserEvent.content, trailingUserTurn.text));
     let turnConsumed = false;
     let eventConsumed = false;
     // One bubble per send on its way (#3082: a forced send can overlap another).
     const list = (Array.isArray(pending) ? pending : [pending]).filter((p) => {
       if (!p || typeof p.text !== 'string') return false;
       if (lastSent && lastSent.id === p.id) return false;
-      if (!turnConsumed && trailingUserTurn && sameMessage(p.text, trailingUserTurn.text)) {
-        turnConsumed = true;
-        return false;
-      }
-      if (!eventConsumed && trailingUserEvent && sameMessage(trailingUserEvent.content, p.text)) {
-        eventConsumed = true;
-        return false;
-      }
-      return true;
+      const matchesTurn = !turnConsumed && trailingUserTurn && sameMessage(p.text, trailingUserTurn.text);
+      const matchesEvent = !eventConsumed && trailingUserEvent && sameMessage(trailingUserEvent.content, p.text);
+      if (!matchesTurn && !matchesEvent) return true;
+      turnConsumed = true;
+      eventConsumed = turnEventOverlap || Boolean(matchesEvent);
+      return false;
     });
     return list.map((p) => `<li class="v6-conversation-event is-user is-pending">${chatRoleMarkup('user', '')}<span class="v6-conversation-content">${messageMarkup(p.text, thumbs, unfurls)}</span><span class="v6-chat-pending-note"> Sending…</span></li>`).join('');
   }
