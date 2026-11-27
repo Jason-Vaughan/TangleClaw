@@ -106,17 +106,56 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   record: a review-round-labeled-comment style nit, and the already-planned recorder run
   below) — nothing further required.
 - Full-suite test-evidence recorder (`prawduct-hook test-evidence record`) ran 32140
-  passed / 23 failed / 2 skipped. All 23 failures are in `test/engine-health.test.js` and
-  `test/tmux-draft-capture.test.js` (real-tmux-pane/draft-logging integration tests this
-  car's diff never touches) and reproduce IDENTICALLY (same 62 pass / 17 fail of the 79 in
-  those 2 files alone) on a clean `origin/main` worktree with none of this branch's
-  commits — confirmed pre-existing, not caused by this diff. `test-status` still reports
-  `stale` because it treats any failing test as not-green; the independent PR reviewer's
-  own WARNING on this is the same observation, not a new one.
+  passed / 23 failed / 2 skipped. **Correction (Critic R2, `rev-20261127T180400Z-b386d2cc`
+  BLOCKING): the first draft of this entry said all 23 were in 2 files, confirmed identical
+  on a clean checkout — that was true for those 2 files but left 6 of the 23 (3 in
+  `test/tmux-named-paste-buffer.test.js`, 1 each in `test/tmux.test.js`,
+  `test/projects.test.js`, `test/startup-dialog.test.js`) unaccounted for.** Re-verified
+  properly (an earlier verification pass itself silently truncated to its last 15 lines via
+  an unintended `| tail` on a backgrounded command — caught only by checking the real PID
+  was still running after the tool reported the wait "complete"):
+  - `test/engine-health.test.js` + `test/tmux-draft-capture.test.js` (17 of the 23):
+    deterministic, reproduces IDENTICALLY (62 pass / 17 fail of 79) every time, on this
+    branch and on a clean `origin/main` worktree alike.
+  - The other 4 files (6 of the 23): genuinely FLAKY on both this branch and a clean
+    `origin/main` worktree — two separate clean-checkout runs of the same 4 files gave 2
+    different failure counts (2, then 5) and different specific failing subtests each
+    time; this branch's own isolated run gave a third set (5 failures, yet different
+    subtests again). Real-tmux-pane timing sensitivity under concurrent host load (other
+    lane sessions' own test runs were observed running concurrently via `ps aux`), not a
+    deterministic bug — but present on a clean base either way, so not caused by this
+    diff.
+  - None of the 6 files, nor the production code they exercise (`lib/tmux.js`,
+    `lib/projects.js`, `lib/sessions.js`, `lib/system-health.js`), are touched anywhere in
+    this branch's diff (`git diff --stat origin/main..HEAD` — 8 files total, all `public/`,
+    `test/v6-*`, or `.prawduct/`/`changelog.d/`).
+  `test-status` still reports `stale` because it treats any failing test as not-green; the
+  independent PR reviewer's own WARNING on this is the same underlying observation, not a
+  new one (its specific "2 files" framing inherited this entry's own first-draft error).
 - Independent PR reviewer (`/prawduct:pr create` Step 3): 0 blocking, 2 warnings
   (the test-evidence staleness above; issues #3327/#3326/#3328/#3330 reading `OPEN` on
   GitHub right now, which is simply this PR's own pre-merge state — closing is the Merge
-  Flow's job, not a defect), 1 note (fixed: this entry's stale 839 count above).
+  Flow's job, not a defect), 1 note (fixed: this entry's stale 839 count, itself fixed
+  above).
+- PRR-A R-Gate R1 (a separate, project-local review channel from Prawduct's own PR
+  reviewer): REQUEST CHANGES — 1 BLOCKING (`pendingMarkup`'s #3326 live-turn dedup matched
+  ANY prior `user` turn, not just the trailing one — re-sending text repeating an older turn
+  could wrongly suppress a legitimate new pending bubble), 1 WARNING (`isPointerSelecting`
+  cleared only on `root`'s own `mouseup`/`pointerup` — a drag released outside `root`'s
+  subtree never bubbles there, leaving it stuck `true` and every background render deferred
+  forever). Both confirmed genuine on independent re-read and fixed in `d97f028c`: the dedup
+  now matches only the trailing `user` turn; the release listeners moved to `win` (bubbles to
+  window in every real browser) plus a `blur` fallback. Regression tests added for all 4
+  scenarios (trailing-turn dedup, trailing-event dedup, release outside `root`, mid-drag
+  `blur`).
+- Critic R2 (`/prawduct:critic verify-resolutions` after `d97f028c`): 1 BLOCKING — the
+  test-evidence correction above; the actual code fix for the PRR-A findings was found
+  sound with real regression coverage. 2 observations recorded, not fixed: `pendingMarkup`'s
+  trailing-only fix narrows but does not fully eliminate the false-suppression shape it
+  targets (a BRAND-NEW send repeating the immediately-preceding turn's exact text could
+  still be suppressed — pre-existing shape, not a regression from this branch); the new
+  `win`-level listeners introduce no cleanup gap (`tcCreateV6Shell` has exactly one non-test
+  call site, instantiated once per page load).
 
 ## 2026-11-24 — v6.6.0 release cut (Milestone #94), Car V660-W2-REL
 
