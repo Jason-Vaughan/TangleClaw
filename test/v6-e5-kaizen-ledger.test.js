@@ -462,3 +462,83 @@ describe('setGate0Disposition / gate0Feed', () => {
     assert.ok(!all.some((item) => item.id === closedId));
   });
 });
+
+describe('listByOriginSprint (#3324)', () => {
+  it('returns only items for the named origin sprint, oldest first', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    seedItem(db, { originSprint: 'v6.6.4', findingId: 'f-other-sprint' });
+    const idA = seedItem(db, { originSprint: 'v6.6.5', findingId: 'f-a' });
+    const idB = seedItem(db, { originSprint: 'v6.6.5', findingId: 'f-b' });
+
+    const rows = e5.listByOriginSprint(db, 'v6.6.5');
+    assert.deepEqual(rows.map((r) => r.id), [idA, idB]);
+    assert.ok(rows.every((r) => r.origin_sprint === 'v6.6.5'));
+  });
+
+  it('returns an empty array for a sprint with no recorded items', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    assert.deepEqual(e5.listByOriginSprint(db, 'v9.9.9'), []);
+  });
+});
+
+describe('listItems (#3324) — the general GET /api/v6/kaizen/items listing', () => {
+  it('with no filters, returns every item, newest first', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const idA = seedItem(db, { findingId: 'f-a' });
+    const idB = seedItem(db, { findingId: 'f-b' });
+    assert.deepEqual(e5.listItems(db).map((r) => r.id), [idB, idA]);
+  });
+
+  it('is unscoped by lifecycle_state, unlike gate0Feed — a Closed item still appears', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const closedId = seedItem(db, { findingId: 'closed-1' });
+    toVerified(db, closedId);
+    db.prepare("UPDATE kaizen_items SET verification_evidence_ref = 'x' WHERE id = ?").run(closedId);
+    e5.recordMeasurement(db, { kaizenId: closedId, sprintVersion: 'v1', measurementKind: 'sprint_window', passed: true, evidenceRef: 'x' });
+    e5.markProvenEffective(db, { id: closedId });
+    e5.closeItem(db, { id: closedId });
+
+    assert.ok(!e5.gate0Feed(db).some((r) => r.id === closedId), 'gate0Feed excludes it');
+    assert.ok(e5.listItems(db).some((r) => r.id === closedId), 'listItems still lists it');
+  });
+
+  it('filters by every recognized column, each by exact string equality', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const idA = seedItem(db, { findingId: 'f-a', originSprint: 'v6.6.5', logicalProjectId: 'lp-a' });
+    const idB = seedItem(db, { findingId: 'f-b', originSprint: 'v6.6.4', logicalProjectId: 'lp-b' });
+
+    assert.deepEqual(e5.listItems(db, { id: idA }).map((r) => r.id), [idA]);
+    assert.deepEqual(e5.listItems(db, { logicalProjectId: 'lp-a' }).map((r) => r.id), [idA]);
+    assert.deepEqual(e5.listItems(db, { originSprint: 'v6.6.5' }).map((r) => r.id), [idA]);
+    assert.deepEqual(e5.listItems(db, { lifecycleState: 'Detected' }).map((r) => r.id).sort(), [idA, idB].sort());
+    assert.equal(e5.listItems(db, { gate0Disposition: 'unreviewed' }).length, 2);
+  });
+
+  it('ignores a non-string or blank filter value rather than matching nothing', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    seedItem(db);
+    assert.equal(e5.listItems(db, { logicalProjectId: '' }).length, 1);
+    assert.equal(e5.listItems(db, { logicalProjectId: null }).length, 1);
+  });
+
+  it('caps at LIST_ITEMS_MAX_LIMIT however large opts.limit asks, and defaults sensibly otherwise', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    for (let i = 0; i < 3; i += 1) seedItem(db, { findingId: `f-${i}` });
+    assert.equal(e5.listItems(db, { limit: '2' }).length, 2, 'a numeric-string limit is honored');
+    assert.equal(e5.listItems(db, { limit: 0 }).length, 3, 'a non-positive limit falls back to the default');
+    assert.equal(e5.listItems(db, { limit: 'bogus' }).length, 3, 'a non-numeric limit falls back to the default');
+  });
+
+  it('returns an empty array against an empty ledger', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    assert.deepEqual(e5.listItems(db), []);
+  });
+});

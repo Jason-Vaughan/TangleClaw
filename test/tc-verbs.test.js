@@ -787,6 +787,147 @@ describe('tc verb roster (lib/tc-verbs)', () => {
   });
 });
 
+describe('the kaizen verb family (#3324)', () => {
+  const noopCtx = { env: {}, argv: [], getJson: async () => { throw new Error('unexpected fetch'); }, postJson: async () => { throw new Error('unexpected fetch'); } };
+  const kaizen = VERB_ROSTER.find((v) => v.id === 'kaizen');
+
+  it('is declared in the roster, unprimed', () => {
+    assert.ok(kaizen);
+    assert.equal(kaizen.primed, false);
+  });
+
+  it('no subverb / bad subverb → exit 1 with usage, before any network call', async () => {
+    for (const argv of [[], ['bogus']]) {
+      const res = await kaizen.run({ ...noopCtx, argv });
+      assert.equal(res.code, 1);
+      assert.match(res.stderr, /usage: tc kaizen/);
+    }
+  });
+
+  it('detect posts the mapped flags to POST /api/v6/kaizen/items and reports the new item id', async () => {
+    const calls = [];
+    const res = await kaizen.run({
+      ...noopCtx,
+      argv: [
+        'detect', '--origin-sprint', 'v6.6.5', '--finding-id', 'f-1', '--defect-category', 'c',
+        '--root-cause', 'r', '--corrective-action', 'a', '--owner-role', 'Observer',
+        '--verification-class', 'B_WORKFLOW', '--target-metric', 'm', '--issue', '3324'
+      ],
+      postJson: async (p, body) => { calls.push([p, body]); return { ok: true, code: 'DETECTED', id: 'kz-1' }; }
+    });
+    assert.equal(res.code, 0);
+    assert.equal(calls[0][0], '/api/v6/kaizen/items');
+    assert.deepEqual(calls[0][1], {
+      originSprint: 'v6.6.5', findingId: 'f-1', defectCategory: 'c', rootCause: 'r', correctiveActionSpec: 'a',
+      ownerRole: 'Observer', verificationClass: 'B_WORKFLOW', targetMetric: 'm', linkedIssueId: 3324
+    });
+    assert.match(res.stdout, /Detected f-1 as Kaizen item kz-1 \(DETECTED\)\./);
+  });
+
+  it('list with no flags reads GET /api/v6/kaizen/items with no query string, and renders every row', async () => {
+    const calls = [];
+    const res = await kaizen.run({
+      ...noopCtx, argv: ['list'],
+      getJson: async (p) => {
+        calls.push(p);
+        return [{
+          id: 'kz-1', finding_id: 'f-1', lifecycle_state: 'Detected', effectiveness_status: 'UNVERIFIED',
+          origin_sprint: 'v6.6.5', defect_category: 'c', verification_class: 'B_WORKFLOW',
+          gate0_disposition: 'unreviewed', owner_role: 'Observer'
+        }];
+      }
+    });
+    assert.equal(res.code, 0);
+    assert.equal(calls[0], '/api/v6/kaizen/items');
+    assert.match(res.stdout, /kz-1 \(f-1\) — Detected \/ UNVERIFIED/);
+  });
+
+  it('list forwards every recognized flag as a query-string param, URL-encoded', async () => {
+    const calls = [];
+    await kaizen.run({
+      ...noopCtx,
+      argv: ['list', '--id', 'kz-1', '--logical-project', 'lp a', '--origin-sprint', 'v6.6.5', '--lifecycle-state', 'Detected', '--gate0-disposition', 'unreviewed', '--limit', '5'],
+      getJson: async (p) => { calls.push(p); return []; }
+    });
+    assert.equal(
+      calls[0],
+      '/api/v6/kaizen/items?id=kz-1&logicalProjectId=lp%20a&originSprint=v6.6.5&lifecycleState=Detected&gate0Disposition=unreviewed&limit=5'
+    );
+  });
+
+  it('list says so honestly when nothing matches, rather than printing nothing', async () => {
+    const res = await kaizen.run({ ...noopCtx, argv: ['list'], getJson: async () => [] });
+    assert.equal(res.code, 0);
+    assert.match(res.stdout, /No Kaizen items match\./);
+  });
+
+  it('list rejects an unexpected positional argument before any network call', async () => {
+    const res = await kaizen.run({ ...noopCtx, argv: ['list', 'kz-1'] });
+    assert.equal(res.code, 1);
+    assert.match(res.stderr, /unexpected kz-1/);
+  });
+
+  it('gate0-feed reads the feed, optionally scoped by --logical-project, and says so honestly when empty', async () => {
+    const calls = [];
+    const empty = await kaizen.run({ ...noopCtx, argv: ['gate0-feed'], getJson: async (p) => { calls.push(p); return []; } });
+    assert.match(empty.stdout, /No open\/due Kaizen items\./);
+    assert.equal(calls[0], '/api/v6/kaizen/gate0-feed');
+
+    const scoped = await kaizen.run({
+      ...noopCtx, argv: ['gate0-feed', '--logical-project', 'lp a'],
+      getJson: async (p) => {
+        calls.push(p);
+        return [{
+          id: 'kz-2', finding_id: 'f-2', lifecycle_state: 'Detected', effectiveness_status: 'UNVERIFIED',
+          origin_sprint: 'v1', defect_category: 'c', verification_class: 'A_DETERMINISTIC',
+          gate0_disposition: 'unreviewed', owner_role: 'Observer'
+        }];
+      }
+    });
+    assert.equal(calls[1], '/api/v6/kaizen/gate0-feed?logicalProjectId=lp%20a');
+    assert.match(scoped.stdout, /kz-2 \(f-2\)/);
+  });
+
+  it('disposition requires an item id, and --disposition, before any network call', async () => {
+    const noId = await kaizen.run({ ...noopCtx, argv: ['disposition'] });
+    assert.equal(noId.code, 1);
+    assert.match(noId.stderr, /needs an item id/);
+    const noDisp = await kaizen.run({ ...noopCtx, argv: ['disposition', 'kz-1'] });
+    assert.equal(noDisp.code, 1);
+    assert.match(noDisp.stderr, /needs --disposition/);
+  });
+
+  it('disposition folds --issue/--rule into the rationale, since setGate0Disposition cannot store them separately', async () => {
+    const calls = [];
+    const res = await kaizen.run({
+      ...noopCtx, argv: ['disposition', 'kz-1', '--disposition', 'scheduled', '--issue', '3324', '--rule', 'rule-282'],
+      postJson: async (p, body) => { calls.push([p, body]); return { ok: true, code: 'UPDATED' }; }
+    });
+    assert.equal(res.code, 0);
+    assert.equal(calls[0][0], '/api/v6/kaizen/items/kz-1/gate0-disposition');
+    assert.deepEqual(calls[0][1], { disposition: 'scheduled', rationale: '(Issue #3324, Rule rule-282)' });
+    assert.match(res.stdout, /Gate 0 disposition set to scheduled \(UPDATED\)\./);
+  });
+
+  it('disposition combines an explicit --rationale with --issue/--rule rather than dropping either', async () => {
+    const calls = [];
+    await kaizen.run({
+      ...noopCtx, argv: ['disposition', 'kz-1', '--disposition', 'deferred_with_rationale', '--rationale', 'next sprint', '--issue', '3324'],
+      postJson: async (p, body) => { calls.push([p, body]); return { ok: true, code: 'UPDATED' }; }
+    });
+    assert.deepEqual(calls[0][1], { disposition: 'deferred_with_rationale', rationale: 'next sprint (Issue #3324)' });
+  });
+
+  it('disposition sends no rationale field at all when neither --rationale nor --issue/--rule are given', async () => {
+    const calls = [];
+    await kaizen.run({
+      ...noopCtx, argv: ['disposition', 'kz-1', '--disposition', 'monitoring'],
+      postJson: async (p, body) => { calls.push([p, body]); return { ok: true, code: 'UPDATED' }; }
+    });
+    assert.deepEqual(calls[0][1], { disposition: 'monitoring' });
+  });
+});
+
 describe('tc verb surface against a live server (ambient-awareness Chunk 03)', () => {
   let tmpDir;
   let server;

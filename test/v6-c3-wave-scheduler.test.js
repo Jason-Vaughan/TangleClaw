@@ -14,7 +14,7 @@ const {
   CAR_STATUSES, GATE_TYPES, DEFAULT_MAX_STALL_MS, DEFAULT_FLEET_BUILDER_LANES, WaveSchedulerError,
   MemorySchedulerStore, SqliteSchedulerStore, WaveScheduler, ensureSchema,
   isValidId, lockKey, normalizeScope, scopesConflict, scopeWithin, topologicalWaves,
-  planParallelWaveShards, validateParallelWavePlan
+  planParallelWaveShards, validateParallelWavePlan, evaluateGate0SprintBoundary
 } = require('../lib/v6/c3-wave-scheduler');
 
 /**
@@ -764,4 +764,135 @@ describe('WaveScheduler#createRun — optional parallel-sharding enforcement (me
       assert.deepEqual(store.read().runs, {}, 'a run with a malformed builderLanes entry must never be persisted');
     });
   }
+});
+
+describe('evaluateGate0SprintBoundary (#3324, Charter guardrail 05)', () => {
+  const UNREVIEWED = { id: 'x', finding_id: 'KZ-v665-01', gate0_disposition: 'unreviewed' };
+  const SCHEDULED_LINKED = { id: 'y', finding_id: 'KZ-v665-02', gate0_disposition: 'scheduled', linked_issue_id: 3324 };
+  const SCHEDULED_UNLINKED = { id: 'z', finding_id: 'KZ-v665-03', gate0_disposition: 'scheduled' };
+  const MONITORING = { id: 'w', finding_id: 'KZ-v665-04', gate0_disposition: 'monitoring' };
+  const DEFERRED = { id: 'v', finding_id: 'KZ-v665-05', gate0_disposition: 'deferred_with_rationale', gate0_rationale: 'next sprint' };
+
+  it('passes when every item is validly dispositioned and the prior report settled', () => {
+    const result = evaluateGate0SprintBoundary({
+      kaizenItems: [SCHEDULED_LINKED, MONITORING, DEFERRED], priorSprintReportSettled: true
+    });
+    assert.deepEqual(result, { ok: true, operatorOverrideApplied: false });
+  });
+
+  it('refuses KAIZEN_UNDISPOSITIONED on any item still "unreviewed", naming it', () => {
+    assert.throws(() => evaluateGate0SprintBoundary({ kaizenItems: [UNREVIEWED], priorSprintReportSettled: true }),
+      (err) => err instanceof WaveSchedulerError && err.code === 'KAIZEN_UNDISPOSITIONED' && err.detail.items.includes('KZ-v665-01'));
+  });
+
+  it('refuses KAIZEN_UNDISPOSITIONED on a "scheduled" item with no linked issue, rule, or guardrail rationale', () => {
+    assert.throws(() => evaluateGate0SprintBoundary({ kaizenItems: [SCHEDULED_UNLINKED], priorSprintReportSettled: true }),
+      (err) => err instanceof WaveSchedulerError && err.code === 'KAIZEN_UNDISPOSITIONED' && err.detail.items.includes('KZ-v665-03'));
+  });
+
+  it('accepts a "scheduled" item linked by rule id or by a non-blank gate0_rationale alone', () => {
+    assert.doesNotThrow(() => evaluateGate0SprintBoundary({
+      kaizenItems: [{ ...SCHEDULED_UNLINKED, linked_rule_id: 'rule-282' }], priorSprintReportSettled: true
+    }));
+    assert.doesNotThrow(() => evaluateGate0SprintBoundary({
+      kaizenItems: [{ ...SCHEDULED_UNLINKED, gate0_rationale: 'Guardrail 01' }], priorSprintReportSettled: true
+    }));
+  });
+
+  it('refuses PRIOR_SPRINT_REPORT_UNSETTLED only once every item is validly dispositioned', () => {
+    throwsCode(() => evaluateGate0SprintBoundary({ kaizenItems: [UNREVIEWED], priorSprintReportSettled: false }), 'KAIZEN_UNDISPOSITIONED');
+    throwsCode(() => evaluateGate0SprintBoundary({ kaizenItems: [MONITORING], priorSprintReportSettled: false }), 'PRIOR_SPRINT_REPORT_UNSETTLED');
+  });
+
+  it('passes with no items and a settled report', () => {
+    assert.deepEqual(evaluateGate0SprintBoundary({ kaizenItems: [], priorSprintReportSettled: true }), { ok: true, operatorOverrideApplied: false });
+  });
+
+  it('refuses a non-array kaizenItems', () => {
+    throwsCode(() => evaluateGate0SprintBoundary({ kaizenItems: 'nope', priorSprintReportSettled: true }), 'KAIZEN_ITEMS_INVALID');
+    throwsCode(() => evaluateGate0SprintBoundary({ priorSprintReportSettled: true }), 'KAIZEN_ITEMS_INVALID');
+  });
+
+  it('a valid Operator override bypasses both checks entirely', () => {
+    const override = { grantedBy: 'Jason', reason: 'urgent hotfix window', at: '2026-11-27T00:00:00Z' };
+    const result = evaluateGate0SprintBoundary({ kaizenItems: [UNREVIEWED], priorSprintReportSettled: false, operatorOverride: override });
+    assert.deepEqual(result, { ok: true, operatorOverrideApplied: true });
+  });
+
+  for (const [name, override] of [
+    ['missing entirely', undefined], ['null', null],
+    ['empty grantedBy', { grantedBy: '', reason: 'x', at: '2026-11-27T00:00:00Z' }],
+    ['unparseable at', { grantedBy: 'x', reason: 'y', at: 'not-a-date' }]
+  ]) {
+    it(`does not grant an override that is ${name} -- falls through to the real checks`, () => {
+      throwsCode(() => evaluateGate0SprintBoundary({ kaizenItems: [UNREVIEWED], priorSprintReportSettled: true, operatorOverride: override }), 'KAIZEN_UNDISPOSITIONED');
+    });
+  }
+});
+
+describe('WaveScheduler#createRun — optional Gate 0 Kaizen boundary (metadata.enforceGate0KaizenBoundary)', () => {
+  it('is off by default: createRun needs no gate0Check metadata at all', () => {
+    const { scheduler } = setup();
+    const run = scheduler.createRun({ id: 'r', fleetId: 'f', cars: [{ id: 'a', fileScope: ['lib/a.js'] }] });
+    assert.equal(run.status, 'active');
+  });
+
+  it('requires metadata.gate0Check when enforceGate0KaizenBoundary is true, before persisting anything', () => {
+    const { scheduler, store } = setup();
+    throwsCode(() => scheduler.createRun({
+      id: 'r', fleetId: 'f', cars: [{ id: 'a', fileScope: ['lib/a.js'] }],
+      metadata: { enforceGate0KaizenBoundary: true }
+    }), 'GATE0_CHECK_REQUIRED');
+    assert.deepEqual(store.read().runs, {}, 'a run missing gate0Check must never be persisted');
+  });
+
+  it('refuses the run, before persisting anything, when gate0Check reports an undispositioned item', () => {
+    const { scheduler, store } = setup();
+    throwsCode(() => scheduler.createRun({
+      id: 'r', fleetId: 'f', cars: [{ id: 'a', fileScope: ['lib/a.js'] }],
+      metadata: {
+        enforceGate0KaizenBoundary: true,
+        gate0Check: { kaizenItems: [{ id: 'x', gate0_disposition: 'unreviewed' }], priorSprintReportSettled: true }
+      }
+    }), 'KAIZEN_UNDISPOSITIONED');
+    assert.deepEqual(store.read().runs, {}, 'a run blocked by the Gate 0 check must never be persisted');
+  });
+
+  it('refuses the run when the prior report never settled, even with every item dispositioned', () => {
+    const { scheduler } = setup();
+    throwsCode(() => scheduler.createRun({
+      id: 'r', fleetId: 'f', cars: [{ id: 'a', fileScope: ['lib/a.js'] }],
+      metadata: {
+        enforceGate0KaizenBoundary: true,
+        gate0Check: { kaizenItems: [{ id: 'x', gate0_disposition: 'monitoring' }], priorSprintReportSettled: false }
+      }
+    }), 'PRIOR_SPRINT_REPORT_UNSETTLED');
+  });
+
+  it('admits the run when every item is dispositioned and the prior report settled', () => {
+    const { scheduler } = setup();
+    const run = scheduler.createRun({
+      id: 'r', fleetId: 'f', cars: [{ id: 'a', fileScope: ['lib/a.js'] }],
+      metadata: {
+        enforceGate0KaizenBoundary: true,
+        gate0Check: { kaizenItems: [{ id: 'x', gate0_disposition: 'monitoring' }], priorSprintReportSettled: true }
+      }
+    });
+    assert.equal(run.status, 'active');
+  });
+
+  it('admits the run on a valid Operator override, even with an unreviewed item and an unsettled report', () => {
+    const { scheduler } = setup();
+    const run = scheduler.createRun({
+      id: 'r', fleetId: 'f', cars: [{ id: 'a', fileScope: ['lib/a.js'] }],
+      metadata: {
+        enforceGate0KaizenBoundary: true,
+        gate0Check: {
+          kaizenItems: [{ id: 'x', gate0_disposition: 'unreviewed' }], priorSprintReportSettled: false,
+          operatorOverride: { grantedBy: 'Jason', reason: 'urgent hotfix window', at: '2026-11-27T00:00:00Z' }
+        }
+      }
+    });
+    assert.equal(run.status, 'active');
+  });
 });

@@ -159,6 +159,17 @@ Local train-admission and incremental sync checks (#1894, #2259) against `lib/ro
 | `tc roadmap admission --candidate <file> --facts <file> [--receipt <file>] [--manifest <file>]` | Classifies a train candidate (JSON files) and validates its dispatch against the given facts; prints `{classification, reasons, manifest, admission}`. Exits 2 on a `RoadmapAdmissionError` refusal. |
 | `tc roadmap sync --state <file> --issues <n,n,...> [--repo <path>] [--since <iso>]` | Fetches live issue summaries and runs one incremental sync cycle against the state file; prints `{published, changed, state}`. Does not render real roadmap HTML — `published` here means "the changed-issue set differs from the prior run." |
 
+## Closed-loop Observer Kaizen ledger
+
+A thin client over `/api/v6/kaizen/*` (#3324): detect an Observer Gate 4 finding, list recorded items (optionally filtered), read the Gate 0 planning feed of open/due items, or record a Gate 0 disposition. `--target-metric`, `--defect-category` and `--verification-class` (`A_DETERMINISTIC`, `B_WORKFLOW`, `C_OPERATIONAL_DRILL`, `D_LONGITUDINAL`) follow `lib/v6/e5-kaizen-ledger.js`'s own Architect-ruled schema.
+
+| Command | What it does |
+| --- | --- |
+| `tc kaizen detect --origin-sprint <v> --finding-id <id> --defect-category <c> --root-cause <text> --corrective-action <text> --owner-role <role> --verification-class <class> --target-metric <text> [--owner-lane <lane>] [--issue <n>] [--pr <n>] [--rule <id>] [--logical-project <id>]` | Records a new Kaizen finding (`lifecycle_state: Detected`, `gate0_disposition: unreviewed`). |
+| `tc kaizen list [--id <id>] [--logical-project <id>] [--origin-sprint <v>] [--lifecycle-state <s>] [--gate0-disposition <d>] [--limit <n>]` | Lists recorded items, newest first, matching every given filter — unlike `gate0-feed`, not scoped to open/due `lifecycle_state`s. |
+| `tc kaizen gate0-feed [--logical-project <id>]` | Lists every open/due item a Gate 0 sprint charter must disposition before dispatch, oldest first. |
+| `tc kaizen disposition <id> --disposition <scheduled\|monitoring\|deferred_with_rationale> [--rationale <text>] [--issue <n>] [--rule <id>]` | Records the item's Gate 0 disposition. `--issue`/`--rule` are folded into the rationale text — the ledger stores a linked issue/rule only at `detect` time, never on a later disposition update. |
+
 ## Operator notification candidates
 
 | Command | What it does |
