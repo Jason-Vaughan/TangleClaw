@@ -5810,6 +5810,22 @@ function openGlobalSettings() {
 
   const scannerIntervalSec = Math.round((c.portScannerIntervalMs || 60000) / 1000);
 
+  // #3319/#3318: the host storage warning threshold. diskWarningThresholdPercent
+  // is the one canonical stored field (lib/routes/config.js); GET /api/config
+  // also mirrors it under storageWarningThresholdPct as an accepted alias, so
+  // reading either name works regardless of which sibling car (#3318) landed
+  // first — defaulting to 85 (the documented default) when neither is present.
+  const storageWarningThresholdPct = Math.min(98, Math.max(50,
+    parseInt(c.diskWarningThresholdPercent ?? c.storageWarningThresholdPct ?? 85, 10) || 85));
+  // Critic cumulative review, Car V667-W1-A: before #3318 merged, saving this
+  // field looked live but silently did nothing — an operator would see it
+  // "revert" next time Settings opened, with no signal why. Now that #3318 has
+  // landed, GET /api/config always returns the field, so this reads true and
+  // the caveat below never renders — kept rather than removed, since it still
+  // protects a future state where the field is absent again (e.g. a rollback).
+  const storageThresholdPersists =
+    c.diskWarningThresholdPercent !== undefined || c.storageWarningThresholdPct !== undefined;
+
   // #710 — rendered from the SERVER's resolved bind state (`bindState` on
   // /api/config), never re-derived here. The rules belong to the server: caddy
   // mode overrides an opt-in, and an install that has never chosen is held wide
@@ -5854,6 +5870,7 @@ function openGlobalSettings() {
     </div>` : '';
 
   body.innerHTML = `
+    <section class="gs-category-section" data-gs-category="general" aria-label="General &amp; Server">
     <div class="gs-section-label">Appearance</div>
     <div class="form-group">
       <label class="form-label" for="gsTheme">Theme</label>
@@ -5905,7 +5922,24 @@ function openGlobalSettings() {
       <input type="number" class="form-input" id="gsPortScannerInterval" value="${scannerIntervalSec}" min="10" max="600">
       <div class="form-hint">Min 10s, max 600s (10 min)</div>
     </div>
+    </section>
 
+    <section class="gs-category-section" data-gs-category="storage" aria-label="Storage &amp; System Health" hidden>
+    <div class="gs-section-label">Storage</div>
+    <div class="form-group">
+      <label class="form-label" for="gsStorageWarningThresholdPct">Storage warning threshold (%)</label>
+      <input type="number" class="form-input" id="gsStorageWarningThresholdPct"
+             value="${storageWarningThresholdPct}" min="50" max="98">
+      <div class="form-hint">
+        Warn when the data volume holding projects and sessions crosses this percentage full
+        (range 50&ndash;98, default 85). Evaluated against real disk capacity; an admin alert surfaces
+        when the threshold is crossed.
+        ${storageThresholdPersists ? '' : '<br><strong>Not yet active:</strong> the backend setting this binds to has not shipped yet (#3318) — saving has no effect until it does, and this value will appear to revert the next time Settings opens.'}
+      </div>
+    </div>
+    </section>
+
+    <section class="gs-category-section" data-gs-category="backups" aria-label="Backups &amp; Maintenance" hidden>
     <div class="gs-section-label">Commit hygiene</div>
     <div class="form-group">
       <label class="gs-toggle-label">
@@ -5921,7 +5955,9 @@ function openGlobalSettings() {
         commit-msg hooks (commitlint, etc.) are left alone.
       </div>
     </div>
+    </section>
 
+    <section class="gs-category-section" data-gs-category="security" aria-label="Security &amp; Auth" hidden>
     <div class="gs-section-label">Service Token (M2M API)</div>
     <div class="form-group">
       <label class="gs-toggle-label">
@@ -5990,7 +6026,9 @@ function openGlobalSettings() {
     <div class="form-group" id="gsRecoveryCodesSection">
       <div class="form-hint">Checking your recovery codes…</div>
     </div>
+    </section>
 
+    <section class="gs-category-section" data-gs-category="bridge" aria-label="Bridge &amp; Notifications" hidden>
     <div class="gs-section-label">Operator bridge (Discord)</div>
     <div class="form-group" id="gsOperatorBridgeSection">
       <div class="form-hint">Checking the operator bridge…</div>
@@ -6005,7 +6043,9 @@ function openGlobalSettings() {
     <div class="form-group" id="gsBridgeSettingsSection">
       <div class="form-hint">Checking bridge reach, notifications and channels…</div>
     </div>
+    </section>
 
+    <section class="gs-category-section" data-gs-category="security" aria-label="Security &amp; Auth" hidden>
     <div class="gs-section-label">Launch isolation override</div>
     <div class="form-group">
       <div class="form-hint">Whether launches start, in every project and for the Project Master, when TangleClaw cannot show them isolated. Each project also has its own, in its Settings.</div>
@@ -6013,12 +6053,16 @@ function openGlobalSettings() {
         <div class="form-hint">Reading the override…</div>
       </div>
     </div>
+    </section>
 
+    <section class="gs-category-section" data-gs-category="engines" aria-label="Engines &amp; Quotas" hidden>
     <div class="gs-section-label">Engine Settings</div>
     <div class="form-group" id="gsEngineSettingsContainer">
       <div class="form-hint">Loading engine inventory…</div>
     </div>
+    </section>
 
+    <section class="gs-category-section" data-gs-category="backups" aria-label="Backups &amp; Maintenance" hidden>
     <div class="gs-section-label">Diagnostics</div>
     <div class="form-group">
       <button type="button" class="btn" id="gsRestartBtn"
@@ -6032,7 +6076,15 @@ function openGlobalSettings() {
           : 'Disabled: no restart mechanism detected on this host. On macOS this needs the launchd plist. On Linux it needs a systemd user unit, tangleclaw.service, that runs this server and sets KillMode=process so tmux sessions survive (then run systemctl --user daemon-reload). The server log says which condition failed.'}
       </div>
     </div>
+    </section>
   `;
+
+  // #3319: the rail's active category decides which section(s) are visible;
+  // everything else is `hidden` (set in the template above) until chosen.
+  // Several categories span more than one <section> (bridge/backups each
+  // have 1; security has 2), so this toggles every section sharing a
+  // category together, never just the first match.
+  _gsShowCategory(_gsActiveCategoryFromHash() || 'general');
 
   // #235 — wire the restart button. Inline (rather than at page init)
   // because the button only exists once the modal opens. No-op when
@@ -6164,6 +6216,105 @@ function closeGlobalSettings() {
   if (typeof window.tcForgetOperatorBridge === 'function') {
     window.tcForgetOperatorBridge(document.getElementById('gsOperatorBridgeSection'));
   }
+  // #3319: drop the deep-link hash on close, same as it was never opened —
+  // leaving it would make a page reload (or a bookmark/share of the URL)
+  // silently reopen Global Settings to whatever category was last shown.
+  if (_gsActiveCategoryFromHash() && typeof window.history.replaceState === 'function') {
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
+}
+
+// #3319: the full-screen Global Settings workspace's own 6 categories, the
+// rail/search/deep-link machinery that switches between them. The category
+// NAMES here are the single source of truth — the rail buttons in
+// public/index.html and every `data-gs-category` on a `<section>` inside
+// openGlobalSettings()'s own template must each name one of these exactly.
+const GS_CATEGORIES = ['general', 'storage', 'engines', 'security', 'backups', 'bridge'];
+const GS_HASH_PREFIX = '#settings/';
+let gsActiveCategory = 'general';
+
+/** Which Global Settings category a deep-link hash names, or null (#3319). */
+function _gsActiveCategoryFromHash() {
+  const h = window.location.hash || '';
+  if (!h.startsWith(GS_HASH_PREFIX)) return null;
+  const cat = h.slice(GS_HASH_PREFIX.length);
+  return GS_CATEGORIES.includes(cat) ? cat : null;
+}
+
+/**
+ * Show every `<section data-gs-category="category">` (there can be more
+ * than one — `backups` and `security` each span two non-adjacent blocks of
+ * the original modal's own field order) and hide every other category's
+ * sections; mark the matching rail button active; reflect the choice in
+ * the URL hash via `replaceState` (never `pushState` — one click per
+ * category in Back/Forward history would be surprising, not useful)
+ * (#3319).
+ * @param {string} category
+ */
+function _gsShowCategory(category) {
+  const cat = GS_CATEGORIES.includes(category) ? category : 'general';
+  gsActiveCategory = cat;
+  const search = document.getElementById('gsSearchFilter');
+  if (search) search.value = ''; // switching category clears an active search so the two controls never fight over what's on screen
+  document.querySelectorAll('.gs-category-section').forEach((section) => {
+    section.hidden = section.getAttribute('data-gs-category') !== cat;
+  });
+  document.querySelectorAll('.gs-category-rail-item').forEach((item) => {
+    const isActive = item.getAttribute('data-gs-category') === cat;
+    item.classList.toggle('is-active', isActive);
+    item.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+  const next = `${GS_HASH_PREFIX}${cat}`;
+  if (window.location.hash !== next && typeof window.history.replaceState === 'function') {
+    window.history.replaceState(null, '', next);
+  }
+}
+
+/**
+ * Click wiring for the category rail (#3319). `#gsCategoryRail`'s buttons are
+ * static markup in index.html, siblings of `#globalSettingsBody` rather than
+ * inside it, so `openGlobalSettings()`'s `body.innerHTML = ...` never rebuilds
+ * them — wired exactly once, at the bottom of this file's one-time event
+ * wiring, never from inside `openGlobalSettings()` itself (that would stack a
+ * fresh listener on every open, Critic cumulative review, Car V667-W1-A).
+ */
+function _gsWireCategoryRail() {
+  document.querySelectorAll('.gs-category-rail-item').forEach((item) => {
+    item.addEventListener('click', () => _gsShowCategory(item.getAttribute('data-gs-category')));
+  });
+}
+
+/**
+ * A non-empty query searches every category at once (#3319): each
+ * `.form-group` whose own text matches stays visible, every other one
+ * hides, and a category section with at least one visible match reveals
+ * itself regardless of the rail's own current selection — so finding a
+ * setting never first requires guessing which category it lives in. An
+ * empty query reverts to the plain single-category view the rail controls.
+ * @param {string} query
+ */
+function _gsApplySearchFilter(query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) { _gsShowCategory(gsActiveCategory); return; }
+  document.querySelectorAll('.gs-category-section').forEach((section) => {
+    let anyMatch = false;
+    section.querySelectorAll('.form-group').forEach((group) => {
+      const matches = group.textContent.toLowerCase().includes(q);
+      group.hidden = !matches;
+      if (matches) anyMatch = true;
+    });
+    section.hidden = !anyMatch;
+  });
+  document.querySelectorAll('.gs-category-rail-item').forEach((item) => {
+    item.classList.remove('is-active');
+    item.setAttribute('aria-pressed', 'false');
+  });
+}
+
+/** Input wiring for the search box (#3319), wired exactly once — same reason and same place as `_gsWireCategoryRail`. */
+function _gsWireSearchFilter() {
+  const search = document.getElementById('gsSearchFilter');
+  if (search) search.addEventListener('input', () => _gsApplySearchFilter(search.value));
 }
 
 /**
@@ -6172,6 +6323,14 @@ function closeGlobalSettings() {
 async function saveGlobalSettings() {
   const intervalSec = parseInt(document.getElementById('gsPortScannerInterval').value, 10);
   const intervalMs = (isNaN(intervalSec) ? 60 : Math.min(600, Math.max(10, intervalSec))) * 1000;
+
+  // #3319/#3318: clamp defensively even though the input's own min/max
+  // already constrain it in a compliant browser — a manually-typed
+  // out-of-range value before blur, or a non-numeric paste, must not reach
+  // the PATCH body unclamped.
+  const storageThresholdEl = document.getElementById('gsStorageWarningThresholdPct');
+  const storageThresholdRaw = storageThresholdEl ? parseInt(storageThresholdEl.value, 10) : NaN;
+  const storageThresholdPct = Math.min(98, Math.max(50, isNaN(storageThresholdRaw) ? 85 : storageThresholdRaw));
 
   const patch = {
     theme: document.getElementById('gsTheme').value,
@@ -6183,7 +6342,14 @@ async function saveGlobalSettings() {
     portScannerIntervalMs: intervalMs,
     stripAiCoauthors: document.getElementById('gsStripAiCoauthors').checked,
     serviceTokenEnabled: document.getElementById('gsServiceTokenEnabled').checked,
-    tailscaleMode: document.getElementById('gsTailscaleMode').checked
+    tailscaleMode: document.getElementById('gsTailscaleMode').checked,
+    // #3318 (sibling car, merged after this one was originally written):
+    // diskWarningThresholdPercent is the one canonical stored field;
+    // storageWarningThresholdPct is PATCH /api/config's accepted alias for
+    // it, but the route refuses 400 if a body names BOTH ("the same
+    // setting; send only one") — sending only the canonical name here
+    // avoids that refusal outright rather than relying on the alias path.
+    diskWarningThresholdPercent: storageThresholdPct
   };
 
   // Send this ONLY when the operator actually moved the switch.
@@ -9672,6 +9838,25 @@ $('gearBtn').addEventListener('click', openGlobalSettings);
 $('globalSettingsCancelBtn').addEventListener('click', closeGlobalSettings);
 $('globalSettingsSaveBtn').addEventListener('click', saveGlobalSettings);
 $('globalSettingsModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeGlobalSettings(); });
+// #3319: the new close ("✕") button in the workspace header, beside Cancel —
+// same effect, added because a full-screen page (unlike the old 440px
+// dialog) has no backdrop click-outside area reachable without scrolling.
+$('globalSettingsCloseBtn').addEventListener('click', closeGlobalSettings);
+// #3319: the rail/search wiring itself, done once here rather than inside
+// openGlobalSettings() — the rail and search box are static markup outside
+// #globalSettingsBody, so re-running this on every open would stack a fresh
+// listener per open (Critic cumulative review, Car V667-W1-A).
+_gsWireCategoryRail();
+_gsWireSearchFilter();
+// #3319: Escape closes the workspace from anywhere in it, including while
+// focus is inside the search box — scoped to whether the modal is
+// currently `.open` so it never fires for an unrelated keypress while
+// Global Settings is closed.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('globalSettingsModal').classList.contains('open')) {
+    closeGlobalSettings();
+  }
+});
 $('groupCancelBtn').addEventListener('click', closeGroupModal);
 $('groupSaveBtn').addEventListener('click', saveGroup);
 $('groupDeleteBtn').addEventListener('click', openGroupDeleteConfirm);

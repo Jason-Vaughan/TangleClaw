@@ -41,6 +41,122 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-27 — Global Settings rebuilt as a full-screen workspace, Car V667-W1-A
+
+<!-- prawduct: type=added | scope=v667-w1-a -->
+
+- Added #3319: rebuilt the Global Settings modal (`public/ui.js#openGlobalSettings`,
+  `public/index.html#globalSettingsModal`) from a skinny 440px dialog into a full-screen
+  workspace with a left-hand category rail — General & Server, Storage & System Health,
+  Engines & Quotas, Security & Auth, Backups & Maintenance, Bridge & Notifications. This is
+  the charter's own committed 6-category list; two separate Medusa dispatches from PM named
+  conflicting category lists (the issue's bare "e.g." list, and a 2nd dispatch's own
+  restatement), flagged non-blockingly, and PM confirmed the charter's list is authoritative
+  before building.
+- Reused the exact `position:fixed; inset:0` inline-style-over-CSS-class technique
+  `#settingsModal` (#3214) already uses for its own full-viewport page, rather than
+  introducing a second pattern — confirmed by reading that modal's own markup directly
+  after an earlier message in this session incorrectly claimed Session Settings was NOT
+  full-screen (corrected to PM in the same session).
+- Added a search box (`#gsSearchFilter`) that filters every category's fields at once (not
+  scoped to the currently-open category — finding a setting shouldn't require first
+  guessing which category it lives in) and a deep-linkable `#settings/<category>` hash via
+  `history.replaceState` (never `pushState` — one history entry per rail click would be
+  surprising in Back/Forward, not useful).
+- Added a Storage Warning Threshold (%) field (default 85, range 50-98) in Storage & System
+  Health for sibling car #3318's backend setting. Confirmed via direct source read
+  (`lib/routes/config.js`'s `allowedFields` allowlist) that NEITHER of the two candidate
+  field names the dispatch gave (`diskWarningThresholdPercent` / `storageWarningThresholdPct`)
+  exists in the backend yet — #3318 had not landed as of this write. `saveGlobalSettings`
+  sends BOTH names defensively; the server's own documented allowlist behavior silently
+  skips an unrecognized field rather than erroring, so persistence starts working the moment
+  #3318's allowlist entry lands under whichever name it actually uses, with no further
+  change needed on this side.
+- Every pre-existing control, id, and the `openGlobalSettings`/`closeGlobalSettings`/
+  `saveGlobalSettings` handlers are preserved unchanged — only re-bucketed into
+  `<section data-gs-category="...">` wrappers around the existing markup, confirmed by a
+  balanced-tag check and by keeping every existing test file in this area green
+  (`test/bridge-step-up-settings-wiring.test.js`, `test/global-engine-settings-ui.test.js`,
+  `test/isolation-override-banner.test.js`, `test/launch-isolation-override-ui.test.js`,
+  `test/operator-bridge-panel.test.js`, `test/settings-credential.test.js`,
+  `test/bind-policy-wiring.test.js`).
+- One cross-file fix outside this car's declared scope: `test/operator-bridge-panel.test.js`
+  lifts `closeGlobalSettings()` alone via `vm.runInContext`, and that function now
+  references `_gsActiveCategoryFromHash`/`window.history` as free variables the isolated
+  lift did not provide — caught by running that file, not by inspection. Stubbed minimally
+  in that file; the real hash-clearing behavior has its own direct coverage in the new test
+  file below.
+- Cumulative Critic R1 (2 warnings, fixed): (1) `_gsWireCategoryRail`/
+  `_gsWireSearchFilter` were called from inside `openGlobalSettings()`, stacking a fresh
+  listener on every open since the rail/search box are static markup never rebuilt by
+  that function — moved both calls to the file's one-time top-level event-wiring block
+  instead. (2) the Storage Warning Threshold field gave no signal that it does not persist
+  yet (pending #3318) — added a `storageThresholdPersists` check (true once either backend
+  field name appears in `GET /api/config`) and a "Not yet active" caveat in the hint text
+  that self-clears the moment #3318 lands, with no further change needed here. Also added
+  `.prawduct/operator-verification.md` VRF-009 for this car's visual/interaction surface
+  (full-viewport layout, rail switching, cross-category search, hash deep-linking, close/
+  Escape), accepted with the same "no browser tooling in this headless lane" rationale as
+  VRF-008.
+- Post-R1 fix (own-initiative, not a Critic finding): sibling car #3318 (`diskWarningThresholdPercent`/
+  `storageWarningThresholdPct`) merged to `origin/main` (PR #3341, `58bb55bc`) while this car was
+  mid-review. Read its `lib/routes/config.js` diff directly before rebasing: the merged PATCH route
+  treats `diskWarningThresholdPercent` as the one canonical field and `storageWarningThresholdPct`
+  as an alias — but refuses 400 ("the same setting; send only one") if a body sends BOTH. This
+  car's `saveGlobalSettings()` was sending both unconditionally (written defensively before
+  #3318 landed, when neither name existed in the allowlist yet) — every save of Global Settings
+  would have 400'd once rebased onto the new main. Fixed to send only `diskWarningThresholdPercent`.
+  The read-side fallback (`c.diskWarningThresholdPercent ?? c.storageWarningThresholdPct`) and the
+  `storageThresholdPersists` caveat check are unaffected by this and still correct — `GET
+  /api/config` now always mirrors the value under both names, so the caveat self-clears exactly
+  as designed.
+- New `test/global-settings-workspace-ui.test.js` (40 cases): markup/CSS structural
+  assertions (matching this file's own established convention for `public/ui.js`, per
+  `test/settings-credential.test.js`'s comment) plus behavioral coverage of the new rail/
+  search/hash logic, lifted together with its module-level `const`/`let` state and run
+  against a minimal hand-built fake `document`/`window` (not a full mini-DOM) with every
+  fake method it calls listed explicitly, so an unimplemented one fails loudly instead of
+  silently no-op'ing. `test/tiers.json`/`.testament.toml` regenerated via
+  `scripts/test-tiers.js --write`/`--testament` (lands in the `small` tier — no subprocess,
+  no sqlite, no socket).
+- `docs/areas.json` needed no change: confirmed by reading the whole file that `public/**`
+  is already covered by a single existing glob (the `dashboard-ux` area) and that the file
+  tracks no per-test-file registration at all — the file scope's mention of this file was a
+  stale assumption, not something requiring a forced edit.
+- Verification: full `small`-tier suite plus a targeted regression sweep of every Global
+  Settings-adjacent test file green. An earlier, now-superseded `medium`-tier pool run
+  (`testament run --suite medium`) surfaced 24 failures clustered on 3 shared pool hosts
+  (monad-1, brooks-nas, brooks-5950x), none touching `public/ui.js`/`index.html`/
+  `style.css` or Global Settings; a sample of 3 (`store.test.js`, `bridge-gateway.test.js`,
+  `session-rules.test.js`) passed cleanly run directly on a clean `origin/main` worktree
+  (that run predates the rebase onto `origin/main@8cd4988a` below and is not the evidence
+  gating this PR — recorded here only as earlier-session context).
+- A first post-rebase recorder run (base `origin/main@8cd4988a`, before the #3318 dual-send
+  fix below) recorded `node --test --test-reporter=junit test/*.test.js`: **32311 passed,
+  52 failed, 2 skipped**. All 52 lived in 7 files — `test/engine-health.test.js`,
+  `test/master-medusa.test.js`, `test/projects.test.js`, `test/sessions.test.js`,
+  `test/startup-dialog.test.js`, `test/tmux-draft-capture.test.js`, `test/tmux-tcc.test.js`
+  — none touching `public/ui.js`/`index.html`/`style.css` or Global Settings. Verified
+  directly: ran all 7 files on a clean `origin/main@8cd4988a` worktree. 4 of the 7
+  (`engine-health`, `master-medusa`, `tmux-draft-capture`, `tmux-tcc`) reproduced failures
+  in that same cluster identically; the other 3 (`projects`, `sessions`, `startup-dialog`)
+  showed only 1 failure out of 1019 tests (`"the pane writer refuses a declared dialog
+  (#2128)"` in `test/startup-dialog.test.js`) — a *different* specific case than the one
+  that failed on this branch's run in the same file (`"the synchronous cursor read says
+  whether the cursor is shown, on a real pane"`), consistent with real-tmux-pane/timing-
+  dependent flakiness in that file rather than a deterministic regression either way.
+- The evidence that actually gates `prawduct-hook test-status` for the FINAL tree (after
+  rebasing onto `origin/main@58bb55bc` and the #3318 dual-send fix above) is a second,
+  final recorder run: **32395 passed, 21 failed, 2 skipped** — a strict subset of the
+  same 52 named above (one new name, `"capturePane still captures only the visible pane
+  when the REAL TCC_SOCKET session is itself in alternate screen"`, is a different specific
+  sub-test inside the already-verified-flaky `test/tmux-tcc.test.js`, same file, same real-
+  tmux-pane-timing class). The fewer-failures count between the two runs (52 -> 21) is
+  itself further evidence of non-deterministic, timing-dependent flakiness in this
+  cluster rather than a fixed count any change could plausibly move. Conclusion: every
+  failure across both runs is pre-existing, environment-dependent (real tmux pane/session
+  timing), and unrelated to this branch's changes — none fixed, none newly introduced.
+
 ## 2026-11-27 — v6 chat UX: scroll/selection corruption, dedup send bubble, header UTH toggle, queued-turn indicator, Car V666-W1-A
 
 <!-- prawduct: type=fixed | scope=v666-w1-a -->

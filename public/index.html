@@ -783,12 +783,36 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
     </div>
   </div>
 
-  <!-- Global Settings Modal -->
+  <!-- Global Settings Workspace. #3319: a true full-viewport page, same
+       `position:fixed; inset:0` inline-style-over-CSS-class technique
+       #settingsModal (#3214) above already uses — the inline style always
+       wins over `.global-settings-modal`'s own class rule regardless of
+       selector specificity, so adding a narrower rule later can never
+       silently shrink this back into a bounded dialog. `.global-settings-
+       modal`'s own flex-column plumbing (title+search pinned, actions
+       pinned, the rail+content row the only scrolling region) mirrors
+       `.settings-modal`'s. -->
   <div class="modal-backdrop" id="globalSettingsModal">
-    <div class="modal-content" role="dialog" aria-label="Global settings" aria-modal="true"
-         style="max-width:440px;max-height:85vh;overflow-y:auto">
-      <h3 class="modal-title">Global Settings</h3>
-      <div id="globalSettingsBody"></div>
+    <div class="modal-content global-settings-modal" role="dialog" aria-label="Global settings" aria-modal="true"
+         style="position:fixed; inset:0; width:100vw; height:100vh; max-width:100vw; max-height:100vh; margin:0; border-radius:0;">
+      <h3 class="modal-title gs-workspace-header">
+        <span>Global Settings</span>
+        <input type="search" class="form-input gs-workspace-search" id="gsSearchFilter"
+               placeholder="Search settings…" aria-label="Search Global Settings" autocomplete="off">
+        <button type="button" class="btn btn-compact gs-workspace-close" id="globalSettingsCloseBtn"
+                aria-label="Close Global Settings" title="Close (Esc)">✕</button>
+      </h3>
+      <div class="gs-workspace-row">
+        <nav class="gs-category-rail" id="gsCategoryRail" aria-label="Settings categories">
+          <button type="button" class="gs-category-rail-item" data-gs-category="general" id="gsRailGeneral">General &amp; Server</button>
+          <button type="button" class="gs-category-rail-item" data-gs-category="storage" id="gsRailStorage">Storage &amp; System Health</button>
+          <button type="button" class="gs-category-rail-item" data-gs-category="engines" id="gsRailEngines">Engines &amp; Quotas</button>
+          <button type="button" class="gs-category-rail-item" data-gs-category="security" id="gsRailSecurity">Security &amp; Auth</button>
+          <button type="button" class="gs-category-rail-item" data-gs-category="backups" id="gsRailBackups">Backups &amp; Maintenance</button>
+          <button type="button" class="gs-category-rail-item" data-gs-category="bridge" id="gsRailBridge">Bridge &amp; Notifications</button>
+        </nav>
+        <div class="gs-workspace-content" id="globalSettingsBody"></div>
+      </div>
       <div class="modal-actions">
         <button class="btn" id="globalSettingsCancelBtn">Cancel</button>
         <button class="btn btn-primary" id="globalSettingsSaveBtn">Save</button>
