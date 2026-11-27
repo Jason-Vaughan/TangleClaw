@@ -2,9 +2,11 @@
 
 ## Current release
 
-- [v6.6.4 — Engine failover, delegate succession, lifecycle progress, and settings parity](v6.6.4.md)
+- [v6.6.5 — Sprint reporting, intake traceability, and the V6 feature showcase](v6.6.5.md)
 
 ## Recent releases
+
+- [v6.6.4 — Engine failover, delegate succession, lifecycle progress, and settings parity](v6.6.4.md)
 
 - [v6.6.3 — Fleet policies, safer parallel waves, and project-management helpers](v6.6.3.md)
 

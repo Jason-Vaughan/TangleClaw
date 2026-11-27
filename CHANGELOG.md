@@ -4,6 +4,30 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.6.5] - 2026-11-27
+
+### Added
+
+- **Sprint report gate and Kaizen viewer** (#3266): adds configurable per-version and per-train Gate 4 decisions for mandatory sprint reports and post-mortems, plus a standalone Kaizen & Reports view with version/train selection and settled-report content. The view is not yet mounted in the live page.
+- **Sprint car status sync** (#3267): derives each car's not-started, in-progress, in-review, completed, or deployed state from PR, scheduler, and workload receipts, with a blocked overlay.
+- **Sprint report coverage audit** (#3274): adds a point-in-time v6.6 train status snapshot and coverage audit confirming shipped v6 releases have corresponding sprint reports.
+- **Project documentation SSOT and charter** (#3275): adds a customizable project/fleet documentation manifest, a structured Functional Project Charter schema, and a standalone document index and reader view. The view is not yet mounted in the V6 shell.
+- **Intake-to-release traceability** (#3279): adds a repeatable audit linking GitHub issues with V6 intake references to changelog or release evidence.
+
+### Changed
+
+- **V6 feature showcase** (#3290): updates the README and website with audience, feature matrix, fleet-pack, release-train, and V6 architecture sections, and adds a navigational V6 capability summary to the Feature Index.
+
+### Verification
+
+- PR #3305 (#3275): merged as `d7b3b12d45c3213c48f2c912c56fe764387cac5a`; exact-head Tests run `45898789407` succeeded; Architect A1186/A1187 APPROVED and PRR-A R-Gate R3 ACCEPT.
+- PR #3304 (#3266, #3267): merged as `9558b6493c40ff57419e98b3bca59702bffd07ae`; exact-head Tests run `45928090927` attempt 2 succeeded; Architect A1204/A1205 APPROVED and PRR-A R-Gate R3 ACCEPT.
+- PR #3296 (#3274, #3279, #3290): merged as `258f00df8f60d07d78161ad16c879f7b3bc90d31`; exact-head Tests run `45929029208` succeeded; Architect A1206/A1207 APPROVED and PRR-A R-Gate R4 ACCEPT.
+
+### Release state
+
+This document is part of the v6.6.5 release-cut PR. The cut is not yet merged, tagged, or published. The release workflow will test the eventual merge commit and handle tagging and publication; this PR does not create a tag or publish a release.
+
 ## [6.6.4] - 2026-11-27
 
 ### Added
