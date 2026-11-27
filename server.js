@@ -9735,32 +9735,37 @@ function _v6LogicalProjectIdsForLegacyProject(projectId) {
  * project session is not thereby trusted with every OTHER project's items
  * on this (global, project-agnostic) ledger; each route below checks the
  * returned scope against the item/body it is about to read or write.
- * Writes `res` and returns `{ok: false}` only when the caller may not use
- * this route family at all (an unbound or invalid caller, via
+ * Writes `res` and returns `null` only when the caller may not use this
+ * route family at all (an unbound or invalid caller, via
  * {@link operatorProjectCaller}'s own refusal); a project session with no
  * v6 presence yet (`allowedLogicalProjectIds` empty) still passes this gate
- * -- it can simply act on nothing, which the per-item check enforces.
+ * -- it can simply act on nothing, which the per-item check enforces. Named
+ * to end in `Caller` and returns a value a bare `if (!scope) return;`
+ * reads correctly (truthy object or `null`, never `{ok: false}`) so this
+ * route family's guard matches the same closed-world grammar
+ * `test/v6-master-release-qualification.test.js`'s static route-security
+ * check requires of every `/api/v6` route's first statement.
  * @param {http.IncomingMessage} req - The request
  * @param {http.ServerResponse} res - The response, written only on refusal
  * @param {string} action - What the route does
- * @returns {{ok: true, allowedLogicalProjectIds: (string[]|null)}|{ok: false}}
+ * @returns {{allowedLogicalProjectIds: (string[]|null)}|null}
  *   `allowedLogicalProjectIds` is `null` for the operator/Master (every
  *   item, unrestricted), else the bound project's own resolved ids.
  */
-function _v6KaizenScope(req, res, action) {
+function kaizenScopeCaller(req, res, action) {
   const access = sharedDocsAccess.resolveAccess(req);
   if (access.kind === sharedDocsAccess.KINDS.OPERATOR || access.kind === sharedDocsAccess.KINDS.MASTER) {
-    return { ok: true, allowedLogicalProjectIds: null };
+    return { allowedLogicalProjectIds: null };
   }
   if (access.kind === sharedDocsAccess.KINDS.PROJECT) {
-    return { ok: true, allowedLogicalProjectIds: _v6LogicalProjectIdsForLegacyProject(access.projectId) };
+    return { allowedLogicalProjectIds: _v6LogicalProjectIdsForLegacyProject(access.projectId) };
   }
   operatorProjectCaller(req, res, action);
-  return { ok: false };
+  return null;
 }
 
 /**
- * Whether a kaizen-scoped caller (as {@link _v6KaizenScope} resolved it) may
+ * Whether a kaizen-scoped caller (as {@link kaizenScopeCaller} resolved it) may
  * act on `logicalProjectId` (#3325 addendum, PRR-A R-Gate Round 1, BLOCKING
  * 2). `null` for `allowed` means unrestricted (the operator/Master); an
  * array requires exact membership, including when `logicalProjectId` itself
@@ -9802,8 +9807,8 @@ function _v6RequireOwnedKaizenItem(res, id, allowedLogicalProjectIds) {
 }
 
 route('POST', '/api/v6/kaizen/items', (req, res, _params, body) => {
-  const scope = _v6KaizenScope(req, res, 'detect a Kaizen item');
-  if (!scope.ok) return;
+  const scope = kaizenScopeCaller(req, res, 'detect a Kaizen item');
+  if (!scope) return;
   const b = _v6Body(body);
   if (!_v6KaizenOwns(scope.allowedLogicalProjectIds, b.logicalProjectId)) {
     return errorResponse(res, 403, 'logicalProjectId must be one of your own project\'s v6 logical projects', 'FORBIDDEN');
@@ -9818,16 +9823,16 @@ route('POST', '/api/v6/kaizen/items', (req, res, _params, body) => {
 });
 
 route('GET', '/api/v6/kaizen/items/:id', (req, res, params) => {
-  const scope = _v6KaizenScope(req, res, 'read a Kaizen item');
-  if (!scope.ok) return;
+  const scope = kaizenScopeCaller(req, res, 'read a Kaizen item');
+  if (!scope) return;
   const item = _v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds);
   if (!item) return;
   jsonResponse(res, 200, item);
 });
 
 route('GET', '/api/v6/kaizen/items/:id/measurements', (req, res, params) => {
-  const scope = _v6KaizenScope(req, res, 'read a Kaizen item\'s measurements');
-  if (!scope.ok) return;
+  const scope = kaizenScopeCaller(req, res, 'read a Kaizen item\'s measurements');
+  if (!scope) return;
   if (!_v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds)) return;
   jsonResponse(res, 200, e5.listMeasurements(v6Db(), params.id));
 });
@@ -9839,8 +9844,8 @@ route('GET', '/api/v6/kaizen/items/:id/measurements', (req, res, params) => {
 // can reach either state without the 4-Class proof rules/close precondition
 // actually running.
 route('PATCH', '/api/v6/kaizen/items/:id/state', (req, res, params, body) => {
-  const scope = _v6KaizenScope(req, res, 'change a Kaizen item\'s lifecycle state');
-  if (!scope.ok) return;
+  const scope = kaizenScopeCaller(req, res, 'change a Kaizen item\'s lifecycle state');
+  if (!scope) return;
   if (!_v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds)) return;
   const b = _v6Body(body);
   let result;
@@ -9851,8 +9856,8 @@ route('PATCH', '/api/v6/kaizen/items/:id/state', (req, res, params, body) => {
 });
 
 route('POST', '/api/v6/kaizen/items/:id/measurements', (req, res, params, body) => {
-  const scope = _v6KaizenScope(req, res, 'record a Kaizen measurement');
-  if (!scope.ok) return;
+  const scope = kaizenScopeCaller(req, res, 'record a Kaizen measurement');
+  if (!scope) return;
   if (!_v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds)) return;
   const b = _v6Body(body);
   _v6Respond(res, e5.recordMeasurement(v6Db(), {
@@ -9865,8 +9870,8 @@ route('POST', '/api/v6/kaizen/items/:id/measurements', (req, res, params, body) 
 // Dry-run: answers whether the 4-Class proof rules would pass right now,
 // without mutating anything — PATCH .../state is what actually commits.
 route('POST', '/api/v6/kaizen/items/:id/evaluate-effectiveness', (req, res, params) => {
-  const scope = _v6KaizenScope(req, res, 'evaluate a Kaizen item\'s effectiveness');
-  if (!scope.ok) return;
+  const scope = kaizenScopeCaller(req, res, 'evaluate a Kaizen item\'s effectiveness');
+  if (!scope) return;
   const item = _v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds);
   if (!item) return;
   _v6Respond(res, e5.canMarkProvenEffective(item, e5.listMeasurements(v6Db(), params.id)));
@@ -9881,8 +9886,8 @@ route('POST', '/api/v6/kaizen/items/:id/evaluate-effectiveness', (req, res, para
 // lib/v6/e5-kaizen-ledger.js, which this car's file envelope does not
 // include.
 route('POST', '/api/v6/kaizen/items/:id/mark-regressed', (req, res, params) => {
-  const scope = _v6KaizenScope(req, res, 'mark a Kaizen item regressed');
-  if (!scope.ok) return;
+  const scope = kaizenScopeCaller(req, res, 'mark a Kaizen item regressed');
+  if (!scope) return;
   const item = _v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds);
   if (!item) return;
   if (item.lifecycle_state === 'Closed') {
@@ -9892,16 +9897,16 @@ route('POST', '/api/v6/kaizen/items/:id/mark-regressed', (req, res, params) => {
 });
 
 route('POST', '/api/v6/kaizen/items/:id/gate0-disposition', (req, res, params, body) => {
-  const scope = _v6KaizenScope(req, res, 'set a Kaizen item\'s Gate 0 disposition');
-  if (!scope.ok) return;
+  const scope = kaizenScopeCaller(req, res, 'set a Kaizen item\'s Gate 0 disposition');
+  if (!scope) return;
   if (!_v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds)) return;
   const b = _v6Body(body);
   _v6Respond(res, e5.setGate0Disposition(v6Db(), { id: params.id, disposition: b.disposition, rationale: b.rationale }));
 });
 
 route('GET', '/api/v6/kaizen/items', (req, res) => {
-  const scope = _v6KaizenScope(req, res, 'list Kaizen items');
-  if (!scope.ok) return;
+  const scope = kaizenScopeCaller(req, res, 'list Kaizen items');
+  if (!scope) return;
   const query = parseQuery(reqUrl(req).search);
   const rows = typeof e5.listItems === 'function' ? e5.listItems(v6Db(), query) : e5.gate0Feed(v6Db(), { logicalProjectId: query.logicalProjectId || undefined });
   const visible = scope.allowedLogicalProjectIds === null
@@ -9910,8 +9915,8 @@ route('GET', '/api/v6/kaizen/items', (req, res) => {
 });
 
 route('GET', '/api/v6/kaizen/gate0-feed', (req, res) => {
-  const scope = _v6KaizenScope(req, res, 'read the Gate 0 Kaizen feed');
-  if (!scope.ok) return;
+  const scope = kaizenScopeCaller(req, res, 'read the Gate 0 Kaizen feed');
+  if (!scope) return;
   const query = parseQuery(reqUrl(req).search);
   const rows = e5.gate0Feed(v6Db(), { logicalProjectId: query.logicalProjectId || undefined });
   const visible = scope.allowedLogicalProjectIds === null
