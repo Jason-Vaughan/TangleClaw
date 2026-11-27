@@ -9708,29 +9708,106 @@ route('GET', '/api/v6/legacy-projects/:legacyProjectId', (req, res, params) => {
 // ── E5: Closed-Loop Kaizen Ledger (#2980) ──
 
 /**
+ * The v6 logical project ids a numeric TangleClaw (legacy) project is
+ * entitled to act under (#3325 addendum, PRR-A R-Gate Round 1, BLOCKING 2):
+ * resolved through `v6_legacy_project_view`, the one real mapping from a
+ * `projects.id` to the v6 resource(s)/logical project(s) provisioned for
+ * it (`lib/store/_schema.js`'s own auto-provisioning trigger). Empty when
+ * this project has no v6 presence at all yet -- never a wildcard, and never
+ * guessed from the numeric id itself (e.g. assuming `'lp-' || projectId`),
+ * since a project can also belong to a multi-project fleet's own logical
+ * project, not only its auto-provisioned one.
+ * @param {number} projectId
+ * @returns {string[]}
+ */
+function _v6LogicalProjectIdsForLegacyProject(projectId) {
+  return v6Db().prepare('SELECT DISTINCT logical_project_id FROM v6_legacy_project_view WHERE legacy_project_id = ?')
+    .all(projectId).map((r) => r.logical_project_id);
+}
+
+/**
  * Admit the operator, the Project Master, or any bound project session to a
- * Kaizen ledger route (#3324): Gate 4 ingestion and Gate 0 disposition are
- * driven by `tc kaizen` from Obsr/PM sessions, not only the operator
- * dashboard, so this family cannot gate on {@link operatorProjectCaller}'s
- * operator-only need. Falls back to it only to emit the standard refusal for
- * an unbound or invalid caller.
+ * Kaizen ledger route (#3324), and say which logical project id(s) that
+ * caller may act under (#3325 addendum, PRR-A R-Gate Round 1, BLOCKING 2):
+ * Gate 4 ingestion and Gate 0 disposition are driven by `tc kaizen` from
+ * Obsr/PM sessions, not only the operator dashboard, so this family cannot
+ * gate on {@link operatorProjectCaller}'s operator-only need -- but a bound
+ * project session is not thereby trusted with every OTHER project's items
+ * on this (global, project-agnostic) ledger; each route below checks the
+ * returned scope against the item/body it is about to read or write.
+ * Writes `res` and returns `{ok: false}` only when the caller may not use
+ * this route family at all (an unbound or invalid caller, via
+ * {@link operatorProjectCaller}'s own refusal); a project session with no
+ * v6 presence yet (`allowedLogicalProjectIds` empty) still passes this gate
+ * -- it can simply act on nothing, which the per-item check enforces.
  * @param {http.IncomingMessage} req - The request
  * @param {http.ServerResponse} res - The response, written only on refusal
  * @param {string} action - What the route does
- * @returns {boolean} true when the caller may proceed
+ * @returns {{ok: true, allowedLogicalProjectIds: (string[]|null)}|{ok: false}}
+ *   `allowedLogicalProjectIds` is `null` for the operator/Master (every
+ *   item, unrestricted), else the bound project's own resolved ids.
  */
-function kaizenProjectCaller(req, res, action) {
+function _v6KaizenScope(req, res, action) {
   const access = sharedDocsAccess.resolveAccess(req);
-  if (access.kind === sharedDocsAccess.KINDS.OPERATOR || access.kind === sharedDocsAccess.KINDS.PROJECT
-    || access.kind === sharedDocsAccess.KINDS.MASTER) {
-    return true;
+  if (access.kind === sharedDocsAccess.KINDS.OPERATOR || access.kind === sharedDocsAccess.KINDS.MASTER) {
+    return { ok: true, allowedLogicalProjectIds: null };
   }
-  return operatorProjectCaller(req, res, action);
+  if (access.kind === sharedDocsAccess.KINDS.PROJECT) {
+    return { ok: true, allowedLogicalProjectIds: _v6LogicalProjectIdsForLegacyProject(access.projectId) };
+  }
+  operatorProjectCaller(req, res, action);
+  return { ok: false };
+}
+
+/**
+ * Whether a kaizen-scoped caller (as {@link _v6KaizenScope} resolved it) may
+ * act on `logicalProjectId` (#3325 addendum, PRR-A R-Gate Round 1, BLOCKING
+ * 2). `null` for `allowed` means unrestricted (the operator/Master); an
+ * array requires exact membership, including when `logicalProjectId` itself
+ * is not a string (an item/request naming no project at all is nobody's to
+ * claim by membership -- only the operator/Master may touch it).
+ * @param {string[]|null} allowed
+ * @param {*} logicalProjectId
+ * @returns {boolean}
+ */
+function _v6KaizenOwns(allowed, logicalProjectId) {
+  if (allowed === null) return true;
+  return typeof logicalProjectId === 'string' && allowed.includes(logicalProjectId);
+}
+
+/**
+ * Fetch a Kaizen item and verify the caller's scope owns it (#3325 addendum,
+ * PRR-A R-Gate Round 1, BLOCKING 2) -- folds "no such item" and "found, but
+ * not this caller's project" into the same 404 the sibling wave-run route
+ * (`GET /api/v6/projects/:id/wave-runs/:runId`) already uses for the
+ * identical reason, under two distinct codes, so neither answer by itself
+ * confirms which case it was. Writes `res` and returns null on either
+ * refusal.
+ * @param {http.ServerResponse} res
+ * @param {string} id
+ * @param {string[]|null} allowedLogicalProjectIds
+ * @returns {object|null}
+ */
+function _v6RequireOwnedKaizenItem(res, id, allowedLogicalProjectIds) {
+  const item = e5.getItem(v6Db(), id);
+  if (!item) {
+    errorResponse(res, 404, `Kaizen item "${id}" not found`, 'NOT_FOUND');
+    return null;
+  }
+  if (!_v6KaizenOwns(allowedLogicalProjectIds, item.logical_project_id)) {
+    errorResponse(res, 404, `Kaizen item "${id}" not found for this project`, 'ITEM_NOT_IN_PROJECT');
+    return null;
+  }
+  return item;
 }
 
 route('POST', '/api/v6/kaizen/items', (req, res, _params, body) => {
-  if (!kaizenProjectCaller(req, res, 'detect a Kaizen item')) return;
+  const scope = _v6KaizenScope(req, res, 'detect a Kaizen item');
+  if (!scope.ok) return;
   const b = _v6Body(body);
+  if (!_v6KaizenOwns(scope.allowedLogicalProjectIds, b.logicalProjectId)) {
+    return errorResponse(res, 403, 'logicalProjectId must be one of your own project\'s v6 logical projects', 'FORBIDDEN');
+  }
   _v6Respond(res, e5.detectItem(v6Db(), {
     originSprint: b.originSprint, findingId: b.findingId, defectCategory: b.defectCategory,
     rootCause: b.rootCause, originEvidenceRefs: b.originEvidenceRefs, correctiveActionSpec: b.correctiveActionSpec,
@@ -9741,14 +9818,17 @@ route('POST', '/api/v6/kaizen/items', (req, res, _params, body) => {
 });
 
 route('GET', '/api/v6/kaizen/items/:id', (req, res, params) => {
-  if (!kaizenProjectCaller(req, res, 'read a Kaizen item')) return;
-  const item = e5.getItem(v6Db(), params.id);
-  if (!item) return errorResponse(res, 404, `Kaizen item "${params.id}" not found`, 'NOT_FOUND');
+  const scope = _v6KaizenScope(req, res, 'read a Kaizen item');
+  if (!scope.ok) return;
+  const item = _v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds);
+  if (!item) return;
   jsonResponse(res, 200, item);
 });
 
 route('GET', '/api/v6/kaizen/items/:id/measurements', (req, res, params) => {
-  if (!kaizenProjectCaller(req, res, 'read a Kaizen item\'s measurements')) return;
+  const scope = _v6KaizenScope(req, res, 'read a Kaizen item\'s measurements');
+  if (!scope.ok) return;
+  if (!_v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds)) return;
   jsonResponse(res, 200, e5.listMeasurements(v6Db(), params.id));
 });
 
@@ -9759,7 +9839,9 @@ route('GET', '/api/v6/kaizen/items/:id/measurements', (req, res, params) => {
 // can reach either state without the 4-Class proof rules/close precondition
 // actually running.
 route('PATCH', '/api/v6/kaizen/items/:id/state', (req, res, params, body) => {
-  if (!kaizenProjectCaller(req, res, 'change a Kaizen item\'s lifecycle state')) return;
+  const scope = _v6KaizenScope(req, res, 'change a Kaizen item\'s lifecycle state');
+  if (!scope.ok) return;
+  if (!_v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds)) return;
   const b = _v6Body(body);
   let result;
   if (b.nextState === 'Effectiveness Measured') result = e5.markProvenEffective(v6Db(), { id: params.id });
@@ -9769,7 +9851,9 @@ route('PATCH', '/api/v6/kaizen/items/:id/state', (req, res, params, body) => {
 });
 
 route('POST', '/api/v6/kaizen/items/:id/measurements', (req, res, params, body) => {
-  if (!kaizenProjectCaller(req, res, 'record a Kaizen measurement')) return;
+  const scope = _v6KaizenScope(req, res, 'record a Kaizen measurement');
+  if (!scope.ok) return;
+  if (!_v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds)) return;
   const b = _v6Body(body);
   _v6Respond(res, e5.recordMeasurement(v6Db(), {
     kaizenId: params.id, sprintVersion: b.sprintVersion, measurementKind: b.measurementKind,
@@ -9781,9 +9865,10 @@ route('POST', '/api/v6/kaizen/items/:id/measurements', (req, res, params, body) 
 // Dry-run: answers whether the 4-Class proof rules would pass right now,
 // without mutating anything — PATCH .../state is what actually commits.
 route('POST', '/api/v6/kaizen/items/:id/evaluate-effectiveness', (req, res, params) => {
-  if (!kaizenProjectCaller(req, res, 'evaluate a Kaizen item\'s effectiveness')) return;
-  const item = e5.getItem(v6Db(), params.id);
-  if (!item) return errorResponse(res, 404, `Kaizen item "${params.id}" not found`, 'NOT_FOUND');
+  const scope = _v6KaizenScope(req, res, 'evaluate a Kaizen item\'s effectiveness');
+  if (!scope.ok) return;
+  const item = _v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds);
+  if (!item) return;
   _v6Respond(res, e5.canMarkProvenEffective(item, e5.listMeasurements(v6Db(), params.id)));
 });
 
@@ -9796,31 +9881,42 @@ route('POST', '/api/v6/kaizen/items/:id/evaluate-effectiveness', (req, res, para
 // lib/v6/e5-kaizen-ledger.js, which this car's file envelope does not
 // include.
 route('POST', '/api/v6/kaizen/items/:id/mark-regressed', (req, res, params) => {
-  if (!kaizenProjectCaller(req, res, 'mark a Kaizen item regressed')) return;
-  const item = e5.getItem(v6Db(), params.id);
-  if (item && item.lifecycle_state === 'Closed') {
+  const scope = _v6KaizenScope(req, res, 'mark a Kaizen item regressed');
+  if (!scope.ok) return;
+  const item = _v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds);
+  if (!item) return;
+  if (item.lifecycle_state === 'Closed') {
     return _v6Respond(res, { ok: false, code: 'INVALID_TRANSITION' });
   }
   _v6Respond(res, e5.markRegressed(v6Db(), { id: params.id }));
 });
 
 route('POST', '/api/v6/kaizen/items/:id/gate0-disposition', (req, res, params, body) => {
-  if (!kaizenProjectCaller(req, res, 'set a Kaizen item\'s Gate 0 disposition')) return;
+  const scope = _v6KaizenScope(req, res, 'set a Kaizen item\'s Gate 0 disposition');
+  if (!scope.ok) return;
+  if (!_v6RequireOwnedKaizenItem(res, params.id, scope.allowedLogicalProjectIds)) return;
   const b = _v6Body(body);
   _v6Respond(res, e5.setGate0Disposition(v6Db(), { id: params.id, disposition: b.disposition, rationale: b.rationale }));
 });
 
 route('GET', '/api/v6/kaizen/items', (req, res) => {
-  if (!kaizenProjectCaller(req, res, 'list Kaizen items')) return;
+  const scope = _v6KaizenScope(req, res, 'list Kaizen items');
+  if (!scope.ok) return;
   const query = parseQuery(reqUrl(req).search);
   const rows = typeof e5.listItems === 'function' ? e5.listItems(v6Db(), query) : e5.gate0Feed(v6Db(), { logicalProjectId: query.logicalProjectId || undefined });
-  jsonResponse(res, 200, rows);
+  const visible = scope.allowedLogicalProjectIds === null
+    ? rows : rows.filter((r) => _v6KaizenOwns(scope.allowedLogicalProjectIds, r.logical_project_id));
+  jsonResponse(res, 200, visible);
 });
 
 route('GET', '/api/v6/kaizen/gate0-feed', (req, res) => {
-  if (!kaizenProjectCaller(req, res, 'read the Gate 0 Kaizen feed')) return;
+  const scope = _v6KaizenScope(req, res, 'read the Gate 0 Kaizen feed');
+  if (!scope.ok) return;
   const query = parseQuery(reqUrl(req).search);
-  jsonResponse(res, 200, e5.gate0Feed(v6Db(), { logicalProjectId: query.logicalProjectId || undefined }));
+  const rows = e5.gate0Feed(v6Db(), { logicalProjectId: query.logicalProjectId || undefined });
+  const visible = scope.allowedLogicalProjectIds === null
+    ? rows : rows.filter((r) => _v6KaizenOwns(scope.allowedLogicalProjectIds, r.logical_project_id));
+  jsonResponse(res, 200, visible);
 });
 
 // ── Sprint Report Validator v3 (#2979) ──
@@ -11244,19 +11340,40 @@ const SPRINT_REPORTS_HUB_DEFAULT_PATH = '/Users/jasonvaughan/Documents/Projects/
  * scoped dep below treats a null `projectPath`/`sharedDir` as "use this
  * server's own checkout / this server's own configured shared dir",
  * unchanged from before #3325.
+ *
+ * An explicit `?projectId=`/`?groupId=` is honoured only for a caller who
+ * may actually see it (PRR-A R-Gate Round 1, BLOCKING 1): the operator or
+ * the Project Master (every project/group, consistent with how both are
+ * treated everywhere else in this file), or a bound project session naming
+ * its OWN id. These routes answer any caller, bound or not (#3087), so
+ * trusting the query value outright would let an unauthenticated request
+ * read a DIFFERENT project's CHANGELOG.md/LANE_QUEUE.md/roadmap data/sprint
+ * reports simply by naming it -- the exact cross-project disclosure this
+ * guards against. An unauthorized value is dropped, falling back to the
+ * caller's own bound default (or null) exactly as if it had named nothing,
+ * never answered with a refusal that would itself confirm the id resolves
+ * to something.
  * @param {object} req - The request (`headers`, and whatever query string it carries)
  * @returns {{projectId: (number|null), fleetId: (string|null), groupId: (string|null),
  *   projectPath: (string|null), sharedDir: (string|null)}}
  */
 function _v6ResolveSprintScope(req) {
   const query = parseQuery(reqUrl(req).search);
-  let projectId = /^\d+$/.test(String(query.projectId || '')) ? Number(query.projectId) : null;
-  if (projectId === null) {
-    const access = sharedDocsAccess.resolveAccess(req);
-    if (access.kind === sharedDocsAccess.KINDS.PROJECT) projectId = access.projectId;
-  }
+  const access = sharedDocsAccess.resolveAccess(req);
+  const isGlobalReader = access.kind === sharedDocsAccess.KINDS.OPERATOR || access.kind === sharedDocsAccess.KINDS.MASTER;
+  const boundProjectId = access.kind === sharedDocsAccess.KINDS.PROJECT ? access.projectId : null;
+
+  const requestedProjectId = /^\d+$/.test(String(query.projectId || '')) ? Number(query.projectId) : null;
+  const projectId = requestedProjectId !== null && (isGlobalReader || requestedProjectId === boundProjectId)
+    ? requestedProjectId
+    : boundProjectId;
+
   const fleetId = typeof query.fleetId === 'string' && query.fleetId ? query.fleetId : null;
   let groupId = typeof query.groupId === 'string' && query.groupId ? query.groupId : null;
+  // Same authorization as projectId above, via the identical predicate
+  // `GET /api/shared-docs` already gates a group read on (server.js, the
+  // `sharedDocsAccess.canSeeGroup` call near its `query.groupId` handling).
+  if (groupId !== null && !sharedDocsAccess.canSeeGroup(access, groupId)) groupId = null;
   let projectPath = null;
   if (projectId !== null) {
     const project = store.projects.get(projectId);

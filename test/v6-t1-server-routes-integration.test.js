@@ -8,6 +8,7 @@ const os = require('node:os');
 const store = require('../lib/store');
 const authSession = require('../lib/auth-session');
 const { handleRequest } = require('../server');
+const { bindProject } = require('./_shared-docs-callers');
 
 // v6 Stage 1 (BRIDGE-2, Car V60-T1-W2-ROUTES): the first live HTTP wiring for
 // lib/v6/c1-logical-projects.js (#2118), lib/v6/e5-kaizen-ledger.js (#2980),
@@ -407,6 +408,74 @@ describe('v6 Stage 1 server routes (#2118, #2980, #2979, BRIDGE-2)', () => {
       const feed = await get('/api/v6/kaizen/gate0-feed');
       assert.equal(feed.statusCode, 200, feed.body);
       assert.ok(json(feed).some((item) => item.id === openId));
+    });
+  });
+
+  // #3325 addendum (PRR-A R-Gate Round 1, BLOCKING 2): widening the kaizen
+  // routes from operator-only to also admit a bound project session (#3324)
+  // must not let that project read or mutate another project's items on
+  // this global, project-agnostic ledger. Each v6 project is auto-
+  // provisioned its own v6 logical project id `lp-<id>` (lib/store/_schema.js's
+  // own INSERT trigger on `projects`), which is what these tests use to tag
+  // an item as belonging to one project or the other.
+  describe('E5 Kaizen Ledger routes: cross-project isolation (#3325 addendum, PRR-A R-Gate Round 1 BLOCKING 2)', () => {
+    let projectA;
+    let projectB;
+    let boundA;
+    let boundB;
+
+    before(() => {
+      projectA = store.projects.create({ name: `kaizen-proj-a-${Date.now()}`, path: path.join(tempDir, 'kaizen-proj-a') });
+      projectB = store.projects.create({ name: `kaizen-proj-b-${Date.now()}`, path: path.join(tempDir, 'kaizen-proj-b') });
+      boundA = bindProject(projectA);
+      boundB = bindProject(projectB);
+    });
+
+    it('a bound project session may create an item under its OWN v6 logical project id, but not impersonate another project\'s', async () => {
+      const own = await post('/api/v6/kaizen/items', {
+        originSprint: 'v1', findingId: 'f-own', defectCategory: 'c', rootCause: 'r', correctiveActionSpec: 'a',
+        ownerRole: 'builder', verificationClass: 'A_DETERMINISTIC', targetMetric: 'm', logicalProjectId: `lp-${projectA.id}`
+      }, { operator: false, headers: boundA.headers });
+      assert.equal(own.statusCode, 201, own.body);
+
+      const impersonate = await post('/api/v6/kaizen/items', {
+        originSprint: 'v1', findingId: 'f-imp', defectCategory: 'c', rootCause: 'r', correctiveActionSpec: 'a',
+        ownerRole: 'builder', verificationClass: 'A_DETERMINISTIC', targetMetric: 'm', logicalProjectId: `lp-${projectB.id}`
+      }, { operator: false, headers: boundA.headers });
+      assert.equal(impersonate.statusCode, 403, impersonate.body);
+      assert.equal(json(impersonate).code, 'FORBIDDEN');
+    });
+
+    it('a bound project session cannot read, mutate, or list another project\'s item, but its own project and the operator still can', async () => {
+      const createB = await post('/api/v6/kaizen/items', {
+        originSprint: 'v1', findingId: 'f-b-only', defectCategory: 'c', rootCause: 'r', correctiveActionSpec: 'a',
+        ownerRole: 'builder', verificationClass: 'A_DETERMINISTIC', targetMetric: 'm', logicalProjectId: `lp-${projectB.id}`
+      }, { operator: false, headers: boundB.headers });
+      assert.equal(createB.statusCode, 201, createB.body);
+      const { id } = json(createB);
+
+      const read = await get(`/api/v6/kaizen/items/${id}`, { operator: false, headers: boundA.headers });
+      assert.equal(read.statusCode, 404, read.body);
+      assert.equal(json(read).code, 'ITEM_NOT_IN_PROJECT');
+
+      const mutate = await patch(`/api/v6/kaizen/items/${id}/state`, { nextState: 'Classified' }, { operator: false, headers: boundA.headers });
+      assert.equal(mutate.statusCode, 404, mutate.body);
+      assert.equal(json(mutate).code, 'ITEM_NOT_IN_PROJECT');
+
+      const feed = await get('/api/v6/kaizen/gate0-feed', { operator: false, headers: boundA.headers });
+      assert.equal(feed.statusCode, 200, feed.body);
+      assert.ok(!json(feed).some((item) => item.id === id), 'project A must not see project B\'s item in gate0-feed');
+
+      const list = await get('/api/v6/kaizen/items', { operator: false, headers: boundA.headers });
+      assert.equal(list.statusCode, 200, list.body);
+      assert.ok(!json(list).some((item) => item.id === id), 'project A must not see project B\'s item in the list');
+
+      // The fix restricts, not breaks: project B's own session, and the
+      // operator, still read it normally -- unchanged from before #3325.
+      const ownRead = await get(`/api/v6/kaizen/items/${id}`, { operator: false, headers: boundB.headers });
+      assert.equal(ownRead.statusCode, 200, ownRead.body);
+      const operatorRead = await get(`/api/v6/kaizen/items/${id}`);
+      assert.equal(operatorRead.statusCode, 200, operatorRead.body);
     });
   });
 
