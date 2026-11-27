@@ -28,6 +28,7 @@
     "test/auth-status-warning.test.js",
     "test/auth2-wizard-admin.test.js",
     "test/auto-merge-callers.test.js",
+    "test/backup-memory.test.js",
     "test/bind-notice-render.test.js",
     "test/bind-policy.test.js",
     "test/bridge-context.test.js",
