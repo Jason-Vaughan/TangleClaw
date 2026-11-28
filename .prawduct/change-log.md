@@ -142,6 +142,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   the next commit touching the file, keep the sentences and issue numbers). Fixed immediately
   rather than deferred again — reworded to drop the label, keeping the technical explanation and
   #3355. 883/883 unaffected.
+- Final verify-resolutions (after the O-2 comment fix): 0 findings, 3 non-gating observations,
+  all accepted. O-1 (stale evidence, same unrelated class) and O-2 (confirmed resolved) carried
+  forward from the prior round; O-3 names ~25+ OTHER pre-existing review-round-labeled comments
+  elsewhere in `public/v6-shell.js` as the same already-accepted class (`rev-20261115T020853Z/R-1`)
+  — not introduced or materially touched by this car, out of scope here, left for a future
+  dedicated sweep rather than per-touch fixes. Critic governance closed clean for this branch;
+  tree clean at head `1e0207fd`.
 
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
 
