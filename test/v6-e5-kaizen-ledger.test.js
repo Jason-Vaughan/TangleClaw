@@ -542,3 +542,178 @@ describe('listItems (#3324) — the general GET /api/v6/kaizen/items listing', (
     assert.deepEqual(e5.listItems(db), []);
   });
 });
+
+/**
+ * A real legacy project row (triggering `v6_legacy_project_map`'s own
+ * auto-provisioning backfill) plus its numeric id.
+ * @param {import('node:sqlite').DatabaseSync} _db - Unused; `store.projects`
+ *   operates on the same store the test already opened via `freshStore()`.
+ * @param {string} name
+ * @returns {number} The new project's legacy numeric id.
+ */
+function makeLegacyProject(_db, name) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v6-e5-kaizen-proj-'));
+  return store.projects.create({ name, path: dir }).id;
+}
+
+/** @returns {string} `lp-<legacyProjectId>`, the auto-provisioning trigger's own format. */
+function ownLogicalProjectId(db, legacyProjectId) {
+  return db.prepare('SELECT logical_project_id FROM v6_legacy_project_map WHERE legacy_project_id = ?')
+    .get(legacyProjectId).logical_project_id;
+}
+
+function makeGroup(db, groupId, name) {
+  db.prepare('INSERT INTO project_groups (id, name) VALUES (?, ?)').run(groupId, name);
+}
+
+function addToGroup(db, groupId, projectId) {
+  db.prepare('INSERT INTO project_group_members (group_id, project_id) VALUES (?, ?)').run(groupId, projectId);
+}
+
+describe('resolveLogicalProjectIdsForLegacyProject (#3347, KZ-v667-07)', () => {
+  it('returns only its own mapping, in both id spellings, when it belongs to no group', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const pmId = makeLegacyProject(db, 'Ariadne-PM');
+    const own = ownLogicalProjectId(db, pmId);
+
+    const ids = e5.resolveLogicalProjectIdsForLegacyProject(db, pmId);
+    assert.deepEqual(ids.sort(), [own, String(pmId)].sort());
+  });
+
+  it('includes a peer project\'s own mapping when both share a project group', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const pmId = makeLegacyProject(db, 'Ariadne-PM');
+    const obsrId = makeLegacyProject(db, 'Ariadne-Obsr');
+    makeGroup(db, 'grp-ariadne', 'Ariadne fleet');
+    addToGroup(db, 'grp-ariadne', pmId);
+    addToGroup(db, 'grp-ariadne', obsrId);
+    const ownPm = ownLogicalProjectId(db, pmId);
+    const ownObsr = ownLogicalProjectId(db, obsrId);
+
+    const ids = e5.resolveLogicalProjectIdsForLegacyProject(db, pmId);
+    assert.ok(ids.includes(ownPm), 'own mapping must still be present');
+    assert.ok(ids.includes(ownObsr), 'the group peer\'s mapping must be present too');
+    assert.ok(ids.includes(String(obsrId)), 'the peer\'s bare-id spelling must be present too');
+  });
+
+  it('excludes a project that is NOT in the same group', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const pmId = makeLegacyProject(db, 'Ariadne-PM');
+    const unrelatedId = makeLegacyProject(db, 'Zig-PM');
+    const ownUnrelated = ownLogicalProjectId(db, unrelatedId);
+
+    const ids = e5.resolveLogicalProjectIdsForLegacyProject(db, pmId);
+    assert.ok(!ids.includes(ownUnrelated), 'an unrelated project\'s mapping must never leak in');
+  });
+
+  it('is additive across multiple shared groups, deduplicated', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const pmId = makeLegacyProject(db, 'Ariadne-PM');
+    const peer1 = makeLegacyProject(db, 'Ariadne-Lane-A');
+    const peer2 = makeLegacyProject(db, 'Ariadne-Lane-B');
+    makeGroup(db, 'grp-1', 'Group 1');
+    makeGroup(db, 'grp-2', 'Group 2');
+    addToGroup(db, 'grp-1', pmId);
+    addToGroup(db, 'grp-1', peer1);
+    addToGroup(db, 'grp-2', pmId);
+    addToGroup(db, 'grp-2', peer2);
+
+    const ids = e5.resolveLogicalProjectIdsForLegacyProject(db, pmId);
+    assert.ok(ids.includes(ownLogicalProjectId(db, peer1)));
+    assert.ok(ids.includes(ownLogicalProjectId(db, peer2)));
+    assert.equal(ids.length, new Set(ids).size, 'no duplicates even though pmId shares two different groups');
+  });
+
+  it('returns an empty array for a legacy project id with no v6 presence and no group at all', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    assert.deepEqual(e5.resolveLogicalProjectIdsForLegacyProject(db, 999999), []);
+  });
+});
+
+describe('listItems / gate0Feed fleet-wide scope (#3347, KZ-v667-07)', () => {
+  it('listItems: legacyProjectId resolves across a shared project group, with no --logical-project needed', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const pmId = makeLegacyProject(db, 'Ariadne-PM');
+    const obsrId = makeLegacyProject(db, 'Ariadne-Obsr');
+    makeGroup(db, 'grp-ariadne', 'Ariadne fleet');
+    addToGroup(db, 'grp-ariadne', pmId);
+    addToGroup(db, 'grp-ariadne', obsrId);
+    const pmOwnId = ownLogicalProjectId(db, pmId);
+    const obsrOwnId = ownLogicalProjectId(db, obsrId);
+    const pmItemId = seedItem(db, { findingId: 'pm-1', logicalProjectId: pmOwnId });
+    const obsrItemId = seedItem(db, { findingId: 'obsr-1', logicalProjectId: obsrOwnId });
+    const outsideItemId = seedItem(db, { findingId: 'outside-1', logicalProjectId: 'lp-999999' });
+
+    const rows = e5.listItems(db, { legacyProjectId: pmId });
+    assert.deepEqual(rows.map((r) => r.id).sort(), [pmItemId, obsrItemId].sort());
+    assert.ok(!rows.some((r) => r.id === outsideItemId));
+  });
+
+  it('listItems: legacyProjectId with no group sees only its own items, same as before #3347', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const pmId = makeLegacyProject(db, 'Ariadne-PM');
+    const otherId = makeLegacyProject(db, 'Zig-PM');
+    const pmItemId = seedItem(db, { findingId: 'pm-1', logicalProjectId: ownLogicalProjectId(db, pmId) });
+    seedItem(db, { findingId: 'other-1', logicalProjectId: ownLogicalProjectId(db, otherId) });
+
+    assert.deepEqual(e5.listItems(db, { legacyProjectId: pmId }).map((r) => r.id), [pmItemId]);
+  });
+
+  it('listItems: legacyProjectId resolving to nothing excludes every row, never returns every row', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    seedItem(db, { findingId: 'f-1' });
+    assert.deepEqual(e5.listItems(db, { legacyProjectId: 999999 }), []);
+  });
+
+  it('listItems: an explicit logicalProjectIds array is honored directly', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const idA = seedItem(db, { findingId: 'f-a', logicalProjectId: 'lp-a' });
+    const idB = seedItem(db, { findingId: 'f-b', logicalProjectId: 'lp-b' });
+    seedItem(db, { findingId: 'f-c', logicalProjectId: 'lp-c' });
+
+    assert.deepEqual(e5.listItems(db, { logicalProjectIds: ['lp-a', 'lp-b'] }).map((r) => r.id).sort(), [idA, idB].sort());
+  });
+
+  it('listItems: logicalProjectIds takes precedence over legacyProjectId when both are given', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const pmId = makeLegacyProject(db, 'Ariadne-PM');
+    const idA = seedItem(db, { findingId: 'f-a', logicalProjectId: 'lp-explicit' });
+    seedItem(db, { findingId: 'f-own', logicalProjectId: ownLogicalProjectId(db, pmId) });
+
+    const rows = e5.listItems(db, { logicalProjectIds: ['lp-explicit'], legacyProjectId: pmId });
+    assert.deepEqual(rows.map((r) => r.id), [idA]);
+  });
+
+  it('gate0Feed: legacyProjectId resolves across a shared project group too', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    const pmId = makeLegacyProject(db, 'Ariadne-PM');
+    const obsrId = makeLegacyProject(db, 'Ariadne-Obsr');
+    makeGroup(db, 'grp-ariadne', 'Ariadne fleet');
+    addToGroup(db, 'grp-ariadne', pmId);
+    addToGroup(db, 'grp-ariadne', obsrId);
+    const pmItemId = seedItem(db, { findingId: 'pm-1', logicalProjectId: ownLogicalProjectId(db, pmId) });
+    const obsrItemId = seedItem(db, { findingId: 'obsr-1', logicalProjectId: ownLogicalProjectId(db, obsrId) });
+    seedItem(db, { findingId: 'outside-1', logicalProjectId: 'lp-999999' });
+
+    const rows = e5.gate0Feed(db, { legacyProjectId: pmId });
+    assert.deepEqual(rows.map((r) => r.id).sort(), [pmItemId, obsrItemId].sort());
+  });
+
+  it('gate0Feed: legacyProjectId resolving to nothing excludes every row', (t) => {
+    const db = freshStore();
+    t.after(cleanup);
+    seedItem(db, { findingId: 'f-1' });
+    assert.deepEqual(e5.gate0Feed(db, { legacyProjectId: 999999 }), []);
+  });
+});
