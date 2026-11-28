@@ -1601,7 +1601,7 @@ describe('page wiring (#3022 deliverable a) — index.html and ui.js', () => {
 
   it('ui.js mounts the live controller and wires the toggle to it', () => {
     const block = UI.slice(UI.indexOf("if (typeof window.tcCreateV6Shell === 'function')"));
-    assert.match(block, /window\.tcV6CreateLiveController\(\{ getShell: \(\) => v6Shell, api, apiMutate \}\)/);
+    assert.match(block, /window\.tcV6CreateLiveController\(\{\s*getShell: \(\) => v6Shell, api, apiMutate, fleetStartDelayMs: window\.tcV6StaggerFleetStartMs\s*\}\)/);
     assert.match(block, /onLaunchTemplate\(templateId\) \{ v6Live\.launchTemplate\(templateId\); \}/);
     assert.match(block, /v6Live\.handleRoute\(route\)/);
     assert.match(block, /getElementById\('v6ViewToggleBtn'\)/);
@@ -3071,6 +3071,47 @@ describe('tcV6ExtractLiveTurns unwraps soft-wrapped terminal lines into flowing 
     assert.equal(out.turns[1].text, `${long(150)} should we meet at this place?`);
     assert.equal(out.question, `${long(150)} should we meet at this place?`);
   });
+
+  // #3355 deliverable 4: a wrapped URL's own column-width break can land
+  // right at a real sentence/path boundary, not mid-URL. The pre-fix bug:
+  // gluing with no space whenever `prev` merely ENDED mid-URL, with no
+  // check for what actually follows — a GitHub PR/Issue URL followed by
+  // unrelated prose (or a stray `(` from adjacent markdown) got glued
+  // directly onto the URL (`pull/3354(-`) instead of starting a new word.
+  it('still glues an ordinary wrapped URL with no space when nothing suggests a sentence/path boundary (unchanged)', () => {
+    const prev = 'Open https://example.com/a/very/long-path-segment-xyz-abc';
+    assert.ok(prev.length >= 55);
+    const out = run(['> go', prev, 'more.html for details.']);
+    assert.equal(out.turns[1].text, `${prev}more.html for details.`);
+  });
+
+  it('a complete GitHub PR URL followed by ordinary prose (no leading punctuation) now gets a space, not glued onto the URL', () => {
+    const prev = 'See https://github.com/Jason-Vaughan/TangleClaw/pull/3354';
+    assert.ok(prev.length >= 55);
+    const out = run(['> go', prev, 'Fixed the bug.']);
+    assert.equal(out.turns[1].text, `${prev} Fixed the bug.`);
+  });
+
+  it('a complete GitHub PR URL followed by a stray opening paren (the exact #3355 bug shape) gets a space', () => {
+    const prev = 'See https://github.com/Jason-Vaughan/TangleClaw/pull/3354';
+    assert.ok(prev.length >= 55);
+    const out = run(['> go', prev, '(-fix) landed.']);
+    assert.equal(out.turns[1].text, `${prev} (-fix) landed.`);
+  });
+
+  it('a complete GitHub PR URL followed by a REAL path/fragment/query continuation still glues with no space', () => {
+    const prev = 'See https://github.com/Jason-Vaughan/TangleClaw/pull/3354';
+    assert.ok(prev.length >= 55);
+    const out = run(['> go', prev, '/files for the diff.']);
+    assert.equal(out.turns[1].text, `${prev}/files for the diff.`);
+  });
+
+  it('a URL-ending line that already ends in sentence punctuation always gets a space, never glued', () => {
+    const prev = 'Open https://example.com/a/very/long-path-segment-xyz-abc.';
+    assert.ok(prev.length >= 55);
+    const out = run(['> go', prev, 'Next sentence.']);
+    assert.equal(out.turns[1].text, `${prev} Next sentence.`);
+  });
 });
 
 describe('tcV6ExtractLiveTurns: terminal-echoed/wrapped prompts never duplicate as assistant turns (#3199)', () => {
@@ -3226,6 +3267,48 @@ describe('tcV6ExtractLiveTurns: terminal-echoed/wrapped prompts never duplicate 
     const marked = G.tcV6ArrangeRecorded(events, [{ role: 'user', text: 'please walk through the deploy checklist end to end', recorded: true }], null);
     assert.deepEqual(marked.head, [], 'with the flag, the matching event is excluded — drawn once, via the live turn');
     assert.equal(typeof G.tcV6ArrangeRecorded, 'function');
+  });
+});
+
+// #3355 deliverable 2: an engine can coalesce two queued user messages under
+// ONE `> ` prompt prefix (the second shown as an indented continuation under
+// the first's own echo). The pre-fix bug: `knownLines.has(text)` matched
+// the second message's text across EVERY recorded message, not just the
+// CURRENT echo, so it was swallowed as "still part of the first prompt's
+// echo" instead of starting its own user turn.
+describe('tcV6ExtractLiveTurns: an engine-coalesced second queued prompt under one echo starts its OWN user turn (#3355)', () => {
+  const G = loadV6Shell();
+
+  it('a short, fully-recorded second message indented under the first prompt\'s echo gets its own user turn, in order, before the reply', () => {
+    const lines = ['> wait', '  just confirmed it. tilt is showing tc sprints.', '⏺ Noted.'];
+    const known = ['wait', 'just confirmed it. tilt is showing tc sprints.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', known));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'wait', recorded: true },
+      { role: 'user', text: 'just confirmed it. tilt is showing tc sprints.', recorded: true },
+      { role: 'assistant', text: 'Noted.' }
+    ]);
+  });
+
+  it('does not duplicate the second message\'s turn if the SAME coalesced line repeats (still echoing) before the reply starts', () => {
+    const lines = ['> wait', '  just confirmed it. tilt is showing tc sprints.', '  just confirmed it. tilt is showing tc sprints.', '⏺ Noted.'];
+    const known = ['wait', 'just confirmed it. tilt is showing tc sprints.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', known));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'wait', recorded: true },
+      { role: 'user', text: 'just confirmed it. tilt is showing tc sprints.', recorded: true },
+      { role: 'assistant', text: 'Noted.' }
+    ]);
+  });
+
+  it('an indented line that is genuinely the SAME recorded message\'s own continuation (not a different coalesced message) is still swallowed as before, unaffected by this fix', () => {
+    const longPrompt = 'please check the deploy script end to end before you ship it';
+    const lines = [`❯ ${longPrompt}`, '  and also update the README while you are at it', '⏺ Checked both.'];
+    const out = plain(G.tcV6ExtractLiveTurns(lines, 'claude', []));
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: `${longPrompt}\nand also update the README while you are at it` },
+      { role: 'assistant', text: 'Checked both.' }
+    ]);
   });
 });
 
@@ -6027,6 +6110,114 @@ describe('Car V659-W2-D: one-click fleet start (#3215)', () => {
   });
 });
 
+// #3355 deliverable 5 (#3352): staggered fleet launch. `fleetStartDelayMs`
+// is explicit opt-in only (never environment-detected — this file's own
+// `vm.runInContext` harness sets `sandbox.window = sandbox`, making a test
+// sandbox's globals indistinguishable from a real browser's, so an
+// environment check could never reliably default an OLD test, that
+// supplies neither knob, to 0ms). `public/ui.js`'s real production wiring
+// requests the real `STAGGER_FLEET_START_MS` explicitly instead (covered
+// by the "page wiring" describe block's own structural assertion).
+describe('staggered fleet launch (#3352)', () => {
+  const G = loadV6Shell();
+
+  const makeController = (names, extraDeps) => {
+    // `startFleetMembers` ends with `refresh()`, which reads `shell.getRoute()`
+    // first and no-ops on a view-less route -- `{ view: null }` is enough to
+    // let it return early without needing this stub to model a real route.
+    const shell = { setWorkspaceLoader: () => {}, _consumePendingStartFleetMembers: () => null, getRoute: () => ({ view: null }) };
+    const started = [];
+    const mutateCalls = [];
+    const api = async () => null;
+    const apiMutate = async (url) => { mutateCalls.push(url); return { ok: true }; };
+    const live = G.tcV6CreateLiveController(Object.assign({
+      getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {}
+    }, extraDeps));
+    return { live, mutateCalls, started };
+  };
+
+  it('startFleetMembers pauses fleetStartDelayMs between launches, but never after the last one, when explicitly given', async () => {
+    const sleeps = [];
+    const { live, mutateCalls } = makeController(null, {
+      fleetStartDelayMs: 2500,
+      sleep: async (ms) => { sleeps.push(ms); }
+    });
+    await live.startFleetMembers(['TC-Lane-A', 'TC-Lane-PM', 'TC-Lane-B']);
+    assert.deepEqual(mutateCalls, ['/api/sessions/TC-Lane-A', '/api/sessions/TC-Lane-PM', '/api/sessions/TC-Lane-B']);
+    assert.deepEqual(sleeps, [2500, 2500], 'paused between launches 1->2 and 2->3, never after the last launch');
+  });
+
+  it('startFleetMembers never sleeps at all when fleetStartDelayMs is not given (old tests keep their old, instant speed)', async () => {
+    let sleepCalls = 0;
+    const { live, mutateCalls } = makeController(null, { sleep: async () => { sleepCalls++; } });
+    await live.startFleetMembers(['TC-Lane-A', 'TC-Lane-PM']);
+    assert.deepEqual(mutateCalls, ['/api/sessions/TC-Lane-A', '/api/sessions/TC-Lane-PM']);
+    assert.equal(sleepCalls, 0, 'fleetStartDelayMs defaults to 0 unless explicitly given, regardless of deps.sleep being injected');
+  });
+
+  it('startFleetMembers never sleeps for a single-member batch (no "between launches" to pause for)', async () => {
+    const sleeps = [];
+    const { live } = makeController(null, { fleetStartDelayMs: 2500, sleep: async (ms) => { sleeps.push(ms); } });
+    await live.startFleetMembers(['TC-Lane-A']);
+    assert.deepEqual(sleeps, []);
+  });
+
+  it('startFleet\'s own direct member-loop (an open chat\'s "Start Fleet" button, not the sidebar bulk path) also staggers', async () => {
+    // Mirrors `describe('chat start controls and delegate recognition
+    // markup (#3053)')`'s own `mountStart`-style open-chat setup above,
+    // but with `fleetStartDelayMs`/`sleep` injected directly so this test
+    // stays self-contained rather than widening the shared helper's own
+    // signature just for this one case.
+    const { doc } = makeDocument([]);
+    const root = doc.createElement('div');
+    withIdParsingInnerHTML(root, doc);
+    doc.body.appendChild(root);
+    const win = makeFakeWindow('#/projects/tc-lane');
+    const liveStatus = { 10: true, 12: false, 14: false };
+    const byName = { 'TC-Lane-A': 10, 'TC-Lane-PM': 12, 'TC-Lane-B': 14 };
+    const rows = () => [
+      { id: 10, name: 'TC-Lane-A', engine: { id: 'claude' }, session: liveStatus[10] ? { active: true } : null },
+      { id: 12, name: 'TC-Lane-PM', engine: { id: 'claude' }, session: liveStatus[12] ? { active: true } : null },
+      { id: 14, name: 'TC-Lane-B', engine: { id: 'claude' }, session: liveStatus[14] ? { active: true } : null }
+    ];
+    const mutateCalls = [];
+    const api = async (url) => {
+      if (url === '/api/projects') return { projects: rows() };
+      const st = /^\/api\/sessions\/([^/]+)\/status$/.exec(url);
+      if (st) { const id = byName[decodeURIComponent(st[1])]; return liveStatus[id] ? { active: true, sessionId: id * 100 } : { active: false }; }
+      if (/conversation\/events/.test(url)) return { events: [] };
+      return null;
+    };
+    const apiMutate = async (url) => {
+      mutateCalls.push(url);
+      const m = /^\/api\/sessions\/([^/]+)$/.exec(url);
+      if (m) liveStatus[byName[decodeURIComponent(m[1])]] = true;
+      return { ok: true };
+    };
+    const sleeps = [];
+    let shell = null;
+    const pending = [];
+    const live = G.tcV6CreateLiveController({
+      getShell: () => shell, api, apiMutate, storage: null, setInterval: () => 0, clearInterval: () => {},
+      fleetStartDelayMs: 2500, sleep: async (ms) => { sleeps.push(ms); }
+    });
+    shell = G.tcCreateV6Shell(doc, {
+      root, window: win, storage: null,
+      onRender: (r) => pending.push(live.handleRoute(r)),
+      onStartFleet: () => pending.push(live.startFleet())
+    });
+    pending.push(live.handleRoute(shell.getRoute()));
+    while (pending.length) await pending.shift();
+    doc.getElementById('v6ChatStartFleet').dispatch('click');
+    while (pending.length) await pending.shift();
+    doc.getElementById('v6ChatStartFleet').dispatch('click');
+    while (pending.length) await pending.shift();
+    assert.deepEqual(mutateCalls.slice().sort(), ['/api/sessions/TC-Lane-B', '/api/sessions/TC-Lane-PM'], 'both offline members started, TC-Lane-A (already live) skipped');
+    assert.equal(mutateCalls.length, 2);
+    assert.deepEqual(sleeps, [2500], 'one pause between the two members, none after the last');
+  });
+});
+
 describe('the live controller renames the chat\'s target (#3071)', () => {
   /**
    * A controller over one offline project, with a scripted PATCH outcome.
@@ -6653,6 +6844,55 @@ describe('the Waiting on you queue (#3079)', () => {
       ['Please review the attached diff carefully — does the migration look safe to merge?']);
     assert.deepEqual(out.questions, ['Also, should I run the smoke tests first?'],
       'the echoed trailing fragment is excluded even though it is not a PREFIX of the recorded message');
+  });
+
+  // #3355 deliverable 3a: `openPrior` previously read each EARLIER turn's
+  // (not just the current/last one's) FULL text, so a multi-paragraph
+  // EARLIER reply's own superseded rhetorical '?' (from before its OWN
+  // trailing paragraph) could resurface across a SECOND, later wake —
+  // even though #3131 already established the CURRENT reply trims to its
+  // trailing paragraph, that trim never applied to anything but the last
+  // turn. Now every turn in `openPrior`'s range is trimmed to its own
+  // trailing paragraph.
+  it('a rhetorical "?" in an EARLIER paragraph of a PRIOR (not current) reply, now superseded by that same reply\'s own later paragraph, never resurfaces across a second wake (#3355)', () => {
+    const wake = '> [TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read.';
+    const out = run([
+      '> fix it',
+      '⏺ Does this seem risky? Let me think.',
+      '',
+      '  Shall I push?',
+      wake,
+      '⏺ Pushed now.',
+      wake,
+      '⏺ Also checking logs.'
+    ]);
+    assert.deepEqual(out.questions, ['Shall I push?'],
+      'the first reply\'s own earlier paragraph ("Does this seem risky?") is superseded by its own later one and must not appear');
+  });
+
+  // #3355 deliverable 3b: a non-backticked JS ternary's own `?` previously
+  // satisfied asksQuestion's sentence-ending lookahead purely because of
+  // the SPACE that follows it in `cond ? a : b` — a declarative line that
+  // happens to describe a ternary in prose (ending in `.`, not a real
+  // question) was misread as "Waiting on: YOU". Verified empirically
+  // against this exact fixture before writing the test: the matching
+  // regex's lookahead set never matches a letter/digit directly after
+  // `?`, so a NON-backticked URL query-param token (`?active=true`, no
+  // space before the param name) never reached the lookahead either way
+  // in realistic prose — the query-param strip this car also adds is kept
+  // (harmless, matches the dispatch) but has no OBSERVABLE regression to
+  // demonstrate in this function's actual lookahead semantics, so no
+  // query-param-specific test is asserted here; asserting one would claim
+  // signal that does not exist.
+  it('a non-backticked JS ternary in a declarative (not actually asking) line never reads as a question (#3355)', () => {
+    const out = run(['> check scope', '⏺ The scope resolves as current ? current.project : null if available.']);
+    assert.equal(out.question, null);
+    assert.deepEqual(out.questions, []);
+  });
+
+  it('a non-backticked JS ternary does not mask a REAL question elsewhere on the same line or a later line (#3355)', () => {
+    const out = run(['> check scope', '⏺ It resolves as current ? current.project : null.', '', '  Should I widen the fallback?']);
+    assert.deepEqual(out.questions, ['Should I widen the fallback?']);
   });
 
   it('numbers several questions, escapes each, and gives each a dismiss button', () => {
@@ -8003,6 +8243,30 @@ describe('links in messages open in a new tab, and only http(s) is ever a link (
       '[w](/\\evil.example/x)', '[v](/a\\b)']) {
       assert.doesNotMatch(f(t), /<a /, t);
     }
+  });
+
+  // #3355 deliverable 4b: a wrapped-line glue (now guarded, but still
+  // possible from other capture paths) can leave a stray unmatched `(`
+  // loose in what gets matched as a bare URL, e.g. `pull/3354(-fix` from a
+  // parenthetical glued directly against the URL. The href is truncated
+  // at the last unmatched `(` before the ordinary trailing-punctuation
+  // strip runs, so the stray paren and whatever follows never end up
+  // inside the link.
+  it('truncates a bare URL at a trailing UNMATCHED "(" rather than including it and what follows', () => {
+    const html = f('See https://github.com/acme/widgets/pull/3354(-fix for the patch');
+    assert.match(html, /href="https:\/\/github\.com\/acme\/widgets\/pull\/3354"/);
+    assert.doesNotMatch(html, /href="[^"]*\(-fix/);
+    assert.match(html, /\(-fix for the patch/, 'the stray paren and its text survive as plain escaped text, not inside the href');
+  });
+
+  it('a BALANCED paren pair in a bare URL is kept, unaffected by the unmatched-paren truncation', () => {
+    assert.match(f('https://x.example/wiki/A_(b)'), /href="https:\/\/x\.example\/wiki\/A_\(b\)"/);
+  });
+
+  it('never includes { or } in a bare URL match, even with none of the usual stop characters around them', () => {
+    const html = f('curl https://api.example/x{y} now');
+    assert.match(html, /href="https:\/\/api\.example\/x"/);
+    assert.doesNotMatch(html, /href="[^"]*\{/);
   });
 
   it('escapes everything around and inside links', () => {
@@ -10113,10 +10377,23 @@ describe('#3207 call sites — loadRouteDetail/handleRoute pass a context label 
 describe('#3345 (#3325 fast-follow): project/fleet-scoped workspace panel reads', () => {
   it('loadWorkspacePanel appends ?projectId= (and &groupId= when present) to the sprint-waves/sprint-reports read', () => {
     const fn = SRC.slice(SRC.indexOf('async function loadWorkspacePanel('), SRC.indexOf('\n    }\n\n    /**\n     * POST to a train launch'));
-    assert.match(fn, /const activeProject = current && current\.project \? current\.project : null;/);
+    assert.match(fn, /const activeProject = \(current && current\.project\)\s*\n\s*\|\| \(sh0 && projects \? resolveRouteProject\(route0, projects, delegates\(\)\) : null\);/);
     assert.match(fn, /encodeURIComponent\(activeProject\.id\)/);
     assert.match(fn, /activeProject\.groupId \? `&groupId=\$\{encodeURIComponent\(activeProject\.groupId\)\}` : ''/);
     assert.match(fn, /\(mode === 'kaizen' \? '\/api\/sprint-reports\/current' : '\/api\/sprint-waves'\) \+ scopeQuery/);
+  });
+
+  it('loadWorkspacePanel (#3355) falls back to resolving the project from the current ROUTE when `current` has not resolved yet, and defers an unscoped read on a project/fleet/conversation route until it has', () => {
+    const fn = SRC.slice(SRC.indexOf('async function loadWorkspacePanel('), SRC.indexOf('\n    }\n\n    /**\n     * POST to a train launch'));
+    assert.match(fn, /const route0 = sh0 && typeof sh0\.getRoute === 'function' \? sh0\.getRoute\(\) : null;/);
+    assert.match(fn, /if \(!activeProject && route0 && \(route0\.view === 'project' \|\| route0\.view === 'fleet' \|\| route0\.view === 'conversation'\)\) return;/);
+  });
+
+  it('loadWorkspacePanel (#3355) stamps and checks a PER-MODE generation counter so a stale response from a superseded call for the SAME mode is dropped, without one mode (e.g. charter) superseding an unrelated in-flight call for another (e.g. sprint)', () => {
+    assert.match(SRC, /const workspacePanelGenByMode = new Map\(\);/);
+    const fn = SRC.slice(SRC.indexOf('async function loadWorkspacePanel('), SRC.indexOf('\n    }\n\n    /**\n     * POST to a train launch'));
+    assert.match(fn, /const gen = \(workspacePanelGenByMode\.get\(mode\) \|\| 0\) \+ 1;\s*\n\s*workspacePanelGenByMode\.set\(mode, gen\);/);
+    assert.match(fn, /if \(gen !== workspacePanelGenByMode\.get\(mode\)\) return;/);
   });
 
   it('loadWorkspacePanel appends no query string at all when no project is active, unchanged from before #3345', () => {
@@ -10163,6 +10440,66 @@ describe('#3345 (#3325 fast-follow): project/fleet-scoped workspace panel reads'
     assert.match(block, /workspacePanels\.delete\('charter'\);/);
     assert.match(block, /workspacePanels\.delete\('sprint'\);/);
     assert.match(block, /workspacePanels\.delete\('kaizen'\);/);
+  });
+
+  // #3355 deliverable 1, end-to-end: a workspace-tab click reaching
+  // `loadWorkspacePanel` while `handleRoute`'s own cold-start
+  // `loadProjects()` is still in flight previously fired an UNSCOPED
+  // `/api/sprint-waves` read -- `current.project` is only set once
+  // `loadRouteDetail`/`loadConversation` resolves, well after
+  // `setWorkspaceLoader` is wired on the very FIRST `handleRoute` call.
+  it('a workspace-tab click while projects are still loading never fires an unscoped read, then scopes correctly once the route resolves', async () => {
+    // A minimal stub shell exposing exactly what `handleRoute`/
+    // `loadWorkspacePanel` touch (`setWorkspaceLoader`, `getRoute`,
+    // `setWorkspacePanel`, and the handful of other setters `handleRoute`
+    // calls along the way) -- same pattern the "adds the sprint UI
+    // script..." test above already uses, chosen over the real
+    // `tcCreateV6Shell` because driving THIS race through the real DOM
+    // would need the sprint tab button to exist at the exact moment
+    // `loadProjects()` is still unresolved, which the real shell does not
+    // guarantee render-order-wise.
+    let releaseProjects;
+    const projectsPromise = new Promise((resolve) => { releaseProjects = resolve; });
+    const rows = [{ id: 7, name: 'TC-Lane-X', engine: { id: 'claude' } }];
+    const calls = [];
+    const api = async (url) => {
+      calls.push(url);
+      if (url === '/api/projects') { await projectsPromise; return { projects: rows }; }
+      if (url === '/api/v6/fleet-templates') return { templates: [] };
+      const st = /^\/api\/sessions\/([^/]+)\/status$/.exec(url);
+      if (st) return { active: false };
+      if (/conversation\/events/.test(url)) return { events: [] };
+      if (url.startsWith('/api/sprint-waves')) return { ok: true, waves: [] };
+      return null;
+    };
+    const G = loadV6Shell();
+    const route = { view: 'conversation', resourceId: '7' };
+    let loader = null;
+    let openMode = null; // mirrors the real shell's own current workspace tab
+    const shell = {
+      setWorkspaceLoader: (fn) => { loader = fn; },
+      setWorkspaceActions: () => {},
+      setWorkspacePanel: () => {},
+      getRoute: () => route,
+      setProjects: () => {}, setEngineHealth: () => {}, setTelemetry: () => {}, setTemplates: () => {},
+      setDetail: () => {}, setAttestation: () => {}, setLive: () => {}, setTree: () => {},
+      getWorkspaceMode: () => openMode
+    };
+    const live = G.tcV6CreateLiveController({ getShell: () => shell, api, apiMutate: async () => null, storage: null,
+      setInterval: () => 0, clearInterval: () => {} });
+    const first = live.handleRoute(route);
+    // The cold start's `loadProjects()` is now in flight, unresolved --
+    // simulate an operator clicking the Sprint & Cars tab before it settles.
+    await new Promise((r) => setImmediate(r));
+    assert.equal(typeof loader, 'function', 'setWorkspaceLoader must have been wired before loadProjects resolves');
+    openMode = 'sprint';
+    loader('sprint');
+    await new Promise((r) => setImmediate(r));
+    assert.ok(!calls.some((u) => u.startsWith('/api/sprint-waves')), 'no unscoped read fired while the route\'s project was still unresolved');
+    releaseProjects();
+    await first;
+    await new Promise((r) => setImmediate(r));
+    assert.ok(calls.some((u) => u === '/api/sprint-waves?projectId=7'), `expected a scoped read once resolved, got ${JSON.stringify(calls)}`);
   });
 });
 

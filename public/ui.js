@@ -10007,7 +10007,12 @@ if (typeof window.tcCreateV6Shell === 'function') {
   // shell has its own filters), so it hides while the shell shows.
   const v6ClassicToolbar = document.querySelector('.toolbar');
   let v6Shell = null;
-  const v6Live = window.tcV6CreateLiveController({ getShell: () => v6Shell, api, apiMutate });
+  // #3352: stagger consecutive fleet-member launches here in the real
+  // page, explicitly — see v6-shell.js's createLiveController for why this
+  // is opt-in rather than environment-detected.
+  const v6Live = window.tcV6CreateLiveController({
+    getShell: () => v6Shell, api, apiMutate, fleetStartDelayMs: window.tcV6StaggerFleetStartMs
+  });
   v6Shell = window.tcCreateV6Shell(document, {
     root: v6ShellRoot,
     onLaunchTemplate(templateId) { v6Live.launchTemplate(templateId); },
