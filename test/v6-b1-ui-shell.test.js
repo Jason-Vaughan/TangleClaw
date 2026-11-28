@@ -6962,6 +6962,14 @@ describe('the Waiting on you queue (#3079)', () => {
     assert.equal(out.question, null);
   });
 
+  // The quoted-example strip's OTHER alternative (no surrounding parens
+  // -- a quote preceded directly by a word and a space) needs its own
+  // coverage, not just the parenthesized form above.
+  it('a quoted example question with NO surrounding parens, inside an otherwise-declarative sentence, is never read as this line asking (#3355)', () => {
+    const out = run(['> ack', '⏺ She asked "Should I proceed?" during standup.']);
+    assert.equal(out.question, null);
+  });
+
   it('a declarative line naming both the ternary metalanguage and a bare query-param token is never read as a question (#3355, Operator-reported)', () => {
     const out = run(['> ship it', '⏺ Waiting on: YOU question false-positive fix (JS ternary ?, URL query params ?projectId=, and prior-turn body paragraphs after a Medusa wake)']);
     assert.equal(out.question, null);

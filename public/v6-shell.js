@@ -2937,20 +2937,18 @@
       // question followed by a lowercase clarifying clause with no space
       // before ITS colon (`"...this? maybe: test first."`) are
       // genuinely indistinguishable by local punctuation/case/position
-      // signals alone — several rounds (PRR-A R-Gate R3 through R6) each
-      // closed one shape this way and reopened another, because every
-      // signal tried (branch case, `?`-position, code-punctuation-in-
-      // branch, literal false-branch) is satisfied by ordinary English
-      // too ("0", "true", "null" are common words, not just JS literals).
-      // Ternary-in-prose with no space before its OWN colon is accepted
-      // as a rare, cosmetic false positive (misread as an open question,
-      // self-correcting on the next reply) rather than risk masking a
-      // real question (PRR-A's own stated preference, matching this
-      // repo's established principle for an irresolvable two-sided
-      // ambiguity: name which failure direction is cheaper and fail
-      // that way on purpose, never chase a cleverer pattern). Requiring
-      // whitespace on BOTH sides of the colon is what the lowercase
-      // check alone cannot do, and is sufficient together with it.
+      // signals alone — every signal tried (branch case, `?`-position,
+      // code-punctuation-in-branch, literal false-branch) is satisfied
+      // by ordinary English too ("0", "true", "null" are common words,
+      // not just JS literals). Ternary-in-prose with no space before
+      // its OWN colon is accepted as a rare, cosmetic false positive
+      // (misread as an open question, self-correcting on the next
+      // reply) rather than risk masking a real question — an
+      // irresolvable two-sided ambiguity, where naming the cheaper
+      // failure direction and failing that way on purpose beats
+      // chasing a cleverer pattern. Requiring whitespace on BOTH sides
+      // of the colon is what the lowercase check alone cannot do, and
+      // is sufficient together with it.
       .replace(/\?\s+[a-z_$][\w.$[\]()'"-]*\s+:\s+/g, ' ')
       .replace(/\?[A-Za-z0-9_.-]+=/g, ' ')
       // A bare reference to the ternary operator BY NAME ("a JS ternary
@@ -2958,8 +2956,8 @@
       // ambiguity above, since it needs no colon/branch to recognize.
       .replace(/\b(?:ternary|symbol|character|literal|mark|token)\s+\?/gi, ' ')
       // A quoted example question embedded in an otherwise-declarative
-      // sentence ('...applying the fix ("Should we ship this?") for
-      // R-Gate R3.') is the quoted TEXT's own question, not this line's.
+      // sentence ('...applying the fix ("Should we ship this?") as
+      // discussed.') is the quoted TEXT's own question, not this line's.
       .replace(/(?:(\S\s+)|\()["\u201c][^"\u201d\n]*\?[^"\u201d\n]*["\u201d]\)?(?=[\s).,;:])/g, '$1 ');
     return /\?(?=$|[\s)\]}"'*_~.,;:!\u2019\u201d])/.test(prose);
   }

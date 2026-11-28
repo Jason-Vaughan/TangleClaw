@@ -228,6 +228,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   checkout: a host-level filesystem EPERM (unrelated to this work, confirmed via `touch`
   succeeding but `rm`/overwrite and some file reads failing even for ordinary git operations)
   blocked the primary checkout partway through this round.
+- Critic verify-resolutions (R8): 0 blocking, 0 warning, 3 observations. O-1 (NOTE, fixed
+  immediately rather than accepted a 4th time): the R7 comment itself reintroduced review-round
+  vocabulary ("PRR-A R-Gate R3 through R6", "for R-Gate R3") that a standing disposition AND this
+  session's own new learnings entry — written in the SAME diff Critic was reviewing — both commit
+  to stripping from this exact file. Reworded both comments to keep the technical explanation and
+  #3355 only; confirmed via grep that no `Critic|cumulative|R[0-9]|BLOCKING|PRR-[AB]` vocabulary
+  remains in the function. O-2 (fixed): added a direct test for the quoted-example strip's
+  non-parenthesis-preceded alternative, previously verified only by hand-trace. O-3 (same
+  stale-evidence class as every prior round — accepted). 890/890 in the car's own file. Stage 1
+  static green.
 
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
 
