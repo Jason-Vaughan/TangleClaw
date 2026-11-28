@@ -9740,12 +9740,30 @@ route('GET', '/api/v6/legacy-projects/:legacyProjectId', (req, res, params) => {
  * guessed from the numeric id itself (e.g. assuming `'lp-' || projectId`),
  * since a project can also belong to a multi-project fleet's own logical
  * project, not only its auto-provisioned one.
+ *
+ * Also includes every logical project id belonging to any OTHER project
+ * that shares a `project_groups` membership with `projectId` (#3345
+ * addendum, #3347: a Fleet PM/Observer bound session, e.g. TC-Lane-PM and
+ * TC-Lane-Obsr both in TangleClaw-Shared, must be able to read/disposition
+ * the whole fleet group's own Kaizen items, not only the ones provisioned
+ * under its own single project). A project outside every one of
+ * `projectId`'s groups is never added by this -- `project_group_members`
+ * is the one membership table every group-scoped read in this file already
+ * trusts (`store.projectGroups.listMembers`/`getByProject`), so widening
+ * through it rather than inventing a second membership notion keeps this
+ * consistent with every other group-scoped grant.
  * @param {number} projectId
  * @returns {string[]}
  */
 function _v6LogicalProjectIdsForLegacyProject(projectId) {
-  return v6Db().prepare('SELECT DISTINCT logical_project_id FROM v6_legacy_project_view WHERE legacy_project_id = ?')
-    .all(projectId).map((r) => r.logical_project_id);
+  return v6Db().prepare(
+    `SELECT DISTINCT logical_project_id FROM v6_legacy_project_view WHERE legacy_project_id = ?
+       OR legacy_project_id IN (
+         SELECT m2.project_id FROM project_group_members m1
+         JOIN project_group_members m2 ON m1.group_id = m2.group_id
+         WHERE m1.project_id = ?
+       )`
+  ).all(projectId, projectId).map((r) => r.logical_project_id);
 }
 
 /**
@@ -11381,9 +11399,25 @@ const SPRINT_REPORTS_HUB_DEFAULT_PATH = '/Users/jasonvaughan/Documents/Projects/
  * caller's own bound default (or null) exactly as if it had named nothing,
  * never answered with a refusal that would itself confirm the id resolves
  * to something.
+ * `memberProjectIds` (#3345, #3325 fast-follow): every project id in the
+ * resolved `groupId`'s own fleet, `projectId` included -- this is what lets
+ * {@link module:lib/native-sprint-tracker.sprintDataFromWaveRuns} find a wave
+ * run recorded under a DIFFERENT seat of the same fleet (the operator
+ * launched the train from `TiLT-PM`'s project, then clicks into a sibling
+ * `TiLT-Builder` seat) instead of answering empty just because the clicked
+ * seat's own `projectId` never personally appears on any run's
+ * `metadata.projectId`. `null` when `groupId` never resolved (a lone
+ * project, or no caller-named project at all) -- `sprintDataFromWaveRuns`
+ * falls back to its pre-#3345 exact-`projectId` match in that case, same as
+ * before this field existed.
+ * `projectName`/`groupName` (#3345, #3325 fast-follow): the resolved
+ * project's/group's own display name, so a renderer (`public/sprint-wave-
+ * ui.js`) can show which project/fleet it is actually looking at instead of
+ * a label hardcoded for this server's own install.
  * @param {object} req - The request (`headers`, and whatever query string it carries)
  * @returns {{projectId: (number|null), fleetId: (string|null), groupId: (string|null),
- *   projectPath: (string|null), sharedDir: (string|null)}}
+ *   projectPath: (string|null), sharedDir: (string|null), memberProjectIds: (number[]|null),
+ *   projectName: (string|null), groupName: (string|null)}}
  */
 function _v6ResolveSprintScope(req) {
   const query = parseQuery(reqUrl(req).search);
@@ -11403,20 +11437,25 @@ function _v6ResolveSprintScope(req) {
   // `sharedDocsAccess.canSeeGroup` call near its `query.groupId` handling).
   if (groupId !== null && !sharedDocsAccess.canSeeGroup(access, groupId)) groupId = null;
   let projectPath = null;
+  let projectName = null;
   if (projectId !== null) {
     const project = store.projects.get(projectId);
     projectPath = project ? project.path : null;
+    projectName = project ? project.name : null;
     if (groupId === null) {
       const owned = store.projectGroups.getByProject(projectId).find((g) => g.sharedDir);
       if (owned) groupId = owned.id;
     }
   }
   let sharedDir = null;
+  let groupName = null;
   if (groupId !== null) {
     const group = store.projectGroups.get(groupId);
     sharedDir = group ? group.sharedDir : null;
+    groupName = group ? group.name : null;
   }
-  return { projectId, fleetId, groupId, projectPath, sharedDir };
+  const memberProjectIds = groupId !== null ? store.projectGroups.listMembers(groupId) : null;
+  return { projectId, fleetId, groupId, projectPath, sharedDir, memberProjectIds, projectName, groupName };
 }
 
 /**
@@ -11807,6 +11846,14 @@ async function _v6SprintGithubActivity(scope = {}) {
     getSprintData: (scope) => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), 'current', scope),
     getSprintDataForVersion: (version, scope) => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), version, scope),
     getRoadmapData: (scope) => _v6LoadRoadmapData(scope),
+    // #3345 (#3325 fast-follow): a plain `https://github.com/<repo>` link
+    // for whichever repo the resolved roadmap named (`roadmap.repo`) --
+    // always a valid link for a repo this GitHub token (or the public,
+    // unauthenticated API) can reach, unlike guessing a GitHub Pages URL
+    // (`<owner>.github.io/<repo>/`), which only this server's own install
+    // happens to have configured and most repos never enable at all. Never
+    // installation-specific, so no scope lookup is needed here.
+    getRoadmapUrl: (repo) => (typeof repo === 'string' && repo ? `https://github.com/${repo}` : null),
     getGithubActivity: (scope) => _v6SprintGithubActivity(scope),
     // #3162/#3164.
     getShippedVersions: (scope) => _v6ShippedVersions(scope),
@@ -12640,6 +12687,25 @@ if (require.main === module) {
   if (!_checkPublicAssets()) {
     log.error('Static asset directory (public/index.html) is missing or unreadable — UI routes will 404; '
       + 'check if the install directory was moved or renamed while running', { publicDir: PUBLIC_DIR });
+  }
+
+  // #3347 (#3345 addendum, quick-note from PM; the module itself ships in a
+  // sibling PR, #3348) — best-effort: stages ~/.tangleclaw/tc-cli-staged/ on
+  // boot so a lane-local/TCC-safe staged `tc` invocation never lags behind
+  // a newly merged verb. A missing module (this file not merged yet) is
+  // the EXPECTED case until #3348 lands, so that specific failure logs at
+  // debug, not warn; the function existing but throwing is a real problem
+  // worth a trace, so that one does warn. Either way this never blocks boot.
+  try {
+    // eslint-disable-next-line global-require
+    const stageTcCli = require('./scripts/stage-tc-cli');
+    if (stageTcCli && typeof stageTcCli.stageTcCli === 'function') stageTcCli.stageTcCli();
+  } catch (err) { // prawduct:allow prawduct/broad-except -- best-effort staging must never block server boot
+    if (err && err.code === 'MODULE_NOT_FOUND') {
+      log.debug('tc CLI auto-stage skipped: scripts/stage-tc-cli.js not present yet (#3348)');
+    } else {
+      log.warn('tc CLI auto-stage failed', { error: err && err.message });
+    }
   }
 
   // #1369 — the same move/rename leaves a LaunchAgent plist's WorkingDirectory

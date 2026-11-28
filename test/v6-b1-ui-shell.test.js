@@ -10099,6 +10099,46 @@ describe('#3207 call sites — loadRouteDetail/handleRoute pass a context label 
   });
 });
 
+// #3345 (#3325 fast-follow): Sprint & Cars / Kaizen & Reports reads are
+// scoped to the active project/fleet, and an open workspace panel refreshes
+// when loadConversation switches the active project. Structural source
+// assertions, matching this file's own established convention (#3207's
+// block directly above) -- `loadWorkspacePanel`/`loadConversation` close
+// over `current`/`api`/`getShell`/`seq` from this file's one shared
+// closure, so lifting either in isolation would hit the exact free-variable
+// trap this repo's own learnings file already warns about; the full-
+// controller harness a few hundred lines up (`controller()`) is deliberately
+// scoped to script-loading/panel-drawing alone (its own doc comment: "no
+// route load runs") and not meant to drive a real project switch either.
+describe('#3345 (#3325 fast-follow): project/fleet-scoped workspace panel reads', () => {
+  it('loadWorkspacePanel appends ?projectId= (and &groupId= when present) to the sprint-waves/sprint-reports read', () => {
+    const fn = SRC.slice(SRC.indexOf('async function loadWorkspacePanel('), SRC.indexOf('\n    }\n\n    /**\n     * POST to a train launch'));
+    assert.match(fn, /const activeProject = current && current\.project \? current\.project : null;/);
+    assert.match(fn, /encodeURIComponent\(activeProject\.id\)/);
+    assert.match(fn, /activeProject\.groupId \? `&groupId=\$\{encodeURIComponent\(activeProject\.groupId\)\}` : ''/);
+    assert.match(fn, /\(mode === 'kaizen' \? '\/api\/sprint-reports\/current' : '\/api\/sprint-waves'\) \+ scopeQuery/);
+  });
+
+  it('loadWorkspacePanel appends no query string at all when no project is active, unchanged from before #3345', () => {
+    const fn = SRC.slice(SRC.indexOf('async function loadWorkspacePanel('), SRC.indexOf('\n    }\n\n    /**\n     * POST to a train launch'));
+    assert.match(fn, /const scopeQuery = activeProject\s*\n\s*\? `\?projectId=/);
+    // The ternary's else-branch -- confirms a null activeProject produces ''.
+    assert.match(fn, /: '';/);
+  });
+
+  it('loadConversation calls refreshOpenWorkspacePanel right after setting `current` to the newly-active project', () => {
+    assert.match(SRC,
+      /current = \{ project, sessionId, launchId: \(status && status\.launchId\) \|\| null, ctx, mine, view: null \};\s*\n[\s\S]{0,800}?refreshOpenWorkspacePanel\(mine\);/);
+  });
+
+  it('refreshOpenWorkspacePanel only re-loads for an OPEN data-mode panel (sprint/charter/kaizen), never chat/wizard, and respects the mine/seq staleness guard', () => {
+    const fn = SRC.slice(SRC.indexOf('function refreshOpenWorkspacePanel('), SRC.indexOf('\n    /**\n     * POST to a train launch'));
+    assert.match(fn, /if \(mine !== seq\) return;/);
+    assert.match(fn, /sh && typeof sh\.getWorkspaceMode === 'function' \? sh\.getWorkspaceMode\(\) : null/);
+    assert.match(fn, /if \(mode === 'sprint' \|\| mode === 'charter' \|\| mode === 'kaizen'\) loadWorkspacePanel\(mode\);/);
+  });
+});
+
 // ── Car V651-W2-B (#3133, #3132, #3139): persisted layout, the automated
 // usage probe's own UI, and inline video previews ──
 

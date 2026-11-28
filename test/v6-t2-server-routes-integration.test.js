@@ -930,4 +930,103 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       assert.deepEqual(reportIds(res), ['v2.2.2']);
     });
   });
+
+  // #3345 (#3325 fast-follow, outside this car's originally-declared file
+  // scope -- flagged to PM; this is the one place `_v6ResolveSprintScope`'s
+  // real groupId/sharedDir/memberProjectIds resolution is end-to-end tested
+  // against a real store.projectGroups DB, not a fake `resolveScope` dep
+  // (that's `test/sprint-wave-routes.test.js`'s own job, and it can't reach
+  // this function at all): a train launched from one fleet seat must still
+  // show its cars when a SIBLING seat of the same fleet is the one clicked.
+  describe('GET /api/sprint-waves fleet-wide member-seat resolution (#3345)', () => {
+    let seatPm;
+    let seatBuilder;
+    let seatOutsideFleet;
+    let fleetGroup;
+    let boundBuilder;
+
+    before(() => {
+      seatPm = store.projects.create({ name: `fleet-pm-${Date.now()}`, path: path.join(tempDir, 'fleet-pm') });
+      seatBuilder = store.projects.create({ name: `fleet-builder-${Date.now()}`, path: path.join(tempDir, 'fleet-builder') });
+      seatOutsideFleet = store.projects.create({ name: `fleet-outsider-${Date.now()}`, path: path.join(tempDir, 'fleet-outsider') });
+      fleetGroup = store.projectGroups.create({ name: `test-fleet-${Date.now()}`, sharedDir: path.join(tempDir, 'fleet-shared') });
+      store.projectGroups.addMember(fleetGroup.id, seatPm.id);
+      store.projectGroups.addMember(fleetGroup.id, seatBuilder.id);
+      boundBuilder = bindProject(seatBuilder);
+    });
+
+    it('clicking a sibling seat with no run of its own still sees the fleet\'s run, recorded under a DIFFERENT seat', async () => {
+      const created = await post(`/api/v6/projects/${seatPm.id}/wave-runs`, {
+        fleetId: 'test-fleet', cars: [{ id: 'carFromPmSeat', fileScope: ['lib/example.js'] }]
+      });
+      assert.equal(created.statusCode, 201, created.body);
+      const res = await get(`/api/sprint-waves?projectId=${seatBuilder.id}`, { operator: false, headers: boundBuilder.headers });
+      assert.equal(res.statusCode, 200, res.body);
+      // Not asserting the full list (THIS SERVER'S own real `docs/releases/`
+      // versions also synthesize fallback train rows alongside it, same as
+      // every project this group's fake sharedDir leaves unresolved) -- the
+      // one thing #3345 exists to prove is that the REAL car, recorded
+      // under the OTHER seat, is actually present rather than replaced by a
+      // generic fallback placeholder for its own version.
+      assert.ok(json(res).snapshot.cars.some((c) => c.id === 'carFromPmSeat'), 'the sibling seat\'s real car must be visible');
+    });
+
+    it('a project outside the fleet group never sees that fleet\'s car, even by exact id guess', async () => {
+      const res = await get(`/api/sprint-waves?projectId=${seatOutsideFleet.id}`);
+      assert.equal(res.statusCode, 200, res.body);
+      assert.ok(!json(res).snapshot.cars.some((c) => c.id === 'carFromPmSeat'), 'an unrelated project must never see this fleet\'s car');
+    });
+  });
+
+  // #3345 addendum (#3347, outside this car's originally-declared scope --
+  // flagged to and explicitly requested by PM, with TC-Lane-Arc Ruling
+  // A1273 pre-ratifying the file list): `_v6LogicalProjectIdsForLegacyProject`
+  // now also grants every logical project belonging to a FLEET PEER (same
+  // `project_group_members` group), so a bound Fleet PM/Observer session
+  // can read/disposition the whole fleet's Kaizen items, not only the ones
+  // auto-provisioned under its own single project -- while a project
+  // outside every one of its groups still gets nothing.
+  describe('Kaizen item read scope widens to fleet peers in the same project group (#3345 addendum, #3347)', () => {
+    let seatA;
+    let seatB;
+    let seatOutsider;
+    let group;
+    let boundB;
+    let boundOutsider;
+    let itemId;
+
+    before(async () => {
+      seatA = store.projects.create({ name: `kaizen-fleet-a-${Date.now()}`, path: path.join(tempDir, 'kaizen-fleet-a') });
+      seatB = store.projects.create({ name: `kaizen-fleet-b-${Date.now()}`, path: path.join(tempDir, 'kaizen-fleet-b') });
+      seatOutsider = store.projects.create({ name: `kaizen-outsider-${Date.now()}`, path: path.join(tempDir, 'kaizen-outsider') });
+      group = store.projectGroups.create({ name: `kaizen-fleet-${Date.now()}` });
+      store.projectGroups.addMember(group.id, seatA.id);
+      store.projectGroups.addMember(group.id, seatB.id);
+      boundB = bindProject(seatB);
+      boundOutsider = bindProject(seatOutsider);
+
+      // Detected AS seat A, scoped to seat A's own auto-provisioned logical
+      // project (the `v6_legacy_project_insert` trigger provisions one for
+      // every project on creation) -- the operator creates it since only
+      // the real caller identity matters for the READ assertions below.
+      const created = await post('/api/v6/kaizen/items', {
+        originSprint: 'v6.6.8', findingId: `F-${Date.now()}`, defectCategory: 'test', rootCause: 'test root cause',
+        correctiveActionSpec: 'test corrective action', ownerRole: 'Builder', verificationClass: 'A_DETERMINISTIC',
+        targetMetric: 'test metric', logicalProjectId: `lp-${seatA.id}`
+      });
+      assert.equal(created.statusCode, 201, created.body);
+      itemId = json(created).id;
+    });
+
+    it('a fleet PEER (same group, different project) can read the item', async () => {
+      const res = await get(`/api/v6/kaizen/items/${itemId}`, { operator: false, headers: boundB.headers });
+      assert.equal(res.statusCode, 200, res.body);
+      assert.equal(json(res).id, itemId);
+    });
+
+    it('a project outside every one of seat A\'s groups still cannot read it', async () => {
+      const res = await get(`/api/v6/kaizen/items/${itemId}`, { operator: false, headers: boundOutsider.headers });
+      assert.equal(res.statusCode, 404, res.body);
+    });
+  });
 });

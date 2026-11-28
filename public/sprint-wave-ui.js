@@ -24,8 +24,13 @@
   };
 
   /**
-   * The published public SSOT roadmap site (#3134) — a fixed, known URL,
-   * not something any producer needs to supply.
+   * TangleClaw's own published public SSOT roadmap site (#3134). Exported
+   * for any external caller that still wants it, but {@link
+   * renderReleaseRoadmap} no longer uses it as a silent fallback (#3345,
+   * #3325 fast-follow) — a project/fleet other than TangleClaw's own has no
+   * reason to link here, so the roadmap link now renders only from a
+   * producer-supplied `roadmapUrl`, and not at all when that resolves to
+   * nothing, rather than defaulting to this one install's own page.
    * @type {string}
    */
   const PUBLIC_SSOT_URL = 'https://jason-vaughan.github.io/TangleClaw/';
@@ -530,8 +535,13 @@
    *   summary?: {plannedVersions?: number, releasedVersions?: number,
    *   activeSprintProgress?: {closed?: number, total?: number, pct?: number},
    *   scheduledItems?: number}, cars?: Array<{id: string, version?: (string|null),
-   *   lane?: (string|null), pill?: object, issues?: object[]}>}} snapshotData -
-   *   `lib/native-sprint-tracker.js#buildSprintWaveSnapshot`'s own return shape.
+   *   lane?: (string|null), pill?: object, issues?: object[]}>,
+   *   projectName?: (string|null), groupName?: (string|null), roadmapUrl?: (string|null)
+   *   }} snapshotData -
+   *   `lib/native-sprint-tracker.js#buildSprintWaveSnapshot`'s own return shape, plus
+   *   (#3345, #3325 fast-follow) `projectName`/`groupName`/`roadmapUrl` merged on from the
+   *   SAME `GET /api/sprint-waves` response's own top level (`public/v6-shell.js`'s own
+   *   `charterPanelContent` is what merges them on — they never come from this tracker).
    * @param {{innerHTML?: string}|null} [container] - A DOM element to write
    *   into, or omit to only get the HTML string back.
    * @returns {string} The rendered HTML.
@@ -543,6 +553,11 @@
     const summary = d.summary && typeof d.summary === 'object' ? d.summary : {};
     const progress = summary.activeSprintProgress && typeof summary.activeSprintProgress === 'object' ? summary.activeSprintProgress : {};
     const cars = Array.isArray(d.cars) ? d.cars : [];
+    // #3345 (#3325 fast-follow): the fleet/project this roadmap is actually
+    // scoped to, and its own repo link — never TangleClaw's hardcoded
+    // PUBLIC_SSOT_URL/name for a project or fleet that isn't TangleClaw.
+    const scopeLabel = (typeof d.groupName === 'string' && d.groupName) || (typeof d.projectName === 'string' && d.projectName) || null;
+    const roadmapUrl = typeof d.roadmapUrl === 'string' && d.roadmapUrl ? d.roadmapUrl : null;
 
     const metrics = [
       { label: 'Planned versions', value: summary.plannedVersions },
@@ -596,8 +611,10 @@
       + group('Released Versions', releases.shipped, false);
 
     const html = '<section class="sprint-roadmap-panel" aria-label="Release-First Roadmap">'
-      + '<h2 class="sprint-roadmap-title">Release-First Roadmap</h2>'
-      + `<p class="sprint-roadmap-public-ssot"><a href="${PUBLIC_SSOT_URL}" target="_blank" rel="noopener noreferrer">🌐 Public SSOT Roadmap ↗</a></p>`
+      + `<h2 class="sprint-roadmap-title">Release-First Roadmap${scopeLabel ? ` — ${_escapeHtml(scopeLabel)}` : ''}</h2>`
+      + (roadmapUrl
+        ? `<p class="sprint-roadmap-public-ssot"><a href="${_escapeHtml(roadmapUrl)}" target="_blank" rel="noopener noreferrer">🌐 ${scopeLabel ? _escapeHtml(scopeLabel) : 'Project'} Roadmap ↗</a></p>`
+        : '')
       + metricsBar
       + (groupsHtml || '<p class="sprint-panel-empty">No releases to show yet.</p>')
       + '</section>';

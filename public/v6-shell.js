@@ -706,14 +706,19 @@
       let drawn = null;
       if (ui && typeof ui.renderCharterReadinessPanel === 'function') {
         try {
-          // #3112 (PRR-A R1 NOTE): sprint-wave-ui.js's own doc comment names
-          // this exact passthrough as the one piece missing to compose the
-          // Release-First Roadmap into this panel. getSprintData() has no
-          // `snapshot` field yet (that's the real #3112 gap, out of this
-          // car's scope), so this is a forward-compatible no-op today —
-          // null until something upstream starts sending one.
+          // #3112: composes the Release-First Roadmap into this panel once
+          // `/api/sprint-waves` resolves (its own `snapshot` field, since
+          // #3112's own fix landed).
           const roadmapSnapshot = waves && waves.ok && waves.data && waves.data.snapshot && typeof waves.data.snapshot === 'object'
-            ? waves.data.snapshot : null;
+            // #3345 (#3325 fast-follow): projectName/groupName/roadmapUrl sit
+            // beside `snapshot` on the SAME response, never inside it — merged
+            // onto a copy here, the one place this file threads that response
+            // into sprint-wave-ui.js, so renderReleaseRoadmap never needs its
+            // own extra parameter just to see them.
+            ? Object.assign({}, waves.data.snapshot, {
+              projectName: waves.data.projectName, groupName: waves.data.groupName, roadmapUrl: waves.data.roadmapUrl
+            })
+            : null;
           const html = ui.renderCharterReadinessPanel({ charter: c, activeVersion, startupSummary, approvals, roadmapSnapshot });
           if (typeof html === 'string') drawn = html;
         } catch (err) { // prawduct:allow prawduct/broad-except -- a builder from another car that throws must not blank the panel; the built-in summary stands in
@@ -6559,6 +6564,15 @@
         inFlight: (sendsInFlight.get(String(project.id)) || 0) > 0
       });
       current = { project, sessionId, launchId: (status && status.launchId) || null, ctx, mine, view: null };
+      // #3345 (#3325 fast-follow): an open Sprint & Cars/Charter & Roadmap/
+      // Kaizen & Reports panel was scoped to whichever project/fleet was
+      // active when it was LAST opened — switching projects/sessions here
+      // left it showing the PREVIOUS project's data until the operator
+      // manually revisited the tab. `loadRouteDetail` has no active-project
+      // switch of its own; every one of its routes that changes the active
+      // project reaches this same assignment through its own call into this
+      // function, so one hook here covers both.
+      refreshOpenWorkspacePanel(mine);
       if (sessionId == null) {
         // #3203: a fresh (re-)entry into an offline chat always starts at
         // the hero, never wherever a PREVIOUS visit left it -- the
@@ -7055,7 +7069,20 @@
         const data = await api(url);
         return data ? { ok: true, data } : { ok: false, notFound: api.lastErrorCode === 'NOT_FOUND', error: api.lastError };
       };
-      const result = await read(mode === 'kaizen' ? '/api/sprint-reports/current' : '/api/sprint-waves');
+      // #3345 (#3325 fast-follow): scope the Sprint & Cars / Kaizen & Reports
+      // reads to the active project/fleet, the same way the charter read two
+      // lines down already does — without this, both fell back to
+      // TangleClaw's own sprint data for every project/fleet. The server
+      // resolves the fleet group (and every sibling seat's own wave runs)
+      // from `projectId` alone; `groupId` is passed too when the active
+      // project object happens to carry one, purely as a direct hint that
+      // skips that server-side lookup — its absence changes nothing.
+      const activeProject = current && current.project ? current.project : null;
+      const scopeQuery = activeProject
+        ? `?projectId=${encodeURIComponent(activeProject.id)}`
+          + (activeProject.groupId ? `&groupId=${encodeURIComponent(activeProject.groupId)}` : '')
+        : '';
+      const result = await read((mode === 'kaizen' ? '/api/sprint-reports/current' : '/api/sprint-waves') + scopeQuery);
       // Charter & Roadmap also reads the open project's charter (#3088).
       const project = mode === 'charter' && current && current.project ? current.project : null;
       const base = project ? `/api/v6/projects/${encodeURIComponent(project.id)}/charter` : null;
@@ -7079,6 +7106,27 @@
       const sh = getShell();
       if (!sh || typeof sh.setWorkspacePanel !== 'function') return;
       sh.setWorkspacePanel(mode, mode === 'charter' ? charterPanelContent(charter, result, ui, extra) : workspacePanelContent(mode, result, ui));
+    }
+
+    /**
+     * Re-fetch the currently-open data-mode panel (Sprint & Cars, Charter &
+     * Roadmap, Kaizen & Reports), if one is open, against whatever project
+     * is now active (#3345, #3325 fast-follow). A no-op for `chat`/`wizard`
+     * or when no panel is open at all — `getWorkspaceMode()` is the shell's
+     * own current tab, read fresh each call rather than cached, since the
+     * operator could be on any tab by the time `loadConversation`'s own
+     * awaits before this call resolve.
+     * @param {number} mine - The sequence number `loadConversation` captured
+     *   when it started; a load superseded by a newer one before this runs
+     *   is dropped, same convention as every other `mine !== seq` guard in
+     *   this closure.
+     * @returns {void}
+     */
+    function refreshOpenWorkspacePanel(mine) {
+      if (mine !== seq) return;
+      const sh = getShell();
+      const mode = sh && typeof sh.getWorkspaceMode === 'function' ? sh.getWorkspaceMode() : null;
+      if (mode === 'sprint' || mode === 'charter' || mode === 'kaizen') loadWorkspacePanel(mode);
     }
 
     /**
