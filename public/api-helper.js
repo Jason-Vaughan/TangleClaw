@@ -2665,12 +2665,20 @@
    * @returns {string} Modal HTML, ready to append to a document.
    */
   function tcMasterSettingsMarkup() {
+    // #3346: full-page, entirely via inline styles rather than a CSS class —
+    // this markup is the ONE emitter shared by both pages (see the docstring
+    // above), and the two pages carry separate stylesheets (public/style.css
+    // for the dashboard, public/session.css for the session page, neither of
+    // which the other includes). A class-based rule in only one of them would
+    // leave the modal unstyled on the other, exactly the asymmetry
+    // test/master-settings-css-parity.test.js's "#768" guard exists to catch.
     return `
     <div class="modal-backdrop" id="masterSettingsModal">
-      <div class="modal-content" role="dialog" aria-label="Master settings" aria-modal="true" style="max-width:540px;max-height:85vh;overflow-y:auto">
-        <h3 class="modal-title">Master Settings</h3>
-        <div id="masterSettingsBody"></div>
-        <div class="modal-actions">
+      <div class="modal-content" role="dialog" aria-label="Master settings" aria-modal="true"
+           style="position:fixed; inset:0; width:100vw; height:100vh; max-width:100vw; max-height:100vh; margin:0; border-radius:0; overflow:hidden; display:flex; flex-direction:column;">
+        <h3 class="modal-title" style="flex-shrink:0;">Master Settings</h3>
+        <div id="masterSettingsBody" style="flex:1 1 auto; min-height:0; overflow-y:auto; padding-right:4px; margin-right:-4px;"></div>
+        <div class="modal-actions" style="flex-shrink:0;">
           <button class="btn" id="masterSettingsCloseBtn">Close</button>
           <button class="btn btn-primary" id="masterSettingsSaveBtn">Save</button>
         </div>

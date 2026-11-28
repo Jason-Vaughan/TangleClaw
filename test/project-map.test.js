@@ -129,7 +129,10 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
       const result = await projects.updateProject(project.name, { projectMapEnabled: 'yes' });
       assert.deepEqual(result.errors, ['projectMapEnabled must be a boolean']);
       assert.equal(result.project, null);
-      assert.equal(store.projectConfig.load(project.path).projectMapEnabled, false);
+      // #3342 flipped createProject's own default to true for a project
+      // that says nothing (makeProject() above) — the rejected update must
+      // still leave that create-time value untouched, not the old false.
+      assert.equal(store.projectConfig.load(project.path).projectMapEnabled, true);
     });
 
     it('seeds PROJECT-MAP.md on a false → true transition when the file is absent', async () => {
@@ -167,8 +170,11 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
   });
 
   describe('enrichProject — surface', () => {
-    it('exposes projectMapEnabled (default false, reflects post-update true)', async () => {
+    it('exposes projectMapEnabled (default true, #3342), respects an explicit false override, and reflects a post-update true', async () => {
       projects.createProject({ name: 'pm-surface' });
+      assert.equal((await projects.getProject('pm-surface')).projectMapEnabled, true);
+
+      await projects.updateProject('pm-surface', { projectMapEnabled: false });
       assert.equal((await projects.getProject('pm-surface')).projectMapEnabled, false);
 
       await projects.updateProject('pm-surface', { projectMapEnabled: true });

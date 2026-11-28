@@ -385,9 +385,15 @@
 
   <!-- Settings Modal -->
   <div class="modal-backdrop" id="settingsModal">
-    <div class="modal-content settings-content" role="dialog" aria-label="Session settings" aria-modal="true">
-      <h3 class="modal-title">Session Settings</h3>
-      <div id="settingsBody">
+    <div class="modal-content settings-content" role="dialog" aria-label="Session settings" aria-modal="true"
+         style="position:fixed; inset:0; width:100vw; height:100vh; max-width:100vw; max-height:100vh; margin:0; border-radius:0; overflow:hidden; display:flex; flex-direction:column;">
+      <!-- #3346: full-page, inline rather than in public/session.css (this
+           page's own stylesheet, not shared with the dashboard) — the same
+           flex-column plumbing public/style.css gives .settings-modal/
+           .global-settings-modal as class rules, done inline here instead so
+           this conversion doesn't need to touch a second stylesheet. -->
+      <h3 class="modal-title" style="flex-shrink:0;">Session Settings</h3>
+      <div id="settingsBody" style="flex:1 1 auto; min-height:0; overflow-y:auto; padding-right:4px; margin-right:-4px;">
         <!-- #1181: the chime toggle moved to the banner (`#chimeBtn`). Not
              duplicated here — two controls for one setting is how they drift. -->
         <div class="form-group">
@@ -431,7 +437,7 @@
           <div class="form-hint" id="signOutHint" aria-live="polite"></div>
         </div>
       </div>
-      <div class="modal-actions">
+      <div class="modal-actions" style="flex-shrink:0;">
         <button class="btn" id="settingsCloseBtn">Close</button>
       </div>
     </div>

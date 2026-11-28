@@ -1732,12 +1732,15 @@ body.master-popout-mode #masterPanelFullscreenBtn {
    purpose — the base `.modal-content { max-width: 380px }` rule lives LATER in
    this file, so an equal-specificity `.settings-modal` would lose on source
    order. The two-class selector outranks it regardless of order. */
+/* #3346: full-page (was 680px/90vh — shadowed by the modal's own inline
+   style since #3214 made it full-page there; this class rule just hadn't
+   been brought in line with it). `#settingsBody` is no longer a direct
+   child here — #3346 nested it inside `.ps-workspace-row` as the rail's
+   content pane, so it is sized by `.ps-workspace-content` now, not by a
+   `.settings-modal > #settingsBody` rule. */
 .modal-content.settings-modal {
-  max-width: 680px;
-  /* Flex column so the body scrolls while the title + Save/Cancel stay put —
-     the Save button is always reachable without page-zoom. Overrides the base
-     `overflow-y:auto` (the inner #settingsBody owns the scroll here). */
-  max-height: 90vh;
+  max-width: 100vw;
+  max-height: 100vh;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1746,11 +1749,31 @@ body.master-popout-mode #masterPanelFullscreenBtn {
 .modal-content.settings-modal > .modal-actions {
   flex-shrink: 0;
 }
-.modal-content.settings-modal > #settingsBody {
+
+/* #3346: OpenClaw connection and Group modals — full-page, same flex-column
+   plumbing. Neither modal has a single `#id`-named body element like the
+   settings modals do (their fields are a flat run of `.form-group`/`.form-row`
+   siblings), so each gets one wrapper div (`.oc-modal-body` / `.group-modal-body`)
+   purely to give the flex layout one scrolling region to target. */
+.modal-content.openclaw-modal,
+.modal-content.group-modal {
+  max-width: 100vw;
+  max-height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.modal-content.openclaw-modal > .modal-title,
+.modal-content.openclaw-modal > .modal-actions,
+.modal-content.group-modal > .modal-title,
+.modal-content.group-modal > .modal-actions {
+  flex-shrink: 0;
+}
+.oc-modal-body,
+.group-modal-body {
   flex: 1 1 auto;
-  min-height: 0;        /* lets the flex child shrink below content height so it can scroll */
+  min-height: 0;
   overflow-y: auto;
-  /* room so the scrollbar doesn't sit on top of the controls */
   padding-right: 4px;
   margin-right: -4px;
 }
@@ -1784,14 +1807,16 @@ body.master-popout-mode #masterPanelFullscreenBtn {
 .gs-workspace-close {
   margin-left: auto;
 }
-.gs-workspace-row {
+.gs-workspace-row,
+.ps-workspace-row {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   gap: 18px;
   overflow: hidden;
 }
-.gs-category-rail {
+.gs-category-rail,
+.ps-category-rail {
   flex: 0 0 auto;
   width: 220px;
   display: flex;
@@ -1801,7 +1826,8 @@ body.master-popout-mode #masterPanelFullscreenBtn {
   padding-right: 4px;
   border-right: 1px solid var(--border, #333);
 }
-.gs-category-rail-item {
+.gs-category-rail-item,
+.ps-category-rail-item {
   text-align: left;
   background: none;
   border: none;
@@ -1811,15 +1837,18 @@ body.master-popout-mode #masterPanelFullscreenBtn {
   color: var(--text);
   cursor: pointer;
 }
-.gs-category-rail-item:hover {
+.gs-category-rail-item:hover,
+.ps-category-rail-item:hover {
   background: var(--elevated-bg);
 }
-.gs-category-rail-item.is-active {
+.gs-category-rail-item.is-active,
+.ps-category-rail-item.is-active {
   background: var(--primary);
   color: #000;
   font-weight: 600;
 }
-.gs-workspace-content {
+.gs-workspace-content,
+.ps-workspace-content {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -1829,18 +1858,27 @@ body.master-popout-mode #masterPanelFullscreenBtn {
 /* A category section not currently selected, or one the search filter has
    no match in, is removed from layout entirely — never just visually
    dimmed, so a hidden section's own ids (duplicated nowhere else) never
-   shift the content pane's scroll height while off screen. */
-.gs-category-section[hidden] {
+   shift the content pane's scroll height while off screen.
+   #3346: `.ps-category-section` is the project Settings modal's OWN class,
+   deliberately distinct from `.gs-category-section` — the Global Settings
+   rail's own _gsShowCategory/_gsWireCategoryRail query that class name with
+   an unscoped `document.querySelectorAll`, so sharing it here would let
+   opening/switching Global Settings toggle this modal's sections' hidden
+   state too (and vice versa), even while the other modal is closed. */
+.gs-category-section[hidden],
+.ps-category-section[hidden] {
   display: none;
 }
 /* Narrow viewport: the rail collapses to a horizontal scrollable strip
    above the content instead of a fixed-width column stealing a third of
    the screen on a phone. */
 @media (max-width: 720px) {
-  .gs-workspace-row {
+  .gs-workspace-row,
+  .ps-workspace-row {
     flex-direction: column;
   }
-  .gs-category-rail {
+  .gs-category-rail,
+  .ps-category-rail {
     width: auto;
     flex-direction: row;
     overflow-x: auto;
@@ -1849,7 +1887,8 @@ body.master-popout-mode #masterPanelFullscreenBtn {
     border-bottom: 1px solid var(--border, #333);
     padding-bottom: 4px;
   }
-  .gs-category-rail-item {
+  .gs-category-rail-item,
+  .ps-category-rail-item {
     white-space: nowrap;
   }
 }

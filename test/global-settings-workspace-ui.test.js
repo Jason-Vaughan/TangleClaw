@@ -31,6 +31,8 @@ const { liftDeclaration } = require('./helpers/lift');
 const UI_PATH = path.join(__dirname, '..', 'public', 'ui.js');
 const HTML_PATH = path.join(__dirname, '..', 'public', 'index.html');
 const CSS_PATH = path.join(__dirname, '..', 'public', 'style.css');
+const SESSION_HTML_PATH = path.join(__dirname, '..', 'public', 'session.html');
+const API_HELPER_PATH = path.join(__dirname, '..', 'public', 'api-helper.js');
 
 const CATEGORIES = ['general', 'storage', 'engines', 'security', 'backups', 'bridge'];
 
@@ -97,20 +99,26 @@ describe('Global Settings workspace CSS (#3319)', () => {
   });
 
   it('defines the rail and content pane as a row, and a narrow-viewport collapse', () => {
-    assert.match(css, /\.gs-category-rail\s*\{/);
-    assert.match(css, /\.gs-workspace-content\s*\{/);
+    // #3346 extended this selector with a `.ps-category-rail` sibling (the
+    // project Settings modal's own rail) rather than duplicating the rule
+    // body — `[^{]*` tolerates the trailing `, .ps-category-rail` before
+    // the `{` either way.
+    assert.match(css, /\.gs-category-rail\b[^{]*\{/);
+    assert.match(css, /\.gs-workspace-content\b[^{]*\{/);
     assert.match(css, /@media \(max-width:\s*720px\)\s*\{[^]*\.gs-category-rail/);
   });
 
   it('uses this app\'s real theme variables, not guessed/undefined ones', () => {
-    const railBlock = css.slice(css.indexOf('.gs-category-rail {'), css.indexOf('.gs-workspace-content {'));
+    const railBlock = css.slice(css.indexOf('.gs-category-rail'), css.indexOf('.gs-workspace-content'));
     assert.doesNotMatch(railBlock, /--border-color\b/, 'this app uses --border, not --border-color');
     assert.doesNotMatch(railBlock, /--accent\b/, 'this app uses --primary, not --accent');
     assert.doesNotMatch(railBlock, /--hover-bg\b/, 'this app uses --elevated-bg for hover states');
   });
 
   it('hides a non-active/non-matching category section out of layout entirely', () => {
-    assert.match(css, /\.gs-category-section\[hidden\]\s*\{\s*display:\s*none;\s*\}/);
+    // #3346 extended this selector with a `.ps-category-section[hidden]`
+    // sibling, same reasoning as the rail selector above.
+    assert.match(css, /\.gs-category-section\[hidden\][^{]*\{\s*display:\s*none;\s*\}/);
   });
 });
 
@@ -485,5 +493,261 @@ describe('Global Settings rail/search/hash behavior (#3319)', () => {
     searchEl._inputHandler();
     const bridgeSection = sections.find((s) => s.category === 'bridge');
     assert.equal(bridgeSection.hidden, false);
+  });
+});
+
+/*
+ * #3346 — several other narrow (380px-680px) settings/config modals become
+ * full-page workspaces, and the project #settingsModal's 3 groupings (#3214's
+ * side-by-side responsive cards) become rail categories of their own —
+ * `.ps-category-section`/`.ps-category-rail-item`, deliberately NOT a reuse
+ * of this file's own `.gs-category-section`/`.gs-category-rail-item`,
+ * because `_gsShowCategory` above queries those classes with an unscoped
+ * `document.querySelectorAll` that would otherwise touch the project
+ * Settings modal's sections too. Added here (rather than a new test file)
+ * per this car's own file scope, which keeps test/tiers.json and
+ * .testament.toml untouched by this car.
+ */
+describe('#3346 — full-page modal markup', () => {
+  let indexHtml;
+  let sessionHtml;
+  let css;
+  let apiHelperSrc;
+
+  before(() => {
+    indexHtml = fs.readFileSync(HTML_PATH, 'utf8');
+    sessionHtml = fs.readFileSync(SESSION_HTML_PATH, 'utf8');
+    css = fs.readFileSync(CSS_PATH, 'utf8');
+    apiHelperSrc = fs.readFileSync(API_HELPER_PATH, 'utf8');
+  });
+
+  describe('#masterSettingsModal (public/api-helper.js)', () => {
+    it('is full-page, not the old 540px/85vh box', () => {
+      const start = apiHelperSrc.indexOf('id="masterSettingsModal"');
+      assert.ok(start > -1);
+      const block = apiHelperSrc.slice(start, start + 600);
+      assert.doesNotMatch(block, /max-width:540px/);
+      assert.match(block, /position:fixed; inset:0; width:100vw; height:100vh; max-width:100vw; max-height:100vh; margin:0; border-radius:0;/);
+    });
+
+    it('does the full-page flex-column layout entirely inline, not via a CSS class — this markup is shared by two pages with two separate stylesheets (#768)', () => {
+      const start = apiHelperSrc.indexOf('id="masterSettingsModal"');
+      const block = apiHelperSrc.slice(start, start + 600);
+      // no new class name — a class-based rule living in only one of the
+      // two stylesheets would leave the modal unstyled on the other page.
+      assert.doesNotMatch(block, /class="modal-content master-settings-modal"/);
+      assert.match(block, /overflow:hidden; display:flex; flex-direction:column;/);
+      assert.match(block, /<h3 class="modal-title" style="flex-shrink:0;">/);
+      assert.match(block, /id="masterSettingsBody" style="flex:1 1 auto;[^"]*overflow-y:auto;/);
+      assert.match(block, /<div class="modal-actions" style="flex-shrink:0;">/);
+    });
+
+    it('public/style.css carries no now-dead .master-settings-modal class rule', () => {
+      assert.doesNotMatch(css, /\.master-settings-modal/);
+    });
+  });
+
+  describe('Project #settingsModal (public/index.html + public/ui.js)', () => {
+    let modalBlock;
+
+    before(() => {
+      const start = indexHtml.indexOf('<div class="modal-backdrop" id="settingsModal">');
+      assert.ok(start > -1);
+      const end = indexHtml.indexOf('</div>\n  </div>\n\n\n  <!--', start);
+      modalBlock = end > start ? indexHtml.slice(start, end) : indexHtml.slice(start, start + 3000);
+    });
+
+    it('is still full-page via the #3214 inline style (unchanged by #3346)', () => {
+      assert.match(modalBlock, /position:fixed; inset:0; width:100vw; height:100vh; max-width:100vw; max-height:100vh; margin:0; border-radius:0;/);
+    });
+
+    it('has a rail of exactly 3 categories beside #settingsBody', () => {
+      assert.match(modalBlock, /<nav class="ps-category-rail" id="settingsCategoryRail"/);
+      const railButtons = modalBlock.match(/data-ps-category="(\w+)"/g) || [];
+      assert.deepEqual(railButtons, [
+        'data-ps-category="identity"',
+        'data-ps-category="engine"',
+        'data-ps-category="governance"'
+      ]);
+      assert.match(modalBlock, /<div class="ps-workspace-content" id="settingsBody"><\/div>/);
+    });
+
+    it('public/style.css no longer sizes .settings-modal to 680px/90vh (shadowed, now updated to match the inline full-page style)', () => {
+      const idx = css.indexOf('.modal-content.settings-modal {');
+      assert.ok(idx > -1);
+      const block = css.slice(idx, idx + 400);
+      assert.doesNotMatch(block, /max-width:\s*680px/);
+      assert.doesNotMatch(block, /max-height:\s*90vh/);
+      assert.match(block, /max-width:\s*100vw/);
+      assert.match(block, /max-height:\s*100vh/);
+    });
+
+    it('public/style.css extends the rail mechanics with .ps-* selectors alongside the Global Settings .gs-* ones, never replacing them', () => {
+      assert.match(css, /\.gs-category-rail,\s*\n\s*\.ps-category-rail\s*\{/);
+      assert.match(css, /\.gs-category-rail-item\.is-active,\s*\n\s*\.ps-category-rail-item\.is-active\s*\{/);
+      assert.match(css, /\.gs-category-section\[hidden\],\s*\n\s*\.ps-category-section\[hidden\]\s*\{/);
+    });
+
+    it("openSettings() builds 3 .ps-category-section blocks via settingsCard(title, 'identity'|'engine'|'governance', ...), not .gs-category-section", () => {
+      const src = fs.readFileSync(UI_PATH, 'utf8');
+      const fn = liftDeclaration(src, 'function openSettings(');
+      assert.match(fn, /class="ps-category-section" data-ps-category="\$\{category\}" hidden/);
+      // title stays settingsCard's FIRST argument (test/engine-model-picker.test.js's
+      // "settingsCard title escaping" suite, R-Gate R1 BLOCKING 3, extracts it
+      // by regex in that position) — category is the second.
+      const calls = fn.match(/, '(\w+)', `$/gm) || [];
+      assert.deepEqual(calls, [
+        ", 'identity', `",
+        ", 'engine', `",
+        ", 'governance', `"
+      ]);
+      // its own explanatory comment legitimately names .gs-category-section
+      // (why this modal does NOT reuse it) — only the markup it builds matters.
+      assert.doesNotMatch(fn, /class="gs-category-section"/);
+    });
+  });
+
+  describe('Session #settingsModal (public/session.html)', () => {
+    it('is full-page via an inline style (session.css is a separate stylesheet, out of this car\'s file scope)', () => {
+      const start = sessionHtml.indexOf('<div class="modal-backdrop" id="settingsModal">');
+      assert.ok(start > -1);
+      const block = sessionHtml.slice(start, start + 600);
+      assert.match(block, /position:fixed; inset:0; width:100vw; height:100vh; max-width:100vw; max-height:100vh; margin:0; border-radius:0;/);
+      assert.match(block, /display:flex; flex-direction:column;/);
+    });
+  });
+
+  describe('#groupModal and #openclawModal (public/index.html)', () => {
+    it('#openclawModal is full-page with its own body wrapper', () => {
+      const start = indexHtml.indexOf('<div class="modal-backdrop" id="openclawModal">');
+      assert.ok(start > -1);
+      const block = indexHtml.slice(start, start + 600);
+      assert.doesNotMatch(block, /max-width:440px/);
+      assert.match(block, /position:fixed; inset:0; width:100vw; height:100vh; max-width:100vw; max-height:100vh; margin:0; border-radius:0;/);
+      assert.match(block, /class="modal-content openclaw-modal"/);
+      assert.match(block, /<div class="oc-modal-body">/);
+    });
+
+    it('#groupModal is full-page with its own body wrapper', () => {
+      const start = indexHtml.indexOf('<div class="modal-backdrop" id="groupModal">');
+      assert.ok(start > -1);
+      const block = indexHtml.slice(start, start + 600);
+      assert.doesNotMatch(block, /max-width:420px/);
+      assert.match(block, /position:fixed; inset:0; width:100vw; height:100vh; max-width:100vw; max-height:100vh; margin:0; border-radius:0;/);
+      assert.match(block, /class="modal-content group-modal"/);
+      assert.match(block, /<div class="group-modal-body">/);
+    });
+
+    it('public/style.css gives both a flex-column layout and one scrolling body region', () => {
+      assert.match(css, /\.modal-content\.openclaw-modal,\s*\n\s*\.modal-content\.group-modal\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;/s);
+      assert.match(css, /\.oc-modal-body,\s*\n\s*\.group-modal-body\s*\{[^}]*flex:\s*1 1 auto;[^}]*overflow-y:\s*auto;/s);
+    });
+  });
+});
+
+/*
+ * Behavioral coverage for the project Settings modal's own rail, lifted and
+ * run against a minimal hand-built fake document — mirroring this file's own
+ * established pattern above ("Global Settings rail/search/hash behavior").
+ * The one behavior worth pinning here that a structural assertion cannot
+ * show: this rail's functions only ever touch `.ps-*`-classed elements,
+ * never `.gs-*`-classed ones, even when both are present in the same fake
+ * document at once — the actual isolation #3346 depends on.
+ */
+describe('Project Settings rail behavior (#3346) — isolated from Global Settings', () => {
+  const PS_CATEGORIES = ['identity', 'engine', 'governance'];
+
+  function makePsRailItem(prefix, category) {
+    const item = { prefix, category, classes: new Set(), attrs: {} };
+    item.getAttribute = (name) => (name === `data-${prefix}-category` ? item.category : null);
+    item.setAttribute = (name, val) => { item.attrs[name] = val; };
+    item.classList = { toggle: (cls, state) => { if (state) item.classes.add(cls); else item.classes.delete(cls); } };
+    return item;
+  }
+
+  function makePsSection(prefix, category) {
+    const section = { prefix, category, hidden: true };
+    section.getAttribute = (name) => (name === `data-${prefix}-category` ? section.category : null);
+    return section;
+  }
+
+  function makePsEnv() {
+    // Both modals' elements exist in the same fake document at once — this
+    // is the scenario that matters: both modals' markup is always in the DOM
+    // (only `.open` on the backdrop differs), regardless of which is open.
+    const psSections = PS_CATEGORIES.map((c) => makePsSection('ps', c));
+    const psRailItems = PS_CATEGORIES.map((c) => makePsRailItem('ps', c));
+    const gsSections = ['general', 'storage'].map((c) => makePsSection('gs', c));
+    const gsRailItems = ['general', 'storage'].map((c) => makePsRailItem('gs', c));
+    const doc = {
+      querySelectorAll(sel) {
+        if (sel === '.ps-category-section') return psSections;
+        if (sel === '.ps-category-rail-item') return psRailItems;
+        // A real `.gs-category-section`/`.gs-category-rail-item` query must
+        // never come from _psShowCategory/_psWireCategoryRail.
+        if (sel === '.gs-category-section' || sel === '.gs-category-rail-item') {
+          throw new Error(`_psShowCategory/_psWireCategoryRail must never query ${sel}`);
+        }
+        return [];
+      }
+    };
+    return { doc, psSections, psRailItems, gsSections, gsRailItems };
+  }
+
+  function loadPs() {
+    const src = fs.readFileSync(UI_PATH, 'utf8');
+    const startIdx = src.indexOf('const PS_CATEGORIES = [');
+    assert.ok(startIdx > -1, 'PS_CATEGORIES must exist');
+    const wireDecl = liftDeclaration(src, 'function _psWireCategoryRail(');
+    const endIdx = src.indexOf(wireDecl) + wireDecl.length;
+    const block = src.slice(startIdx, endIdx);
+    const factory = new Function('document', `
+      ${block}
+      return {
+        showCategory: _psShowCategory,
+        wireCategoryRail: _psWireCategoryRail,
+        categories: PS_CATEGORIES,
+        getActive: () => psActiveCategory
+      };
+    `);
+    return factory;
+  }
+
+  it('PS_CATEGORIES is exactly the 3 rail categories, in rail order', () => {
+    const { doc } = makePsEnv();
+    const ps = loadPs()(doc);
+    assert.deepEqual(ps.categories, PS_CATEGORIES);
+  });
+
+  it('_psShowCategory shows only the chosen category and marks its rail item active, never touching .gs-* elements', () => {
+    const { doc, psSections, psRailItems } = makePsEnv();
+    const ps = loadPs()(doc);
+    assert.doesNotThrow(() => ps.showCategory('engine'));
+    for (const section of psSections) {
+      assert.equal(section.hidden, section.category !== 'engine');
+    }
+    for (const item of psRailItems) {
+      assert.equal(item.classes.has('is-active'), item.category === 'engine');
+      assert.equal(item.attrs['aria-pressed'], item.category === 'engine' ? 'true' : 'false');
+    }
+  });
+
+  it('_psShowCategory falls back to the first category for an unknown name', () => {
+    const { doc } = makePsEnv();
+    const ps = loadPs()(doc);
+    ps.showCategory('not-a-real-category');
+    assert.equal(ps.getActive(), 'identity');
+  });
+
+  it('_psWireCategoryRail wires exactly once even if called twice (no doubled listeners)', () => {
+    const { doc, psRailItems } = makePsEnv();
+    let addCount = 0;
+    for (const item of psRailItems) {
+      item.addEventListener = () => { addCount++; };
+    }
+    const ps = loadPs()(doc);
+    ps.wireCategoryRail();
+    ps.wireCategoryRail();
+    assert.equal(addCount, psRailItems.length, 'second call must be a no-op');
   });
 });

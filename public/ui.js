@@ -2213,23 +2213,35 @@ function openSettings(name, options) {
   // `enrichProject` always sends the default template, so it is never restated here.
   const provenanceSetting = project.provenanceWatermark
     || { enabled: false, template: null, defaultTemplate: '', warning: null };
-  // #3214: a full-page settings view groups its fields into 3 responsive
-  // cards (flex-wrap, so they reflow to one column on a narrow viewport
-  // with no media query — public/style.css is not touched by this car) —
-  // Identity & Workspace Paths, the 3-phase Engine/Model/Effort/Launch Mode
-  // configuration, and Switchboard/Wake/Governance controls. Every existing
-  // field keeps its exact id and inner markup; only the OUTER grouping
-  // changed, so every id a caller or a test already reaches for is still
-  // exactly where it was.
-  const settingsCard = (title, bodyHtml) => `
-    <section style="flex:1 1 340px; min-width:280px; border:1px solid var(--border, #333); border-radius:8px; padding:14px 16px; margin-bottom:14px;">
+  // #3346: the modal's 3 groupings (originally #3214's side-by-side
+  // responsive cards) are now rail categories — one shown at a time via
+  // #settingsCategoryRail. `.ps-category-section`/`.ps-category-rail-item`
+  // are this modal's OWN classes (public/style.css extends the same rule
+  // bodies #3319's `.gs-category-*` already has, under a second selector) —
+  // not a reuse of the Global Settings classes themselves, because that
+  // modal's `_gsShowCategory` queries `.gs-category-section` with an
+  // unscoped `document.querySelectorAll`, which would otherwise toggle this
+  // modal's sections' hidden state too (and vice versa) even while the other
+  // modal is closed. `_psShowCategory`/`_psWireCategoryRail` below are this
+  // modal's own independent, equally-scoped pair. Every existing field keeps
+  // its exact id and inner markup; only the OUTER grouping changed, so every
+  // id a caller or a test already reaches for is still exactly where it was.
+  // `title` stays the FIRST argument, same position #3214 originally gave
+  // it — test/engine-model-picker.test.js's "settingsCard title escaping"
+  // suite (R-Gate R1 BLOCKING 3) extracts it by regex as settingsCard's
+  // first quoted string argument. It keeps the escaped in-content heading
+  // that fix required: the rail button beside it labels the category for
+  // navigation, but is static markup in index.html, not this escaped
+  // dynamic string, so dropping this heading would have silently dropped
+  // that fix's own guarantee.
+  const settingsCard = (title, category, bodyHtml) => `
+    <section class="ps-category-section" data-ps-category="${category}" hidden>
       <h4 style="margin:0 0 10px; font-size:0.95em; text-transform:uppercase; letter-spacing:0.03em; opacity:0.75;">${esc(title)}</h4>
       ${bodyHtml}
     </section>`;
 
   document.getElementById('settingsBody').innerHTML = `
-    <div style="display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
-      ${settingsCard('Identity & Workspace Paths', `
+      ${settingsCard('Identity & Workspace Paths', 'identity', `
         <div class="form-group">
           <label class="form-label" for="settingsName">Name</label>
           <input type="text" class="form-input" id="settingsName" value="${esc(name)}"
@@ -2260,7 +2272,7 @@ function openSettings(name, options) {
             ${project.medusaEnabled ? ' &middot; Medusa comms enabled' : ''}
           </div>
         </div>`)}
-      ${settingsCard('AI Engine, Model & Effort — Launch Mode', `
+      ${settingsCard('AI Engine, Model & Effort — Launch Mode', 'engine', `
         <div class="form-group">
           <label class="form-label" for="settingsEngine">Engine</label>
           <select class="form-select" id="settingsEngine">${engineOpts}</select>
@@ -2269,7 +2281,7 @@ function openSettings(name, options) {
         </div>
         <div id="settingsModelEffortContainer"></div>
         <div id="settingsLaunchModeContainer"></div>`)}
-      ${settingsCard('Switchboard, Wake & Governance Controls', `
+      ${settingsCard('Switchboard, Wake & Governance Controls', 'governance', `
         <div class="settings-toggles-grid">
           <div id="settingsSilentPrimeContainer"></div>
           <div id="settingsFeatureIndexContainer"></div>
@@ -2322,8 +2334,10 @@ function openSettings(name, options) {
             <div class="form-hint">Adds one comment line naming this project to the files TangleClaw writes whole and keeps private: the session prime and re-entry notes (while silent prime is on), the UI wrap advisory, and a <code>.codex.yaml</code> or <code>.aider.conf.yml</code> that git ignores. It never touches <code>CLAUDE.md</code>, <code>AGENTS.md</code>, a config file git does not ignore, or any other file you own, so on an engine with no config file (OpenClaw) only the files in <code>.tangleclaw/</code> carry it. Off by default. Leave the line blank for the default; <code>{project}</code> and <code>{engine}</code> are the only placeholders. A change reaches each file the next time TangleClaw regenerates it — usually the next session launch — not when you save.</div>
           </div>
         </div>`)}
-    </div>
     ${renderProjectRulesSection(project)}`;
+
+  _psShowCategory(PS_CATEGORIES[0]);
+  _psWireCategoryRail();
 
   // Provenance preview (#1885): what the line will read, with this project's
   // name and the engine now selected. `tcProvenancePreview` owns the wording.
@@ -3003,6 +3017,48 @@ function closeSettings() {
   isolationOverrideReveal = false;
   projectRulesTargetId = null;
   projectRulesTargetName = null;
+}
+
+// #3346: the project Settings modal's own rail categories — independent of
+// Global Settings' GS_CATEGORIES/_gsShowCategory/_gsWireCategoryRail (#3319),
+// deliberately, so neither modal's rail can affect the other's section
+// visibility (see the note on `.ps-category-section[hidden]` in
+// public/style.css). No hash deep-link for this one: the modal opens by
+// project name, not by URL, and `#settings/...` is already Global Settings'
+// own hash prefix.
+const PS_CATEGORIES = ['identity', 'engine', 'governance'];
+let psActiveCategory = PS_CATEGORIES[0];
+
+/**
+ * Show the one `.ps-category-section[data-ps-category="category"]` and hide
+ * the other two; mark the matching rail button active (#3346).
+ * @param {string} category
+ */
+function _psShowCategory(category) {
+  const cat = PS_CATEGORIES.includes(category) ? category : PS_CATEGORIES[0];
+  psActiveCategory = cat;
+  document.querySelectorAll('.ps-category-section').forEach((section) => {
+    section.hidden = section.getAttribute('data-ps-category') !== cat;
+  });
+  document.querySelectorAll('.ps-category-rail-item').forEach((item) => {
+    const isActive = item.getAttribute('data-ps-category') === cat;
+    item.classList.toggle('is-active', isActive);
+    item.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+}
+
+// Click wiring for #settingsCategoryRail (#3346). Its buttons are static
+// markup in index.html, siblings of #settingsBody rather than inside it, so
+// openSettings()'s `body.innerHTML = ...` never rebuilds them — wired
+// exactly once, mirroring _gsWireCategoryRail's own one-time-wiring note
+// (Car V667-W1-A), never from inside openSettings() itself.
+let _psRailWired = false;
+function _psWireCategoryRail() {
+  if (_psRailWired) return;
+  _psRailWired = true;
+  document.querySelectorAll('.ps-category-rail-item').forEach((item) => {
+    item.addEventListener('click', () => _psShowCategory(item.getAttribute('data-ps-category')));
+  });
 }
 
 // ── Project Rules (CC-6, #381) ──

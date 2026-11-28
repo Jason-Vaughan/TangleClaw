@@ -279,17 +279,16 @@ describe('feature-index (#207, chunk 1)', () => {
   });
 
   describe('enrichProject — surface', () => {
-    it('exposes featureIndexEnabled (default false)', async () => {
+    it('exposes featureIndexEnabled (default true, #3342)', async () => {
       projects.createProject({ name: 'enrich-default' });
       const enriched = await projects.getProject('enrich-default');
-      assert.equal(enriched.featureIndexEnabled, false);
+      assert.equal(enriched.featureIndexEnabled, true);
     });
 
-    it('reflects post-update true', async () => {
-      projects.createProject({ name: 'enrich-true' });
-      await projects.updateProject('enrich-true', { featureIndexEnabled: true });
-      const enriched = await projects.getProject('enrich-true');
-      assert.equal(enriched.featureIndexEnabled, true);
+    it('respects an explicit false override at creation (#3342)', async () => {
+      projects.createProject({ name: 'enrich-explicit-false', featureIndexEnabled: false });
+      const enriched = await projects.getProject('enrich-explicit-false');
+      assert.equal(enriched.featureIndexEnabled, false);
     });
   });
 
