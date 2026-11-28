@@ -160,6 +160,8 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   previously-verified case (the original `Checklist:`/`Status:`/`Options:` false positives, both
   ternary shapes) before trusting it. One new regression test added for the exact reported shape.
   884/884 in the car's own file; cross-file sweep (`test/v6-*.test.js`): 2774/2774; Stage 1 green.
+  verify-resolutions: 0 findings, 1 non-gating observation (same stale-evidence class as every
+  prior round — accepted). Tree clean at head `f4b2bf4c`.
 
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
 
