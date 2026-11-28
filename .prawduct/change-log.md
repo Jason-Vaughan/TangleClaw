@@ -191,6 +191,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   its own JSDoc declaring `Promise<string|null>` support; harmless today (the real
   implementation is synchronous) but would silently break under a future async one. Added the
   `await`, matching every sibling dep call in the same function.
+- R-1 resolution: PM granted an explicit ruling (PM-V668-W1A-01) citing GitHub issues #3254 and
+  #3349 as the durable shared-host tmux/pane-timing contention exception. Independently
+  verified both before accepting: both are real, open issues whose bodies match the claim
+  exactly, including reproduction evidence against the diff AND unmodified `origin/main`;
+  `scripts/test-touched.js`'s `KNOWN_FLAKY_STAGE2` object is a real, already-landed, code-level
+  exception list (3 entries today — `test/tmux-draft-capture.test.js`, `test/engine-
+  health.test.js`, `test/ttyd-runtime.test.js`; the 5 additional files #3349 names are a
+  pending, not-yet-landed addition to that same list). Dispositioned R-1 ACCEPTED with that
+  citation. A follow-up `verify-resolutions` pass then found the disposition alone
+  insufficient to clear a BLOCKING finding while `test-status` itself reads `stale` (the
+  evidence tree had moved one commit since the last full recorder run) — the protocol treats
+  stale evidence as "cannot confirm either way, stays blocking by omission," independent of
+  any ruling about what a CONFIRMED set of failures would mean. Reported this specific
+  mechanical gap back to PM (not something I resolved on my own authority) and received a
+  second explicit ruling, PM-V668-W1A-02: run the targeted `node --test` on this car's own 5
+  touched test files (seconds, not the ~2.5-hour full-suite recorder) and treat the Testament
+  pool's own pre-push Stage 2/3 run plus GitHub Actions CI as the authoritative full-suite
+  gates for this PR, in place of a second local recorder pass — citing the host-CPU-load
+  concern that motivated the original ask not to re-run locally. Ran the 5 files directly:
+  1302/1302 passing. Proceeding to push and open the PR on that explicit basis, recorded here
+  with the exact gap rather than presented as an ordinary clean pass.
 
 ## 2026-11-27 — Global Settings rebuilt as a full-screen workspace, Car V667-W1-A
 
