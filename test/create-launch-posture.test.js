@@ -524,3 +524,118 @@ describe('#1304 — Create opens Settings instead of auto-launching, with a Save
     });
   });
 });
+
+/*
+ * #3342 — createProject now defaults 8 project feature toggles to `true`
+ * instead of DEFAULT_PROJECT_CONFIG's own false/null/absent defaults, while
+ * still respecting an explicit caller value (including an explicit
+ * `false`). The dispatch's field names don't all match the real config keys
+ * (verified against every `=== true` read site before building, reported
+ * back to the dispatcher) — this file uses the real keys: medusaEnabled,
+ * medusaWake, featureIndexEnabled, projectMapEnabled, evalAuditMode.enabled,
+ * subagentParallelizationEnabled, wrapKeepSessionRunning, acceptFolderTrust.
+ *
+ * This deliberately does NOT touch the + Create Project wizard's HTML/JS
+ * (PM ruling, Option (a)): the wizard sends none of these 8 fields today,
+ * so it inherits the new true default with zero UI changes. No wizard
+ * markup is tested here for that reason.
+ */
+describe('#3342 — createProject defaults 8 feature toggles to true', () => {
+  let tmpDir;
+  let projectsDir;
+  let projects;
+  let seq = 0;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-3342-defaults-'));
+    projectsDir = path.join(tmpDir, 'projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+    store.init();
+    const config = store.config.load();
+    config.projectsDir = projectsDir;
+    store.config.save(config);
+    projects = require('../lib/projects');
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function freshName() {
+    return `v3342-defaults-${++seq}`;
+  }
+
+  it('defaults all 8 toggles to true when the caller passes none of them', () => {
+    const name = freshName();
+    const result = projects.createProject({ name });
+    assert.equal(result.errors.length, 0);
+    const config = store.projectConfig.load(result.project.path);
+    assert.equal(config.medusaEnabled, true);
+    assert.equal(config.medusaWake, true);
+    assert.equal(config.featureIndexEnabled, true);
+    assert.equal(config.projectMapEnabled, true);
+    assert.equal(config.evalAuditMode.enabled, true);
+    assert.equal(config.subagentParallelizationEnabled, true);
+    assert.equal(config.wrapKeepSessionRunning, true);
+    assert.equal(config.acceptFolderTrust, true);
+  });
+
+  it('respects an explicit false for each field independently', () => {
+    const fields = [
+      ['medusaEnabled', 'medusaEnabled'],
+      ['medusaWake', 'medusaWake'],
+      ['featureIndexEnabled', 'featureIndexEnabled'],
+      ['projectMapEnabled', 'projectMapEnabled'],
+      ['subagentParallelizationEnabled', 'subagentParallelizationEnabled'],
+      ['wrapKeepSessionRunning', 'wrapKeepSessionRunning'],
+      ['acceptFolderTrust', 'acceptFolderTrust']
+    ];
+    for (const [callerKey, configKey] of fields) {
+      const name = freshName();
+      const result = projects.createProject({ name, [callerKey]: false });
+      assert.equal(result.errors.length, 0, `creating ${name} should not error`);
+      const config = store.projectConfig.load(result.project.path);
+      assert.equal(config[configKey], false, `${configKey} should honor the explicit false override`);
+      // every OTHER field on the same project still defaults true
+      assert.equal(config.evalAuditMode.enabled, true);
+    }
+  });
+
+  it('respects an explicit evalAuditMode.enabled: false, via the same shallow-merge convention the settings PATCH path uses', () => {
+    const name = freshName();
+    const result = projects.createProject({ name, evalAuditMode: { enabled: false } });
+    assert.equal(result.errors.length, 0);
+    const config = store.projectConfig.load(result.project.path);
+    assert.equal(config.evalAuditMode.enabled, false);
+    // every other evalAuditMode sub-field (judgeModel, gateCascade, sampling, ...)
+    // survives the merge untouched, since it is a shallow merge onto the default
+    // sub-object, never a full replacement of it.
+    assert.equal(config.evalAuditMode.judgeModel, store.DEFAULT_PROJECT_CONFIG.evalAuditMode.judgeModel);
+    assert.equal(config.evalAuditMode.gateCascade, store.DEFAULT_PROJECT_CONFIG.evalAuditMode.gateCascade);
+  });
+
+  it('an explicit empty evalAuditMode object (no enabled key) still defaults enabled to true', () => {
+    // `evalAuditMode`'s only API-settable sub-field is `enabled` (same
+    // validator createProject and updateProject both use — passing e.g.
+    // `judgeModel` here is rejected, scoring tunables are project.json-only),
+    // so an object with no `enabled` key is the realistic "caller touched
+    // evalAuditMode but didn't say enabled" case, not an object naming a
+    // disallowed key.
+    const name = freshName();
+    const result = projects.createProject({ name, evalAuditMode: {} });
+    assert.equal(result.errors.length, 0);
+    const config = store.projectConfig.load(result.project.path);
+    assert.equal(config.evalAuditMode.enabled, true);
+  });
+
+  it('an explicit true is a no-op against the new default (still true)', () => {
+    const name = freshName();
+    const result = projects.createProject({ name, medusaEnabled: true, acceptFolderTrust: true });
+    assert.equal(result.errors.length, 0);
+    const config = store.projectConfig.load(result.project.path);
+    assert.equal(config.medusaEnabled, true);
+    assert.equal(config.acceptFolderTrust, true);
+  });
+});

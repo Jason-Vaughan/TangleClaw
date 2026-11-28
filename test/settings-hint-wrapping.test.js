@@ -48,10 +48,17 @@ describe('settings hint wrapping (#1271)', () => {
     // All three participate: track floor, inter-column gap, and the modal
     // ceiling they have to fit inside. Pinning only two lets a change to the
     // third silently invalidate the rationale beside the rule.
+    //
+    // #3346 moved the modal's ceiling from a fixed 680px to the viewport
+    // itself (100vw, full-page) — the fix stays necessary for the SAME
+    // reason, just against a narrow phone's own 100vw rather than a fixed
+    // 680px box: `.settings-toggles-grid`'s two `minmax(min(290px, 100%), 1fr)`
+    // tracks can still pack tight enough on a phone-width viewport for an
+    // unbreakable token to overflow its cell.
     const grid = css.match(/\.settings-toggles-grid\s*\{[^}]*\}/);
     assert.ok(grid, 'the toggles grid rule must exist');
     assert.match(grid[0], /minmax\(min\(290px,\s*100%\),\s*1fr\)/);
     assert.match(grid[0], /gap:\s*0\s+22px/);
-    assert.match(css, /\.modal-content\.settings-modal\s*\{[^}]*max-width:\s*680px/);
+    assert.match(css, /\.modal-content\.settings-modal\s*\{[^}]*max-width:\s*100vw/);
   });
 });

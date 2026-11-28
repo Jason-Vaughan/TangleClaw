@@ -1729,10 +1729,13 @@ describe('projects', () => {
     });
 
     // MED-2K9P Chunk 02: per-project Medusa session-comms auto-enable.
-    it('defaults medusaEnabled to false on enrich', async () => {
+    // #3342 flipped createProject's own default to true; 'new-project' (this
+    // describe block's shared fixture, created with no explicit medusaEnabled)
+    // picks that up.
+    it('defaults medusaEnabled to true on enrich (#3342)', async () => {
       const result = await projects.updateProject('new-project', { tags: ['x'] });
       assert.ok(result.project);
-      assert.equal(result.project.medusaEnabled, false);
+      assert.equal(result.project.medusaEnabled, true);
     });
 
     it('persists medusaEnabled and round-trips it through enrich', async () => {
@@ -1756,10 +1759,12 @@ describe('projects', () => {
     });
 
     // MED-2K9P v2 T2: per-project idle-gated wake opt-in (same shape as medusaEnabled).
-    it('defaults medusaWake to false on enrich', async () => {
+    // #3342 flipped createProject's own default to true (see the note above
+    // medusaEnabled's own default test).
+    it('defaults medusaWake to true on enrich (#3342)', async () => {
       const result = await projects.updateProject('new-project', { tags: ['x'] });
       assert.ok(result.project);
-      assert.equal(result.project.medusaWake, false);
+      assert.equal(result.project.medusaWake, true);
     });
 
     it('persists medusaWake and round-trips it through enrich', async () => {
@@ -1783,9 +1788,11 @@ describe('projects', () => {
     });
 
     // #1708: the keep-running default a wrap inherits when its request says nothing.
-    it('defaults wrapKeepSessionRunning to false on enrich', async () => {
+    // #3342 flipped createProject's own default to true (see the note above
+    // medusaEnabled's own default test).
+    it('defaults wrapKeepSessionRunning to true on enrich (#3342)', async () => {
       const result = await projects.updateProject('new-project', { tags: ['x'] });
-      assert.equal(result.project.wrapKeepSessionRunning, false);
+      assert.equal(result.project.wrapKeepSessionRunning, true);
     });
 
     it('persists wrapKeepSessionRunning and round-trips it through enrich', async () => {
@@ -4393,8 +4400,11 @@ describe('projects', () => {
 
     it('sends nothing and logs nothing when the project has not opted in', async () => {
       const name = 'aft-launch-noopt';
-      projects.createProject({ name, engine: 'claude' });
-      // Explicit default: acceptFolderTrust is false unless set.
+      // #3342 flipped createProject's own default to true for a project
+      // that says nothing — this test is specifically about the NOT-opted-in
+      // path, so it now opts out explicitly instead of relying on the
+      // (changed) default.
+      projects.createProject({ name, engine: 'claude', acceptFolderTrust: false });
       let result;
       try {
         result = sessions.launchSession(name, {});

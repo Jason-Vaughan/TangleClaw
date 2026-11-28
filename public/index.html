@@ -172,8 +172,10 @@
 
   <!-- OpenClaw Connection Modal (create/edit) -->
   <div class="modal-backdrop" id="openclawModal">
-    <div class="modal-content" role="dialog" aria-label="OpenClaw connection" aria-modal="true" style="max-width:440px;max-height:85vh;overflow-y:auto">
+    <div class="modal-content openclaw-modal" role="dialog" aria-label="OpenClaw connection" aria-modal="true"
+         style="position:fixed; inset:0; width:100vw; height:100vh; max-width:100vw; max-height:100vh; margin:0; border-radius:0;">
       <h3 class="modal-title" id="openclawModalTitle">New Connection</h3>
+      <div class="oc-modal-body">
       <div class="form-group">
         <label class="form-label" for="ocName">Name</label>
         <input type="text" class="form-input" id="ocName" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="e.g. My Project">
@@ -232,6 +234,7 @@
       </div>
       <div id="ocTestResult" class="oc-test-result hidden" role="status"></div>
       <div id="ocError" class="form-error hidden" role="alert"></div>
+      </div>
       <div class="modal-actions">
         <button class="btn" id="ocTestBtn">Test Connection</button>
         <span style="flex:1"></span>
@@ -312,8 +315,10 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
 
   <!-- Group Modal (create/edit) -->
   <div class="modal-backdrop" id="groupModal">
-    <div class="modal-content" role="dialog" aria-label="Group" aria-modal="true" style="max-width:420px;max-height:85vh;overflow-y:auto">
+    <div class="modal-content group-modal" role="dialog" aria-label="Group" aria-modal="true"
+         style="position:fixed; inset:0; width:100vw; height:100vh; max-width:100vw; max-height:100vh; margin:0; border-radius:0;">
       <h3 class="modal-title" id="groupModalTitle">New Group</h3>
+      <div class="group-modal-body">
       <div class="form-group">
         <label class="form-label" for="groupName">Name <span style="color:var(--text-muted);font-weight:normal">(optional)</span></label>
         <input type="text" class="form-input" id="groupName" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Auto-generated from members">
@@ -345,6 +350,7 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
         <button class="btn btn-small btn-primary" id="groupAddDocBtn" style="margin-top:8px;width:100%">+ Add Document</button>
       </div>
       <div id="groupError" class="form-error hidden" role="alert"></div>
+      </div>
       <div class="modal-actions">
         <button class="btn" id="groupCancelBtn">Cancel</button>
         <button class="btn btn-danger hidden" id="groupDeleteBtn">Delete Group</button>
@@ -735,10 +741,15 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
        `.modal-backdrop`'s own centering flexbox entirely (public/style.css),
        so it fills the screen instead of being centered within it. An inline
        style always wins over a stylesheet rule regardless of selector
-       specificity, so the settings-modal class's own flex-column/scroll-body
-       plumbing (title and actions pinned, #settingsBody the only scrolling
-       region) still applies unchanged underneath it; only the box's own
-       size and position changed. -->
+       specificity, so the settings-modal class's own flex-column plumbing
+       (title and actions pinned, one scrolling region between them) still
+       applies unchanged underneath it; only the box's own size and position
+       changed.
+       #3346: that one scrolling region is now a rail + content workspace,
+       the same shape #3319's Global Settings modal uses — `.ps-category-rail`
+       is this modal's OWN class, not `.gs-category-rail`, so switching this
+       modal's category can never touch Global Settings' sections (and vice
+       versa); see public/style.css's note by `.ps-category-section[hidden]`. -->
   <div class="modal-backdrop" id="settingsModal">
     <div class="modal-content settings-modal" role="dialog" aria-label="Project settings" aria-modal="true"
          style="position:fixed; inset:0; width:100vw; height:100vh; max-width:100vw; max-height:100vh; margin:0; border-radius:0;">
@@ -746,7 +757,14 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
         <span id="settingsTitleText">Settings</span>
         <span id="settingsStatusBadge" class="form-hint" style="font-weight:normal;"></span>
       </h3>
-      <div id="settingsBody"></div>
+      <div class="ps-workspace-row">
+        <nav class="ps-category-rail" id="settingsCategoryRail" aria-label="Project settings categories">
+          <button type="button" class="ps-category-rail-item" data-ps-category="identity" id="psRailIdentity">Identity &amp; Paths</button>
+          <button type="button" class="ps-category-rail-item" data-ps-category="engine" id="psRailEngine">Engine &amp; Launch Mode</button>
+          <button type="button" class="ps-category-rail-item" data-ps-category="governance" id="psRailGovernance">Switchboard &amp; Governance</button>
+        </nav>
+        <div class="ps-workspace-content" id="settingsBody"></div>
+      </div>
       <div class="modal-actions">
         <button class="btn" id="settingsCancelBtn">Cancel</button>
         <button class="btn btn-primary" id="settingsSaveBtn">Save Properties</button>
