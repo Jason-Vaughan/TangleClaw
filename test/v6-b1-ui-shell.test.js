@@ -6934,6 +6934,16 @@ describe('the Waiting on you queue (#3079)', () => {
     assert.equal(run(['> check scope', '⏺ The scope resolves as current ? current.project: null if available.']).question, null);
   });
 
+  // Critic verify-resolutions: the R4 fix's new backward-look alternative
+  // widened the branch's allowed first character to uppercase too (only
+  // the colon-spacing needed relaxing, not the case), so a `?` preceded
+  // by whitespace/`)`/`]` and followed by a CAPITALIZED clause with no
+  // space before its own colon lost its own `?` the same way the
+  // original, already-fixed directly-glued case did.
+  it('a real question ending in a closing paren, followed by a CAPITALIZED colon-prefixed clause, is never masked (#3355)', () => {
+    assert.equal(run(['> ship it', '⏺ Should we ship (final build)? Status: pending.']).question, 'Should we ship (final build)? Status: pending.');
+  });
+
   it('numbers several questions, escapes each, and gives each a dismiss button', () => {
     const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
       chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'x' }], questions: ['A <b>?', 'B?'] } } });

@@ -2954,11 +2954,16 @@
       // ternary's `?` always follows a complete expression, so it is
       // preceded by whitespace or a closing `)`/`]`; an English `?` is
       // glued directly to the word it ends with no space at all. The
-      // first alternative below matches on that backward-look (relaxing
-      // the colon-spacing requirement, since the `?`-position signal
-      // alone is now doing the disambiguation); the second is the
-      // unchanged prior fallback for the rare case nothing precedes `?`.
-      .replace(/(?:[\s)\]]\?\s+[a-zA-Z_$][\w.$[\]()'"-]*\s*:\s+|\?\s+[a-z_$][\w.$[\]()'"-]*\s+:\s+)/g, ' ')
+      // first alternative below matches on that backward-look, relaxing
+      // ONLY the colon-spacing requirement, since the `?`-position
+      // signal is now doing extra disambiguation work — it must still
+      // require the branch to start lowercase, same as the fallback
+      // second alternative, or a capitalized clause right after a `?`
+      // preceded by whitespace/`)`/`]` (`"Should we ship (final
+      // build)? Status: pending."`) loses its own `?` the same way the
+      // lowercase-only check already prevents for the directly-glued
+      // case above (#3355).
+      .replace(/(?:[\s)\]]\?\s+[a-z_$][\w.$[\]()'"-]*\s*:\s+|\?\s+[a-z_$][\w.$[\]()'"-]*\s+:\s+)/g, ' ')
       .replace(/\?[A-Za-z0-9_.-]+=/g, ' ');
     return /\?(?=$|[\s)\]}"'*_~.,;:!\u2019\u201d])/.test(prose);
   }

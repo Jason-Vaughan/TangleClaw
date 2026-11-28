@@ -180,6 +180,22 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   shape. 885/885 in the car's own file (per PRR-A's explicit instruction: targeted file only this
   round, not the cross-file sweep — the live TangleClaw server shares this host's resources).
   Stage 1 static green.
+- Critic verify-resolutions BLOCKING (1, fixed): the R4 fix's new backward-look alternative (`[\s)\]]\?\s+...`)
+  widened the branch's allowed first character to uppercase too (`[a-zA-Z_$]`, copied verbatim
+  from PM's own given regex) when ONLY the colon-spacing needed relaxing — PM's exact regex
+  itself carried this flaw, and my own verification against 13 cases (including the 2 extra
+  adversarial ones I added beyond what either PRR-A or PM reported) still missed this specific
+  combination (a `?` preceded by whitespace/`)`/`]` AND followed by a capitalized clause with no
+  space before its own colon — `"Should we ship (final build)? Status: pending."` lost its own
+  `?`). Caught by `verify-resolutions`, not by me. Fixed by restricting the new alternative's
+  branch back to lowercase-only, matching the fallback alternative — relaxes ONLY what R4 needed
+  relaxed (colon spacing), nothing else. Re-verified against all 13 previously-known cases plus
+  this one (14 total) before trusting it. One new regression test for the exact reported shape.
+  886/886 in the car's own file (targeted-file-only per PRR-A's standing instruction). Stage 1
+  static green. Also caught, before committing, my own in-progress comment reintroducing a
+  review-round label ("Critic verify-resolutions, Car V669-W1-A") while explaining this exact
+  fix — reworded before it ever reached a commit, per this session's own new learnings entry on
+  this exact recurring mistake.
 
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
 
