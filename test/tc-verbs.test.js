@@ -1733,11 +1733,61 @@ describe('scripts/stage-tc-cli.js', () => {
     assert.equal(fs.readFileSync(path.join(stagedDir, 'bin', 'tc'), 'utf8'), '#!/usr/bin/env node\nconsole.log("v1-patched");\n');
   });
 
+  // PRR-B R-Gate Round 1 BLOCKING on PR #3348: the original fingerprint
+  // (version.json + bin/tc only) trusted this repo's own release discipline
+  // to always bump version.json alongside a lib/ change -- an assumption,
+  // never verified, which is exactly the shape of claim this fleet's own
+  // practice says not to lean on. A lib/-only edit, with version.json AND
+  // bin/tc both unchanged, must still trigger a restage now.
+  it('restages when a lib/ file changes, even with version.json and bin/tc both unchanged', () => {
+    stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    fs.writeFileSync(path.join(repoRoot, 'lib', 'tc-verbs.js'), 'module.exports = { patched: true };\n');
+
+    const result = stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    assert.equal(result.staged, true);
+    assert.equal(fs.readFileSync(path.join(stagedDir, 'lib', 'tc-verbs.js'), 'utf8'), 'module.exports = { patched: true };\n');
+  });
+
+  it('restages when a lib/ file is added or removed, even with every existing file\'s content unchanged', () => {
+    stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    fs.writeFileSync(path.join(repoRoot, 'lib', 'new-file.js'), 'module.exports = {};\n');
+
+    const result = stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    assert.equal(result.staged, true);
+    assert.equal(fs.existsSync(path.join(stagedDir, 'lib', 'new-file.js')), true);
+  });
+
   it('force restages even when nothing changed', () => {
     stageTcCli.stageTcCli({ repoRoot, stagedDir });
     const result = stageTcCli.stageTcCli({ repoRoot, stagedDir, force: true });
     assert.equal(result.staged, true);
     assert.equal(result.reason, 'forced');
+  });
+
+  describe('_libTreeDigest', () => {
+    it('is deterministic and changes on content, addition, or removal', () => {
+      const first = stageTcCli._libTreeDigest(repoRoot);
+      assert.equal(stageTcCli._libTreeDigest(repoRoot), first, 'same tree, same digest, called twice');
+
+      fs.writeFileSync(path.join(repoRoot, 'lib', 'tc-verbs.js'), 'module.exports = { changed: true };\n');
+      const afterEdit = stageTcCli._libTreeDigest(repoRoot);
+      assert.notEqual(afterEdit, first);
+
+      fs.writeFileSync(path.join(repoRoot, 'lib', 'sub', 'deep.js'), 'module.exports = 1;\n'); // revert the edit above
+      fs.writeFileSync(path.join(repoRoot, 'lib', 'tc-verbs.js'), 'module.exports = {};\n');
+      const afterRevert = stageTcCli._libTreeDigest(repoRoot);
+      assert.equal(afterRevert, first, 'reverting the edit restores the original digest');
+
+      fs.rmSync(path.join(repoRoot, 'lib', 'sub', 'deep.js'));
+      const afterRemoval = stageTcCli._libTreeDigest(repoRoot);
+      assert.notEqual(afterRemoval, first, 'removing a file must change the digest even though every remaining file is identical');
+    });
+
+    it('ignores a non-.js file under lib/', () => {
+      const before = stageTcCli._libTreeDigest(repoRoot);
+      fs.writeFileSync(path.join(repoRoot, 'lib', 'notes.txt'), 'not a script\n');
+      assert.equal(stageTcCli._libTreeDigest(repoRoot), before);
+    });
   });
 
   describe('main() CLI', () => {
@@ -1760,5 +1810,66 @@ describe('scripts/stage-tc-cli.js', () => {
       assert.equal(res.code, 1);
       assert.match(res.stderr, /stage-tc-cli:/);
     });
+  });
+});
+
+// lib/tc-verbs.js's own best-effort auto-stage hook (#3347 R2, PRR-B R-Gate
+// Round 1 BLOCKING on PR #3348: the module had no startup/deploy caller at
+// all, so a newly merged verb could stay stale in ~/.tangleclaw/tc-cli-staged/
+// indefinitely). Every real input is injected -- the bare module-load call
+// (`_autoStageBestEffort()` with no args, at the top of lib/tc-verbs.js) is
+// covered implicitly by this whole test file already running green: that
+// call's own real require.main is this test file, never literally named
+// `tc`, so it no-ops on every single test run without special handling.
+describe('_autoStageBestEffort (#3347 R2)', () => {
+  const { _autoStageBestEffort } = require('../lib/tc-verbs');
+
+  it('does nothing when the process entry point is not literally named "tc"', () => {
+    const result = _autoStageBestEffort({ mainFilename: '/some/path/node_modules/.bin/mocha' });
+    assert.equal(result.ran, false);
+    assert.equal(result.reason, 'not-cli-entry');
+  });
+
+  it('does nothing when require.main is absent (e.g. loaded as an ES module)', () => {
+    const result = _autoStageBestEffort({ mainFilename: undefined });
+    assert.equal(result.ran, false);
+    assert.equal(result.reason, 'not-cli-entry');
+  });
+
+  it('does nothing when this file is itself running from the staged copy', () => {
+    const calls = [];
+    const result = _autoStageBestEffort({
+      mainFilename: '/some/path/bin/tc',
+      ownDir: '/Users/x/.tangleclaw/tc-cli-staged/lib',
+      stagedLibDir: '/Users/x/.tangleclaw/tc-cli-staged/lib',
+      stageTcCli: (opts) => calls.push(opts)
+    });
+    assert.equal(result.ran, false);
+    assert.equal(result.reason, 'is-staged-copy');
+    assert.equal(calls.length, 0, 'stageTcCli must never be called from the staged copy\'s own lib/');
+  });
+
+  it('calls stageTcCli with repoRoot resolved from ownDir, when running as the real CLI from a live checkout', () => {
+    const calls = [];
+    const result = _autoStageBestEffort({
+      mainFilename: '/some/repo/bin/tc',
+      ownDir: '/some/repo/lib',
+      stagedLibDir: '/Users/x/.tangleclaw/tc-cli-staged/lib',
+      stageTcCli: (opts) => calls.push(opts)
+    });
+    assert.equal(result.ran, true);
+    assert.deepEqual(calls, [{ repoRoot: '/some/repo' }]);
+  });
+
+  it('never throws, even when stageTcCli itself throws', () => {
+    const result = _autoStageBestEffort({
+      mainFilename: '/some/repo/bin/tc',
+      ownDir: '/some/repo/lib',
+      stagedLibDir: '/Users/x/.tangleclaw/tc-cli-staged/lib',
+      stageTcCli: () => { throw new Error('disk full'); }
+    });
+    assert.equal(result.ran, false);
+    assert.equal(result.reason, 'error');
+    assert.match(result.error, /disk full/);
   });
 });

@@ -13,19 +13,25 @@
  * invoking it is the caller's decision, same as `lib/backup.js`'s own
  * CLI-only, no-daemon shape).
  *
- * Change detection is deliberately cheap, not a full-tree hash: `bin/tc`
- * requires `lib/tc-verbs.js` by relative path (`path.join(__dirname, '..',
- * 'lib', 'tc-verbs.js')`), so staging always mirrors `bin/tc` and the whole
- * `lib/` directory together — every verb's own transitive `lib/*`
+ * `bin/tc` requires `lib/tc-verbs.js` by relative path (`path.join(__dirname,
+ * '..', 'lib', 'tc-verbs.js')`), so staging always mirrors `bin/tc` and the
+ * whole `lib/` directory together — every verb's own transitive `lib/*`
  * dependencies ride along automatically, never a hand-maintained file list
- * that drifts behind a new `require('./something-new')`. Whether a restage
- * is NEEDED is answered by two cheap signals instead: `version.json`'s own
- * version string, and `bin/tc`'s own SHA-256 — exactly the two things
- * #3347's own acceptance criteria name ("whenever version or file digest
- * changes"). A change to anything else under `lib/` without either of those
- * changing is not expected in this repo's own release discipline (every
- * merge bumps `version.json`), so this is the proportional signal, not a
- * full recursive digest of 400+ files on every call.
+ * that drifts behind a new `require('./something-new')`.
+ *
+ * Whether a restage is NEEDED is answered by a composite fingerprint:
+ * `version.json`'s own version string, `bin/tc`'s own SHA-256, and a single
+ * combined digest of every `lib/**\/*.js` file's own path and content (PRR-B
+ * R-Gate Round 1 BLOCKING on PR #3348) — an earlier version of this module
+ * trusted `version.json`/`bin/tc` alone, on the assumption that this repo's
+ * own release discipline always bumps `version.json` alongside any `lib/`
+ * change; that assumption is exactly the kind of claim this fleet's own
+ * practice says to verify rather than lean on, and PRR-B was right not to
+ * accept it as a substitute for actually checking `lib/`. The combined
+ * digest costs reading and hashing every staged file on every call (lib/ is
+ * ~13MB across ~430 files in this repo today) — accepted deliberately as
+ * the correctness/cost trade-off #3347's own "digest changes" acceptance
+ * criterion asks for, not a cheaper approximation of it.
  *
  * @module scripts/stage-tc-cli
  */
@@ -53,13 +59,56 @@ function defaultStagedDir() {
 }
 
 /**
- * The two cheap signals that decide whether a restage is needed: the live
- * `version.json`'s version string, and the live `bin/tc`'s own SHA-256.
- * Either reads as `null` when its source file is missing or unreadable,
- * which always compares unequal to a staged manifest's own non-null value —
- * so a broken/missing source is a `changed` signal, not a silent no-op.
+ * A single SHA-256 digest over every `.js` file under `repoRoot/lib`,
+ * recursively — each file's own path and content both feed the digest, so
+ * an added, removed, or edited file all change the result, never just a
+ * file's own content in isolation (PRR-B R-Gate Round 1 BLOCKING on PR
+ * #3348). Deterministic regardless of filesystem directory-listing order:
+ * paths are collected first and sorted before anything is hashed.
  * @param {string} repoRoot
- * @returns {{version: (string|null), binTcSha256: (string|null)}}
+ * @returns {string} Hex digest, or the digest of nothing (`lib/` missing or empty).
+ */
+function _libTreeDigest(repoRoot) {
+  const libDir = path.join(repoRoot, 'lib');
+  const relPaths = [];
+  const walk = (dir, rel) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(path.join(dir, entry.name), relPath);
+      else if (entry.isFile() && entry.name.endsWith('.js')) relPaths.push(relPath);
+    }
+  };
+  walk(libDir, '');
+  relPaths.sort();
+  const hash = crypto.createHash('sha256');
+  for (const relPath of relPaths) {
+    let bytes;
+    try {
+      bytes = fs.readFileSync(path.join(libDir, ...relPath.split('/')));
+    } catch {
+      bytes = Buffer.alloc(0);
+    }
+    hash.update(relPath).update('\0').update(bytes).update('\n');
+  }
+  return hash.digest('hex');
+}
+
+/**
+ * The signals that decide whether a restage is needed: the live
+ * `version.json`'s version string, the live `bin/tc`'s own SHA-256, and
+ * {@link _libTreeDigest} over the live `lib/` tree. Each reads as `null`
+ * when its own source is missing or unreadable, which always compares
+ * unequal to a staged manifest's own non-null value — so a broken/missing
+ * source is a `changed` signal, not a silent no-op.
+ * @param {string} repoRoot
+ * @returns {{version: (string|null), binTcSha256: (string|null), libTreeSha256: (string|null)}}
  */
 function _fingerprint(repoRoot) {
   let version = null;
@@ -75,7 +124,13 @@ function _fingerprint(repoRoot) {
   } catch {
     binTcSha256 = null;
   }
-  return { version, binTcSha256 };
+  let libTreeSha256 = null;
+  try {
+    libTreeSha256 = _libTreeDigest(repoRoot);
+  } catch {
+    libTreeSha256 = null;
+  }
+  return { version, binTcSha256, libTreeSha256 };
 }
 
 /**
@@ -116,7 +171,8 @@ function stageTcCli(opts = {}) {
   const current = _fingerprint(repoRoot);
   const staged = _readStagedFingerprint(stagedDir);
   const upToDate = !force && staged !== null
-    && staged.version === current.version && staged.binTcSha256 === current.binTcSha256;
+    && staged.version === current.version && staged.binTcSha256 === current.binTcSha256
+    && staged.libTreeSha256 === current.libTreeSha256;
   if (upToDate) {
     return { staged: false, reason: 'up-to-date', stagedDir, fingerprint: current };
   }
@@ -171,5 +227,5 @@ if (require.main === module) {
 module.exports = {
   stageTcCli, main, defaultRepoRoot, defaultStagedDir,
   // Exported for tests only.
-  _fingerprint, _readStagedFingerprint
+  _fingerprint, _readStagedFingerprint, _libTreeDigest
 };
