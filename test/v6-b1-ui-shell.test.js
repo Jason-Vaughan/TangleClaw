@@ -6970,6 +6970,14 @@ describe('the Waiting on you queue (#3079)', () => {
     assert.equal(out.question, null);
   });
 
+  // A quoted question at the very START of the line (common after bullet
+  // stripping) is reached by neither the parenthesized nor the
+  // mid-sentence alternative above, since nothing precedes the quote.
+  it('a quoted example question at the very START of the line, followed by declarative text, is never read as this line asking (#3355, Operator-reported)', () => {
+    const out = run(['> ack', '⏺ "Should I proceed?" is quoted text from the transcript.']);
+    assert.equal(out.question, null);
+  });
+
   it('a declarative line naming both the ternary metalanguage and a bare query-param token is never read as a question (#3355, Operator-reported)', () => {
     const out = run(['> ship it', '⏺ Waiting on: YOU question false-positive fix (JS ternary ?, URL query params ?projectId=, and prior-turn body paragraphs after a Medusa wake)']);
     assert.equal(out.question, null);
@@ -7084,6 +7092,41 @@ describe('the Waiting on you queue (#3079)', () => {
     const q = m.doc.getElementById('v6ChatQuestion');
     assert.equal(q.innerHTML, '');
     assert.equal(q.className, 'v6-chat-question');
+  });
+});
+
+// #3355 (Operator-reported): three Codex TUI chrome lines were leaking
+// into the chat stream as fake bubbles -- a completed-turn timing recap
+// with a bare clock time instead of "done", Codex's own non-empty input
+// placeholder, and Codex's middle-dot status bar footer.
+describe('Codex TUI chrome never leaks into the chat stream as fake bubbles (#3355, Operator-reported)', () => {
+  const G = loadV6Shell();
+  const run = (lines, known) => plain(G.tcV6ExtractLiveTurns(lines, 'codex', known || []));
+
+  it('a completed-turn timing recap with a bare clock time (no "done") after the middle dot is chrome, not a new reply', () => {
+    const out = run(['> go', '⏺ Done.', 'Worked for 2m 9s · 11:11', '› ']);
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'go' },
+      { role: 'assistant', text: 'Done.' }
+    ]);
+    assert.equal(out.activity, null);
+  });
+
+  it('Codex\'s own non-empty input-box placeholder is never read as the operator speaking', () => {
+    const out = run(['> go', '⏺ Working...', '› Ask Codex to do anything']);
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'go' },
+      { role: 'assistant', text: 'Working...' }
+    ], 'no spurious third user turn from the placeholder text');
+  });
+
+  it('Codex\'s own middle-dot status bar footer is chrome, not a new reply', () => {
+    const out = run(['> go', '⏺ Done.',
+      'GPT-5.6-Sol medium · Ready · never · Context 56% left · weekly 99% left      Goal stalled (/goal resume)']);
+    assert.deepEqual(out.turns, [
+      { role: 'user', text: 'go' },
+      { role: 'assistant', text: 'Done.' }
+    ]);
   });
 });
 

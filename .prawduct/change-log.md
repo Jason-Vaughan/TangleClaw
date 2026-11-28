@@ -243,6 +243,34 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   correctly scoped out, not flagged as a new defect. Review is over for this tree; branch covered
   at 11 commits since `origin/main`, no blocking outstanding. Tree clean at head `ec5cf523`.
   Awaiting PRR-A/Arc human review.
+- **PRR-A R-Gate R8 REVISE (fixed) + 3 Operator-reported Codex TUI chrome fixes, bundled into
+  this same PR at PM's explicit direction — flagged as a scope deviation from this car's declared
+  #3355/#3352, not silently absorbed:**
+  - PRR-A's real finding: a quoted example question at the very START of a line (after bullet
+    stripping, e.g. `"Should I proceed?" is quoted text from the transcript.`) was reached by
+    neither the parenthesized nor mid-sentence quoted-example alternative, since nothing precedes
+    the quote. Added a third alternative anchored at `^`. Independently verified against the
+    exact reported case plus every case from every prior round. One edge case found during my own
+    verification (a BARE quoted question with nothing else on the line) is NOT fixed by this
+    alternative and is NOT what either PRR-A or PM reported — left as a known, genuinely ambiguous
+    limitation (a standalone quoted line could legitimately be the assistant's own question)
+    rather than over-fitting to an untested case.
+  - Codex's own completed-turn timing recap puts a bare `HH:MM` clock time after the middle dot
+    with no "done" word (`Worked for 2m 9s · 11:11`) — `LIVE_DONE_RE` only recognized Claude's own
+    `· done 12:57 AM` shape, so this line stuck as a fake running-activity line forever.
+  - Codex's own input box is never empty — it draws a literal placeholder ("Ask Codex to do
+    anything") even with nothing typed — which `extractLiveTurns` misread as the operator having
+    typed that sentence, wrongly marking the turn answered.
+  - Codex's own middle-dot status bar footer (`GPT-5.6-Sol medium · Ready · never · Context 56%
+    left · weekly 99% left ... Goal stalled (/goal resume)`) is a different shape from the
+    existing `| Model | NN% left` status-bar rule and leaked through as a fake assistant bubble.
+  All 4 fixes independently verified against their exact reported lines plus every existing
+  fixture before applying; 4 new regression tests added (1 for the quoted-question case, 3 for
+  the Codex chrome lines, in a new dedicated describe block). 894/894 in the car's own file. Stage
+  1 static green. Built and pushed from a fresh /tmp clone of this branch again: the primary
+  checkout's host-level filesystem EPERM recurred mid-push of this exact commit (git objects
+  became unreadable partway through the Testament pool gate), after having fully recovered and
+  been used successfully for the two prior commits.
 
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
 

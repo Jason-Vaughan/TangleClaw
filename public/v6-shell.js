@@ -2708,6 +2708,11 @@
     /\(disable recaps in \/config\)\s*$/i,
     /^[⏵⏸]+\s*bypass permissions/i,
     /\|\s*(?:Opus|Sonnet|Haiku|Claude|GPT|Gemini)\b[^|]*\|\s*\d+%\s*left\s*$/i,
+    // #3355 (Operator-reported): Codex's own middle-dot status bar footer
+    // ("GPT-5.6-Sol medium · Ready · never · Context 56% left · weekly
+    // 99% left ... Goal stalled (/goal resume)") — a different shape
+    // from the "| Model | NN% left" status bar right above.
+    /\bContext\s+\d+%\s+left\s*\u00B7\s*weekly\s+\d+%\s+left\b/i,
     // #3167: a collapsed background-task footer, naming how many more lines
     // are hidden — chrome about the TUI's own display, not the reply.
     /^↓\s*\d+\s+more\b/i,
@@ -2775,7 +2780,11 @@
    * `live.activity` forever after the turn actually ended. Checked, and
    * returned on, before `LIVE_BUSY` ever sees the line.
    */
-  const LIVE_DONE_RE = /^(?:[\u2736\u273B\u273D\u2722]\s+)?\S+\s+for\s+\d+[hms0-9\s]*(?:\u00B7\s*done\b|$)|\b\u00B7\s*done\s+\d{1,2}:\d{2}/i;
+  // #3355 (Operator-reported): Codex's own timing recap puts a bare
+  // HH:MM clock time after the middle dot, with no "done" word at all
+  // ("Worked for 2m 9s · 11:11") -- allow that shape too, alongside
+  // Claude's own "· done 12:57 AM".
+  const LIVE_DONE_RE = /^(?:[\u2736\u273B\u273D\u2722]\s+)?\S+\s+for\s+\d+[hms0-9\s]*(?:\u00B7\s*(?:done\b|\d{1,2}:\d{2})|$)|\b\u00B7\s*done\s+\d{1,2}:\d{2}/i;
 
   /**
    * #3181: a footer that means the engine is at rest, not working \u2014 the
@@ -2957,8 +2966,11 @@
       .replace(/\b(?:ternary|symbol|character|literal|mark|token)\s+\?/gi, ' ')
       // A quoted example question embedded in an otherwise-declarative
       // sentence ('...applying the fix ("Should we ship this?") as
-      // discussed.') is the quoted TEXT's own question, not this line's.
-      .replace(/(?:(\S\s+)|\()["\u201c][^"\u201d\n]*\?[^"\u201d\n]*["\u201d]\)?(?=[\s).,;:])/g, '$1 ');
+      // discussed.') is the quoted TEXT's own question, not this line's
+      // — including at the very START of the line ('"Should I proceed?"
+      // is quoted text from the transcript.'), which the mid-sentence
+      // alternative above cannot reach since nothing precedes the quote.
+      .replace(/(?:(\S\s+)|\()["\u201c][^"\u201d\n]*\?[^"\u201d\n]*["\u201d]\)?(?=[\s).,;:])|^["\u201c][^"\u201d\n]*\?[^"\u201d\n]*["\u201d](?=\s+\S)/g, '$1 ');
     return /\?(?=$|[\s)\]}"'*_~.,;:!\u2019\u201d])/.test(prose);
   }
 
@@ -3240,8 +3252,13 @@
         block = null;
         const said = prompt[1].trim();
         // An empty prompt is the input box the engine always draws, not the
-        // operator speaking: it neither ends nor starts anything.
-        if (said) {
+        // operator speaking: it neither ends nor starts anything. Codex's
+        // own input box is never empty -- it draws its placeholder text
+        // ("Ask Codex to do anything") even with nothing typed -- so that
+        // exact placeholder needs its own check here (#3355, Operator-
+        // reported): without it, it reads as the operator having typed
+        // that sentence and wrongly marks the turn answered.
+        if (said && !/^Ask Codex to do anything$/i.test(said)) {
           activity = null;
           menuActive = false;
           answered = true;
