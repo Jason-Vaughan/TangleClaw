@@ -162,6 +162,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   884/884 in the car's own file; cross-file sweep (`test/v6-*.test.js`): 2774/2774; Stage 1 green.
   verify-resolutions: 0 findings, 1 non-gating observation (same stale-evidence class as every
   prior round — accepted). Tree clean at head `f4b2bf4c`.
+- PRR-A R-Gate R4 REVISE (1 surgical fix, relayed by PM): the R2 fix's whitespace-before-colon
+  requirement swung too far — a real JS ternary can ALSO be written with no space before its OWN
+  colon (`current ? current.project: null`, as opposed to `current ? current.project : null`),
+  which that requirement then wrongly left unstripped, reintroducing a false-positive open
+  question for an otherwise-ordinary declarative line. Fixed per PM's exact verified regex: key
+  off what precedes the `?` instead of (only) what precedes the `:` — a real ternary's `?` always
+  follows a complete expression (preceded by whitespace or a closing `)`/`]`), while an English
+  `?` is glued directly to the word it ends with no space at all. The whitespace-before-`?`
+  alternative relaxes the colon-spacing requirement (since the `?`-position signal alone now does
+  the disambiguation); the original R2 pattern remains as a fallback for the rare case nothing
+  precedes `?`. Verified independently against all 8 known cases (both ternary colon-spacing
+  shapes, the `maybe:`/`Checklist:`/`Status:`/`Options:` false positives, a bare query-param
+  token, and two further adversarial cases — a ternary with a function-call/array-access
+  condition, and an English question followed by a multi-word lowercase clause) before trusting
+  it, not just the one PRR-A reported. One new regression test for the exact PRR-A-reported
+  shape. 885/885 in the car's own file (per PRR-A's explicit instruction: targeted file only this
+  round, not the cross-file sweep — the live TangleClaw server shares this host's resources).
+  Stage 1 static green.
 
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
 

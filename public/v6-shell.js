@@ -2944,12 +2944,21 @@
       // is what distinguishes them, verified against both shapes (#3355).
       // A lowercase-starting clause with NO space before its own colon
       // (`"...this? maybe: test first."`) still slipped through the
-      // lowercase check alone \u2014 a real ternary's `:` always has
-      // whitespace on both sides (`cond ? a : b`), while a colon
-      // attached directly to the preceding word is prose, never code, so
-      // requiring `\s+` (not `\s*`) before the colon too closes this gap
-      // without reopening the one the lowercase check already closed.
-      .replace(/\?\s+[a-z_$][\w.$[\]()'"-]*\s+:\s+/g, ' ')
+      // lowercase check alone, so requiring whitespace before the colon
+      // too (`cond ? a : b` always has it on both sides) closed that gap
+      // \u2014 but a real ternary can ALSO be written with no space before
+      // ITS colon (`current ? current.project: null`), which that
+      // whitespace-before-colon requirement then wrongly left unstripped
+      // (PRR-A R-Gate R4, same case PM independently repro'd). The
+      // reliable signal is instead what precedes the `?` itself: a real
+      // ternary's `?` always follows a complete expression, so it is
+      // preceded by whitespace or a closing `)`/`]`; an English `?` is
+      // glued directly to the word it ends with no space at all. The
+      // first alternative below matches on that backward-look (relaxing
+      // the colon-spacing requirement, since the `?`-position signal
+      // alone is now doing the disambiguation); the second is the
+      // unchanged prior fallback for the rare case nothing precedes `?`.
+      .replace(/(?:[\s)\]]\?\s+[a-zA-Z_$][\w.$[\]()'"-]*\s*:\s+|\?\s+[a-z_$][\w.$[\]()'"-]*\s+:\s+)/g, ' ')
       .replace(/\?[A-Za-z0-9_.-]+=/g, ' ');
     return /\?(?=$|[\s)\]}"'*_~.,;:!\u2019\u201d])/.test(prose);
   }

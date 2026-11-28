@@ -6921,6 +6921,19 @@ describe('the Waiting on you queue (#3079)', () => {
     assert.equal(run(['> ship it', '⏺ Should we ship this? maybe: test first.']).question, 'Should we ship this? maybe: test first.');
   });
 
+  // PRR-A R-Gate R4: requiring whitespace before the ternary's own colon
+  // (the R2 fix above) swung too far the other way -- a real JS ternary
+  // can ALSO be written with no space before its colon
+  // ("current.project: null"), which that requirement then wrongly left
+  // unstripped, reintroducing a false-positive open question. The
+  // reliable signal is what precedes the `?` instead: a real ternary's
+  // `?` always follows a complete expression (preceded by whitespace or
+  // a closing `)`/`]`), never glued directly to a word the way an
+  // English `?` always is.
+  it('a real JS ternary with NO space before its own colon is still correctly recognized as code, not a question (#3355, PRR-A R-Gate R4)', () => {
+    assert.equal(run(['> check scope', '⏺ The scope resolves as current ? current.project: null if available.']).question, null);
+  });
+
   it('numbers several questions, escapes each, and gives each a dismiss button', () => {
     const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
       chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'x' }], questions: ['A <b>?', 'B?'] } } });
