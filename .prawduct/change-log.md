@@ -41,6 +41,74 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-28 — v6 frontend & fleet-wide workspace isolation, Car V668-W1-A
+
+<!-- prawduct: type=fixed | scope=v668-w1-a -->
+
+- Fixed #3345 (#3325 fast-follow): sibling car #3333 fixed the backend route scoping for
+  `GET /api/sprint-waves`/`/api/sprint-reports/:version` but never touched the frontend calls
+  or the fleet-wide wave-run resolution, so selecting a non-TangleClaw project/fleet still
+  showed TangleClaw's own Sprint & Cars/Charter & Roadmap/Kaizen & Reports panels.
+  `public/v6-shell.js`'s `loadWorkspacePanel` now passes `?projectId=<activeProject.id>`
+  (`&groupId=` when present) to both reads; a new `refreshOpenWorkspacePanel(mine)`, called
+  right after `loadConversation` sets `current`, re-fetches an open data-mode panel whenever
+  the active project/session switches.
+- `server.js`'s `_v6ResolveSprintScope` now also resolves `projectName`/`groupName`/
+  `memberProjectIds` (every project id in the clicked seat's own fleet group, via
+  `store.projectGroups.listMembers`). `lib/native-sprint-tracker.js`'s `sprintDataFromWaveRuns`
+  accepts a `scope.memberProjectIds` that REPLACES the old single-`projectId` exact match with
+  "the run's `metadata.projectId` is one of these" — a wave run a DIFFERENT seat of the same
+  fleet recorded now answers correctly instead of the empty sprint (and the misleading generic
+  `<version>-train-N` fallback placeholder that used to stand in for the real car) just because
+  the one clicked seat never personally launched a train. Backward compatible: an omitted/null
+  `memberProjectIds` behaves exactly as before #3345.
+- `GET /api/sprint-waves` now also returns `projectName`/`groupName`/`roadmapUrl` (the last a
+  plain `github.com/<repo>` link derived from the resolved roadmap's own `repo` — never a
+  guessed GitHub Pages URL, since most repos never enable one). `public/sprint-wave-ui.js`'s
+  Release-First Roadmap reads these instead of its hardcoded `PUBLIC_SSOT_URL`/`TC-Lane-*`
+  fallback, and renders no roadmap link at all when `roadmapUrl` is absent — never defaults to
+  TangleClaw's own public page for a different project/fleet. `PUBLIC_SSOT_URL` stays exported
+  for any external caller that still wants it; `renderReleaseRoadmap` itself no longer uses it
+  as a silent default.
+- Cross-car scope note: this car's file scope originally named only `public/v6-shell.js`,
+  `public/sprint-wave-ui.js`, `server.js`, `lib/native-sprint-tracker.js` and 3 test files.
+  Building deliverable (2) revealed the API response needs 3 new fields, which only
+  `lib/routes/sprint-wave-routes.js`'s `handleGetSprintWaves` builds — outside the original
+  scope. Flagged to PM before touching it; PM/Architect ratified it into
+  `SPRINT_V668_CHARTER.md`/`LANE_QUEUE.md`'s file list (Ruling A1273) along with
+  `test/v6-t2-server-routes-integration.test.js` (the one place `_v6ResolveSprintScope`'s real
+  DB-backed `groupId`/`sharedDir`/`memberProjectIds` resolution is end-to-end tested —
+  `test/sprint-wave-routes.test.js` only tests the router against a fake `resolveScope` dep and
+  cannot reach it) before either was committed.
+- Addendum (#3347, requested by PM mid-build, not part of #3345's own 3 deliverables):
+  `_v6LogicalProjectIdsForLegacyProject` widened to include every logical project belonging to
+  a fleet peer (same `project_group_members` group), so a bound Fleet PM/Observer session can
+  read/disposition the whole fleet's Kaizen items via `kaizenScopeCaller`, not only the ones
+  auto-provisioned under its own single project. Independently verified before accepting:
+  issue #3347 is real and open and corroborates the general need; the given SQL is schema-
+  correct (`project_group_members` has `group_id`/`project_id` columns, confirmed from this
+  same session's own `listMembers` implementation); `v6Db()` and `store.getDb()` are the exact
+  same connection (`const v6Db = () => store.getDb();`), so the subquery's join is valid rather
+  than a cross-database reference that would silently fail. Tested end to end: a real
+  `POST /api/v6/kaizen/items` + `GET .../items/:id` round-trip confirms a same-group peer can
+  read the item and a project outside every one of the creator's groups still 404s.
+- Addendum (#3347, quick-note from PM, also not part of #3345's own 3 deliverables): a
+  best-effort `tc` CLI auto-stage call added at server boot (`require.main === module` gated,
+  same as its sibling startup checks) — `require('./scripts/stage-tc-cli')` is expected to
+  MODULE_NOT_FOUND until sibling PR #3348 ships that file, logged at `debug` for that specific,
+  expected case; the function existing but throwing instead logs at `warn`. Never blocks boot
+  either way. Not covered by a test: this specific call is gated the same way its neighboring
+  startup checks already are, and testing it would need the same child-process-spawning
+  harness those already-untested-by-this-car neighbors would (`test/server-listen-protocol.test.js`/
+  `test/master-boot-order.test.js`, both outside this car's scope) — disproportionate cost for
+  a 12-line, non-blocking try/catch; flagged rather than silently skipped.
+- Verification: full regression sweep across all 4 touched test files
+  (`test/sprint-wave-routes.test.js`, `test/native-sprint-tracker.test.js`,
+  `test/v6-b1-ui-shell.test.js`, `test/v6-t2-server-routes-integration.test.js`): 1196/1196
+  passing. Stage 1 static checks green. No `test/tiers.json`/`.testament.toml` changes (no new
+  test file — PM confirmed, TC-Lane-Arc Ruling A1273 pre-ratified using only the existing
+  tier-registered files).
+
 ## 2026-11-27 — Global Settings rebuilt as a full-screen workspace, Car V667-W1-A
 
 <!-- prawduct: type=added | scope=v667-w1-a -->
