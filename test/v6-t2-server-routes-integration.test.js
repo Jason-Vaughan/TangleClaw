@@ -1005,6 +1005,27 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       assert.equal(body.projectName, seatOutsideFleet.name);
       assert.equal(body.groupName, null, 'this project is deliberately outside every group');
     });
+
+    // PRR-A R-Gate R1 BLOCKING: a project-scoped request with no fleet
+    // group was falling through to THIS SERVER'S OWN roadmap2-data.json/
+    // LANE_QUEUE.md/sprint-reports-hub (whatever this install's own
+    // ROADMAP2_DATA_DEFAULT_PATH etc. name), so its real repo/releases/
+    // reports showed up labeled with the UNRELATED ungrouped project's own
+    // name -- exactly the cross-project mix-up this whole car exists to
+    // prevent. This machine's real default roadmap genuinely names
+    // Jason-Vaughan/TangleClaw with real releases, so this test is strict
+    // about asserting NONE of that leaks through, not just that `roadmapUrl`
+    // happens to be falsy.
+    it('never falls through to this install\'s own roadmap/reports-hub for a project-scoped-but-ungrouped request', async () => {
+      const res = await get(`/api/sprint-waves?projectId=${seatOutsideFleet.id}`);
+      assert.equal(res.statusCode, 200, res.body);
+      const body = json(res);
+      assert.equal(body.roadmapUrl, null, 'must not expose this install\'s own roadmap link for an unrelated ungrouped project');
+      assert.notEqual(body.roadmapUrl, 'https://github.com/Jason-Vaughan/TangleClaw', 'must never be THIS install\'s own repo specifically');
+      assert.equal(body.roadmapSource, 'fallback', 'must not read this install\'s own real roadmap2-data.json');
+      assert.deepEqual(body.snapshot.releases, { active: [], planned: [], shipped: [] },
+        'must not inherit this install\'s own ~86 real releases');
+    });
   });
 
   // #3345 addendum (#3347, outside this car's originally-declared scope --

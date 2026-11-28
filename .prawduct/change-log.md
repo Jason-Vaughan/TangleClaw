@@ -212,6 +212,28 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   concern that motivated the original ask not to re-run locally. Ran the 5 files directly:
   1302/1302 passing. Proceeding to push and open the PR on that explicit basis, recorded here
   with the exact gap rather than presented as an ordinary clean pass.
+- PRR-A R-Gate R1 (BLOCKING 1, fixed): a project-scoped request with no fleet group
+  (`scope.projectId` resolved, `scope.sharedDir` still null) fell through to THIS INSTALL'S OWN
+  `roadmap2-data.json` (hardcoded `ROADMAP2_DATA_DEFAULT_PATH`) — on this machine, a real file
+  naming `Jason-Vaughan/TangleClaw` with ~86 real releases — so an ungrouped project's panel
+  showed this install's own roadmap/repo link under that project's own `projectName`, exactly
+  the cross-project mix-up this whole car exists to prevent. Confirmed directly before fixing:
+  read the real default file, `repo: "Jason-Vaughan/TangleClaw"`, 86 releases. Fixed in
+  `_v6LoadRoadmapData`: the install-wide fallback is now used only for a request naming no
+  project at all (the bare operator dashboard, unchanged pre-#3325 behavior); a project-scoped-
+  but-ungrouped `scope` gets an empty roadmap instead. Then grepped the whole file for every
+  sibling function sharing the identical `scope.sharedDir ? <project's own file> : <this
+  install's own file>` shape (per this repo's own learnings file: check every member of the
+  same pattern, not just the one named) and found 3 more with the SAME bug —
+  `_v6LoadRoadmapSyncStatus`, `_v6LoadReportsHubHtml` (reachable today via the already-wired
+  `getReports` dep → `_v6ReportsCatalog`, so this one was a live leak, not just latent), and
+  `_v6LoadSprintReportHtml` (not currently wired as a dep, so latent, but fixed anyway for
+  consistency). Factored the shared "is this a project-scoped-but-ungrouped request" check into
+  one new `_v6ScopedToProjectWithNoGroup(scope)` helper all 4 now call, rather than repeating
+  the condition inline 4 times. Added a new, strict regression test in `test/v6-t2-server-
+  routes-integration.test.js` — confirmed it actually fails without the fix (reverted the
+  server.js diff, re-ran, got exactly the real leaked URL back; restored the fix, re-ran, green)
+  before trusting it. 74/74 in that file, 1303/1303 across all 5 touched test files.
 
 ## 2026-11-27 — Global Settings rebuilt as a full-screen workspace, Car V667-W1-A
 
