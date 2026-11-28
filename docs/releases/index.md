@@ -2,6 +2,7 @@
 
 ## Current release
 
+- [v6.6.9 — Fleet sprint visibility and Fleet Shell reliability](v6.6.9.md)
 - [v6.6.8 — Fleet workspace isolation, full-page settings, and coordinator tools](v6.6.8.md)
 - [v6.6.7 — Global Settings workspace, memory backups, and connection stability](v6.6.7.md)
 - [v6.6.6 — Fleet-isolated sprint data, provisioning hardening, and closed-loop Kaizen](v6.6.6.md)

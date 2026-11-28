@@ -28,6 +28,11 @@ further down this file (#3290).
 - **Ephemeral launch-secret scrubbing** — see `v6.6.0`'s own entry below.
 - Each `v6.x.y` section below is this index's real, line-free record of what shipped in that version.
 
+## v6.6.9 — Fleet sprint visibility and Fleet Shell reliability
+
+- **Fleet sprint data fallback (#3356)** — `server.js#_v6LoadLaneQueueSprintData`/`#_v6ChooseSprintDataSource` and `GET /api/sprint-waves`/`GET /api/sprint-reports/:version`: fleet car tables in `LANE_QUEUE.md` now supply sprint data when persisted wave runs are absent or older.
+- **Fleet Shell chat/workspace reliability and staggered launch (#3355, #3352)** — `public/v6-shell.js#loadWorkspacePanel`/`#extractLiveTurns`/`#asksQuestion`/`#appendReplyLine`/`#lineMarkup` and `public/ui.js`: fixes project-scoped workspace reads, chat attribution, false waiting prompts, wrapped URL boundaries, Codex TUI chrome filtering, and synchronized fleet startup.
+
 ## v6.6.5 — Sprint reporting, intake traceability, and the V6 feature showcase
 
 - **Sprint report gate and Kaizen viewer** (#3266) — `lib/sprint-report-gate.js#evaluateReportGate`/`#evaluateTrainGate` and `public/v6-kaizen-reports-view.js`: configurable Gate 4 completion decisions and a standalone version/train report view; live-page wiring remains follow-up work.
