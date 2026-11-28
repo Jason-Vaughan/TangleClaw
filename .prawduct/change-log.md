@@ -238,6 +238,11 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   non-parenthesis-preceded alternative, previously verified only by hand-trace. O-3 (same
   stale-evidence class as every prior round — accepted). 890/890 in the car's own file. Stage 1
   static green.
+- Final verify-resolutions (R8): 0 blocking, 0 warning, 0 new findings. O-1/O-2 confirmed
+  resolved; a separate, pre-existing, out-of-scope citation-tag class elsewhere in the file was
+  correctly scoped out, not flagged as a new defect. Review is over for this tree; branch covered
+  at 11 commits since `origin/main`, no blocking outstanding. Tree clean at head `ec5cf523`.
+  Awaiting PRR-A/Arc human review.
 
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
 
