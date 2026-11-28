@@ -930,4 +930,153 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       assert.deepEqual(reportIds(res), ['v2.2.2']);
     });
   });
+
+  // #3345 (#3325 fast-follow, outside this car's originally-declared file
+  // scope -- flagged to PM; this is the one place `_v6ResolveSprintScope`'s
+  // real groupId/sharedDir/memberProjectIds resolution is end-to-end tested
+  // against a real store.projectGroups DB, not a fake `resolveScope` dep
+  // (that's `test/sprint-wave-routes.test.js`'s own job, and it can't reach
+  // this function at all): a train launched from one fleet seat must still
+  // show its cars when a SIBLING seat of the same fleet is the one clicked.
+  describe('GET /api/sprint-waves fleet-wide member-seat resolution (#3345)', () => {
+    let seatPm;
+    let seatBuilder;
+    let seatOutsideFleet;
+    let fleetGroup;
+    let boundBuilder;
+
+    before(() => {
+      seatPm = store.projects.create({ name: `fleet-pm-${Date.now()}`, path: path.join(tempDir, 'fleet-pm') });
+      seatBuilder = store.projects.create({ name: `fleet-builder-${Date.now()}`, path: path.join(tempDir, 'fleet-builder') });
+      seatOutsideFleet = store.projects.create({ name: `fleet-outsider-${Date.now()}`, path: path.join(tempDir, 'fleet-outsider') });
+      fleetGroup = store.projectGroups.create({ name: `test-fleet-${Date.now()}`, sharedDir: path.join(tempDir, 'fleet-shared') });
+      store.projectGroups.addMember(fleetGroup.id, seatPm.id);
+      store.projectGroups.addMember(fleetGroup.id, seatBuilder.id);
+      boundBuilder = bindProject(seatBuilder);
+    });
+
+    it('clicking a sibling seat with no run of its own still sees the fleet\'s run, recorded under a DIFFERENT seat', async () => {
+      const created = await post(`/api/v6/projects/${seatPm.id}/wave-runs`, {
+        fleetId: 'test-fleet', cars: [{ id: 'carFromPmSeat', fileScope: ['lib/example.js'] }]
+      });
+      assert.equal(created.statusCode, 201, created.body);
+      const res = await get(`/api/sprint-waves?projectId=${seatBuilder.id}`, { operator: false, headers: boundBuilder.headers });
+      assert.equal(res.statusCode, 200, res.body);
+      // Not asserting the full list (THIS SERVER'S own real `docs/releases/`
+      // versions also synthesize fallback train rows alongside it, same as
+      // every project this group's fake sharedDir leaves unresolved) -- the
+      // one thing #3345 exists to prove is that the REAL car, recorded
+      // under the OTHER seat, is actually present rather than replaced by a
+      // generic fallback placeholder for its own version.
+      assert.ok(json(res).snapshot.cars.some((c) => c.id === 'carFromPmSeat'), 'the sibling seat\'s real car must be visible');
+    });
+
+    it('a project outside the fleet group never sees that fleet\'s car, even by exact id guess', async () => {
+      const res = await get(`/api/sprint-waves?projectId=${seatOutsideFleet.id}`);
+      assert.equal(res.statusCode, 200, res.body);
+      assert.ok(!json(res).snapshot.cars.some((c) => c.id === 'carFromPmSeat'), 'an unrelated project must never see this fleet\'s car');
+    });
+
+    // The new projectName/groupName/roadmapUrl fields had only consumer-side
+    // tests elsewhere (hand-constructed values passed straight to the
+    // renderer) -- this exercises the real DB -> _v6ResolveSprintScope ->
+    // handleGetSprintWaves -> JSON response path these 3 fields actually
+    // travel in production.
+    it('GET /api/sprint-waves returns the real projectName/groupName resolved from the DB, and a real roadmapUrl derived from the group\'s own roadmap2-data.json repo', async () => {
+      const roadmapBoardDir = path.join(fleetGroup.sharedDir, 'roadmap-board');
+      fs.mkdirSync(roadmapBoardDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(roadmapBoardDir, 'roadmap2-data.json'),
+        JSON.stringify({ repo: 'SomeOwner/SomeFleetRepo', releases: [] })
+      );
+      const res = await get(`/api/sprint-waves?projectId=${seatBuilder.id}`, { operator: false, headers: boundBuilder.headers });
+      assert.equal(res.statusCode, 200, res.body);
+      const body = json(res);
+      assert.equal(body.projectName, seatBuilder.name);
+      assert.equal(body.groupName, fleetGroup.name);
+      assert.equal(body.roadmapUrl, 'https://github.com/SomeOwner/SomeFleetRepo');
+      assert.equal(body.roadmapSource, 'roadmap2-data.json');
+    });
+
+    it('GET /api/sprint-waves resolves projectName from the project alone (no group needed) but leaves groupName null when it belongs to none', async () => {
+      const res = await get(`/api/sprint-waves?projectId=${seatOutsideFleet.id}`);
+      assert.equal(res.statusCode, 200, res.body);
+      const body = json(res);
+      assert.equal(body.projectName, seatOutsideFleet.name);
+      assert.equal(body.groupName, null, 'this project is deliberately outside every group');
+    });
+
+    // PRR-A R-Gate R1 BLOCKING: a project-scoped request with no fleet
+    // group was falling through to THIS SERVER'S OWN roadmap2-data.json/
+    // LANE_QUEUE.md/sprint-reports-hub (whatever this install's own
+    // ROADMAP2_DATA_DEFAULT_PATH etc. name), so its real repo/releases/
+    // reports showed up labeled with the UNRELATED ungrouped project's own
+    // name -- exactly the cross-project mix-up this whole car exists to
+    // prevent. This machine's real default roadmap genuinely names
+    // Jason-Vaughan/TangleClaw with real releases, so this test is strict
+    // about asserting NONE of that leaks through, not just that `roadmapUrl`
+    // happens to be falsy.
+    it('never falls through to this install\'s own roadmap/reports-hub for a project-scoped-but-ungrouped request', async () => {
+      const res = await get(`/api/sprint-waves?projectId=${seatOutsideFleet.id}`);
+      assert.equal(res.statusCode, 200, res.body);
+      const body = json(res);
+      assert.equal(body.roadmapUrl, null, 'must not expose this install\'s own roadmap link for an unrelated ungrouped project');
+      assert.notEqual(body.roadmapUrl, 'https://github.com/Jason-Vaughan/TangleClaw', 'must never be THIS install\'s own repo specifically');
+      assert.equal(body.roadmapSource, 'fallback', 'must not read this install\'s own real roadmap2-data.json');
+      assert.deepEqual(body.snapshot.releases, { active: [], planned: [], shipped: [] },
+        'must not inherit this install\'s own ~86 real releases');
+    });
+  });
+
+  // #3345 addendum (#3347, outside this car's originally-declared scope --
+  // flagged to and explicitly requested by PM, with TC-Lane-Arc Ruling
+  // A1273 pre-ratifying the file list): `_v6LogicalProjectIdsForLegacyProject`
+  // now also grants every logical project belonging to a FLEET PEER (same
+  // `project_group_members` group), so a bound Fleet PM/Observer session
+  // can read/disposition the whole fleet's Kaizen items, not only the ones
+  // auto-provisioned under its own single project -- while a project
+  // outside every one of its groups still gets nothing.
+  describe('Kaizen item read scope widens to fleet peers in the same project group (#3345 addendum, #3347)', () => {
+    let seatA;
+    let seatB;
+    let seatOutsider;
+    let group;
+    let boundB;
+    let boundOutsider;
+    let itemId;
+
+    before(async () => {
+      seatA = store.projects.create({ name: `kaizen-fleet-a-${Date.now()}`, path: path.join(tempDir, 'kaizen-fleet-a') });
+      seatB = store.projects.create({ name: `kaizen-fleet-b-${Date.now()}`, path: path.join(tempDir, 'kaizen-fleet-b') });
+      seatOutsider = store.projects.create({ name: `kaizen-outsider-${Date.now()}`, path: path.join(tempDir, 'kaizen-outsider') });
+      group = store.projectGroups.create({ name: `kaizen-fleet-${Date.now()}` });
+      store.projectGroups.addMember(group.id, seatA.id);
+      store.projectGroups.addMember(group.id, seatB.id);
+      boundB = bindProject(seatB);
+      boundOutsider = bindProject(seatOutsider);
+
+      // Detected AS seat A, scoped to seat A's own auto-provisioned logical
+      // project (the `v6_legacy_project_insert` trigger provisions one for
+      // every project on creation) -- the operator creates it since only
+      // the real caller identity matters for the READ assertions below.
+      const created = await post('/api/v6/kaizen/items', {
+        originSprint: 'v6.6.8', findingId: `F-${Date.now()}`, defectCategory: 'test', rootCause: 'test root cause',
+        correctiveActionSpec: 'test corrective action', ownerRole: 'Builder', verificationClass: 'A_DETERMINISTIC',
+        targetMetric: 'test metric', logicalProjectId: `lp-${seatA.id}`
+      });
+      assert.equal(created.statusCode, 201, created.body);
+      itemId = json(created).id;
+    });
+
+    it('a fleet PEER (same group, different project) can read the item', async () => {
+      const res = await get(`/api/v6/kaizen/items/${itemId}`, { operator: false, headers: boundB.headers });
+      assert.equal(res.statusCode, 200, res.body);
+      assert.equal(json(res).id, itemId);
+    });
+
+    it('a project outside every one of seat A\'s groups still cannot read it', async () => {
+      const res = await get(`/api/v6/kaizen/items/${itemId}`, { operator: false, headers: boundOutsider.headers });
+      assert.equal(res.statusCode, 404, res.body);
+    });
+  });
 });

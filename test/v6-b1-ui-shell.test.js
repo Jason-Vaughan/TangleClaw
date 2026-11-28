@@ -10099,6 +10099,73 @@ describe('#3207 call sites — loadRouteDetail/handleRoute pass a context label 
   });
 });
 
+// #3345 (#3325 fast-follow): Sprint & Cars / Kaizen & Reports reads are
+// scoped to the active project/fleet, and an open workspace panel refreshes
+// when loadConversation switches the active project. Structural source
+// assertions, matching this file's own established convention (#3207's
+// block directly above) -- `loadWorkspacePanel`/`loadConversation` close
+// over `current`/`api`/`getShell`/`seq` from this file's one shared
+// closure, so lifting either in isolation would hit the exact free-variable
+// trap this repo's own learnings file already warns about; the full-
+// controller harness a few hundred lines up (`controller()`) is deliberately
+// scoped to script-loading/panel-drawing alone (its own doc comment: "no
+// route load runs") and not meant to drive a real project switch either.
+describe('#3345 (#3325 fast-follow): project/fleet-scoped workspace panel reads', () => {
+  it('loadWorkspacePanel appends ?projectId= (and &groupId= when present) to the sprint-waves/sprint-reports read', () => {
+    const fn = SRC.slice(SRC.indexOf('async function loadWorkspacePanel('), SRC.indexOf('\n    }\n\n    /**\n     * POST to a train launch'));
+    assert.match(fn, /const activeProject = current && current\.project \? current\.project : null;/);
+    assert.match(fn, /encodeURIComponent\(activeProject\.id\)/);
+    assert.match(fn, /activeProject\.groupId \? `&groupId=\$\{encodeURIComponent\(activeProject\.groupId\)\}` : ''/);
+    assert.match(fn, /\(mode === 'kaizen' \? '\/api\/sprint-reports\/current' : '\/api\/sprint-waves'\) \+ scopeQuery/);
+  });
+
+  it('loadWorkspacePanel appends no query string at all when no project is active, unchanged from before #3345', () => {
+    const fn = SRC.slice(SRC.indexOf('async function loadWorkspacePanel('), SRC.indexOf('\n    }\n\n    /**\n     * POST to a train launch'));
+    assert.match(fn, /const scopeQuery = activeProject\s*\n\s*\? `\?projectId=/);
+    // The ternary's else-branch -- confirms a null activeProject produces ''.
+    assert.match(fn, /: '';/);
+  });
+
+  it('loadConversation calls refreshOpenWorkspacePanel right after setting `current` to the newly-active project', () => {
+    assert.match(SRC,
+      /current = \{ project, sessionId, launchId: \(status && status\.launchId\) \|\| null, ctx, mine, view: null \};\s*\n[\s\S]{0,800}?refreshOpenWorkspacePanel\(mine\);/);
+  });
+
+  it('refreshOpenWorkspacePanel only re-loads for an OPEN data-mode panel (sprint/charter/kaizen), never chat/wizard, and respects the mine/seq staleness guard', () => {
+    const fn = SRC.slice(SRC.indexOf('function refreshOpenWorkspacePanel('), SRC.indexOf('\n    /**\n     * POST to a train launch'));
+    assert.match(fn, /if \(mine !== seq\) return;/);
+    assert.match(fn, /sh && typeof sh\.getWorkspaceMode === 'function' \? sh\.getWorkspaceMode\(\) : null/);
+    assert.match(fn, /if \(mode === 'sprint' \|\| mode === 'charter' \|\| mode === 'kaizen'\) loadWorkspacePanel\(mode\);/);
+  });
+
+  // #3345's own project/fleet-scoped sprint/kaizen reads turned the
+  // pre-existing charter-only staleness guard into a real cross-project
+  // paint risk for sprint/kaizen too -- an operator switching projects
+  // while either read was still in flight had nothing to stop the OLD
+  // project's data from painting over the panel.
+  it('loadWorkspacePanel drops a stale read for EVERY data mode (sprint/charter/kaizen), not just charter, if the active project changed during the awaits', () => {
+    const fn = SRC.slice(SRC.indexOf('async function loadWorkspacePanel('), SRC.indexOf('\n    }\n\n    /**\n     * POST to a train launch'));
+    // The guard now keys off `activeProject` (captured before this
+    // function's very first await), not the charter-only `project`.
+    assert.match(fn,
+      /if \(activeProject && !\(current && current\.project && String\(current\.project\.id\) === String\(activeProject\.id\)\)\) return;/);
+    // And the charter-only `project` variable must NOT still be the one
+    // guarding this -- confirms the fix replaced it rather than merely
+    // adding a second, redundant check beside the old one.
+    assert.doesNotMatch(fn,
+      /if \(project && !\(current && current\.project && String\(current\.project\.id\) === String\(project\.id\)\)\) return;/);
+  });
+
+  it('a project-route switch clears the cached sprint/kaizen panels too, not just charter\'s', () => {
+    const idx = SRC.indexOf("workspaceMode = 'chat';\n        // Every data-mode panel belongs to the project that was open");
+    assert.ok(idx > -1, 'could not find the route-switch cache-clear block');
+    const block = SRC.slice(idx, SRC.indexOf('\n      }', idx));
+    assert.match(block, /workspacePanels\.delete\('charter'\);/);
+    assert.match(block, /workspacePanels\.delete\('sprint'\);/);
+    assert.match(block, /workspacePanels\.delete\('kaizen'\);/);
+  });
+});
+
 // ── Car V651-W2-B (#3133, #3132, #3139): persisted layout, the automated
 // usage probe's own UI, and inline video previews ──
 

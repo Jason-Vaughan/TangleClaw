@@ -9740,12 +9740,27 @@ route('GET', '/api/v6/legacy-projects/:legacyProjectId', (req, res, params) => {
  * guessed from the numeric id itself (e.g. assuming `'lp-' || projectId`),
  * since a project can also belong to a multi-project fleet's own logical
  * project, not only its auto-provisioned one.
+ *
+ * Also includes every logical project id belonging to any OTHER project
+ * that shares a `project_groups` membership with `projectId` (#3345
+ * addendum, #3347: a Fleet PM/Observer bound session, e.g. TC-Lane-PM and
+ * TC-Lane-Obsr both in TangleClaw-Shared, must be able to read/disposition
+ * the whole fleet group's own Kaizen items, not only the ones provisioned
+ * under its own single project). Delegates the actual resolution to
+ * {@link module:lib/v6/e5-kaizen-ledger.resolveLogicalProjectIdsForLegacyProject}
+ * (sibling car V668-W1-D/#3347's own fix for the identical need, merged
+ * while this car was mid-build and independently verified before
+ * delegating to it rather than keeping a second, slightly different copy
+ * of the same `project_group_members` self-join query): this function's
+ * own first draft duplicated that SQL inline, missing the `lp-N`-vs-bare-
+ * numeric spelling ambiguity `e5`'s version already handles for
+ * `kaizen_items.logical_project_id`, a column with no format check. One
+ * producer of this capability, not two that can silently drift apart.
  * @param {number} projectId
  * @returns {string[]}
  */
 function _v6LogicalProjectIdsForLegacyProject(projectId) {
-  return v6Db().prepare('SELECT DISTINCT logical_project_id FROM v6_legacy_project_view WHERE legacy_project_id = ?')
-    .all(projectId).map((r) => r.logical_project_id);
+  return e5.resolveLogicalProjectIdsForLegacyProject(v6Db(), projectId);
 }
 
 /**
@@ -11381,9 +11396,25 @@ const SPRINT_REPORTS_HUB_DEFAULT_PATH = '/Users/jasonvaughan/Documents/Projects/
  * caller's own bound default (or null) exactly as if it had named nothing,
  * never answered with a refusal that would itself confirm the id resolves
  * to something.
+ * `memberProjectIds` (#3345, #3325 fast-follow): every project id in the
+ * resolved `groupId`'s own fleet, `projectId` included -- this is what lets
+ * {@link module:lib/native-sprint-tracker.sprintDataFromWaveRuns} find a wave
+ * run recorded under a DIFFERENT seat of the same fleet (the operator
+ * launched the train from `TiLT-PM`'s project, then clicks into a sibling
+ * `TiLT-Builder` seat) instead of answering empty just because the clicked
+ * seat's own `projectId` never personally appears on any run's
+ * `metadata.projectId`. `null` when `groupId` never resolved (a lone
+ * project, or no caller-named project at all) -- `sprintDataFromWaveRuns`
+ * falls back to its pre-#3345 exact-`projectId` match in that case, same as
+ * before this field existed.
+ * `projectName`/`groupName` (#3345, #3325 fast-follow): the resolved
+ * project's/group's own display name, so a renderer (`public/sprint-wave-
+ * ui.js`) can show which project/fleet it is actually looking at instead of
+ * a label hardcoded for this server's own install.
  * @param {object} req - The request (`headers`, and whatever query string it carries)
  * @returns {{projectId: (number|null), fleetId: (string|null), groupId: (string|null),
- *   projectPath: (string|null), sharedDir: (string|null)}}
+ *   projectPath: (string|null), sharedDir: (string|null), memberProjectIds: (number[]|null),
+ *   projectName: (string|null), groupName: (string|null)}}
  */
 function _v6ResolveSprintScope(req) {
   const query = parseQuery(reqUrl(req).search);
@@ -11403,20 +11434,25 @@ function _v6ResolveSprintScope(req) {
   // `sharedDocsAccess.canSeeGroup` call near its `query.groupId` handling).
   if (groupId !== null && !sharedDocsAccess.canSeeGroup(access, groupId)) groupId = null;
   let projectPath = null;
+  let projectName = null;
   if (projectId !== null) {
     const project = store.projects.get(projectId);
     projectPath = project ? project.path : null;
+    projectName = project ? project.name : null;
     if (groupId === null) {
       const owned = store.projectGroups.getByProject(projectId).find((g) => g.sharedDir);
       if (owned) groupId = owned.id;
     }
   }
   let sharedDir = null;
+  let groupName = null;
   if (groupId !== null) {
     const group = store.projectGroups.get(groupId);
     sharedDir = group ? group.sharedDir : null;
+    groupName = group ? group.name : null;
   }
-  return { projectId, fleetId, groupId, projectPath, sharedDir };
+  const memberProjectIds = groupId !== null ? store.projectGroups.listMembers(groupId) : null;
+  return { projectId, fleetId, groupId, projectPath, sharedDir, memberProjectIds, projectName, groupName };
 }
 
 /**
@@ -11614,6 +11650,25 @@ function _v6ReleaseCommitFor(version, scope = {}) {
 }
 
 /**
+ * Whether `scope` names a specific project that resolved no fleet group
+ * (#3345, PRR-A R-Gate R1 BLOCKING): every one of this file's `scope.sharedDir
+ * ? <that project/fleet's own file> : <this install's own file>` fallbacks
+ * must treat this case as "no file at all," never falling through to the
+ * second branch -- that branch is THIS server's own shared data, correct
+ * only for a request naming no project (the bare operator dashboard,
+ * unchanged pre-#3325 behavior). Without this, an ungrouped project's panel
+ * shows this install's own roadmap/reports-hub content under that
+ * project's name -- the exact cross-project mix-up #3345 exists to
+ * prevent, caught in review for `_v6LoadRoadmapData` and generalized here
+ * to its 3 siblings with the identical shape.
+ * @param {{projectId?: (number|null), sharedDir?: (string|null)}} scope
+ * @returns {boolean}
+ */
+function _v6ScopedToProjectWithNoGroup(scope) {
+  return Boolean(scope) && scope.projectId != null && !scope.sharedDir;
+}
+
+/**
  * Parsed `roadmap-sync-status.json`, or null when this machine cannot read
  * it (#3166) -- the same "external, read-only-to-this-checkout, degrade
  * gracefully" contract {@link _v6LoadRoadmapData} already follows for
@@ -11623,12 +11678,15 @@ function _v6ReleaseCommitFor(version, scope = {}) {
  * reads unhealthy, never like one that was never asked about at all (which
  * is what omitting the `getSyncStatus` dep entirely means instead). Reads
  * `scope.sharedDir`'s own `roadmap-board/public/roadmap/roadmap-sync-status.json`
- * when resolved (#3325), else this server's own, unchanged from before #3325.
- * @param {{sharedDir?: (string|null)}} [scope]
+ * when resolved (#3325), else this server's own, unchanged from before #3325
+ * -- except for a project-scoped-but-ungrouped `scope` (#3345), which gets
+ * no path at all rather than this install's own ({@link _v6ScopedToProjectWithNoGroup}).
+ * @param {{projectId?: (number|null), sharedDir?: (string|null)}} [scope]
  * @returns {*}
  */
 function _v6LoadRoadmapSyncStatus(scope = {}) {
   try {
+    if (_v6ScopedToProjectWithNoGroup(scope)) throw new Error('no sync-status path for this scope');
     const statusPath = scope.sharedDir
       ? path.join(scope.sharedDir, 'roadmap-board', 'public', 'roadmap', 'roadmap-sync-status.json')
       : (process.env.TANGLECLAW_ROADMAP_SYNC_STATUS_PATH || ROADMAP_SYNC_STATUS_DEFAULT_PATH);
@@ -11641,14 +11699,16 @@ function _v6LoadRoadmapSyncStatus(scope = {}) {
 /**
  * The Sprint Reports Hub's own `index.html` text, or null when this machine
  * cannot read it (#3166) -- same degrade-gracefully contract as
- * {@link _v6LoadRoadmapSyncStatus}. Reads `scope.sharedDir`'s own
- * `sprint-reports/index.html` when resolved (#3325), else this server's
- * own, unchanged from before #3325.
- * @param {{sharedDir?: (string|null)}} [scope]
+ * {@link _v6LoadRoadmapSyncStatus}, including its #3345 no-install-fallback
+ * exception for a project-scoped-but-ungrouped `scope`. Reads
+ * `scope.sharedDir`'s own `sprint-reports/index.html` when resolved (#3325),
+ * else this server's own, unchanged from before #3325.
+ * @param {{projectId?: (number|null), sharedDir?: (string|null)}} [scope]
  * @returns {string|null}
  */
 function _v6LoadReportsHubHtml(scope = {}) {
   try {
+    if (_v6ScopedToProjectWithNoGroup(scope)) throw new Error('no reports-hub path for this scope');
     const hubPath = scope.sharedDir
       ? path.join(scope.sharedDir, 'sprint-reports', 'index.html')
       : (process.env.TANGLECLAW_SPRINT_REPORTS_HUB_PATH || SPRINT_REPORTS_HUB_DEFAULT_PATH);
@@ -11662,24 +11722,26 @@ function _v6LoadReportsHubHtml(scope = {}) {
  * One version's own `sprint-reports/vX.Y.Z/index.html` text, or null when
  * this machine cannot read it (#3175, Ruling A871) -- same degrade-
  * gracefully contract as {@link _v6LoadRoadmapSyncStatus}/
- * {@link _v6LoadReportsHubHtml}, and the same parent directory
- * {@link SPRINT_REPORTS_HUB_DEFAULT_PATH} already names (the hub's own
- * `index.html` sits directly beside every version's own report
- * directory) -- or `scope.sharedDir`'s own `sprint-reports/` when resolved
- * (#3325), else this server's own, unchanged from before #3325. `version`
- * is validated against {@link module:lib/native-sprint-tracker.SPRINT_VERSION_RE}
+ * {@link _v6LoadReportsHubHtml} (including the #3345 no-install-fallback
+ * exception for a project-scoped-but-ungrouped `scope`), and the same
+ * parent directory {@link SPRINT_REPORTS_HUB_DEFAULT_PATH} already names
+ * (the hub's own `index.html` sits directly beside every version's own
+ * report directory) -- or `scope.sharedDir`'s own `sprint-reports/` when
+ * resolved (#3325), else this server's own, unchanged from before #3325.
+ * `version` is validated against {@link module:lib/native-sprint-tracker.SPRINT_VERSION_RE}
  * before it ever reaches a path -- `'current'` and anything malformed
  * answer null rather than resolving a path at all, since neither names a
  * real report directory and letting either reach `path.join` unchecked is
  * how a path-traversal segment would reach the filesystem.
  * @param {string} version
- * @param {{sharedDir?: (string|null)}} [scope]
+ * @param {{projectId?: (number|null), sharedDir?: (string|null)}} [scope]
  * @returns {string|null}
  */
 function _v6LoadSprintReportHtml(version, scope = {}) {
   const { SPRINT_VERSION_RE } = require('./lib/native-sprint-tracker');
   if (typeof version !== 'string' || version === 'current' || !SPRINT_VERSION_RE.test(version)) return null;
   try {
+    if (_v6ScopedToProjectWithNoGroup(scope)) throw new Error('no reports-hub path for this scope');
     const reportsHubPath = scope.sharedDir
       ? path.join(scope.sharedDir, 'sprint-reports', 'index.html')
       : (process.env.TANGLECLAW_SPRINT_REPORTS_HUB_PATH || SPRINT_REPORTS_HUB_DEFAULT_PATH);
@@ -11699,20 +11761,29 @@ function _v6LoadSprintReportHtml(version, scope = {}) {
  * next request. Reads `scope.sharedDir`'s own
  * `roadmap-board/roadmap2-data.json`/`LANE_QUEUE.md` and `scope.projectPath`'s
  * own `docs/releases/` when resolved (#3325), else this server's own,
- * unchanged from before #3325.
- * @param {{projectPath?: (string|null), sharedDir?: (string|null)}} [scope]
+ * unchanged from before #3325 -- EXCEPT (#3345, PRR-A R-Gate R1 BLOCKING):
+ * that install-wide default is this SERVER's own data, so it is used only
+ * for a request naming no project at all (the bare operator dashboard,
+ * unchanged pre-#3325 behavior). A project-scoped-but-ungrouped `scope`
+ * ({@link _v6ScopedToProjectWithNoGroup}) instead gets an empty roadmap
+ * rather than falling through to this install's own
+ * `roadmap2-data.json`/`LANE_QUEUE.md` — otherwise an ungrouped project's
+ * panel would show THIS install's roadmap/repo link under that project's
+ * own name, exactly the cross-project mix-up #3345 exists to prevent.
+ * @param {{projectId?: (number|null), projectPath?: (string|null), sharedDir?: (string|null)}} [scope]
  * @returns {{data: object, repo: (string|null), source: string}}
  */
 function _v6LoadRoadmapData(scope = {}) {
   const roadmapPath = scope.sharedDir
     ? path.join(scope.sharedDir, 'roadmap-board', 'roadmap2-data.json')
-    : (process.env.TANGLECLAW_ROADMAP2_DATA_PATH || ROADMAP2_DATA_DEFAULT_PATH);
+    : (_v6ScopedToProjectWithNoGroup(scope) ? null : (process.env.TANGLECLAW_ROADMAP2_DATA_PATH || ROADMAP2_DATA_DEFAULT_PATH));
   try {
+    if (!roadmapPath) throw new Error('no roadmap path for this scope');
     const parsed = JSON.parse(fs.readFileSync(roadmapPath, 'utf8'));
     if (parsed && Array.isArray(parsed.releases)) {
       return { data: parsed, repo: typeof parsed.repo === 'string' ? parsed.repo : null, source: 'roadmap2-data.json' };
     }
-  } catch { /* unreadable, missing, or not this shape -- fall through to the fallback below */ }
+  } catch { /* unreadable, missing, not this shape, or no path for this scope -- fall through to the fallback below */ }
 
   const nativeSprintTracker = require('./lib/native-sprint-tracker');
   const docsReleaseVersions = _v6DocsReleaseVersions(scope);
@@ -11720,9 +11791,10 @@ function _v6LoadRoadmapData(scope = {}) {
   try {
     const laneQueuePath = scope.sharedDir
       ? path.join(scope.sharedDir, 'LANE_QUEUE.md')
-      : (process.env.TANGLECLAW_LANE_QUEUE_PATH || LANE_QUEUE_DEFAULT_PATH);
+      : (_v6ScopedToProjectWithNoGroup(scope) ? null : (process.env.TANGLECLAW_LANE_QUEUE_PATH || LANE_QUEUE_DEFAULT_PATH));
+    if (!laneQueuePath) throw new Error('no lane queue path for this scope');
     laneQueueText = fs.readFileSync(laneQueuePath, 'utf8');
-  } catch { /* no shared lane queue visible from this checkout/machine */ }
+  } catch { /* no shared lane queue visible from this checkout/machine, or none applies to this scope */ }
 
   return {
     data: nativeSprintTracker.buildRoadmapDataFromFallbackSources({ docsReleaseVersions, laneQueueText }),
@@ -11807,6 +11879,14 @@ async function _v6SprintGithubActivity(scope = {}) {
     getSprintData: (scope) => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), 'current', scope),
     getSprintDataForVersion: (version, scope) => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), version, scope),
     getRoadmapData: (scope) => _v6LoadRoadmapData(scope),
+    // #3345 (#3325 fast-follow): a plain `https://github.com/<repo>` link
+    // for whichever repo the resolved roadmap named (`roadmap.repo`) --
+    // always a valid link for a repo this GitHub token (or the public,
+    // unauthenticated API) can reach, unlike guessing a GitHub Pages URL
+    // (`<owner>.github.io/<repo>/`), which only this server's own install
+    // happens to have configured and most repos never enable at all. Never
+    // installation-specific, so no scope lookup is needed here.
+    getRoadmapUrl: (repo) => (typeof repo === 'string' && repo ? `https://github.com/${repo}` : null),
     getGithubActivity: (scope) => _v6SprintGithubActivity(scope),
     // #3162/#3164.
     getShippedVersions: (scope) => _v6ShippedVersions(scope),
@@ -12640,6 +12720,31 @@ if (require.main === module) {
   if (!_checkPublicAssets()) {
     log.error('Static asset directory (public/index.html) is missing or unreadable — UI routes will 404; '
       + 'check if the install directory was moved or renamed while running', { publicDir: PUBLIC_DIR });
+  }
+
+  // #3347 (#3345 addendum, quick-note from PM): best-effort -- stages
+  // ~/.tangleclaw/tc-cli-staged/ on boot so a lane-local/TCC-safe staged
+  // `tc` invocation never lags behind a newly merged verb. Sibling PR
+  // #3348 (Car V668-W1-D) merged `scripts/stage-tc-cli.js` itself while
+  // this car was mid-build -- its own module deliberately wires up nothing
+  // at startup ("none of which this module wires up itself" is its own
+  // doc comment's wording), so this IS that wiring, not a duplicate of it.
+  // MODULE_NOT_FOUND still logs at debug rather than warn, defensively,
+  // for the same install-drift reason the #1369 check two lines down
+  // tolerates a moved/renamed directory -- a checkout mid-rebase onto an
+  // older tree, or a future revert, should not warn for a condition this
+  // call already treats as a safe no-op. The function existing but
+  // throwing is a real problem worth a trace either way. Never blocks boot.
+  try {
+    // eslint-disable-next-line global-require
+    const stageTcCli = require('./scripts/stage-tc-cli');
+    if (stageTcCli && typeof stageTcCli.stageTcCli === 'function') stageTcCli.stageTcCli();
+  } catch (err) { // prawduct:allow prawduct/broad-except -- best-effort staging must never block server boot
+    if (err && err.code === 'MODULE_NOT_FOUND') {
+      log.debug('tc CLI auto-stage skipped: scripts/stage-tc-cli.js not present in this checkout');
+    } else {
+      log.warn('tc CLI auto-stage failed', { error: err && err.message });
+    }
   }
 
   // #1369 — the same move/rename leaves a LaunchAgent plist's WorkingDirectory

@@ -1750,9 +1750,44 @@ describe('public/sprint-wave-ui: Release-First Roadmap, Sprint Car cards & Repor
   });
 
   describe('renderReleaseRoadmap', () => {
-    it('links out to the published public SSOT roadmap (#3134)', () => {
+    it('renders no roadmap link at all when the producer supplies no roadmapUrl (#3345, #3325 fast-follow — never defaults to TangleClaw\'s own hardcoded SSOT page for an unresolved project/fleet)', () => {
       const html = sprintWaveUi.renderReleaseRoadmap(snapshot());
-      assert.match(html, /<a href="https:\/\/jason-vaughan\.github\.io\/TangleClaw\/" target="_blank" rel="noopener noreferrer">🌐 Public SSOT Roadmap ↗<\/a>/);
+      assert.doesNotMatch(html, /sprint-roadmap-public-ssot/);
+      assert.doesNotMatch(html, /jason-vaughan\.github\.io/);
+    });
+
+    it('links out to the producer-supplied roadmapUrl, labeled with groupName when given (#3345, #3325 fast-follow)', () => {
+      const html = sprintWaveUi.renderReleaseRoadmap(Object.assign({}, snapshot(), {
+        roadmapUrl: 'https://github.com/SomeOwner/SomeFleetRepo', groupName: 'TiLT-Fleet', projectName: 'TiLT-PM'
+      }));
+      assert.match(html, /<a href="https:\/\/github\.com\/SomeOwner\/SomeFleetRepo" target="_blank" rel="noopener noreferrer">🌐 TiLT-Fleet Roadmap ↗<\/a>/);
+      assert.match(html, /Release-First Roadmap — TiLT-Fleet/);
+    });
+
+    it('falls back to projectName for the label when no groupName is given', () => {
+      const html = sprintWaveUi.renderReleaseRoadmap(Object.assign({}, snapshot(), {
+        roadmapUrl: 'https://github.com/SomeOwner/SomeRepo', projectName: 'Solo-Project'
+      }));
+      assert.match(html, /🌐 Solo-Project Roadmap ↗/);
+      assert.match(html, /Release-First Roadmap — Solo-Project/);
+    });
+
+    it('labels the link generically when roadmapUrl is given but neither groupName nor projectName is', () => {
+      const html = sprintWaveUi.renderReleaseRoadmap(Object.assign({}, snapshot(), {
+        roadmapUrl: 'https://github.com/SomeOwner/SomeRepo'
+      }));
+      assert.match(html, /🌐 Project Roadmap ↗/);
+      assert.doesNotMatch(html, /Release-First Roadmap — /);
+    });
+
+    it('escapes an untrusted groupName/projectName rather than injecting it raw', () => {
+      const html = sprintWaveUi.renderReleaseRoadmap(Object.assign({}, snapshot(), {
+        roadmapUrl: 'https://github.com/x/y', groupName: HOSTILE
+      }));
+      assert.doesNotMatch(html, /<img/);
+    });
+
+    it('PUBLIC_SSOT_URL is still exported, for any external caller that still wants it, even though renderReleaseRoadmap no longer defaults to it', () => {
       assert.equal(sprintWaveUi.PUBLIC_SSOT_URL, 'https://jason-vaughan.github.io/TangleClaw/');
     });
 
@@ -2311,7 +2346,12 @@ describe('the live server mounts the sprint wave routes (#3087, Ruling A774)', (
         releases: { active: [], planned: [], shipped: [] },
         summary: { plannedVersions: 0, releasedVersions: 0, activeSprintProgress: { closed: 0, total: 0, pct: 0 }, scheduledItems: 0 },
         cars: [], reports: []
-      }
+      },
+      // #3345 (#3325 fast-follow): null for every field here, since this
+      // unbound request names no projectId/groupId to resolve any of them
+      // from, and the fallback roadmap this describe block forces has no
+      // real repo for roadmapUrl to derive from either.
+      projectName: null, groupName: null, roadmapUrl: null
     });
     const c3 = require('../lib/v6/c3-wave-scheduler');
     new c3.WaveScheduler({ store: new c3.SqliteSchedulerStore(store.getDb()) }).createRun({
@@ -2811,5 +2851,74 @@ describe('native-sprint-tracker: sprintDataFromWaveRuns scope filtering (#3325 F
   it('an empty runs map scoped to a projectId answers the empty "current" sprint, not an unscoped run', () => {
     assert.deepEqual(tracker.sprintDataFromWaveRuns({}, 'current', { projectId: 1 }),
       { version: null, cars: [], lanes: [], pullRequests: [], waves: [], learnings: [], releaseCommit: null });
+  });
+
+  describe('memberProjectIds (#3345, #3325 fast-follow: fleet-wide member-seat resolution)', () => {
+    it('finds a run recorded under a DIFFERENT fleet seat than the one clicked', () => {
+      // The operator launched the train from seat 1 (e.g. TiLT-PM); clicking
+      // into sibling seat 2 (TiLT-Builder) must still see it, not an empty sprint.
+      const runs = { launchedBySeat1: run('launchedBySeat1', 1, 'active', { carA: {} }, { projectId: 1 }) };
+      assert.deepEqual(
+        tracker.sprintDataFromWaveRuns(runs, 'current', { projectId: 2, memberProjectIds: [1, 2, 3] }).cars.map((c) => c.id),
+        ['carA']
+      );
+    });
+
+    it('still excludes a run belonging to a project outside the fleet group entirely', () => {
+      const runs = {
+        inFleet: run('inFleet', 1, 'active', { carA: {} }, { projectId: 1 }),
+        outsideFleet: run('outsideFleet', 2, 'active', { carB: {} }, { projectId: 99 })
+      };
+      assert.deepEqual(
+        tracker.sprintDataFromWaveRuns(runs, 'current', { projectId: 2, memberProjectIds: [1, 2, 3] }).cars.map((c) => c.id),
+        ['carA']
+      );
+    });
+
+    it('a lone project (no fleet group) passes memberProjectIds as its own single id, same as the old exact match', () => {
+      const runs = {
+        mine: run('mine', 1, 'active', { carMine: {} }, { projectId: 1 }),
+        theirs: run('theirs', 2, 'active', { carTheirs: {} }, { projectId: 2 })
+      };
+      assert.deepEqual(
+        tracker.sprintDataFromWaveRuns(runs, 'current', { projectId: 1, memberProjectIds: [1] }).cars.map((c) => c.id),
+        ['carMine']
+      );
+    });
+
+    it('memberProjectIds still combines with fleetId — both must match when both are given', () => {
+      const runs = {
+        match: run('match', 1, 'active', { carA: {} }, { projectId: 1 }, 'TiLT-Fleet'),
+        wrongFleet: run('wrongFleet', 2, 'active', { carB: {} }, { projectId: 1 }, 'TangleClaw-Shared')
+      };
+      assert.deepEqual(
+        tracker.sprintDataFromWaveRuns(
+          runs, 'current', { projectId: 2, memberProjectIds: [1, 2], fleetId: 'TiLT-Fleet' }
+        ).cars.map((c) => c.id),
+        ['carA']
+      );
+    });
+
+    it('a null/omitted memberProjectIds falls back to the pre-#3345 exact scope.projectId match, unchanged', () => {
+      const runs = {
+        mine: run('mine', 1, 'active', { carMine: {} }, { projectId: 1 }),
+        theirs: run('theirs', 2, 'active', { carTheirs: {} }, { projectId: 2 })
+      };
+      assert.deepEqual(
+        tracker.sprintDataFromWaveRuns(runs, 'current', { projectId: 1 }).cars.map((c) => c.id), ['carMine']
+      );
+      assert.deepEqual(
+        tracker.sprintDataFromWaveRuns(runs, 'current', { projectId: 1, memberProjectIds: null }).cars.map((c) => c.id),
+        ['carMine']
+      );
+    });
+
+    it('an empty memberProjectIds array excludes every run, even the clicked seat\'s own', () => {
+      const runs = { mine: run('mine', 1, 'active', { carMine: {} }, { projectId: 1 }) };
+      assert.deepEqual(
+        tracker.sprintDataFromWaveRuns(runs, 'current', { projectId: 1, memberProjectIds: [] }),
+        tracker.sprintDataFromWaveRuns({}, 'current', { projectId: 1 })
+      );
+    });
   });
 });

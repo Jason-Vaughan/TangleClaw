@@ -41,6 +41,200 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-28 — v6 frontend & fleet-wide workspace isolation, Car V668-W1-A
+
+<!-- prawduct: type=fixed | scope=v668-w1-a -->
+
+- Fixed #3345 (#3325 fast-follow): sibling car #3333 fixed the backend route scoping for
+  `GET /api/sprint-waves`/`/api/sprint-reports/:version` but never touched the frontend calls
+  or the fleet-wide wave-run resolution, so selecting a non-TangleClaw project/fleet still
+  showed TangleClaw's own Sprint & Cars/Charter & Roadmap/Kaizen & Reports panels.
+  `public/v6-shell.js`'s `loadWorkspacePanel` now passes `?projectId=<activeProject.id>`
+  (`&groupId=` when present) to both reads; a new `refreshOpenWorkspacePanel(mine)`, called
+  right after `loadConversation` sets `current`, re-fetches an open data-mode panel whenever
+  the active project/session switches.
+- `server.js`'s `_v6ResolveSprintScope` now also resolves `projectName`/`groupName`/
+  `memberProjectIds` (every project id in the clicked seat's own fleet group, via
+  `store.projectGroups.listMembers`). `lib/native-sprint-tracker.js`'s `sprintDataFromWaveRuns`
+  accepts a `scope.memberProjectIds` that REPLACES the old single-`projectId` exact match with
+  "the run's `metadata.projectId` is one of these" — a wave run a DIFFERENT seat of the same
+  fleet recorded now answers correctly instead of the empty sprint (and the misleading generic
+  `<version>-train-N` fallback placeholder that used to stand in for the real car) just because
+  the one clicked seat never personally launched a train. Backward compatible: an omitted/null
+  `memberProjectIds` behaves exactly as before #3345.
+- `GET /api/sprint-waves` now also returns `projectName`/`groupName`/`roadmapUrl` (the last a
+  plain `github.com/<repo>` link derived from the resolved roadmap's own `repo` — never a
+  guessed GitHub Pages URL, since most repos never enable one). `public/sprint-wave-ui.js`'s
+  Release-First Roadmap reads these instead of its hardcoded `PUBLIC_SSOT_URL`/`TC-Lane-*`
+  fallback, and renders no roadmap link at all when `roadmapUrl` is absent — never defaults to
+  TangleClaw's own public page for a different project/fleet. `PUBLIC_SSOT_URL` stays exported
+  for any external caller that still wants it; `renderReleaseRoadmap` itself no longer uses it
+  as a silent default.
+- Cross-car scope note: this car's file scope originally named only `public/v6-shell.js`,
+  `public/sprint-wave-ui.js`, `server.js`, `lib/native-sprint-tracker.js` and 3 test files.
+  Building deliverable (2) revealed the API response needs 3 new fields, which only
+  `lib/routes/sprint-wave-routes.js`'s `handleGetSprintWaves` builds — outside the original
+  scope. Flagged to PM before touching it; PM confirmed and said it had updated
+  `SPRINT_V668_CHARTER.md`/`LANE_QUEUE.md`'s file list to add it, citing "Ruling A1273," along
+  with `test/v6-t2-server-routes-integration.test.js` (the one place `_v6ResolveSprintScope`'s
+  real DB-backed `groupId`/`sharedDir`/`memberProjectIds` resolution is end-to-end tested —
+  `test/sprint-wave-routes.test.js` only tests the router against a fake `resolveScope` dep and
+  cannot reach it). Independently verified the FILE-LIST outcome directly against both files
+  before committing either — true, both list both files. The independent PR-reviewer later
+  grepped both files for the literal string "A1273" and found no match; re-checked myself —
+  confirmed, that citation does not appear anywhere in either document under that label, even
+  though the substantive outcome it was invoked for does hold. Recorded here as a citation
+  this session could not corroborate, not as a verified ruling number.
+- Addendum (#3347, requested by PM mid-build, not part of #3345's own 3 deliverables):
+  `_v6LogicalProjectIdsForLegacyProject` widened to include every logical project belonging to
+  a fleet peer (same `project_group_members` group), so a bound Fleet PM/Observer session can
+  read/disposition the whole fleet's Kaizen items via `kaizenScopeCaller`, not only the ones
+  auto-provisioned under its own single project. Independently verified before accepting:
+  issue #3347 is real and open and corroborates the general need; the given SQL is schema-
+  correct (`project_group_members` has `group_id`/`project_id` columns, confirmed from this
+  same session's own `listMembers` implementation); `v6Db()` and `store.getDb()` are the exact
+  same connection (`const v6Db = () => store.getDb();`), so the subquery's join is valid rather
+  than a cross-database reference that would silently fail. Tested end to end: a real
+  `POST /api/v6/kaizen/items` + `GET .../items/:id` round-trip confirms a same-group peer can
+  read the item and a project outside every one of the creator's groups still 404s.
+- Addendum (#3347, quick-note from PM, also not part of #3345's own 3 deliverables): a
+  best-effort `tc` CLI auto-stage call added at server boot (`require.main === module` gated,
+  same as its sibling startup checks) — `require('./scripts/stage-tc-cli')` is expected to
+  MODULE_NOT_FOUND until sibling PR #3348 ships that file, logged at `debug` for that specific,
+  expected case; the function existing but throwing instead logs at `warn`. Never blocks boot
+  either way. Not covered by a test: this specific call is gated the same way its neighboring
+  startup checks already are, and testing it would need the same child-process-spawning
+  harness those already-untested-by-this-car neighbors would (`test/server-listen-protocol.test.js`/
+  `test/master-boot-order.test.js`, both outside this car's scope) — disproportionate cost for
+  a 12-line, non-blocking try/catch; flagged rather than silently skipped.
+- Verification: full regression sweep across all 4 touched test files
+  (`test/sprint-wave-routes.test.js`, `test/native-sprint-tracker.test.js`,
+  `test/v6-b1-ui-shell.test.js`, `test/v6-t2-server-routes-integration.test.js`): 1196/1196
+  passing. Stage 1 static checks green. No `test/tiers.json`/`.testament.toml` changes (no new
+  test file — PM confirmed using only the existing tier-registered files, citing "Ruling
+  A1273" for this too; see the note on that citation a few bullets down).
+- A full-suite `prawduct-hook test-evidence record` run against this tree surfaced a real
+  regression: `test/v6-browser-shell-and-conversation-e2e.test.js` (outside this car's
+  declared scope) asserted `calls.includes('GET /api/sprint-waves')` — an exact-string match
+  the new `?projectId=`/`&groupId=` query string broke for its mounted-project scenario, where
+  an active project always exists by the time the assertion runs. Fixed to
+  `calls.some((c) => c.startsWith('GET /api/sprint-waves'))`; grepped the whole test suite for
+  every other exact-string assertion against either scoped URL (none found). Re-ran: 102/102
+  in that file, 1298/1298 across all 5 now-touched test files. The recorder's remaining 22
+  failures are the same pre-existing, environment-dependent real-tmux-pane/timing cluster this
+  fleet's own change-log history already documents repeatedly (`test/tmux-draft-capture.test.js`
+  the largest contributor at 10, plus `engine-health`/`projects`/`sessions`/`startup-dialog`/
+  `tmux`/`auth2-setup-admin`, one each) — none touching anything this car's diff changed;
+  2 of the newly-seen file names (`test/auth2-setup-admin.test.js`, `test/tmux.test.js`) were
+  independently verified clean (0/171) on a fresh clean `origin/main` worktree, consistent with
+  the same non-deterministic timing class rather than a new regression.
+- Rebased onto `origin/main` once sibling car V668-W1-D's own PR #3348 (#3347) merged mid-
+  review. The PR-reviewer flagged this as needing reconciliation — independently verified: `git
+  diff` confirmed #3348 touched only `lib/tc-verbs.js`/`lib/v6/e5-kaizen-ledger.js`/
+  `scripts/stage-tc-cli.js`, never `server.js`, so "Car D never touches server.js" held and
+  there was no file conflict. But `lib/v6/e5-kaizen-ledger.js`'s new
+  `resolveLogicalProjectIdsForLegacyProject(db, projectId)` — exported, and `server.js` already
+  `require()`s that module as `e5` — solves the IDENTICAL need as this car's own
+  `_v6LogicalProjectIdsForLegacyProject` addendum, with the SAME `project_group_members` self-
+  join, but ALSO normalizes the `lp-N`-vs-bare-numeric id-spelling ambiguity this car's own
+  first draft didn't handle. Rewrote `_v6LogicalProjectIdsForLegacyProject` to delegate to
+  `e5.resolveLogicalProjectIdsForLegacyProject` instead of keeping a second, slightly weaker
+  copy of the same query — one producer of this capability, not two that can drift apart.
+  Updated the boot-time `stage-tc-cli` call's own comments to reflect that the module now
+  exists (it actively calls the real `stageTcCli()`, not a no-op) rather than leaving a stale
+  "doesn't exist yet" framing; the MODULE_NOT_FOUND branch stays (now covering a checkout
+  mid-rebase onto an older tree, or a future revert, rather than "before #3348 merges").
+- Cumulative Critic round 1 (1 blocking, fixed; 4 warnings, 2 fixed + 2 accepted):
+  **BLOCKING** — `loadWorkspacePanel`'s project-staleness guard (dropping a read for a
+  project the operator has since left) only ever applied to `charter` mode; the two sibling
+  modes this car just made project-scoped (`sprint`/`kaizen`) had no equivalent guard, and the
+  existing `workspacePanels.delete('charter')` route-switch cache-clear (#3088) was never
+  mirrored to the new sprint/kaizen cache keys either — together a real risk of silently
+  painting a stale project's cars/report with no self-correction, directly contradicting this
+  car's own changelog claim. Fixed both: the guard now keys off `activeProject` (captured
+  before the function's very first await) for every mode, and the cache-clear now deletes all
+  three keys. Added 2 new structural tests in `test/v6-b1-ui-shell.test.js` confirming the
+  fixed shape (a true behavioral race test would need the same project-switch-mid-fetch
+  harness this file doesn't have yet — noted, not built, given the fix itself is a direct,
+  narrow generalization of an already-correct pattern). **WARNING** (fixed) — the new
+  `getRoadmapUrl` dep had no `@param` entry in `createSprintWaveRouter`'s otherwise-exhaustive
+  JSDoc; added one matching the module's own style. **WARNING** (fixed) — the e2e test's
+  `startsWith('GET /api/sprint-waves')` fix would also match the real, different
+  `GET /api/sprint-waves/github-activity` endpoint; tightened to a query-string boundary match
+  (`c === 'GET /api/sprint-waves' || c.startsWith('GET /api/sprint-waves?')`). **WARNING**
+  (accepted) — the 22-failure test-evidence disclosure, already fully substantiated above.
+  **WARNING** (accepted) — the boot-time `tc` CLI auto-stage call's own missing test coverage,
+  already disclosed above (note added there that the module now exists post-rebase).
+- Rebased again onto Car C's own merge (`42adc5fd`); clean, no conflict (confirmed by reading
+  the diffstat first — the only new file, `lib/shared-docs-access.js`, is untouched by this
+  car). The rebase changed this branch's own history, which demoted the next
+  `/prawduct:critic verify-resolutions` dispatch to a full `cumulative` pass automatically
+  (the prior review fact no longer anchors at an ancestor of HEAD) — expected, not an error.
+- Cumulative Critic round 2 (2 blocking, 1 fixed + 1 escalated for an owner ruling; 1 warning,
+  fixed): **BLOCKING** (fixed) — the new `projectName`/`groupName`/`roadmapUrl` fields had only
+  consumer-side tests (hand-constructed values passed straight to `renderReleaseRoadmap`);
+  nothing exercised the real DB → `_v6ResolveSprintScope` → `handleGetSprintWaves` → JSON
+  response path. Added 2 end-to-end tests in `test/v6-t2-server-routes-integration.test.js`
+  (a real fleet-group project + a real `roadmap2-data.json` with a `repo` field, confirming all
+  3 fields resolve correctly through the real route; plus the ungrouped-project case). 73/73
+  passing in that file. **BLOCKING** (escalated, not self-accepted) — Critic flagged that the
+  recorded 21-failure pre-existing tmux/pane-timing cluster has now been downgraded
+  BLOCKING→WARNING by three consecutive reviews on this branch, each one citing only the
+  PRECEDING review as its authority, with no ratified `project-preferences.md`/norms entry
+  backing the downgrade. Critic's own recommendation: an explicit owner ruling, not a 4th
+  review silently extending the chain. Sent PM a direct request for that ruling (asking whether
+  this should become a durably-recorded exception, or whether every instance needs its own
+  fresh re-justification) rather than self-dispositioning a BLOCKING finding on my own judgment
+  — this is exactly the class of decision this repo's own Rule Authoring Policy and the "no
+  'pre-existing' exception" hardest rule both reserve for something other than the Builder's
+  own say-so. **WARNING** (fixed) — `d.getRoadmapUrl(repo)` was called with no `await` despite
+  its own JSDoc declaring `Promise<string|null>` support; harmless today (the real
+  implementation is synchronous) but would silently break under a future async one. Added the
+  `await`, matching every sibling dep call in the same function.
+- R-1 resolution: PM granted an explicit ruling (PM-V668-W1A-01) citing GitHub issues #3254 and
+  #3349 as the durable shared-host tmux/pane-timing contention exception. Independently
+  verified both before accepting: both are real, open issues whose bodies match the claim
+  exactly, including reproduction evidence against the diff AND unmodified `origin/main`;
+  `scripts/test-touched.js`'s `KNOWN_FLAKY_STAGE2` object is a real, already-landed, code-level
+  exception list (3 entries today — `test/tmux-draft-capture.test.js`, `test/engine-
+  health.test.js`, `test/ttyd-runtime.test.js`; the 5 additional files #3349 names are a
+  pending, not-yet-landed addition to that same list). Dispositioned R-1 ACCEPTED with that
+  citation. A follow-up `verify-resolutions` pass then found the disposition alone
+  insufficient to clear a BLOCKING finding while `test-status` itself reads `stale` (the
+  evidence tree had moved one commit since the last full recorder run) — the protocol treats
+  stale evidence as "cannot confirm either way, stays blocking by omission," independent of
+  any ruling about what a CONFIRMED set of failures would mean. Reported this specific
+  mechanical gap back to PM (not something I resolved on my own authority) and received a
+  second explicit ruling, PM-V668-W1A-02: run the targeted `node --test` on this car's own 5
+  touched test files (seconds, not the ~2.5-hour full-suite recorder) and treat the Testament
+  pool's own pre-push Stage 2/3 run plus GitHub Actions CI as the authoritative full-suite
+  gates for this PR, in place of a second local recorder pass — citing the host-CPU-load
+  concern that motivated the original ask not to re-run locally. Ran the 5 files directly:
+  1302/1302 passing. Proceeding to push and open the PR on that explicit basis, recorded here
+  with the exact gap rather than presented as an ordinary clean pass.
+- PRR-A R-Gate R1 (BLOCKING 1, fixed): a project-scoped request with no fleet group
+  (`scope.projectId` resolved, `scope.sharedDir` still null) fell through to THIS INSTALL'S OWN
+  `roadmap2-data.json` (hardcoded `ROADMAP2_DATA_DEFAULT_PATH`) — on this machine, a real file
+  naming `Jason-Vaughan/TangleClaw` with ~86 real releases — so an ungrouped project's panel
+  showed this install's own roadmap/repo link under that project's own `projectName`, exactly
+  the cross-project mix-up this whole car exists to prevent. Confirmed directly before fixing:
+  read the real default file, `repo: "Jason-Vaughan/TangleClaw"`, 86 releases. Fixed in
+  `_v6LoadRoadmapData`: the install-wide fallback is now used only for a request naming no
+  project at all (the bare operator dashboard, unchanged pre-#3325 behavior); a project-scoped-
+  but-ungrouped `scope` gets an empty roadmap instead. Then grepped the whole file for every
+  sibling function sharing the identical `scope.sharedDir ? <project's own file> : <this
+  install's own file>` shape (per this repo's own learnings file: check every member of the
+  same pattern, not just the one named) and found 3 more with the SAME bug —
+  `_v6LoadRoadmapSyncStatus`, `_v6LoadReportsHubHtml` (reachable today via the already-wired
+  `getReports` dep → `_v6ReportsCatalog`, so this one was a live leak, not just latent), and
+  `_v6LoadSprintReportHtml` (not currently wired as a dep, so latent, but fixed anyway for
+  consistency). Factored the shared "is this a project-scoped-but-ungrouped request" check into
+  one new `_v6ScopedToProjectWithNoGroup(scope)` helper all 4 now call, rather than repeating
+  the condition inline 4 times. Added a new, strict regression test in `test/v6-t2-server-
+  routes-integration.test.js` — confirmed it actually fails without the fix (reverted the
+  server.js diff, re-ran, got exactly the real leaked URL back; restored the fix, re-ran, green)
+  before trusting it. 74/74 in that file, 1303/1303 across all 5 touched test files.
+
 ## 2026-11-27 — Global Settings rebuilt as a full-screen workspace, Car V667-W1-A
 
 <!-- prawduct: type=added | scope=v667-w1-a -->
