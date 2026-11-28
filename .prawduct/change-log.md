@@ -165,6 +165,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   (accepted) — the 22-failure test-evidence disclosure, already fully substantiated above.
   **WARNING** (accepted) — the boot-time `tc` CLI auto-stage call's own missing test coverage,
   already disclosed above (note added there that the module now exists post-rebase).
+- Rebased again onto Car C's own merge (`42adc5fd`); clean, no conflict (confirmed by reading
+  the diffstat first — the only new file, `lib/shared-docs-access.js`, is untouched by this
+  car). The rebase changed this branch's own history, which demoted the next
+  `/prawduct:critic verify-resolutions` dispatch to a full `cumulative` pass automatically
+  (the prior review fact no longer anchors at an ancestor of HEAD) — expected, not an error.
+- Cumulative Critic round 2 (2 blocking, 1 fixed + 1 escalated for an owner ruling; 1 warning,
+  fixed): **BLOCKING** (fixed) — the new `projectName`/`groupName`/`roadmapUrl` fields had only
+  consumer-side tests (hand-constructed values passed straight to `renderReleaseRoadmap`);
+  nothing exercised the real DB → `_v6ResolveSprintScope` → `handleGetSprintWaves` → JSON
+  response path. Added 2 end-to-end tests in `test/v6-t2-server-routes-integration.test.js`
+  (a real fleet-group project + a real `roadmap2-data.json` with a `repo` field, confirming all
+  3 fields resolve correctly through the real route; plus the ungrouped-project case). 73/73
+  passing in that file. **BLOCKING** (escalated, not self-accepted) — Critic flagged that the
+  recorded 21-failure pre-existing tmux/pane-timing cluster has now been downgraded
+  BLOCKING→WARNING by three consecutive reviews on this branch, each one citing only the
+  PRECEDING review as its authority, with no ratified `project-preferences.md`/norms entry
+  backing the downgrade. Critic's own recommendation: an explicit owner ruling, not a 4th
+  review silently extending the chain. Sent PM a direct request for that ruling (asking whether
+  this should become a durably-recorded exception, or whether every instance needs its own
+  fresh re-justification) rather than self-dispositioning a BLOCKING finding on my own judgment
+  — this is exactly the class of decision this repo's own Rule Authoring Policy and the "no
+  'pre-existing' exception" hardest rule both reserve for something other than the Builder's
+  own say-so. **WARNING** (fixed) — `d.getRoadmapUrl(repo)` was called with no `await` despite
+  its own JSDoc declaring `Promise<string|null>` support; harmless today (the real
+  implementation is synchronous) but would silently break under a future async one. Added the
+  `await`, matching every sibling dep call in the same function.
 
 ## 2026-11-27 — Global Settings rebuilt as a full-screen workspace, Car V667-W1-A
 

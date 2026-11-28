@@ -976,6 +976,35 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       assert.equal(res.statusCode, 200, res.body);
       assert.ok(!json(res).snapshot.cars.some((c) => c.id === 'carFromPmSeat'), 'an unrelated project must never see this fleet\'s car');
     });
+
+    // Critic cumulative review, Car V668-W1-A BLOCKING 2: the new projectName/
+    // groupName/roadmapUrl fields had only consumer-side tests (hand-
+    // constructed values passed straight to the renderer) -- nothing
+    // exercised the real DB -> _v6ResolveSprintScope -> handleGetSprintWaves
+    // -> JSON response path these 3 fields actually travel in production.
+    it('GET /api/sprint-waves returns the real projectName/groupName resolved from the DB, and a real roadmapUrl derived from the group\'s own roadmap2-data.json repo', async () => {
+      const roadmapBoardDir = path.join(fleetGroup.sharedDir, 'roadmap-board');
+      fs.mkdirSync(roadmapBoardDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(roadmapBoardDir, 'roadmap2-data.json'),
+        JSON.stringify({ repo: 'SomeOwner/SomeFleetRepo', releases: [] })
+      );
+      const res = await get(`/api/sprint-waves?projectId=${seatBuilder.id}`, { operator: false, headers: boundBuilder.headers });
+      assert.equal(res.statusCode, 200, res.body);
+      const body = json(res);
+      assert.equal(body.projectName, seatBuilder.name);
+      assert.equal(body.groupName, fleetGroup.name);
+      assert.equal(body.roadmapUrl, 'https://github.com/SomeOwner/SomeFleetRepo');
+      assert.equal(body.roadmapSource, 'roadmap2-data.json');
+    });
+
+    it('GET /api/sprint-waves resolves projectName from the project alone (no group needed) but leaves groupName null when it belongs to none', async () => {
+      const res = await get(`/api/sprint-waves?projectId=${seatOutsideFleet.id}`);
+      assert.equal(res.statusCode, 200, res.body);
+      const body = json(res);
+      assert.equal(body.projectName, seatOutsideFleet.name);
+      assert.equal(body.groupName, null, 'this project is deliberately outside every group');
+    });
   });
 
   // #3345 addendum (#3347, outside this car's originally-declared scope --
