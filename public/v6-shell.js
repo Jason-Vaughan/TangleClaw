@@ -2708,6 +2708,11 @@
     /\(disable recaps in \/config\)\s*$/i,
     /^[⏵⏸]+\s*bypass permissions/i,
     /\|\s*(?:Opus|Sonnet|Haiku|Claude|GPT|Gemini)\b[^|]*\|\s*\d+%\s*left\s*$/i,
+    // #3355 (Operator-reported): Codex's own middle-dot status bar footer
+    // ("GPT-5.6-Sol medium · Ready · never · Context 56% left · weekly
+    // 99% left ... Goal stalled (/goal resume)") — a different shape
+    // from the "| Model | NN% left" status bar right above.
+    /\bContext\s+\d+%\s+left\s*\u00B7\s*weekly\s+\d+%\s+left\b/i,
     // #3167: a collapsed background-task footer, naming how many more lines
     // are hidden — chrome about the TUI's own display, not the reply.
     /^↓\s*\d+\s+more\b/i,
@@ -2775,7 +2780,11 @@
    * `live.activity` forever after the turn actually ended. Checked, and
    * returned on, before `LIVE_BUSY` ever sees the line.
    */
-  const LIVE_DONE_RE = /^(?:[\u2736\u273B\u273D\u2722]\s+)?\S+\s+for\s+\d+[hms0-9\s]*(?:\u00B7\s*done\b|$)|\b\u00B7\s*done\s+\d{1,2}:\d{2}/i;
+  // #3355 (Operator-reported): Codex's own timing recap puts a bare
+  // HH:MM clock time after the middle dot, with no "done" word at all
+  // ("Worked for 2m 9s · 11:11") -- allow that shape too, alongside
+  // Claude's own "· done 12:57 AM".
+  const LIVE_DONE_RE = /^(?:[\u2736\u273B\u273D\u2722]\s+)?\S+\s+for\s+\d+[hms0-9\s]*(?:\u00B7\s*(?:done\b|\d{1,2}:\d{2})|$)|\b\u00B7\s*done\s+\d{1,2}:\d{2}/i;
 
   /**
    * #3181: a footer that means the engine is at rest, not working \u2014 the
@@ -2923,7 +2932,45 @@
    * @returns {boolean}
    */
   function asksQuestion(line) {
-    const prose = String(line).replace(/`[^`]*`/g, ' ').replace(/\bhttps?:\/\/\S+/gi, ' ');
+    const prose = String(line)
+      .replace(/`[^`]*`/g, ' ')
+      .replace(/\bhttps?:\/\/\S+/gi, ' ')
+      // #3355: a JS ternary (`cond ? a : b`) or a bare (non-backticked,
+      // non-URL) query-param token (`?projectId=`) can otherwise satisfy
+      // the sentence-ending-`?` test below purely by coincidence of
+      // what follows the `?` — strip both before testing so a line that
+      // is really declarative (ends in `.`, not an actual question) is
+      // never misread because of a `?` that belongs to code, not prose.
+      //
+      // A no-space-before-colon ternary (`cond ? a: b`) and an English
+      // question followed by a lowercase clarifying clause with no space
+      // before ITS colon (`"...this? maybe: test first."`) are
+      // genuinely indistinguishable by local punctuation/case/position
+      // signals alone — every signal tried (branch case, `?`-position,
+      // code-punctuation-in-branch, literal false-branch) is satisfied
+      // by ordinary English too ("0", "true", "null" are common words,
+      // not just JS literals). Ternary-in-prose with no space before
+      // its OWN colon is accepted as a rare, cosmetic false positive
+      // (misread as an open question, self-correcting on the next
+      // reply) rather than risk masking a real question — an
+      // irresolvable two-sided ambiguity, where naming the cheaper
+      // failure direction and failing that way on purpose beats
+      // chasing a cleverer pattern. Requiring whitespace on BOTH sides
+      // of the colon is what the lowercase check alone cannot do, and
+      // is sufficient together with it.
+      .replace(/\?\s+[a-z_$][\w.$[\]()'"-]*\s+:\s+/g, ' ')
+      .replace(/\?[A-Za-z0-9_.-]+=/g, ' ')
+      // A bare reference to the ternary operator BY NAME ("a JS ternary
+      // ?") is metalanguage, never a real question — distinct from the
+      // ambiguity above, since it needs no colon/branch to recognize.
+      .replace(/\b(?:ternary|symbol|character|literal|mark|token)\s+\?/gi, ' ')
+      // A quoted example question embedded in an otherwise-declarative
+      // sentence ('...applying the fix ("Should we ship this?") as
+      // discussed.') is the quoted TEXT's own question, not this line's
+      // — including at the very START of the line ('"Should I proceed?"
+      // is quoted text from the transcript.'), which the mid-sentence
+      // alternative above cannot reach since nothing precedes the quote.
+      .replace(/(?:(\S\s+)|\()["\u201c][^"\u201d\n]*\?[^"\u201d\n]*["\u201d]\)?(?=[\s).,;:])|^["\u201c][^"\u201d\n]*\?[^"\u201d\n]*["\u201d](?=\s+\S)/g, '$1 ');
     return /\?(?=$|[\s)\]}"'*_~.,;:!\u2019\u201d])/.test(prose);
   }
 
@@ -3044,6 +3091,11 @@
     // #3082 needs that question to keep waiting, but the current reply's
     // own earlier, superseded prose never is.
     let lastReplyTrailingBlock = '';
+    // #3355: `lastReplyTrailingBlock` above only ever holds the LATEST
+    // flush's trailing paragraph; this keeps EVERY flushed assistant
+    // turn's own, by its index in `turns`, so `openPrior` can read each
+    // earlier turn's trailing paragraph instead of its full text.
+    const trailingBlockByTurnIndex = new Map();
     let activity = null;
     const switchboard = [];
     // Whether the operator has spoken since the newest reply (#3079): their
@@ -3073,6 +3125,14 @@
       if (reply.length) {
         lastReplyTrailingBlock = reply.slice(replyBlockStart).join('\n');
         turns.push(woken ? { role: 'assistant', text: reply.join('\n'), trigger: 'switchboard' } : { role: 'assistant', text: reply.join('\n') });
+        // #3355: each flushed turn's OWN trailing paragraph, keyed by its
+        // position in `turns` rather than stored ON the turn object (so
+        // the public shape every existing exact-equality test already
+        // asserts against is unchanged) — `openPrior` below reads this so
+        // a later Medusa wake never rescans an EARLIER reply's full text,
+        // which could resurrect mid-reply code/prose paragraphs that
+        // happen to contain a stray `?` as a new open question.
+        trailingBlockByTurnIndex.set(turns.length - 1, lastReplyTrailingBlock);
         answered = false;
       }
       reply = [];
@@ -3120,7 +3180,20 @@
       const mergeIntoLast = !inFence && !startsNewBlock && reply.length > 0 && replyLineLen >= WRAP_WIDTH_THRESHOLD;
       if (mergeIntoLast) {
         const prev = reply[reply.length - 1];
-        reply[reply.length - 1] = TRAILING_OPEN_URL.test(prev) ? `${prev}${txt}` : `${prev} ${txt}`;
+        // #3355: a wrapped URL's own boundary can land right where a real
+        // sentence/path break belongs — `prev` ending mid-URL is not
+        // enough on its own. Glue with no space only when `prev` does NOT
+        // already end a sentence/clause (it would otherwise read as "the
+        // URL continues" even after a `.`/`?`/`)`), `txt` does NOT open
+        // with punctuation that starts something new (`(`, `{`, `[`, a
+        // quote), and this is not a COMPLETE GitHub PR/Issue URL whose
+        // continuation starts with ordinary prose rather than more path
+        // (`/`), a fragment (`#`) or a query string (`?`).
+        const gluePrev = TRAILING_OPEN_URL.test(prev)
+          && !/[.,;:!?)\]]$/.test(prev)
+          && !/^[({["']/.test(txt)
+          && !(/(?:github\.com\/[^/\s]+\/[^/\s]+\/(?:pull|issues)\/\d+)$/i.test(prev) && !/^[/#?]/.test(txt));
+        reply[reply.length - 1] = gluePrev ? `${prev}${txt}` : `${prev} ${txt}`;
       } else reply.push(txt);
       replyLineLen = txt.length;
       if (isFenceDelim) inFence = !inFence;
@@ -3179,8 +3252,13 @@
         block = null;
         const said = prompt[1].trim();
         // An empty prompt is the input box the engine always draws, not the
-        // operator speaking: it neither ends nor starts anything.
-        if (said) {
+        // operator speaking: it neither ends nor starts anything. Codex's
+        // own input box is never empty -- it draws its placeholder text
+        // ("Ask Codex to do anything") even with nothing typed -- so that
+        // exact placeholder needs its own check here (#3355, Operator-
+        // reported): without it, it reads as the operator having typed
+        // that sentence and wrongly marks the turn answered.
+        if (said && !/^Ask Codex to do anything$/i.test(said)) {
           activity = null;
           menuActive = false;
           answered = true;
@@ -3231,7 +3309,25 @@
       // The rest of a recorded message the pane is still echoing.
       // A prompt recorded only in part goes on, indented, past what the
       // record holds; those lines are still the prompt, not a reply.
-      if (echo && (knownLines.has(text) || echo.includes(squash(text)) || LONG_PROMPT_NOTE.test(text) || (echoCut && indented))) return;
+      if (echo && (echo.includes(squash(text)) || LONG_PROMPT_NOTE.test(text) || (echoCut && indented && !knownLines.has(text)))) return;
+      // #3355: an engine can coalesce two queued user messages under ONE
+      // `> ` prompt prefix (the second shown as an indented continuation).
+      // The check above only recognizes text belonging to the CURRENT
+      // echo; the line this replaced (`knownLines.has(text)` checked
+      // across EVERY recorded message, not just this one) swallowed the
+      // second message here too, leaving it unmatched and landing in
+      // `parts.tail` instead of its own place among `turns`.
+      if (echo && indented && !echo.includes(squash(text)) && knownLines.has(text)) {
+        const nextEcho = recordedAs(text);
+        if (nextEcho && nextEcho !== echo) {
+          const lastTurn = turns[turns.length - 1];
+          if (!(lastTurn && lastTurn.role === 'user' && lastTurn.recorded && lastTurn.text === original(nextEcho))) {
+            turns.push({ role: 'user', text: original(nextEcho), recorded: true });
+          }
+          echo = nextEcho;
+          return;
+        }
+      }
       echo = null;
       // #3181: a completed-turn timing recap ("✻ Baked for 2m 23s · done
       // 12:57 AM") matches LIVE_BUSY's own leading-glyph test below — check
@@ -3338,13 +3434,22 @@
     // is still waiting (#3082).
     let since = turns.length;
     while (since > 0 && turns[since - 1].role === 'assistant') since--;
-    // #3131: every turn since the operator last spoke is still read in
-    // full (#3082: a question asked before a wake keeps waiting through
-    // it) EXCEPT the current/last one, which contributes only its own
-    // trailing paragraph — so a rhetorical '?' in an earlier paragraph of
-    // the SAME reply, now superseded by the one that follows it, is never
-    // misread as still open.
-    const openPrior = last && last.role === 'assistant' && !answered ? turns.slice(since, -1).map((t) => t.text) : [];
+    // #3131: every turn since the operator last spoke is still read
+    // (#3082: a question asked before a wake keeps waiting through it),
+    // but only each one's own TRAILING paragraph (#3355) — a rhetorical or
+    // code/prose '?' in an EARLIER paragraph of any of these replies, now
+    // superseded by whatever followed it within that same reply, is never
+    // resurrected as a still-open question by a later wake scanning back
+    // over it. `trailingBlockByTurnIndex` has no entry only for a turn
+    // this closure never flushed as a reply (never the case here, since
+    // `since..length-1` is exactly the assistant turns `flush()` produced
+    // this same call), so the `t.text` fallback is purely defensive.
+    const openPrior = last && last.role === 'assistant' && !answered
+      ? turns.slice(since, -1).map((t, i) => {
+        const idx = since + i;
+        return trailingBlockByTurnIndex.has(idx) ? trailingBlockByTurnIndex.get(idx) : t.text;
+      })
+      : [];
     const trailingBlock = last && last.role === 'assistant' && !answered ? lastReplyTrailingBlock.split('\n') : [];
     const tail = last && last.role === 'assistant' && !answered ? last.text.split('\n').pop() : '';
     // Any line that is the operator's own words, echoed or quoted back
@@ -3381,7 +3486,10 @@
    * `/\host`). A bare URL stops at whitespace, a quote or an angle bracket, and
    * drops trailing sentence punctuation, keeping a `)` it opened itself.
    */
-  const MESSAGE_LINK = /\[([^\]\n]{1,300})\]\((https?:\/\/[^\s)<>"']+|\/(?![\/\\])[^\s)<>"'\\]*)\)|https?:\/\/[^\s<>"'`]+/g;
+  // #3355: `{`/`}` excluded from the bare-URL branch too — a wrapped-line
+  // glue or adjacent markdown can otherwise pull a `{`/`}` that belongs to
+  // surrounding prose/code into what is matched as the URL itself.
+  const MESSAGE_LINK = /\[([^\]\n]{1,300})\]\((https?:\/\/[^\s)<>"']+|\/(?![\/\\])[^\s)<>"'\\]*)\)|https?:\/\/[^\s<>"'`{}]+/g;
 
   /** An image a URL names by its extension (#3082). */
   const IMAGE_URL = /\.(?:png|jpe?g|webp|gif)(?:[?#]|$)/i;
@@ -3743,6 +3851,16 @@
       let href = m[2] || match;
       const label = m[1];
       if (!label) {
+        // #3355: an unmatched `(` loose in `href` (e.g. `pull/3354(-`, a
+        // trailing parenthetical that was glued directly against the URL
+        // with no space) is never part of the URL — truncate at the LAST
+        // unmatched `(` before the ordinary trailing-punctuation strip
+        // below, which only looks at the very end and would otherwise
+        // leave the stray `(` and everything captured after it in place.
+        if ((href.match(/\(/g) || []).length > (href.match(/\)/g) || []).length) {
+          const lastOpen = href.lastIndexOf('(');
+          if (lastOpen >= 0) href = href.slice(0, lastOpen);
+        }
         // Sentence punctuation after a bare URL is not part of it.
         while (/[.,;:!?)\]]$/.test(href) && !(href.endsWith(')') && (href.match(/\(/g) || []).length >= (href.match(/\)/g) || []).length)) {
           href = href.slice(0, -1);
@@ -5948,6 +6066,14 @@
    * dependency chain, so its result shows a critical path that spans both
    * trains (schema → api → view → review).
    */
+  /**
+   * The real pause between consecutive fleet-member launches (#3352),
+   * exported so `public/ui.js`'s production wiring can request it
+   * explicitly via `fleetStartDelayMs` — see {@link createLiveController}'s
+   * own note on why this is never environment-detected.
+   */
+  const STAGGER_FLEET_START_MS = 2500;
+
   const SAMPLE_WHATIF_SCENARIO = Object.freeze({
     trains: [
       { id: 'core', cars: [{ id: 'schema', effort: 3, files: ['lib/store.js'] }, { id: 'api', effort: 2, files: ['server.js'], dependsOn: ['schema'] }] },
@@ -5965,6 +6091,23 @@
       : defaultStorage(typeof window !== 'undefined' ? window : null));
     const startTimer = deps.setInterval || (typeof setInterval === 'function' ? setInterval : null);
     const stopTimer = deps.clearInterval || (typeof clearInterval === 'function' ? clearInterval : null);
+    // #3352: launching 10+ fleet members in the same instant thrashes
+    // tmux/CLI/hook startup badly enough that several bounce
+    // Starting -> Off -> Starting and the tail of the batch can miss its
+    // launch window entirely. `startFleetMembers`/`startFleet` pause this
+    // long between consecutive launches instead of firing them all at
+    // once. `deps.sleep` lets a test observe/control the pause without
+    // actually waiting. The delay itself is explicit opt-in only
+    // (`deps.fleetStartDelayMs`), never environment-sniffed: this file's
+    // own test harness (`vm.runInContext` with `sandbox.window = sandbox`,
+    // #3355) makes a test sandbox's globals indistinguishable from a real
+    // browser's by design, so a "real browser vs. test" check can never
+    // reliably tell them apart here — `public/ui.js`'s real production
+    // wiring passes `STAGGER_FLEET_START_MS` (exported below) explicitly
+    // instead, and every test that does not care about the stagger keeps
+    // its old 0ms behavior with no change at all.
+    const sleep = typeof deps.sleep === 'function' ? deps.sleep : (ms) => new Promise((r) => setTimeout(r, ms));
+    const fleetStartDelayMs = typeof deps.fleetStartDelayMs === 'number' ? deps.fleetStartDelayMs : 0;
     let projects = null;
     let templatesLoaded = false;
     let lastRouteKey = null;
@@ -7077,7 +7220,23 @@
       // from `projectId` alone; `groupId` is passed too when the active
       // project object happens to carry one, purely as a direct hint that
       // skips that server-side lookup — its absence changes nothing.
-      const activeProject = current && current.project ? current.project : null;
+      // #3355: `current.project` is the authoritative source once
+      // `loadConversation` has resolved it, but a workspace tab reached
+      // before that (route just changed, `loadProjects`/`loadRouteDetail`
+      // still in flight) has no `current` yet even though the route itself
+      // already names a project/fleet/conversation — fall back to resolving
+      // it directly from the route so this call still scopes correctly
+      // instead of racing ahead unscoped.
+      const sh0 = getShell();
+      const route0 = sh0 && typeof sh0.getRoute === 'function' ? sh0.getRoute() : null;
+      const activeProject = (current && current.project)
+        || (sh0 && projects ? resolveRouteProject(route0, projects, delegates()) : null);
+      // Projects have not loaded yet for a route that names one: wait for
+      // `refreshOpenWorkspacePanel` (fired once `loadConversation`/
+      // `loadRouteDetail` resolves) rather than firing an unscoped read now.
+      if (!activeProject && route0 && (route0.view === 'project' || route0.view === 'fleet' || route0.view === 'conversation')) return;
+      const gen = (workspacePanelGenByMode.get(mode) || 0) + 1;
+      workspacePanelGenByMode.set(mode, gen);
       const scopeQuery = activeProject
         ? `?projectId=${encodeURIComponent(activeProject.id)}`
           + (activeProject.groupId ? `&groupId=${encodeURIComponent(activeProject.groupId)}` : '')
@@ -7110,6 +7269,7 @@
       // before this function's very first await, so it is the one snapshot
       // every mode can check itself against, not just charter's own later
       // `project` capture.
+      if (gen !== workspacePanelGenByMode.get(mode)) return;
       if (activeProject && !(current && current.project && String(current.project.id) === String(activeProject.id))) return;
       const sh = getShell();
       if (!sh || typeof sh.setWorkspacePanel !== 'function') return;
@@ -7195,6 +7355,19 @@
       }
     };
     let workspaceLoaderGiven = false;
+    // #3355: a workspace-tab click can reach `loadWorkspacePanel` while
+    // `handleRoute`'s own cold-start `loadProjects()` is still in flight —
+    // `shell.setWorkspaceLoader` is wired on the very first `handleRoute`
+    // call, before `freshLoad` resolves. Each `loadWorkspacePanel(mode)`
+    // call stamps itself with the next value for its OWN mode so a
+    // response that arrives after a NEWER call for that SAME mode started
+    // (a rapid double-click, a project switch while that tab is open)
+    // never overwrites what the newer call is about to paint. Keyed by
+    // mode, not a single shared counter: `sprint` and `charter` write to
+    // separate panels, so one in flight never supersedes the other — a
+    // shared counter would drop a genuinely still-wanted earlier load for
+    // a DIFFERENT tab just because a click on another tab happened after.
+    const workspacePanelGenByMode = new Map();
 
     async function handleRoute(route) {
       // The shell's first render runs inside tcCreateV6Shell itself, before
@@ -7559,7 +7732,8 @@
       if (!shell || !names.length) return;
       names.forEach((name) => launchState.set(name, { status: 'starting', message: null, diagnostic: null }));
       showProjects(shell);
-      for (const name of names) {
+      for (let i = 0; i < names.length; i++) {
+        const name = names[i];
         const ok = await apiMutate(`/api/sessions/${encodeURIComponent(name)}`, 'POST', {});
         if (!ok) {
           const message = `Not started: ${api.lastError || 'the server refused it'}`;
@@ -7570,6 +7744,10 @@
           launchState.delete(name);
         }
         showProjects(shell);
+        // #3352: stagger consecutive launches so 10+ tmux/CLI/hook
+        // startups never thrash at the same instant; no pause after the
+        // last one.
+        if (i < names.length - 1 && fleetStartDelayMs > 0) await sleep(fleetStartDelayMs);
       }
       await refresh();
     }
@@ -7898,9 +8076,12 @@
       if (!offline.length) return;
       showSend({ kind: 'pending', message: `Starting ${offline.length} session${offline.length === 1 ? '' : 's'}…` });
       const failures = [];
-      for (const m of offline) {
+      for (let i = 0; i < offline.length; i++) {
+        const m = offline[i];
         const ok = await apiMutate(`/api/sessions/${encodeURIComponent(m.name)}`, 'POST', {});
         if (!ok) failures.push(`${m.name}: ${api.lastError || 'the server refused it'}`);
+        // #3352: same launch-thrash stagger as startFleetMembers.
+        if (i < offline.length - 1 && fleetStartDelayMs > 0) await sleep(fleetStartDelayMs);
       }
       await refresh();
       const started = offline.length - failures.length;
@@ -12042,4 +12223,5 @@
   global.tcV6WaitingOnModel = waitingOnModel;
   global.tcV6WaitingOnMarkup = waitingOnMarkup;
   global.tcCreateV6Shell = tcCreateV6Shell;
+  global.tcV6StaggerFleetStartMs = STAGGER_FLEET_START_MS;
 })(typeof window !== 'undefined' ? window : globalThis);
