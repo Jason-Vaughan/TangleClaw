@@ -272,7 +272,11 @@ describe('carrier wiring: the toggle reaches the generated config (#1257, A506-W
 
     it('CLAUDE.md gains the guidance only after the toggle is saved on', async () => {
       const name = 'subagent-carrier-test';
-      const created = projects.createProject({ name, engine: 'claude' });
+      // #3342 flipped createProject's own default to true for a project
+      // that says nothing — this test is specifically about the before/after
+      // the toggle is saved ON, so it opts out explicitly at creation
+      // instead of relying on the (changed) default.
+      const created = projects.createProject({ name, engine: 'claude', subagentParallelizationEnabled: false });
       assert.deepEqual(created.errors, []);
       const carrierPath = path.join(created.project.path, 'CLAUDE.md');
 
@@ -288,7 +292,10 @@ describe('carrier wiring: the toggle reaches the generated config (#1257, A506-W
 
     it('evaluateProjectSubagentDispatch and ingestProjectSubagentFinding are the live runtime caller, on a real project (Round 3, PRR-B R-Gate)', async () => {
       const name = 'subagent-dispatch-test';
-      const created = projects.createProject({ name, engine: 'claude' });
+      // #3342 flipped createProject's own default to true — this test
+      // specifically exercises the refused-while-off path before turning it
+      // on below, so it opts out explicitly at creation.
+      const created = projects.createProject({ name, engine: 'claude', subagentParallelizationEnabled: false });
       assert.deepEqual(created.errors, []);
 
       // Off by default: refused, by project name, by id, and by an
