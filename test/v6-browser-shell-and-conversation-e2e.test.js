@@ -583,7 +583,13 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       // The route is mounted by V630-W1-B; either merge order must read cleanly, so wait for the loading line to go.
       for (let i = 0; i < 300 && (!panel() || /Loading…/.test(panel())); i++) await new Promise((r) => setTimeout(r, 50));
       assert.equal(shell.getWorkspaceMode(), 'sprint', 'a redraw on the same route keeps the mode');
-      assert.ok(calls.includes('GET /api/sprint-waves'), JSON.stringify(calls));
+      // #3345 (#3325 fast-follow, outside this file's originally-declared
+      // scope -- flagged to PM): loadWorkspacePanel now appends
+      // ?projectId=<activeProject.id> (and &groupId= when present) to this
+      // read, so the exact bare URL no longer appears; a mounted project
+      // route always has an active project by this point, so prefix-
+      // matching is the real contract here, not an exact string.
+      assert.ok(calls.some((c) => c.startsWith('GET /api/sprint-waves')), JSON.stringify(calls));
       assert.doesNotMatch(panel(), /Loading…/);
       assert.match(panel(), /<h2 class="v6-workspace-panel-title">Sprint &amp; Cars<\/h2>/);
       assert.match(panel(), /Not available on this server yet\.|sprint-wave-board|v6-workspace-list|No cars are on the board yet\./);

@@ -108,6 +108,21 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   passing. Stage 1 static checks green. No `test/tiers.json`/`.testament.toml` changes (no new
   test file — PM confirmed, TC-Lane-Arc Ruling A1273 pre-ratified using only the existing
   tier-registered files).
+- A full-suite `prawduct-hook test-evidence record` run against this tree surfaced a real
+  regression: `test/v6-browser-shell-and-conversation-e2e.test.js` (outside this car's
+  declared scope) asserted `calls.includes('GET /api/sprint-waves')` — an exact-string match
+  the new `?projectId=`/`&groupId=` query string broke for its mounted-project scenario, where
+  an active project always exists by the time the assertion runs. Fixed to
+  `calls.some((c) => c.startsWith('GET /api/sprint-waves'))`; grepped the whole test suite for
+  every other exact-string assertion against either scoped URL (none found). Re-ran: 102/102
+  in that file, 1298/1298 across all 5 now-touched test files. The recorder's remaining 22
+  failures are the same pre-existing, environment-dependent real-tmux-pane/timing cluster this
+  fleet's own change-log history already documents repeatedly (`test/tmux-draft-capture.test.js`
+  the largest contributor at 10, plus `engine-health`/`projects`/`sessions`/`startup-dialog`/
+  `tmux`/`auth2-setup-admin`, one each) — none touching anything this car's diff changed;
+  2 of the newly-seen file names (`test/auth2-setup-admin.test.js`, `test/tmux.test.js`) were
+  independently verified clean (0/171) on a fresh clean `origin/main` worktree, consistent with
+  the same non-deterministic timing class rather than a new regression.
 
 ## 2026-11-27 — Global Settings rebuilt as a full-screen workspace, Car V667-W1-A
 
