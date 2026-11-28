@@ -4,6 +4,44 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.6.8] - 2026-11-28
+
+### Added
+- A verified Fleet Coordinator (`fleetCoordinator: true` with an active `project-manager`
+  coordinator role) may now `PATCH /api/projects/:name` for a sibling project inside its own
+  `<Prefix>-*` fleet namespace (e.g. a `TiLT-PM` coordinator configuring `TiLT-Arc`,
+  `TiLT-Lane-*`, `TiLT-PRR-*`, `TiLT-INT` or `TiLT-Obsr`), while a cross-fleet project outside
+  that namespace stays denied and a non-coordinator project member's own-project-only
+  restriction is unchanged (`lib/shared-docs-access.js#canChangeProject`, #3335).
+- Master Settings, the project Settings modal, session Settings, the Group
+  modal, and the OpenClaw connection modal are now all full-page workspaces
+  instead of narrow (380px-680px) boxes. The project Settings modal's three
+  groupings (Identity & Paths, Engine & Launch Mode, Switchboard &
+  Governance) are now a left-hand category rail, the same shape Global
+  Settings already uses (#3319). (#3346)
+- A new project now defaults all 8 of its feature toggles ON — Medusa
+  session comms, Medusa wake, Feature Index, Project Map, eval audit,
+  subagent parallelization, keep-session-running after wrap, and
+  accept-folder-trust — instead of off/unset. An explicit value on `POST
+  /api/projects`, including an explicit `false`, still wins. (#3342)
+
+### Fixed
+- v6 frontend & fleet-wide workspace isolation (#3345, #3325 fast-follow): Sprint & Cars,
+  Charter & Roadmap, and Kaizen & Reports now scope their reads to the active project/fleet
+  instead of always falling back to TangleClaw's own sprint data. `public/v6-shell.js`'s
+  `loadWorkspacePanel` passes `?projectId=<activeProject.id>` (and `&groupId=` when the active
+  project object carries one) to `/api/sprint-waves`/`/api/sprint-reports/current`, and an open
+  workspace panel now refreshes automatically whenever the operator switches projects/sessions.
+  `public/sprint-wave-ui.js`'s Release-First Roadmap no longer hardcodes TangleClaw's own public
+  SSOT link or labels; it reads `projectName`/`groupName`/`roadmapUrl` from the API response and
+  shows no link at all for a project/fleet with no resolvable repo, rather than defaulting to
+  TangleClaw's own page. `server.js`'s `_v6ResolveSprintScope` resolves every project id in the
+  clicked seat's own fleet group (`memberProjectIds`), so `lib/native-sprint-tracker.js`'s
+  `sprintDataFromWaveRuns` finds a wave run another seat of the same fleet recorded instead of
+  answering empty just because the one clicked seat never personally launched a train. Also
+  widens `_v6LogicalProjectIdsForLegacyProject` to include fleet peers' logical projects (so a
+  Fleet PM/Observer session can read/disposition the whole fleet's Kaizen items, #3347).
+- Added `scripts/stage-tc-cli.js`, an idempotent helper that mirrors `bin/tc` and `lib/` into `~/.tangleclaw/tc-cli-staged/` whenever `version.json` or `bin/tc` changes, so a staged or lane-local `tc` invocation never lags behind a newly merged verb. `lib/v6/e5-kaizen-ledger.js` now resolves `tc kaizen list`/`gate0-feed` across a caller's whole project group — a Fleet PM sees Kaizen items its fleet's Observer ingested without passing `--logical-project lp-114` by hand — via a new `resolveLogicalProjectIdsForLegacyProject`, exported for `server.js`'s own caller-scope resolution to use (#3347, KZ-v667-07).
 ## [6.6.7] - 2026-11-27
 
 ### Added
