@@ -11669,6 +11669,25 @@ function _v6ScopedToProjectWithNoGroup(scope) {
 }
 
 /**
+ * `LANE_QUEUE.md`'s own path for `scope`, or null when none applies —
+ * `scope.sharedDir`'s own copy when resolved (#3325), else this server's
+ * own default (an env override, or `LANE_QUEUE_DEFAULT_PATH`), except a
+ * project-scoped-but-ungrouped `scope` ({@link _v6ScopedToProjectWithNoGroup}),
+ * which gets no path at all for the same #3345 cross-project reason every
+ * sibling "install-wide default file" resolver already follows. Factored
+ * out of {@link _v6LoadRoadmapData}'s own inline version so
+ * {@link _v6LoadLaneQueueSprintData} (#3356) resolves the identical file
+ * for the identical scope, rather than risking the two paths drifting apart.
+ * @param {{projectId?: (number|null), sharedDir?: (string|null)}} [scope]
+ * @returns {string|null}
+ */
+function _v6LaneQueuePath(scope = {}) {
+  return scope.sharedDir
+    ? path.join(scope.sharedDir, 'LANE_QUEUE.md')
+    : (_v6ScopedToProjectWithNoGroup(scope) ? null : (process.env.TANGLECLAW_LANE_QUEUE_PATH || LANE_QUEUE_DEFAULT_PATH));
+}
+
+/**
  * Parsed `roadmap-sync-status.json`, or null when this machine cannot read
  * it (#3166) -- the same "external, read-only-to-this-checkout, degrade
  * gracefully" contract {@link _v6LoadRoadmapData} already follows for
@@ -11789,9 +11808,7 @@ function _v6LoadRoadmapData(scope = {}) {
   const docsReleaseVersions = _v6DocsReleaseVersions(scope);
   let laneQueueText = null;
   try {
-    const laneQueuePath = scope.sharedDir
-      ? path.join(scope.sharedDir, 'LANE_QUEUE.md')
-      : (_v6ScopedToProjectWithNoGroup(scope) ? null : (process.env.TANGLECLAW_LANE_QUEUE_PATH || LANE_QUEUE_DEFAULT_PATH));
+    const laneQueuePath = _v6LaneQueuePath(scope);
     if (!laneQueuePath) throw new Error('no lane queue path for this scope');
     laneQueueText = fs.readFileSync(laneQueuePath, 'utf8');
   } catch { /* no shared lane queue visible from this checkout/machine, or none applies to this scope */ }
@@ -11801,6 +11818,78 @@ function _v6LoadRoadmapData(scope = {}) {
     repo: null,
     source: 'fallback'
   };
+}
+
+/**
+ * This fleet's sprint data as recovered from `LANE_QUEUE.md` alone (#3356)
+ * — the fallback for a fleet whose sprint state lives only in that file,
+ * with no `v6_wave_runs` row at all for it. Resolves the identical
+ * scope-aware path {@link _v6LoadRoadmapData}'s own fallback reads
+ * ({@link _v6LaneQueuePath}), so the two never disagree about which file a
+ * given scope names. An unreadable/missing file (or a scope that resolves
+ * no path at all) degrades to the same empty sprint shape
+ * `parseSprintDataFromLaneQueue` itself returns for empty text, never a
+ * thrown error.
+ * @param {string} version - `'current'` or `X.Y.Z`/`vX.Y.Z`.
+ * @param {{projectId?: (number|null), sharedDir?: (string|null)}} [scope]
+ * @returns {{version: (string|null), cars: object[], lanes: object[], pullRequests: object[], waves: Array<string[]>, learnings: [], releaseCommit: null}}
+ */
+function _v6LoadLaneQueueSprintData(version, scope = {}) {
+  const nativeSprintTracker = require('./lib/native-sprint-tracker');
+  let laneQueueText = '';
+  try {
+    const laneQueuePath = _v6LaneQueuePath(scope);
+    if (!laneQueuePath) throw new Error('no lane queue path for this scope');
+    laneQueueText = fs.readFileSync(laneQueuePath, 'utf8');
+  } catch { /* no shared lane queue visible from this checkout/machine, or none applies to this scope */ }
+  return nativeSprintTracker.parseSprintDataFromLaneQueue(laneQueueText, version);
+}
+
+/**
+ * True when semver `a` is strictly newer than semver `b` (`vX.Y.Z` or
+ * `X.Y.Z`, either side) — major, then minor, then patch; any missing or
+ * non-numeric segment reads as `0` rather than throwing, since a sprint
+ * version string is never guaranteed to carry all three.
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
+function _v6IsNewerSemver(a, b) {
+  const parts = (v) => String(v).replace(/^v/, '').split('.').map((n) => Number(n) || 0);
+  const pa = parts(a);
+  const pb = parts(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff > 0;
+  }
+  return false;
+}
+
+/**
+ * Which of two sprint-data sources `getSprintData` should answer with
+ * (#3356): `laneQueueData` when `waveRunsData` has 0 cars for this scope at
+ * all, or — only for the `'current'` request (`isCurrent`) — when
+ * `laneQueueData` itself has cars AND names a strictly newer sprint than
+ * `waveRunsData` does (LANE_QUEUE.md is what a lane updates live, so once
+ * it has moved on to a newer sprint than the persisted run still reflects,
+ * it is the more current of the two); `waveRunsData` otherwise. Pulled out
+ * of `getSprintData` itself so this decision is one pure function a test
+ * can drive directly, rather than logic only reachable through the live
+ * `v6_wave_runs` table and a real `LANE_QUEUE.md` on disk.
+ * @param {object|null} waveRunsData - `sprintDataFromWaveRuns`'s own return (`null` for an unmatched explicit version).
+ * @param {object} laneQueueData - `_v6LoadLaneQueueSprintData`'s own return (never `null`).
+ * @param {boolean} isCurrent - Whether this is the `'current'` request — gates the newer-version comparison.
+ * @returns {object}
+ */
+function _v6ChooseSprintDataSource(waveRunsData, laneQueueData, isCurrent) {
+  const waveCars = waveRunsData && Array.isArray(waveRunsData.cars) ? waveRunsData.cars : [];
+  if (waveCars.length === 0) return laneQueueData;
+  const laneQueueCars = laneQueueData && Array.isArray(laneQueueData.cars) ? laneQueueData.cars : [];
+  if (isCurrent && laneQueueCars.length > 0 && laneQueueData.version && waveRunsData.version
+      && _v6IsNewerSemver(laneQueueData.version, waveRunsData.version)) {
+    return laneQueueData;
+  }
+  return waveRunsData;
 }
 
 /**
@@ -11876,8 +11965,37 @@ async function _v6SprintGithubActivity(scope = {}) {
     // into the router module, which the router's own JSDoc deliberately
     // keeps free of a live database or network call.
     resolveScope: (req) => _v6ResolveSprintScope(req),
-    getSprintData: (scope) => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), 'current', scope),
-    getSprintDataForVersion: (version, scope) => nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), version, scope),
+    // #3356: a fleet/project whose sprint state lives only in LANE_QUEUE.md
+    // (no v6_wave_runs row at all) still has one. `getSprintData` falls
+    // back whenever the wave-runs answer has 0 cars, or whenever
+    // LANE_QUEUE.md's own 'current' sprint names a newer version than the
+    // wave-runs one does -- the file is what a lane updates live, so once
+    // it has moved on to a newer sprint than the persisted run reflects,
+    // it is the more current of the two. `getSprintDataForVersion` asks
+    // for an EXPLICIT version, never 'current', so only the 0-cars
+    // fallback applies there -- there is no "newer" to compare against a
+    // version the caller already named.
+    getSprintData: (scope) => {
+      const waveRunsData = nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), 'current', scope);
+      const laneQueueData = _v6LoadLaneQueueSprintData('current', scope);
+      return _v6ChooseSprintDataSource(waveRunsData, laneQueueData, true);
+    },
+    getSprintDataForVersion: (version, scope) => {
+      const waveRunsData = nativeSprintTracker.sprintDataFromWaveRuns(waveRuns(), version, scope);
+      const waveCars = waveRunsData && Array.isArray(waveRunsData.cars) ? waveRunsData.cars : [];
+      if (waveCars.length > 0) return waveRunsData;
+      const laneQueueData = _v6LoadLaneQueueSprintData(version, scope);
+      const laneQueueCars = Array.isArray(laneQueueData.cars) ? laneQueueData.cars : [];
+      // `waveRunsData` is `null` for an unmatched EXPLICIT version
+      // (`sprintDataFromWaveRuns`'s own documented contract) -- the route
+      // handler reads that `null` as "404, no sprint data for this version
+      // at all." A LANE_QUEUE.md-derived empty-but-non-null shape must
+      // never paper over that, so an equally empty laneQueueData falls
+      // back to `waveRunsData` itself (preserving null, or `current`'s own
+      // non-null empty-sprint shape) rather than this function's own
+      // always-truthy empty object.
+      return laneQueueCars.length > 0 ? laneQueueData : waveRunsData;
+    },
     getRoadmapData: (scope) => _v6LoadRoadmapData(scope),
     // #3345 (#3325 fast-follow): a plain `https://github.com/<repo>` link
     // for whichever repo the resolved roadmap named (`roadmap.repo`) --
@@ -13518,4 +13636,4 @@ if (require.main === module) {
 }
 
 
-module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller, _checkPublicAssets, _setPublicDir, _resetTailscaleOriginCacheForTest, _sanitizeOpenclawDirectHeaders, OPENCLAW_DIRECT_CF_HEADERS, _v6PinnedLookup };
+module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller, _checkPublicAssets, _setPublicDir, _resetTailscaleOriginCacheForTest, _sanitizeOpenclawDirectHeaders, OPENCLAW_DIRECT_CF_HEADERS, _v6PinnedLookup, _v6LaneQueuePath, _v6LoadLaneQueueSprintData, _v6IsNewerSemver, _v6ChooseSprintDataSource, _v6ScopedToProjectWithNoGroup };
