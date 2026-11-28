@@ -14,7 +14,7 @@
  * exercises the exact same comparison without spawning anything.
  */
 
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -2919,6 +2919,428 @@ describe('native-sprint-tracker: sprintDataFromWaveRuns scope filtering (#3325 F
         tracker.sprintDataFromWaveRuns(runs, 'current', { projectId: 1, memberProjectIds: [] }),
         tracker.sprintDataFromWaveRuns({}, 'current', { projectId: 1 })
       );
+    });
+  });
+});
+
+describe('native-sprint-tracker: parseSprintDataFromLaneQueue (#3356)', () => {
+  const EMPTY = { version: null, cars: [], lanes: [], pullRequests: [], waves: [], learnings: [], releaseCommit: null };
+
+  // The real TangleClaw-style layout: Version + PRR columns present, two
+  // tables (Wave 1 + Wave 2) both tagged `v6.6.9` via their own Version
+  // column — mirrors /Users/jasonvaughan/Documents/Projects/Shared/TangleClaw-Shared/LANE_QUEUE.md as read on 2026-11-28.
+  const TC_STYLE = [
+    '# TangleClaw Fleet: Live Lane Queue (`Sprint v6.6.9`)',
+    '',
+    '**Owner:** `TC-Lane-PM` (#74).',
+    '**Target Version:** `v6.6.9` · **Milestone:** [`#119`](https://x/milestone/119)',
+    '',
+    '## Wave 1: Parallel Feature Cars (`0` Shared Files)',
+    '',
+    '| Version | Car ID | Lane | PRR | Issues | Branch | Exclusive File Envelope (`0` Overlap) | Status |',
+    '|---|---|---|---|---|---|---|---|',
+    '| `v6.6.9` | `Car V669-W1-A` | `TC-Lane-A` (#111) | `TC-Lane-PRR-A` (#83) | [`#3355`](https://x/3355), [`#3352`](https://x/3352) | `fix/v669-w1-a` | `public/v6-shell.js`, `test/v6-b1-ui-shell.test.js` | **DISPATCHED (Gate 0 Ruling A1297)** |',
+    '| `v6.6.9` | `Car V669-W1-B` | `TC-Lane-B` (#112) | `TC-Lane-PRR-B` (#143) | [`#3356`](https://x/3356) | `feat/v669-w1-b` | `lib/native-sprint-tracker.js`, `server.js` | **DISPATCHED (Gate 0 Ruling A1297)** |',
+    '',
+    '## Wave 2: Release Cut (`v6.6.9`)',
+    '',
+    '| Version | Car ID | Lane | PRR | Issues | Branch | Exclusive File Envelope | Status |',
+    '|---|---|---|---|---|---|---|---|',
+    '| `v6.6.9` | `Car V669-W2-REL` | `TC-Lane-INT` (#113) | `TC-Lane-PRR-A` (#83) | Milestone `#119` (`#3352`, `#3355`, `#3356`) | `chore/release-v6.6.9` | `version.json`, `CHANGELOG.md` | **WAITS FOR WAVE 1** |'
+  ].join('\n');
+
+  // The TiLT-Fleet-style layout the dispatch names but no real example of
+  // this repo carries: no Version/PRR columns, version read from the
+  // section heading's own inline tag.
+  const TILT_STYLE = [
+    '# TiLT Fleet: Live Lane Queue',
+    '',
+    '**Fleet state:** **ACTIVE — Sprint `v0.2.0`**',
+    '',
+    '## Track B (`v0.2.0` · Fast Follow)',
+    '',
+    '| Car | Lane | Branch | Issue | Exclusive File Envelope | Status |',
+    '|---|---|---|---|---|---|',
+    '| `B1` | `TiLT-B1` (#191) | `feat/b1` | [`#42`](http://x) | `a.js`, `b.js` | **MERGED (PR #55)** |',
+    '| `B2` | `TiLT-B2` (#192) | `feat/b2` | `#43` | `c.js` | **BLOCKED** |'
+  ].join('\n');
+
+  it('returns the empty sprint for non-string/empty input', () => {
+    assert.deepEqual(tracker.parseSprintDataFromLaneQueue(''), EMPTY);
+    assert.deepEqual(tracker.parseSprintDataFromLaneQueue(null), EMPTY);
+    assert.deepEqual(tracker.parseSprintDataFromLaneQueue(undefined), EMPTY);
+  });
+
+  describe('TangleClaw-style layout (Version + PRR columns, two tables)', () => {
+    it('merges both tables\' cars for the resolved version, in table order', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'current');
+      assert.equal(data.version, 'v6.6.9');
+      assert.deepEqual(data.cars.map((c) => c.id), ['V669-W1-A', 'V669-W1-B', 'V669-W2-REL']);
+    });
+
+    it('resolves "current" from **Target Version:** when no **Fleet state:** declaration exists', () => {
+      assert.equal(tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'current').version, 'v6.6.9');
+    });
+
+    it('strips the "Car " prefix and backticks from the car id', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'current');
+      assert.ok(data.cars.every((c) => !c.id.includes('`') && !c.id.startsWith('Car ')));
+    });
+
+    it('strips the trailing seat id from lane and PRR, keeping only the canonical name', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'current');
+      const carA = data.cars.find((c) => c.id === 'V669-W1-A');
+      assert.equal(carA.lane, 'TC-Lane-A');
+      assert.deepEqual(carA.reviewers, { prr: 'TC-Lane-PRR-A' });
+    });
+
+    it('extracts every #NNNN issue number from a markdown-linked Issues cell, open by default', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'current');
+      const carA = data.cars.find((c) => c.id === 'V669-W1-A');
+      assert.deepEqual(carA.issues, [{ id: 3355, state: 'open' }, { id: 3352, state: 'open' }]);
+    });
+
+    it('never reads a "Milestone `#NNN`" reference as an issue number', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'current');
+      const rel = data.cars.find((c) => c.id === 'V669-W2-REL');
+      assert.deepEqual(rel.issues.map((i) => i.id), [3352, 3355, 3356]);
+      assert.ok(!rel.issues.some((i) => i.id === 119), 'the Milestone number must never appear as an issue');
+    });
+
+    it('splits a comma-separated, backticked Exclusive File Envelope cell into a files array', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'current');
+      const carB = data.cars.find((c) => c.id === 'V669-W1-B');
+      assert.deepEqual(carB.files, ['lib/native-sprint-tracker.js', 'server.js']);
+    });
+
+    it('strips backticks from the branch cell', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'current');
+      assert.equal(data.cars.find((c) => c.id === 'V669-W1-B').branch, 'feat/v669-w1-b');
+    });
+
+    it('maps every DISPATCHED car to a committed lane entry, not complete or assigned', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'current');
+      for (const carId of ['V669-W1-A', 'V669-W1-B']) {
+        const lane = data.lanes.find((l) => l.carId === carId);
+        assert.equal(lane.status, 'committed');
+        assert.equal(lane.hold, false);
+      }
+    });
+
+    it('WAITS FOR WAVE 1 (no DISPATCH/ACTIVE/etc. keyword) reads assigned, not committed', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'current');
+      const rel = data.lanes.find((l) => l.carId === 'V669-W2-REL');
+      assert.equal(rel.status, 'assigned');
+    });
+
+    it('no car in this fixture is confirmed complete and no PR is open, so pullRequests is empty', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'current');
+      assert.deepEqual(data.pullRequests, []);
+      assert.ok(data.cars.every((c) => !c.confirmedComplete));
+    });
+
+    it('waves is a single array of every matched car id, in order', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'current');
+      assert.deepEqual(data.waves, [['V669-W1-A', 'V669-W1-B', 'V669-W2-REL']]);
+    });
+
+    it('learnings is always empty and releaseCommit is always null, as documented', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'current');
+      assert.deepEqual(data.learnings, []);
+      assert.equal(data.releaseCommit, null);
+    });
+
+    it('an explicit targetVersion filters to just that version, v-prefixed or bare', () => {
+      assert.equal(tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'v6.6.9').cars.length, 3);
+      assert.equal(tracker.parseSprintDataFromLaneQueue(TC_STYLE, '6.6.9').cars.length, 3);
+    });
+
+    it('an explicit targetVersion with no matching car returns the empty sprint', () => {
+      assert.deepEqual(tracker.parseSprintDataFromLaneQueue(TC_STYLE, 'v9.9.9'), EMPTY);
+    });
+  });
+
+  describe('TiLT-Fleet-style layout (no Version/PRR columns, heading-tagged version)', () => {
+    it('resolves "current" from **Fleet state:** **ACTIVE — Sprint `vX.Y.Z`**', () => {
+      assert.equal(tracker.parseSprintDataFromLaneQueue(TILT_STYLE, 'current').version, 'v0.2.0');
+    });
+
+    it('reads every row\'s version from the nearest preceding heading\'s own tag', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TILT_STYLE, 'current');
+      assert.ok(data.cars.every((c) => c.version === 'v0.2.0'));
+    });
+
+    it('a bare (non-linked, non-backticked) Issue cell still yields its issue number', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TILT_STYLE, 'current');
+      assert.deepEqual(data.cars.find((c) => c.id === 'B2').issues, [{ id: 43, state: 'open' }]);
+    });
+
+    it('MERGED marks the car confirmedComplete and every one of its issues closed', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TILT_STYLE, 'current');
+      const b1 = data.cars.find((c) => c.id === 'B1');
+      assert.equal(b1.confirmedComplete, true);
+      assert.deepEqual(b1.issues, [{ id: 42, state: 'closed' }]);
+    });
+
+    it('extracts "PR #NNN" from Status text into a pullRequests entry, merged once confirmedComplete', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TILT_STYLE, 'current');
+      assert.deepEqual(data.pullRequests, [
+        { carId: 'B1', number: 55, state: 'merged', title: null, lane: 'TiLT-B1', status: '**MERGED (PR #55)**' }
+      ]);
+    });
+
+    it('BLOCKED marks the lane on hold, and not confirmedComplete', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TILT_STYLE, 'current');
+      const b2 = data.lanes.find((l) => l.carId === 'B2');
+      assert.equal(b2.hold, true);
+      assert.equal(data.cars.find((c) => c.id === 'B2').confirmedComplete, undefined);
+    });
+
+    it('a car table with no PRR column at all carries no reviewers field', () => {
+      const data = tracker.parseSprintDataFromLaneQueue(TILT_STYLE, 'current');
+      assert.ok(data.cars.every((c) => !('reviewers' in c)));
+    });
+
+    // PRR-B R-Gate R1 BLOCKING, #3356: a section heading with NO inline
+    // version tag of its own (just "## Wave 1: ..."), under a file that
+    // only ever declares its version once at the top level, must still
+    // resolve its rows to that file-level version -- not null.
+    it('a row under a section heading with no inline version tag still resolves via the file-level declaration', () => {
+      const text = [
+        '**Target Version:** `v6.6.9`',
+        '',
+        '## Wave 1: Parallel Feature Cars (`0` Shared Files)',
+        '',
+        '| Car | Lane | Branch | Issue | Exclusive File Envelope | Status |',
+        '|---|---|---|---|---|---|',
+        '| `X` | `L1` | `b1` | `#1` | `a.js` | **DISPATCHED** |'
+      ].join('\n');
+      const data = tracker.parseSprintDataFromLaneQueue(text, 'current');
+      assert.equal(data.version, 'v6.6.9');
+      assert.deepEqual(data.cars.map((c) => c.id), ['X']);
+    });
+
+    it('with neither a row/heading version nor a file-level declaration, the row stays unversioned and never matches any target', () => {
+      const text = [
+        '## Wave 1: Parallel Feature Cars (`0` Shared Files)',
+        '',
+        '| Car | Lane | Branch | Issue | Exclusive File Envelope | Status |',
+        '|---|---|---|---|---|---|',
+        '| `X` | `L1` | `b1` | `#1` | `a.js` | **DISPATCHED** |'
+      ].join('\n');
+      assert.deepEqual(tracker.parseSprintDataFromLaneQueue(text, 'current'), EMPTY);
+      assert.deepEqual(tracker.parseSprintDataFromLaneQueue(text, 'v6.6.9'), EMPTY);
+    });
+  });
+
+  describe('"current" version resolution fallback order', () => {
+    it('falls back to the first in-progress/dispatched/active car\'s version when neither file-level declaration exists', () => {
+      const text = [
+        '## Track A (`v0.1.0`)',
+        '| Car | Lane | Branch | Issue | Exclusive File Envelope | Status |',
+        '|---|---|---|---|---|---|',
+        '| `A1` | `L1` | `b1` | `#1` | `x.js` | **MERGED** |',
+        '',
+        '## Track B (`v0.2.0`)',
+        '| Car | Lane | Branch | Issue | Exclusive File Envelope | Status |',
+        '|---|---|---|---|---|---|',
+        '| `B1` | `L2` | `b2` | `#2` | `y.js` | **IN PROGRESS** |'
+      ].join('\n');
+      assert.equal(tracker.parseSprintDataFromLaneQueue(text, 'current').version, 'v0.2.0');
+    });
+
+    it('falls back to the highest version with any car at all when nothing is in progress and no declaration exists', () => {
+      const text = [
+        '## Track A (`v0.1.0`)',
+        '| Car | Lane | Branch | Issue | Exclusive File Envelope | Status |',
+        '|---|---|---|---|---|---|',
+        '| `A1` | `L1` | `b1` | `#1` | `x.js` | **MERGED** |',
+        '',
+        '## Track B (`v0.3.0`)',
+        '| Car | Lane | Branch | Issue | Exclusive File Envelope | Status |',
+        '|---|---|---|---|---|---|',
+        '| `B1` | `L2` | `b2` | `#2` | `y.js` | **MERGED** |',
+        '',
+        '## Track C (`v0.2.0`)',
+        '| Car | Lane | Branch | Issue | Exclusive File Envelope | Status |',
+        '|---|---|---|---|---|---|',
+        '| `C1` | `L3` | `b3` | `#3` | `z.js` | **MERGED** |'
+      ].join('\n');
+      assert.equal(tracker.parseSprintDataFromLaneQueue(text, 'current').version, 'v0.3.0');
+    });
+  });
+
+  it('ignores a non-car markdown table entirely (no Car/Car ID column)', () => {
+    const text = [
+      '**Target Version:** `v1.0.0`',
+      '| Setting | Value |',
+      '|---|---|',
+      '| foo | bar |'
+    ].join('\n');
+    assert.deepEqual(tracker.parseSprintDataFromLaneQueue(text, 'current'), EMPTY);
+  });
+});
+
+describe('native-sprint-tracker: buildRoadmapDataFromFallbackSources — LANE_QUEUE.md car-table fallback (#3356)', () => {
+  it('still uses the ## Train N — `Sprint vX.Y.Z` path unchanged when those headers are present (no regression)', () => {
+    const laneQueueText = [
+      '## Train 7 — `Sprint v1.2.3`',
+      'Car A: Closes #10, Part of #11'
+    ].join('\n');
+    const result = tracker.buildRoadmapDataFromFallbackSources({ laneQueueText });
+    assert.deepEqual(result.releases, [{ version: '1.2.3', trains: [{ cars: [10, 11] }] }]);
+  });
+
+  it('falls back to car-table rows, grouped by resolved version, when no ## Train N headers exist at all', () => {
+    const laneQueueText = [
+      '**Target Version:** `v6.6.9`',
+      '',
+      '| Version | Car ID | Lane | Issues | Branch | Exclusive File Envelope | Status |',
+      '|---|---|---|---|---|---|---|',
+      '| `v6.6.9` | `Car X` | `L1` | [`#100`](http://x), [`#101`](http://x) | `b1` | `a.js` | **DISPATCHED** |',
+      '| `v6.6.9` | `Car Y` | `L2` | [`#102`](http://x) | `b2` | `b.js` | **DISPATCHED** |'
+    ].join('\n');
+    const result = tracker.buildRoadmapDataFromFallbackSources({ laneQueueText });
+    assert.equal(result.releases.length, 1);
+    assert.equal(result.releases[0].version, '6.6.9');
+    assert.equal(result.releases[0].trains.length, 1);
+    assert.deepEqual([...result.releases[0].trains[0].cars].sort((a, b) => a - b), [100, 101, 102]);
+  });
+
+  it('never reads a release car\'s own Milestone reference as one of its issues', () => {
+    const laneQueueText = [
+      '**Target Version:** `v6.6.9`',
+      '| Version | Car ID | Lane | Issues | Branch | Exclusive File Envelope | Status |',
+      '|---|---|---|---|---|---|---|',
+      '| `v6.6.9` | `Car REL` | `L1` | Milestone `#119` (`#3352`) | `b1` | `a.js` | **WAITS** |'
+    ].join('\n');
+    const result = tracker.buildRoadmapDataFromFallbackSources({ laneQueueText });
+    assert.deepEqual(result.releases[0].trains[0].cars, [3352]);
+  });
+
+  it('a row with no issue numbers at all contributes no train', () => {
+    const laneQueueText = [
+      '**Target Version:** `v6.6.9`',
+      '| Version | Car ID | Lane | Issues | Branch | Exclusive File Envelope | Status |',
+      '|---|---|---|---|---|---|---|',
+      '| `v6.6.9` | `Car X` | `L1` |  | `b1` | `a.js` | **DISPATCHED** |'
+    ].join('\n');
+    assert.deepEqual(tracker.buildRoadmapDataFromFallbackSources({ laneQueueText }), { releases: [] });
+  });
+
+  it('with neither Train headers nor any car table, returns an empty releases array', () => {
+    assert.deepEqual(tracker.buildRoadmapDataFromFallbackSources({ laneQueueText: '# Just a heading\n' }), { releases: [] });
+  });
+});
+
+describe('server.js: LANE_QUEUE.md sprint-data wiring (#3356)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  // Deferred to a `before()` hook, not required at describe-body scope: a
+  // bare `require('../server')` here would run the moment this file is
+  // LOADED (every describe body executes synchronously during test
+  // collection, before any test or hook actually runs) -- including before
+  // "the live server mounts the sprint wave routes" describe block's own
+  // `beforeEach` ever points server.js's roadmap-sync-status env vars at
+  // its throwaway tmpDir. `require()` caches the module, so that
+  // describe's own later `require('../server')` would just reuse this
+  // already-cached module, whose own module-scope `fs.existsSync(...)`
+  // mount-time gate (server.js's `getSyncStatus` dep wiring) would have
+  // already run against this operator's REAL roadmap-sync-status.json/
+  // sprint-reports/ paths and cached its decision — surfacing a real
+  // roadmapSyncStatus where that describe block's fixture expects none at
+  // all. A `before()` hook instead runs once test collection is done, in
+  // declaration order, after every earlier describe block's own tests have
+  // already finished.
+  let srv;
+  before(() => { srv = require('../server'); });
+
+  describe('_v6IsNewerSemver', () => {
+    it('is true only when a is strictly greater than b, across major/minor/patch', () => {
+      assert.equal(srv._v6IsNewerSemver('v6.6.9', 'v6.6.8'), true);
+      assert.equal(srv._v6IsNewerSemver('v6.7.0', 'v6.6.9'), true);
+      assert.equal(srv._v6IsNewerSemver('v7.0.0', 'v6.9.9'), true);
+      assert.equal(srv._v6IsNewerSemver('v6.6.8', 'v6.6.9'), false);
+      assert.equal(srv._v6IsNewerSemver('v6.6.9', 'v6.6.9'), false);
+    });
+
+    it('tolerates a missing v-prefix on either side, and a missing patch segment', () => {
+      assert.equal(srv._v6IsNewerSemver('6.6.9', 'v6.6.8'), true);
+      assert.equal(srv._v6IsNewerSemver('v1.2', 'v1.1.9'), true);
+    });
+  });
+
+  describe('_v6ChooseSprintDataSource', () => {
+    const waveRunsData = { version: 'v6.6.8', cars: [{ id: 'A' }] };
+    const laneQueueDataNewer = { version: 'v6.6.9', cars: [{ id: 'B' }] };
+    const laneQueueDataOlder = { version: 'v6.6.7', cars: [{ id: 'C' }] };
+    const laneQueueEmpty = { version: null, cars: [] };
+
+    it('falls back to laneQueueData whenever waveRunsData has 0 cars, current or not', () => {
+      assert.equal(srv._v6ChooseSprintDataSource({ version: 'v1.0.0', cars: [] }, laneQueueDataNewer, true), laneQueueDataNewer);
+      assert.equal(srv._v6ChooseSprintDataSource(null, laneQueueDataNewer, false), laneQueueDataNewer);
+    });
+
+    it('for "current", prefers laneQueueData when it has cars AND is strictly newer', () => {
+      assert.equal(srv._v6ChooseSprintDataSource(waveRunsData, laneQueueDataNewer, true), laneQueueDataNewer);
+    });
+
+    it('for "current", keeps waveRunsData when laneQueueData is not newer, or carries no cars', () => {
+      assert.equal(srv._v6ChooseSprintDataSource(waveRunsData, laneQueueDataOlder, true), waveRunsData);
+      assert.equal(srv._v6ChooseSprintDataSource(waveRunsData, laneQueueEmpty, true), waveRunsData);
+    });
+
+    it('for an explicit (non-"current") version, never prefers laneQueueData just for being newer', () => {
+      assert.equal(srv._v6ChooseSprintDataSource(waveRunsData, laneQueueDataNewer, false), waveRunsData);
+    });
+  });
+
+  describe('_v6LaneQueuePath', () => {
+    it('joins scope.sharedDir when given', () => {
+      assert.equal(srv._v6LaneQueuePath({ sharedDir: '/fleet/shared' }), path.join('/fleet/shared', 'LANE_QUEUE.md'));
+    });
+
+    it('returns null for a project-scoped-but-ungrouped scope (#3345 cross-project guard)', () => {
+      assert.equal(srv._v6LaneQueuePath({ projectId: 42 }), null);
+    });
+
+    it('falls back to this install\'s own default path for an unscoped/bare request', () => {
+      assert.ok(typeof srv._v6LaneQueuePath({}) === 'string' && srv._v6LaneQueuePath({}).endsWith('LANE_QUEUE.md'));
+    });
+  });
+
+  describe('_v6LoadLaneQueueSprintData', () => {
+    let tmpDir;
+
+    before(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-lane-queue-sprint-'));
+      fs.writeFileSync(path.join(tmpDir, 'LANE_QUEUE.md'), [
+        '**Target Version:** `v9.0.0`',
+        '| Version | Car ID | Lane | Issues | Branch | Exclusive File Envelope | Status |',
+        '|---|---|---|---|---|---|---|',
+        '| `v9.0.0` | `Car X` | `L1` | `#1` | `b1` | `a.js` | **DISPATCHED** |'
+      ].join('\n'));
+    });
+
+    after(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('reads a real LANE_QUEUE.md from scope.sharedDir and returns the parsed sprint data', () => {
+      const data = srv._v6LoadLaneQueueSprintData('current', { sharedDir: tmpDir });
+      assert.equal(data.version, 'v9.0.0');
+      assert.deepEqual(data.cars.map((c) => c.id), ['X']);
+    });
+
+    it('degrades to the empty sprint shape, never throwing, when the file cannot be read at all', () => {
+      const data = srv._v6LoadLaneQueueSprintData('current', { sharedDir: path.join(tmpDir, 'does-not-exist') });
+      assert.deepEqual(data, { version: null, cars: [], lanes: [], pullRequests: [], waves: [], learnings: [], releaseCommit: null });
+    });
+
+    it('degrades to the empty sprint shape for a project-scoped-but-ungrouped scope (no path resolves at all)', () => {
+      const data = srv._v6LoadLaneQueueSprintData('current', { projectId: 42 });
+      assert.deepEqual(data, { version: null, cars: [], lanes: [], pullRequests: [], waves: [], learnings: [], releaseCommit: null });
     });
   });
 });
