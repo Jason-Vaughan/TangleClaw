@@ -3100,6 +3100,37 @@ describe('native-sprint-tracker: parseSprintDataFromLaneQueue (#3356)', () => {
       const data = tracker.parseSprintDataFromLaneQueue(TILT_STYLE, 'current');
       assert.ok(data.cars.every((c) => !('reviewers' in c)));
     });
+
+    // PRR-B R-Gate R1 BLOCKING, #3356: a section heading with NO inline
+    // version tag of its own (just "## Wave 1: ..."), under a file that
+    // only ever declares its version once at the top level, must still
+    // resolve its rows to that file-level version -- not null.
+    it('a row under a section heading with no inline version tag still resolves via the file-level declaration', () => {
+      const text = [
+        '**Target Version:** `v6.6.9`',
+        '',
+        '## Wave 1: Parallel Feature Cars (`0` Shared Files)',
+        '',
+        '| Car | Lane | Branch | Issue | Exclusive File Envelope | Status |',
+        '|---|---|---|---|---|---|',
+        '| `X` | `L1` | `b1` | `#1` | `a.js` | **DISPATCHED** |'
+      ].join('\n');
+      const data = tracker.parseSprintDataFromLaneQueue(text, 'current');
+      assert.equal(data.version, 'v6.6.9');
+      assert.deepEqual(data.cars.map((c) => c.id), ['X']);
+    });
+
+    it('with neither a row/heading version nor a file-level declaration, the row stays unversioned and never matches any target', () => {
+      const text = [
+        '## Wave 1: Parallel Feature Cars (`0` Shared Files)',
+        '',
+        '| Car | Lane | Branch | Issue | Exclusive File Envelope | Status |',
+        '|---|---|---|---|---|---|',
+        '| `X` | `L1` | `b1` | `#1` | `a.js` | **DISPATCHED** |'
+      ].join('\n');
+      assert.deepEqual(tracker.parseSprintDataFromLaneQueue(text, 'current'), EMPTY);
+      assert.deepEqual(tracker.parseSprintDataFromLaneQueue(text, 'v6.6.9'), EMPTY);
+    });
   });
 
   describe('"current" version resolution fallback order', () => {
