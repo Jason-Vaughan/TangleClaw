@@ -2,11 +2,13 @@
 
 ## Current release
 
+- [v6.6.8 — Fleet workspace isolation, full-page settings, and coordinator tools](v6.6.8.md)
 - [v6.6.7 — Global Settings workspace, memory backups, and connection stability](v6.6.7.md)
 - [v6.6.6 — Fleet-isolated sprint data, provisioning hardening, and closed-loop Kaizen](v6.6.6.md)
-- [v6.6.5 — Sprint reporting, intake traceability, and the V6 feature showcase](v6.6.5.md)
 
 ## Recent releases
+
+- [v6.6.5 — Sprint reporting, intake traceability, and the V6 feature showcase](v6.6.5.md)
 
 - [v6.6.4 — Engine failover, delegate succession, lifecycle progress, and settings parity](v6.6.4.md)
 
