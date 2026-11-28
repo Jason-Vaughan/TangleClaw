@@ -977,11 +977,11 @@ describe('v6 Train 2 server routes (#2982, #2983, #2984, #2985, #1151, #2986, #2
       assert.ok(!json(res).snapshot.cars.some((c) => c.id === 'carFromPmSeat'), 'an unrelated project must never see this fleet\'s car');
     });
 
-    // Critic cumulative review, Car V668-W1-A BLOCKING 2: the new projectName/
-    // groupName/roadmapUrl fields had only consumer-side tests (hand-
-    // constructed values passed straight to the renderer) -- nothing
-    // exercised the real DB -> _v6ResolveSprintScope -> handleGetSprintWaves
-    // -> JSON response path these 3 fields actually travel in production.
+    // The new projectName/groupName/roadmapUrl fields had only consumer-side
+    // tests elsewhere (hand-constructed values passed straight to the
+    // renderer) -- this exercises the real DB -> _v6ResolveSprintScope ->
+    // handleGetSprintWaves -> JSON response path these 3 fields actually
+    // travel in production.
     it('GET /api/sprint-waves returns the real projectName/groupName resolved from the DB, and a real roadmapUrl derived from the group\'s own roadmap2-data.json repo', async () => {
       const roadmapBoardDir = path.join(fleetGroup.sharedDir, 'roadmap-board');
       fs.mkdirSync(roadmapBoardDir, { recursive: true });

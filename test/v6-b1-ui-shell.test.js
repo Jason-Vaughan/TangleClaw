@@ -10138,12 +10138,11 @@ describe('#3345 (#3325 fast-follow): project/fleet-scoped workspace panel reads'
     assert.match(fn, /if \(mode === 'sprint' \|\| mode === 'charter' \|\| mode === 'kaizen'\) loadWorkspacePanel\(mode\);/);
   });
 
-  // Critic cumulative review, Car V668-W1-A, BLOCKING 1: #3345's own
-  // project/fleet-scoped sprint/kaizen reads turned the pre-existing
-  // charter-only staleness guard into a real cross-project paint risk for
-  // sprint/kaizen too -- an operator switching projects while either read
-  // was still in flight had nothing to stop the OLD project's data from
-  // painting over the panel.
+  // #3345's own project/fleet-scoped sprint/kaizen reads turned the
+  // pre-existing charter-only staleness guard into a real cross-project
+  // paint risk for sprint/kaizen too -- an operator switching projects
+  // while either read was still in flight had nothing to stop the OLD
+  // project's data from painting over the panel.
   it('loadWorkspacePanel drops a stale read for EVERY data mode (sprint/charter/kaizen), not just charter, if the active project changed during the awaits', () => {
     const fn = SRC.slice(SRC.indexOf('async function loadWorkspacePanel('), SRC.indexOf('\n    }\n\n    /**\n     * POST to a train launch'));
     // The guard now keys off `activeProject` (captured before this

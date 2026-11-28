@@ -11162,11 +11162,10 @@
         lastModeRouteKey = modeRouteKey;
         workspaceMode = 'chat';
         // Every data-mode panel belongs to the project that was open: never
-        // show it for another (#3088; widened to sprint/kaizen by #3345,
-        // Critic cumulative review -- #3325's own fast-follow scoped their
-        // reads to the active project/fleet, so a stale cached panel from
-        // the PREVIOUS one is now a real cross-project leak risk, not just
-        // charter's).
+        // show it for another (#3088; widened to sprint/kaizen by #3345 --
+        // #3325's own fast-follow scoped their reads to the active
+        // project/fleet, so a stale cached panel from the PREVIOUS one is a
+        // real cross-project leak risk, not just charter's).
         workspacePanels.delete('charter');
         workspacePanels.delete('sprint');
         workspacePanels.delete('kaizen');
