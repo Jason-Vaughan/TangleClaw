@@ -4,6 +4,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [6.6.9] - 2026-11-28
+
+### Fixed
+- `GET /api/sprint-waves` and `GET /api/sprint-reports/:version` now fall back to parsing a fleet's own `LANE_QUEUE.md` car tables when no persisted wave-scheduler run exists for that scope, or when the file names a strictly newer current sprint (#3356).
+- Fixed v6 Fleet Shell workspace races, chat turn attribution, false “Waiting on: YOU” questions, wrapped-URL boundaries, and staggered fleet-member startup (#3355, #3352). Codex TUI timing recaps, input placeholders, and status-bar footers no longer appear as fake chat bubbles.
+
 ## [6.6.8] - 2026-11-28
 
 ### Added

@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-28 — Fleet sprint visibility and Fleet Shell reliability, Wave 2 release
+
+<!-- prawduct: type=fixed | scope=v669-w2-rel -->
+
+- Shipped Wave 2 for v6.6.9 (#3356, #3355, #3352): fleet sprint routes now fall back to parsing car tables from `LANE_QUEUE.md` when persisted wave runs are missing or stale; Fleet Shell fixes prevent unscoped workspace races, lost chat turns, false waiting prompts, malformed wrapped links, and Codex TUI chrome leaking into chat; fleet member startup is staggered to avoid concurrent startup flaps.
+
 ## 2026-11-28 — v6 Fleet Shell chat/workspace fixes + staggered fleet launch, Car V669-W1-A
 
 <!-- prawduct: type=fixed | scope=v669-w1-a -->
