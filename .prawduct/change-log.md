@@ -271,6 +271,15 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   checkout's host-level filesystem EPERM recurred mid-push of this exact commit (git objects
   became unreadable partway through the Testament pool gate), after having fully recovered and
   been used successfully for the two prior commits.
+- Final verify-resolutions (R9): 0 blocking, 0 warning, 0 note. 4 observations, all accepted:
+  O-1 (a second, distinct unstripped quoted-question shape — a start-of-line quote immediately
+  followed by punctuation with no space, e.g. `"Is this ok?", she said.` — found by Critic, not
+  reported by either PRR-A or PM; added to `.prawduct/.handoff-notes.md` for the next touch
+  rather than fixed now); O-2 (the new Codex checks are engine-unscoped, matching this file's own
+  established convention — no action); O-3 (the `changelog.d/3355...` fragment's summary didn't
+  mention the Codex fixes — updated for completeness); O-4 (same stale-evidence class as every
+  prior round). Review is over for this tree; branch covered at 13 commits since `origin/main`,
+  no blocking outstanding. Tree clean at head `5ed6cf5a`.
 
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
 
