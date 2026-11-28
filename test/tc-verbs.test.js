@@ -13,7 +13,7 @@
  * side-fetch, and with the unresolved-project bucket pruned like every other.
  */
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -1651,5 +1651,225 @@ describe('tc usage windows — surfaces a partial scan honestly (#2766 BLOCKING 
     const res = await usageVerb.run(ctx);
     assert.doesNotMatch(res.stdout, /No usage parsed/);
     assert.match(res.stdout, /claude-sonnet-5/);
+  });
+});
+
+// scripts/stage-tc-cli.js (#3347, KZ-v667-07): no dedicated test file, per
+// the car's own dispatch, so this repo's test/tiers.json and .testament.toml
+// need no new entry -- these tests live here instead.
+describe('scripts/stage-tc-cli.js', () => {
+  const stageTcCli = require('../scripts/stage-tc-cli');
+  let tmpDir, repoRoot, stagedDir;
+
+  function writeVersion(version) {
+    fs.writeFileSync(path.join(repoRoot, 'version.json'), JSON.stringify({ version }));
+  }
+
+  function writeBinTc(content) {
+    fs.mkdirSync(path.join(repoRoot, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'bin', 'tc'), content);
+  }
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-stage-cli-'));
+    repoRoot = path.join(tmpDir, 'repo');
+    stagedDir = path.join(tmpDir, 'staged');
+    fs.mkdirSync(repoRoot, { recursive: true });
+    writeVersion('1.0.0');
+    writeBinTc('#!/usr/bin/env node\nconsole.log("v1");\n');
+    fs.mkdirSync(path.join(repoRoot, 'lib', 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'lib', 'tc-verbs.js'), 'module.exports = {};\n');
+    fs.writeFileSync(path.join(repoRoot, 'lib', 'sub', 'deep.js'), 'module.exports = 1;\n');
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('stages bin/tc and the whole lib/ tree (including nested subdirectories) on first run', () => {
+    const result = stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    assert.equal(result.staged, true);
+    assert.equal(result.reason, 'never-staged');
+    assert.equal(fs.readFileSync(path.join(stagedDir, 'bin', 'tc'), 'utf8'), '#!/usr/bin/env node\nconsole.log("v1");\n');
+    assert.equal(fs.readFileSync(path.join(stagedDir, 'lib', 'tc-verbs.js'), 'utf8'), 'module.exports = {};\n');
+    assert.equal(fs.readFileSync(path.join(stagedDir, 'lib', 'sub', 'deep.js'), 'utf8'), 'module.exports = 1;\n');
+  });
+
+  it('sets bin/tc executable in the staged location', () => {
+    stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    const mode = fs.statSync(path.join(stagedDir, 'bin', 'tc')).mode;
+    assert.equal(mode & 0o111, 0o111, 'owner/group/other execute bits must all be set');
+  });
+
+  it('is a no-op on a second call with nothing changed', () => {
+    stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    const sentinel = path.join(stagedDir, 'lib', 'sentinel-not-overwritten.txt');
+    fs.writeFileSync(sentinel, 'untouched');
+
+    const result = stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    assert.equal(result.staged, false);
+    assert.equal(result.reason, 'up-to-date');
+    assert.equal(fs.existsSync(sentinel), true, 'an up-to-date call must not have touched lib/ at all');
+  });
+
+  it('restages when version.json changes, removing a stale file no longer in the live source', () => {
+    stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    const staleFile = path.join(stagedDir, 'lib', 'removed-verb.js');
+    fs.writeFileSync(staleFile, 'this file no longer exists in the live source');
+
+    writeVersion('1.0.1');
+    const result = stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    assert.equal(result.staged, true);
+    assert.equal(result.reason, 'changed');
+    assert.equal(fs.existsSync(staleFile), false, 'a clean restage must not leave stale files behind');
+  });
+
+  it('restages when bin/tc\'s own content changes, even with version.json unchanged', () => {
+    stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    writeBinTc('#!/usr/bin/env node\nconsole.log("v1-patched");\n');
+
+    const result = stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    assert.equal(result.staged, true);
+    assert.equal(fs.readFileSync(path.join(stagedDir, 'bin', 'tc'), 'utf8'), '#!/usr/bin/env node\nconsole.log("v1-patched");\n');
+  });
+
+  // PRR-B R-Gate Round 1 BLOCKING on PR #3348: the original fingerprint
+  // (version.json + bin/tc only) trusted this repo's own release discipline
+  // to always bump version.json alongside a lib/ change -- an assumption,
+  // never verified, which is exactly the shape of claim this fleet's own
+  // practice says not to lean on. A lib/-only edit, with version.json AND
+  // bin/tc both unchanged, must still trigger a restage now.
+  it('restages when a lib/ file changes, even with version.json and bin/tc both unchanged', () => {
+    stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    fs.writeFileSync(path.join(repoRoot, 'lib', 'tc-verbs.js'), 'module.exports = { patched: true };\n');
+
+    const result = stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    assert.equal(result.staged, true);
+    assert.equal(fs.readFileSync(path.join(stagedDir, 'lib', 'tc-verbs.js'), 'utf8'), 'module.exports = { patched: true };\n');
+  });
+
+  it('restages when a lib/ file is added or removed, even with every existing file\'s content unchanged', () => {
+    stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    fs.writeFileSync(path.join(repoRoot, 'lib', 'new-file.js'), 'module.exports = {};\n');
+
+    const result = stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    assert.equal(result.staged, true);
+    assert.equal(fs.existsSync(path.join(stagedDir, 'lib', 'new-file.js')), true);
+  });
+
+  it('force restages even when nothing changed', () => {
+    stageTcCli.stageTcCli({ repoRoot, stagedDir });
+    const result = stageTcCli.stageTcCli({ repoRoot, stagedDir, force: true });
+    assert.equal(result.staged, true);
+    assert.equal(result.reason, 'forced');
+  });
+
+  describe('_libTreeDigest', () => {
+    it('is deterministic and changes on content, addition, or removal', () => {
+      const first = stageTcCli._libTreeDigest(repoRoot);
+      assert.equal(stageTcCli._libTreeDigest(repoRoot), first, 'same tree, same digest, called twice');
+
+      fs.writeFileSync(path.join(repoRoot, 'lib', 'tc-verbs.js'), 'module.exports = { changed: true };\n');
+      const afterEdit = stageTcCli._libTreeDigest(repoRoot);
+      assert.notEqual(afterEdit, first);
+
+      fs.writeFileSync(path.join(repoRoot, 'lib', 'sub', 'deep.js'), 'module.exports = 1;\n'); // revert the edit above
+      fs.writeFileSync(path.join(repoRoot, 'lib', 'tc-verbs.js'), 'module.exports = {};\n');
+      const afterRevert = stageTcCli._libTreeDigest(repoRoot);
+      assert.equal(afterRevert, first, 'reverting the edit restores the original digest');
+
+      fs.rmSync(path.join(repoRoot, 'lib', 'sub', 'deep.js'));
+      const afterRemoval = stageTcCli._libTreeDigest(repoRoot);
+      assert.notEqual(afterRemoval, first, 'removing a file must change the digest even though every remaining file is identical');
+    });
+
+    it('ignores a non-.js file under lib/', () => {
+      const before = stageTcCli._libTreeDigest(repoRoot);
+      fs.writeFileSync(path.join(repoRoot, 'lib', 'notes.txt'), 'not a script\n');
+      assert.equal(stageTcCli._libTreeDigest(repoRoot), before);
+    });
+  });
+
+  describe('main() CLI', () => {
+    it('stages via --repo-root/--staged-dir flags and exits 0', () => {
+      const res = stageTcCli.main(['--repo-root', repoRoot, '--staged-dir', stagedDir]);
+      assert.equal(res.code, 0);
+      assert.equal(JSON.parse(res.stdout).staged, true);
+    });
+
+    it('--force restages via the CLI too', () => {
+      stageTcCli.main(['--repo-root', repoRoot, '--staged-dir', stagedDir]);
+      const res = stageTcCli.main(['--repo-root', repoRoot, '--staged-dir', stagedDir, '--force']);
+      assert.equal(JSON.parse(res.stdout).reason, 'forced');
+    });
+
+    it('exits 1 with a readable message when repoRoot has no bin/tc to stage', () => {
+      const emptyRoot = path.join(tmpDir, 'empty-repo');
+      fs.mkdirSync(emptyRoot, { recursive: true });
+      const res = stageTcCli.main(['--repo-root', emptyRoot, '--staged-dir', stagedDir]);
+      assert.equal(res.code, 1);
+      assert.match(res.stderr, /stage-tc-cli:/);
+    });
+  });
+});
+
+// lib/tc-verbs.js's own best-effort auto-stage hook (#3347 R2, PRR-B R-Gate
+// Round 1 BLOCKING on PR #3348: the module had no startup/deploy caller at
+// all, so a newly merged verb could stay stale in ~/.tangleclaw/tc-cli-staged/
+// indefinitely). Every real input is injected -- the bare module-load call
+// (`_autoStageBestEffort()` with no args, at the top of lib/tc-verbs.js) is
+// covered implicitly by this whole test file already running green: that
+// call's own real require.main is this test file, never literally named
+// `tc`, so it no-ops on every single test run without special handling.
+describe('_autoStageBestEffort (#3347 R2)', () => {
+  const { _autoStageBestEffort } = require('../lib/tc-verbs');
+
+  it('does nothing when the process entry point is not literally named "tc"', () => {
+    const result = _autoStageBestEffort({ mainFilename: '/some/path/node_modules/.bin/mocha' });
+    assert.equal(result.ran, false);
+    assert.equal(result.reason, 'not-cli-entry');
+  });
+
+  it('does nothing when require.main is absent (e.g. loaded as an ES module)', () => {
+    const result = _autoStageBestEffort({ mainFilename: undefined });
+    assert.equal(result.ran, false);
+    assert.equal(result.reason, 'not-cli-entry');
+  });
+
+  it('does nothing when this file is itself running from the staged copy', () => {
+    const calls = [];
+    const result = _autoStageBestEffort({
+      mainFilename: '/some/path/bin/tc',
+      ownDir: '/Users/x/.tangleclaw/tc-cli-staged/lib',
+      stagedLibDir: '/Users/x/.tangleclaw/tc-cli-staged/lib',
+      stageTcCli: (opts) => calls.push(opts)
+    });
+    assert.equal(result.ran, false);
+    assert.equal(result.reason, 'is-staged-copy');
+    assert.equal(calls.length, 0, 'stageTcCli must never be called from the staged copy\'s own lib/');
+  });
+
+  it('calls stageTcCli with repoRoot resolved from ownDir, when running as the real CLI from a live checkout', () => {
+    const calls = [];
+    const result = _autoStageBestEffort({
+      mainFilename: '/some/repo/bin/tc',
+      ownDir: '/some/repo/lib',
+      stagedLibDir: '/Users/x/.tangleclaw/tc-cli-staged/lib',
+      stageTcCli: (opts) => calls.push(opts)
+    });
+    assert.equal(result.ran, true);
+    assert.deepEqual(calls, [{ repoRoot: '/some/repo' }]);
+  });
+
+  it('never throws, even when stageTcCli itself throws', () => {
+    const result = _autoStageBestEffort({
+      mainFilename: '/some/repo/bin/tc',
+      ownDir: '/some/repo/lib',
+      stagedLibDir: '/Users/x/.tangleclaw/tc-cli-staged/lib',
+      stageTcCli: () => { throw new Error('disk full'); }
+    });
+    assert.equal(result.ran, false);
+    assert.equal(result.reason, 'error');
+    assert.match(result.error, /disk full/);
   });
 });
