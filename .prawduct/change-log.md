@@ -196,6 +196,11 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   review-round label ("Critic verify-resolutions, Car V669-W1-A") while explaining this exact
   fix — reworded before it ever reached a commit, per this session's own new learnings entry on
   this exact recurring mistake.
+- Final verify-resolutions (R6): 0 findings, prior BLOCKING confirmed fixed (hand-traced against
+  the exact adversarial string, confirmed the vulnerable pattern exists at exactly one site, new
+  test matches). 1 non-gating observation (same stale-evidence class as every prior round —
+  accepted). Review is over for this tree; branch covered at 8 commits since `origin/main`, no
+  blocking outstanding. Tree clean at head `7c797948`.
 
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
 
