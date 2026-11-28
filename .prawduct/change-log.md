@@ -74,12 +74,17 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   `public/sprint-wave-ui.js`, `server.js`, `lib/native-sprint-tracker.js` and 3 test files.
   Building deliverable (2) revealed the API response needs 3 new fields, which only
   `lib/routes/sprint-wave-routes.js`'s `handleGetSprintWaves` builds — outside the original
-  scope. Flagged to PM before touching it; PM/Architect ratified it into
-  `SPRINT_V668_CHARTER.md`/`LANE_QUEUE.md`'s file list (Ruling A1273) along with
-  `test/v6-t2-server-routes-integration.test.js` (the one place `_v6ResolveSprintScope`'s real
-  DB-backed `groupId`/`sharedDir`/`memberProjectIds` resolution is end-to-end tested —
+  scope. Flagged to PM before touching it; PM confirmed and said it had updated
+  `SPRINT_V668_CHARTER.md`/`LANE_QUEUE.md`'s file list to add it, citing "Ruling A1273," along
+  with `test/v6-t2-server-routes-integration.test.js` (the one place `_v6ResolveSprintScope`'s
+  real DB-backed `groupId`/`sharedDir`/`memberProjectIds` resolution is end-to-end tested —
   `test/sprint-wave-routes.test.js` only tests the router against a fake `resolveScope` dep and
-  cannot reach it) before either was committed.
+  cannot reach it). Independently verified the FILE-LIST outcome directly against both files
+  before committing either — true, both list both files. The independent PR-reviewer later
+  grepped both files for the literal string "A1273" and found no match; re-checked myself —
+  confirmed, that citation does not appear anywhere in either document under that label, even
+  though the substantive outcome it was invoked for does hold. Recorded here as a citation
+  this session could not corroborate, not as a verified ruling number.
 - Addendum (#3347, requested by PM mid-build, not part of #3345's own 3 deliverables):
   `_v6LogicalProjectIdsForLegacyProject` widened to include every logical project belonging to
   a fleet peer (same `project_group_members` group), so a bound Fleet PM/Observer session can
@@ -106,8 +111,8 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   (`test/sprint-wave-routes.test.js`, `test/native-sprint-tracker.test.js`,
   `test/v6-b1-ui-shell.test.js`, `test/v6-t2-server-routes-integration.test.js`): 1196/1196
   passing. Stage 1 static checks green. No `test/tiers.json`/`.testament.toml` changes (no new
-  test file — PM confirmed, TC-Lane-Arc Ruling A1273 pre-ratified using only the existing
-  tier-registered files).
+  test file — PM confirmed using only the existing tier-registered files, citing "Ruling
+  A1273" for this too; see the note on that citation a few bullets down).
 - A full-suite `prawduct-hook test-evidence record` run against this tree surfaced a real
   regression: `test/v6-browser-shell-and-conversation-e2e.test.js` (outside this car's
   declared scope) asserted `calls.includes('GET /api/sprint-waves')` — an exact-string match
