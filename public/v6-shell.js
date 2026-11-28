@@ -7100,9 +7100,17 @@
         extra.approvedRoles = exported.ok && Array.isArray(exported.data.approvedRoles) ? exported.data.approvedRoles : [];
       }
       const ui = result.ok || (charter && charter.ok) ? await sprintWaveUi() : null;
-      // A charter read for a project the operator has since left is dropped: its Activate buttons would act on
-      // the project now open (cumulative review).
-      if (project && !(current && current.project && String(current.project.id) === String(project.id))) return;
+      // A read for a project the operator has since left is dropped: a
+      // charter's Activate buttons would act on the project now open
+      // (cumulative review); a sprint/kaizen read would silently paint the
+      // WRONG project's cars/report with no self-correction, which #3345's
+      // own project/fleet-scoped reads turned into a real leak risk where
+      // charter alone used to be the only affected mode (Critic cumulative
+      // review, Car V668-W1-A BLOCKING 1) -- `activeProject` is captured
+      // before this function's very first await, so it is the one snapshot
+      // every mode can check itself against, not just charter's own later
+      // `project` capture.
+      if (activeProject && !(current && current.project && String(current.project.id) === String(activeProject.id))) return;
       const sh = getShell();
       if (!sh || typeof sh.setWorkspacePanel !== 'function') return;
       sh.setWorkspacePanel(mode, mode === 'charter' ? charterPanelContent(charter, result, ui, extra) : workspacePanelContent(mode, result, ui));
@@ -11153,8 +11161,15 @@
       if (modeRouteKey !== lastModeRouteKey) {
         lastModeRouteKey = modeRouteKey;
         workspaceMode = 'chat';
-        // The charter panel belongs to the project that was open: never show it for another (#3088).
+        // Every data-mode panel belongs to the project that was open: never
+        // show it for another (#3088; widened to sprint/kaizen by #3345,
+        // Critic cumulative review -- #3325's own fast-follow scoped their
+        // reads to the active project/fleet, so a stale cached panel from
+        // the PREVIOUS one is now a real cross-project leak risk, not just
+        // charter's).
         workspacePanels.delete('charter');
+        workspacePanels.delete('sprint');
+        workspacePanels.delete('kaizen');
       }
       const shown = workspaceVisibility(workspaceMode, inChat);
       const activityElapsed = syncBusy();

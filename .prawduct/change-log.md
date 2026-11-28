@@ -123,6 +123,43 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   2 of the newly-seen file names (`test/auth2-setup-admin.test.js`, `test/tmux.test.js`) were
   independently verified clean (0/171) on a fresh clean `origin/main` worktree, consistent with
   the same non-deterministic timing class rather than a new regression.
+- Rebased onto `origin/main` once sibling car V668-W1-D's own PR #3348 (#3347) merged mid-
+  review. The PR-reviewer flagged this as needing reconciliation — independently verified: `git
+  diff` confirmed #3348 touched only `lib/tc-verbs.js`/`lib/v6/e5-kaizen-ledger.js`/
+  `scripts/stage-tc-cli.js`, never `server.js`, so "Car D never touches server.js" held and
+  there was no file conflict. But `lib/v6/e5-kaizen-ledger.js`'s new
+  `resolveLogicalProjectIdsForLegacyProject(db, projectId)` — exported, and `server.js` already
+  `require()`s that module as `e5` — solves the IDENTICAL need as this car's own
+  `_v6LogicalProjectIdsForLegacyProject` addendum, with the SAME `project_group_members` self-
+  join, but ALSO normalizes the `lp-N`-vs-bare-numeric id-spelling ambiguity this car's own
+  first draft didn't handle. Rewrote `_v6LogicalProjectIdsForLegacyProject` to delegate to
+  `e5.resolveLogicalProjectIdsForLegacyProject` instead of keeping a second, slightly weaker
+  copy of the same query — one producer of this capability, not two that can drift apart.
+  Updated the boot-time `stage-tc-cli` call's own comments to reflect that the module now
+  exists (it actively calls the real `stageTcCli()`, not a no-op) rather than leaving a stale
+  "doesn't exist yet" framing; the MODULE_NOT_FOUND branch stays (now covering a checkout
+  mid-rebase onto an older tree, or a future revert, rather than "before #3348 merges").
+- Cumulative Critic round 1 (1 blocking, fixed; 4 warnings, 2 fixed + 2 accepted):
+  **BLOCKING** — `loadWorkspacePanel`'s project-staleness guard (dropping a read for a
+  project the operator has since left) only ever applied to `charter` mode; the two sibling
+  modes this car just made project-scoped (`sprint`/`kaizen`) had no equivalent guard, and the
+  existing `workspacePanels.delete('charter')` route-switch cache-clear (#3088) was never
+  mirrored to the new sprint/kaizen cache keys either — together a real risk of silently
+  painting a stale project's cars/report with no self-correction, directly contradicting this
+  car's own changelog claim. Fixed both: the guard now keys off `activeProject` (captured
+  before the function's very first await) for every mode, and the cache-clear now deletes all
+  three keys. Added 2 new structural tests in `test/v6-b1-ui-shell.test.js` confirming the
+  fixed shape (a true behavioral race test would need the same project-switch-mid-fetch
+  harness this file doesn't have yet — noted, not built, given the fix itself is a direct,
+  narrow generalization of an already-correct pattern). **WARNING** (fixed) — the new
+  `getRoadmapUrl` dep had no `@param` entry in `createSprintWaveRouter`'s otherwise-exhaustive
+  JSDoc; added one matching the module's own style. **WARNING** (fixed) — the e2e test's
+  `startsWith('GET /api/sprint-waves')` fix would also match the real, different
+  `GET /api/sprint-waves/github-activity` endpoint; tightened to a query-string boundary match
+  (`c === 'GET /api/sprint-waves' || c.startsWith('GET /api/sprint-waves?')`). **WARNING**
+  (accepted) — the 22-failure test-evidence disclosure, already fully substantiated above.
+  **WARNING** (accepted) — the boot-time `tc` CLI auto-stage call's own missing test coverage,
+  already disclosed above (note added there that the module now exists post-rebase).
 
 ## 2026-11-27 — Global Settings rebuilt as a full-screen workspace, Car V667-W1-A
 

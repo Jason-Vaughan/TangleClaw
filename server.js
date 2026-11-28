@@ -9746,24 +9746,21 @@ route('GET', '/api/v6/legacy-projects/:legacyProjectId', (req, res, params) => {
  * addendum, #3347: a Fleet PM/Observer bound session, e.g. TC-Lane-PM and
  * TC-Lane-Obsr both in TangleClaw-Shared, must be able to read/disposition
  * the whole fleet group's own Kaizen items, not only the ones provisioned
- * under its own single project). A project outside every one of
- * `projectId`'s groups is never added by this -- `project_group_members`
- * is the one membership table every group-scoped read in this file already
- * trusts (`store.projectGroups.listMembers`/`getByProject`), so widening
- * through it rather than inventing a second membership notion keeps this
- * consistent with every other group-scoped grant.
+ * under its own single project). Delegates the actual resolution to
+ * {@link module:lib/v6/e5-kaizen-ledger.resolveLogicalProjectIdsForLegacyProject}
+ * (sibling car V668-W1-D/#3347's own fix for the identical need, merged
+ * while this car was mid-build and independently verified before
+ * delegating to it rather than keeping a second, slightly different copy
+ * of the same `project_group_members` self-join query): this function's
+ * own first draft duplicated that SQL inline, missing the `lp-N`-vs-bare-
+ * numeric spelling ambiguity `e5`'s version already handles for
+ * `kaizen_items.logical_project_id`, a column with no format check. One
+ * producer of this capability, not two that can silently drift apart.
  * @param {number} projectId
  * @returns {string[]}
  */
 function _v6LogicalProjectIdsForLegacyProject(projectId) {
-  return v6Db().prepare(
-    `SELECT DISTINCT logical_project_id FROM v6_legacy_project_view WHERE legacy_project_id = ?
-       OR legacy_project_id IN (
-         SELECT m2.project_id FROM project_group_members m1
-         JOIN project_group_members m2 ON m1.group_id = m2.group_id
-         WHERE m1.project_id = ?
-       )`
-  ).all(projectId, projectId).map((r) => r.logical_project_id);
+  return e5.resolveLogicalProjectIdsForLegacyProject(v6Db(), projectId);
 }
 
 /**
@@ -12689,20 +12686,26 @@ if (require.main === module) {
       + 'check if the install directory was moved or renamed while running', { publicDir: PUBLIC_DIR });
   }
 
-  // #3347 (#3345 addendum, quick-note from PM; the module itself ships in a
-  // sibling PR, #3348) — best-effort: stages ~/.tangleclaw/tc-cli-staged/ on
-  // boot so a lane-local/TCC-safe staged `tc` invocation never lags behind
-  // a newly merged verb. A missing module (this file not merged yet) is
-  // the EXPECTED case until #3348 lands, so that specific failure logs at
-  // debug, not warn; the function existing but throwing is a real problem
-  // worth a trace, so that one does warn. Either way this never blocks boot.
+  // #3347 (#3345 addendum, quick-note from PM): best-effort -- stages
+  // ~/.tangleclaw/tc-cli-staged/ on boot so a lane-local/TCC-safe staged
+  // `tc` invocation never lags behind a newly merged verb. Sibling PR
+  // #3348 (Car V668-W1-D) merged `scripts/stage-tc-cli.js` itself while
+  // this car was mid-build -- its own module deliberately wires up nothing
+  // at startup ("none of which this module wires up itself" is its own
+  // doc comment's wording), so this IS that wiring, not a duplicate of it.
+  // MODULE_NOT_FOUND still logs at debug rather than warn, defensively,
+  // for the same install-drift reason the #1369 check two lines down
+  // tolerates a moved/renamed directory -- a checkout mid-rebase onto an
+  // older tree, or a future revert, should not warn for a condition this
+  // call already treats as a safe no-op. The function existing but
+  // throwing is a real problem worth a trace either way. Never blocks boot.
   try {
     // eslint-disable-next-line global-require
     const stageTcCli = require('./scripts/stage-tc-cli');
     if (stageTcCli && typeof stageTcCli.stageTcCli === 'function') stageTcCli.stageTcCli();
   } catch (err) { // prawduct:allow prawduct/broad-except -- best-effort staging must never block server boot
     if (err && err.code === 'MODULE_NOT_FOUND') {
-      log.debug('tc CLI auto-stage skipped: scripts/stage-tc-cli.js not present yet (#3348)');
+      log.debug('tc CLI auto-stage skipped: scripts/stage-tc-cli.js not present in this checkout');
     } else {
       log.warn('tc CLI auto-stage failed', { error: err && err.message });
     }

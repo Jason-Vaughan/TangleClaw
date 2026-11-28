@@ -587,9 +587,14 @@ describe('v6 Stage 2 E2E: browser shell and conversation, against the live serve
       // scope -- flagged to PM): loadWorkspacePanel now appends
       // ?projectId=<activeProject.id> (and &groupId= when present) to this
       // read, so the exact bare URL no longer appears; a mounted project
-      // route always has an active project by this point, so prefix-
-      // matching is the real contract here, not an exact string.
-      assert.ok(calls.some((c) => c.startsWith('GET /api/sprint-waves')), JSON.stringify(calls));
+      // route always has an active project by this point, so a query-
+      // string boundary match is the real contract here, not an exact
+      // string. A bare startsWith would also match the real, different
+      // `GET /api/sprint-waves/github-activity` endpoint (Critic cumulative
+      // review, Car V668-W1-A WARNING) -- matched against `?` specifically,
+      // never a path separator, so this stays a false-pass guard against
+      // the one route it names.
+      assert.ok(calls.some((c) => c === 'GET /api/sprint-waves' || c.startsWith('GET /api/sprint-waves?')), JSON.stringify(calls));
       assert.doesNotMatch(panel(), /Loading…/);
       assert.match(panel(), /<h2 class="v6-workspace-panel-title">Sprint &amp; Cars<\/h2>/);
       assert.match(panel(), /Not available on this server yet\.|sprint-wave-board|v6-workspace-list|No cars are on the board yet\./);
