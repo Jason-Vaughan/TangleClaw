@@ -133,6 +133,15 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   the car's own file; cross-file sweep (`test/v6-*.test.js`): 2773/2773; Stage 1 green.
   R-2 (WARNING, stale test evidence — accepted: predates this PR's files, targeted run is fresh)
   and R-3 (NOTE, 0 backlog items affect changed paths — accepted) dispositioned, no code change.
+- verify-resolutions: 0 blocking, R-1 confirmed fixed (hand-traced the new regex against the
+  regressed shape, the original ternary shape, and a mixed ternary+real-question line; grepped
+  for other sites of the old vulnerable pattern — single-site fix, not a partial patch). 2
+  non-gating observations: O-1 (stale evidence, same as R-2 — accepted) and O-2 — the fix's own
+  new comment re-added a "Critic cumulative BLOCKING:" review-round label, directly breaking this
+  file's own prior carry-forward commitment (`rev-20261115T020853Z/R-1`: strip these labels on
+  the next commit touching the file, keep the sentences and issue numbers). Fixed immediately
+  rather than deferred again — reworded to drop the label, keeping the technical explanation and
+  #3355. 883/883 unaffected.
 
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
 

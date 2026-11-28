@@ -2933,16 +2933,15 @@
       // is really declarative (ends in `.`, not an actual question) is
       // never misread because of a `?` that belongs to code, not prose.
       //
-      // Critic cumulative BLOCKING: the first draft's ternary strip
-      // (`/\?\s+[^?:\n]+\s*:/g`) matched ANY "? <prose> :" on one line,
-      // not just a ternary \u2014 `"Should we ship this? Checklist: tests,
-      // docs."` lost its own real `?` this way, silently hiding a
-      // genuine open question. A real ternary's branch is a lowercase
-      // JS identifier/property-access/call (`current.project`, `bar()`);
-      // an English clarifying clause after a real question almost always
-      // starts with a capital letter (`Checklist:`, `Status:`,
-      // `Options:`) \u2014 requiring the branch to start lowercase is what
-      // distinguishes them, verified against both shapes before trusting it.
+      // A naive ternary strip (matching ANY "? <prose> :" on one line)
+      // would consume a real question's own `?` too \u2014 `"Should we ship
+      // this? Checklist: tests, docs."` would lose its question mark and
+      // silently stop reading as open. A real ternary's branch is a
+      // lowercase JS identifier/property-access/call (`current.project`,
+      // `bar()`); an English clarifying clause after a real question
+      // almost always starts with a capital letter (`Checklist:`,
+      // `Status:`, `Options:`) \u2014 requiring the branch to start lowercase
+      // is what distinguishes them, verified against both shapes (#3355).
       .replace(/\?\s+[a-z_$][\w.$[\]()'"-]*\s*:/g, ' ')
       .replace(/\?[A-Za-z0-9_.-]+=/g, ' ');
     return /\?(?=$|[\s)\]}"'*_~.,;:!\u2019\u201d])/.test(prose);
