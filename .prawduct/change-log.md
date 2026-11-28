@@ -149,6 +149,17 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   — not introduced or materially touched by this car, out of scope here, left for a future
   dedicated sweep rather than per-touch fixes. Critic governance closed clean for this branch;
   tree clean at head `1e0207fd`.
+- PRR-A R-Gate R2 REVISE (1 surgical fix, relayed by PM): the lowercase-start check alone still
+  let a lowercase-starting clarifying clause with NO space before its own colon slip through
+  (`"Should we ship this? maybe: test first."` — `"maybe:"` has no space before `:`). A real JS
+  ternary's `:` always has whitespace on BOTH sides (`cond ? a : b`); a colon glued directly to
+  the preceding word is prose, never code. Fixed by requiring `\s+` (not `\s*`) before the colon
+  too, combined with the existing lowercase-start check rather than replacing it — both signals
+  independently point at "this is code," which is stricter than either alone and still matches
+  every legitimate ternary shape. Verified against the exact PRR-A-reported case plus every
+  previously-verified case (the original `Checklist:`/`Status:`/`Options:` false positives, both
+  ternary shapes) before trusting it. One new regression test added for the exact reported shape.
+  884/884 in the car's own file; cross-file sweep (`test/v6-*.test.js`): 2774/2774; Stage 1 green.
 
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
 

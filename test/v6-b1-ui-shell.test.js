@@ -6912,6 +6912,15 @@ describe('the Waiting on you queue (#3079)', () => {
     assert.equal(run(['> go', '⏺ It falls back to activeProject.groupId ? groupId : null when present.']).question, null);
   });
 
+  // PRR-A R-Gate R2: a LOWERCASE-starting clarifying clause with no space
+  // before its own colon ("maybe:") still slipped through the lowercase
+  // check alone, since lowercase English words exist too. A real
+  // ternary's `:` always has whitespace on both sides; a colon glued
+  // directly to the preceding word is never code.
+  it('a real question followed by a lowercase clarifying clause with NO space before its colon is never masked (#3355, PRR-A R-Gate R2)', () => {
+    assert.equal(run(['> ship it', '⏺ Should we ship this? maybe: test first.']).question, 'Should we ship this? maybe: test first.');
+  });
+
   it('numbers several questions, escapes each, and gives each a dismiss button', () => {
     const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
       chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'x' }], questions: ['A <b>?', 'B?'] } } });

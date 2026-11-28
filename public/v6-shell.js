@@ -2942,7 +2942,14 @@
       // almost always starts with a capital letter (`Checklist:`,
       // `Status:`, `Options:`) \u2014 requiring the branch to start lowercase
       // is what distinguishes them, verified against both shapes (#3355).
-      .replace(/\?\s+[a-z_$][\w.$[\]()'"-]*\s*:/g, ' ')
+      // A lowercase-starting clause with NO space before its own colon
+      // (`"...this? maybe: test first."`) still slipped through the
+      // lowercase check alone \u2014 a real ternary's `:` always has
+      // whitespace on both sides (`cond ? a : b`), while a colon
+      // attached directly to the preceding word is prose, never code, so
+      // requiring `\s+` (not `\s*`) before the colon too closes this gap
+      // without reopening the one the lowercase check already closed.
+      .replace(/\?\s+[a-z_$][\w.$[\]()'"-]*\s+:\s+/g, ' ')
       .replace(/\?[A-Za-z0-9_.-]+=/g, ' ');
     return /\?(?=$|[\s)\]}"'*_~.,;:!\u2019\u201d])/.test(prose);
   }
