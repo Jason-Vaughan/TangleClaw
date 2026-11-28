@@ -201,6 +201,33 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   test matches). 1 non-gating observation (same stale-evidence class as every prior round —
   accepted). Review is over for this tree; branch covered at 8 commits since `origin/main`, no
   blocking outstanding. Tree clean at head `7c797948`.
+- **Structural revision (R7), after PRR-A's further R5/R6 findings reopened the SAME shape twice
+  more ("Do we need the fallback (for beta)? maybe: keep it." -- `)` before `?`, lowercase clause,
+  no space before colon):** rather than patch a fourth time, stepped back and proposed dropping
+  the colon-spacing relaxation entirely to PM and PRR-A, with full reasoning and verification.
+  PRR-A explicitly agreed ("preserving a genuine natural-language question is preferable;
+  allowing an occasional no-space-before-colon ternary false positive is the safer tradeoff").
+  PM countered with a more elaborate 3-way regex (code-punctuation-in-branch OR JS-literal-false-
+  branch detection) claiming no tradeoff was needed; independently verified it BEFORE applying —
+  found 2 new concrete false negatives ("Do we deploy now ? maybe: 0 downtime needed." and
+  "...maybe: true is fine." both silently stripped, since "0"/"true" are ordinary English words,
+  not just JS literals). Reported that counter-example back and proceeded with the simpler,
+  PRR-A-endorsed design: requires whitespace on BOTH sides of the ternary colon, no backward-look
+  at what precedes `?` at all. PM then approved this exact approach. Accepts exactly 2 known,
+  cosmetic false-positive shapes (a no-space-before-colon ternary read as an open question —
+  self-correcting on the next reply, never silent) in exchange for zero known false negatives
+  across every real-question case found in R2 through R6. Also added, independently verified, and
+  unrelated to the ambiguity: a metalanguage strip (`a JS ternary ?` referenced by name is never a
+  question) and a quoted-example strip (a question quoted inside an otherwise-declarative
+  sentence, matching the Operator's own reported line, is the quoted text's own question, not the
+  line's). Rewrote the now-obsolete R4/R5/R6 test narrating "still correctly recognized as code"
+  (the opposite of the new design) to document the accepted tradeoff explicitly; added tests for
+  the metalanguage case, the quoted-example case, and both Operator-reported screenshot lines.
+  889/889 in the car's own file (targeted-file-only per PRR-A's standing instruction). Stage 1
+  static green. Built and pushed from a fresh /tmp clone of this branch, not the primary
+  checkout: a host-level filesystem EPERM (unrelated to this work, confirmed via `touch`
+  succeeding but `rm`/overwrite and some file reads failing even for ordinary git operations)
+  blocked the primary checkout partway through this round.
 
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
 

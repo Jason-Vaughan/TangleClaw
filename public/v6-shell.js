@@ -2929,42 +2929,38 @@
       // #3355: a JS ternary (`cond ? a : b`) or a bare (non-backticked,
       // non-URL) query-param token (`?projectId=`) can otherwise satisfy
       // the sentence-ending-`?` test below purely by coincidence of
-      // what follows the `?` \u2014 strip both before testing so a line that
+      // what follows the `?` — strip both before testing so a line that
       // is really declarative (ends in `.`, not an actual question) is
       // never misread because of a `?` that belongs to code, not prose.
       //
-      // A naive ternary strip (matching ANY "? <prose> :" on one line)
-      // would consume a real question's own `?` too \u2014 `"Should we ship
-      // this? Checklist: tests, docs."` would lose its question mark and
-      // silently stop reading as open. A real ternary's branch is a
-      // lowercase JS identifier/property-access/call (`current.project`,
-      // `bar()`); an English clarifying clause after a real question
-      // almost always starts with a capital letter (`Checklist:`,
-      // `Status:`, `Options:`) \u2014 requiring the branch to start lowercase
-      // is what distinguishes them, verified against both shapes (#3355).
-      // A lowercase-starting clause with NO space before its own colon
-      // (`"...this? maybe: test first."`) still slipped through the
-      // lowercase check alone, so requiring whitespace before the colon
-      // too (`cond ? a : b` always has it on both sides) closed that gap
-      // \u2014 but a real ternary can ALSO be written with no space before
-      // ITS colon (`current ? current.project: null`), which that
-      // whitespace-before-colon requirement then wrongly left unstripped
-      // (PRR-A R-Gate R4, same case PM independently repro'd). The
-      // reliable signal is instead what precedes the `?` itself: a real
-      // ternary's `?` always follows a complete expression, so it is
-      // preceded by whitespace or a closing `)`/`]`; an English `?` is
-      // glued directly to the word it ends with no space at all. The
-      // first alternative below matches on that backward-look, relaxing
-      // ONLY the colon-spacing requirement, since the `?`-position
-      // signal is now doing extra disambiguation work — it must still
-      // require the branch to start lowercase, same as the fallback
-      // second alternative, or a capitalized clause right after a `?`
-      // preceded by whitespace/`)`/`]` (`"Should we ship (final
-      // build)? Status: pending."`) loses its own `?` the same way the
-      // lowercase-only check already prevents for the directly-glued
-      // case above (#3355).
-      .replace(/(?:[\s)\]]\?\s+[a-z_$][\w.$[\]()'"-]*\s*:\s+|\?\s+[a-z_$][\w.$[\]()'"-]*\s+:\s+)/g, ' ')
-      .replace(/\?[A-Za-z0-9_.-]+=/g, ' ');
+      // A no-space-before-colon ternary (`cond ? a: b`) and an English
+      // question followed by a lowercase clarifying clause with no space
+      // before ITS colon (`"...this? maybe: test first."`) are
+      // genuinely indistinguishable by local punctuation/case/position
+      // signals alone — several rounds (PRR-A R-Gate R3 through R6) each
+      // closed one shape this way and reopened another, because every
+      // signal tried (branch case, `?`-position, code-punctuation-in-
+      // branch, literal false-branch) is satisfied by ordinary English
+      // too ("0", "true", "null" are common words, not just JS literals).
+      // Ternary-in-prose with no space before its OWN colon is accepted
+      // as a rare, cosmetic false positive (misread as an open question,
+      // self-correcting on the next reply) rather than risk masking a
+      // real question (PRR-A's own stated preference, matching this
+      // repo's established principle for an irresolvable two-sided
+      // ambiguity: name which failure direction is cheaper and fail
+      // that way on purpose, never chase a cleverer pattern). Requiring
+      // whitespace on BOTH sides of the colon is what the lowercase
+      // check alone cannot do, and is sufficient together with it.
+      .replace(/\?\s+[a-z_$][\w.$[\]()'"-]*\s+:\s+/g, ' ')
+      .replace(/\?[A-Za-z0-9_.-]+=/g, ' ')
+      // A bare reference to the ternary operator BY NAME ("a JS ternary
+      // ?") is metalanguage, never a real question — distinct from the
+      // ambiguity above, since it needs no colon/branch to recognize.
+      .replace(/\b(?:ternary|symbol|character|literal|mark|token)\s+\?/gi, ' ')
+      // A quoted example question embedded in an otherwise-declarative
+      // sentence ('...applying the fix ("Should we ship this?") for
+      // R-Gate R3.') is the quoted TEXT's own question, not this line's.
+      .replace(/(?:(\S\s+)|\()["\u201c][^"\u201d\n]*\?[^"\u201d\n]*["\u201d]\)?(?=[\s).,;:])/g, '$1 ');
     return /\?(?=$|[\s)\]}"'*_~.,;:!\u2019\u201d])/.test(prose);
   }
 

@@ -6921,27 +6921,50 @@ describe('the Waiting on you queue (#3079)', () => {
     assert.equal(run(['> ship it', '⏺ Should we ship this? maybe: test first.']).question, 'Should we ship this? maybe: test first.');
   });
 
-  // PRR-A R-Gate R4: requiring whitespace before the ternary's own colon
-  // (the R2 fix above) swung too far the other way -- a real JS ternary
-  // can ALSO be written with no space before its colon
-  // ("current.project: null"), which that requirement then wrongly left
-  // unstripped, reintroducing a false-positive open question. The
-  // reliable signal is what precedes the `?` instead: a real ternary's
-  // `?` always follows a complete expression (preceded by whitespace or
-  // a closing `)`/`]`), never glued directly to a word the way an
-  // English `?` always is.
-  it('a real JS ternary with NO space before its own colon is still correctly recognized as code, not a question (#3355, PRR-A R-Gate R4)', () => {
-    assert.equal(run(['> check scope', '⏺ The scope resolves as current ? current.project: null if available.']).question, null);
+  // PRR-A R-Gate R4 through R6 each closed one no-space-before-colon
+  // false-negative shape this way (requiring whitespace before the
+  // colon; then keying off what precedes `?`; then a code-punctuation/
+  // JS-literal check in the false branch) and each reopened another --
+  // "isReady() ? proceed(): wait()" and "(for beta)? maybe: keep it."
+  // are syntactically identical by every local signal tried, because
+  // "0"/"true"/"null" are ordinary English words too, not just JS
+  // literals. Settled (with PRR-A's explicit agreement) on accepting a
+  // no-space-before-colon ternary as a rare, cosmetic false positive --
+  // the safe failure direction -- rather than keep chasing a pattern
+  // that cannot exist. A real question is NEVER masked by this choice;
+  // these two document the accepted tradeoff, not a regression.
+  it('a real JS ternary with NO space before its own colon is read as an open question -- an accepted tradeoff, not a regression (#3355)', () => {
+    assert.equal(run(['> check scope', '⏺ The scope resolves as current ? current.project: null if available.']).question,
+      'The scope resolves as current ? current.project: null if available.');
+    assert.equal(run(['> check scope', '⏺ It resolves via isReady() ? proceed(): wait() when checked.']).question,
+      'It resolves via isReady() ? proceed(): wait() when checked.');
   });
 
-  // Critic verify-resolutions: the R4 fix's new backward-look alternative
-  // widened the branch's allowed first character to uppercase too (only
-  // the colon-spacing needed relaxing, not the case), so a `?` preceded
-  // by whitespace/`)`/`]` and followed by a CAPITALIZED clause with no
-  // space before its own colon lost its own `?` the same way the
-  // original, already-fixed directly-glued case did.
-  it('a real question ending in a closing paren, followed by a CAPITALIZED colon-prefixed clause, is never masked (#3355)', () => {
+  it('a real question ending in a closing paren, followed by a CAPITALIZED or lowercase colon-prefixed clause, is never masked (#3355)', () => {
     assert.equal(run(['> ship it', '⏺ Should we ship (final build)? Status: pending.']).question, 'Should we ship (final build)? Status: pending.');
+    assert.equal(run(['> ship it', '⏺ Do we need the fallback (for beta)? maybe: keep it.']).question, 'Do we need the fallback (for beta)? maybe: keep it.');
+  });
+
+  // The ternary operator referenced BY NAME ("a JS ternary ?") is
+  // metalanguage, not a real question -- a separate, unambiguous case
+  // that needs no colon/branch to recognize, so it is not part of the
+  // ambiguity above.
+  it('a bare reference to the ternary operator by name is never read as a question (#3355)', () => {
+    assert.equal(run(['> explain', '⏺ The fix uses a JS ternary ? to pick a default.']).question, null);
+    assert.equal(run(['> explain', "⏺ Is this a ternary? Let's check."]).question, "Is this a ternary? Let's check.");
+  });
+
+  // A quoted example question embedded inside an otherwise-declarative
+  // sentence is the QUOTED TEXT's own question, not this line's -- the
+  // Operator's own reported shape (#3355).
+  it('a quoted example question inside an otherwise-declarative sentence is never read as this line asking (#3355)', () => {
+    const out = run(['> ack', '⏺ Acknowledged TC-Lane-A commit and confirmed TC-Lane-A is now applying the fix ("Should we ship this? maybe: test first.") for R-Gate R3.']);
+    assert.equal(out.question, null);
+  });
+
+  it('a declarative line naming both the ternary metalanguage and a bare query-param token is never read as a question (#3355, Operator-reported)', () => {
+    const out = run(['> ship it', '⏺ Waiting on: YOU question false-positive fix (JS ternary ?, URL query params ?projectId=, and prior-turn body paragraphs after a Medusa wake)']);
+    assert.equal(out.question, null);
   });
 
   it('numbers several questions, escapes each, and gives each a dismiss button', () => {
