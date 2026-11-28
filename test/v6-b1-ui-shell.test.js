@@ -6895,6 +6895,23 @@ describe('the Waiting on you queue (#3079)', () => {
     assert.deepEqual(out.questions, ['Should I widen the fallback?']);
   });
 
+  // Critic cumulative BLOCKING (Car V669-W1-A): the first draft's ternary
+  // strip matched ANY "? <prose> :" on one line, not just a real ternary,
+  // so a genuine question immediately followed by a colon-prefixed
+  // clarifying clause ("Checklist:", "Status:", "Options:" -- always
+  // capitalized, unlike a real ternary's lowercase identifier branch) lost
+  // its own trailing `?` and was silently read as not a question at all.
+  it('a real question followed by a colon-prefixed, CAPITALIZED clarifying clause on the SAME line is never masked (#3355, Critic regression)', () => {
+    const out = run(['> ship it', '⏺ Should we ship this? Checklist: tests, docs, changelog.']);
+    assert.equal(out.question, 'Should we ship this? Checklist: tests, docs, changelog.');
+  });
+
+  it('a real question followed by other capitalized colon-prefixed clauses is never masked, lowercase ternary branches still strip (#3355)', () => {
+    assert.equal(run(['> go', '⏺ Is this ready? Status: pending review.']).question, 'Is this ready? Status: pending review.');
+    assert.equal(run(['> go', '⏺ Shall I proceed? Options: yes or no.']).question, 'Shall I proceed? Options: yes or no.');
+    assert.equal(run(['> go', '⏺ It falls back to activeProject.groupId ? groupId : null when present.']).question, null);
+  });
+
   it('numbers several questions, escapes each, and gives each a dismiss button', () => {
     const html = G.tcV6ConversationViewMarkup({ project: { id: 1, name: 'P' }, sessionId: 2, events: [],
       chat: { status: 'active', members: [], live: { turns: [{ role: 'assistant', text: 'x' }], questions: ['A <b>?', 'B?'] } } });

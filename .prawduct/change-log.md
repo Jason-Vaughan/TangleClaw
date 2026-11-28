@@ -116,6 +116,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   876+ tests in `test/v6-b1-ui-shell.test.js` pass; cross-file sweep
   (`test/v6-*.test.js test/sprint-wave-routes.test.js test/native-sprint-tracker.test.js
   test/api-*.test.js`): 5079/5079. Stage 1 static green.
+- Critic cumulative R1 (BLOCKING 1, fixed): the deliverable-3 ternary-strip regex
+  (`/\?\s+[^?:\n]+\s*:/g`) matched ANY "`<real question>? <prose with a colon>`" on one physical
+  line, not just an actual ternary — verified directly, `asksQuestion("Should we ship this?
+  Checklist: tests, docs, changelog.")` returned `false`, silently hiding a genuine open question
+  from the "Waiting on: YOU" indicator. Exactly the shape this repo's own learnings file already
+  names ("a fix that changes a failure MODE needs re-checking against the actual requirement") —
+  traded a known false positive for an unexamined false negative. Fixed by requiring the matched
+  branch (between `?` and `:`) to start with a LOWERCASE letter/`_`/`$`
+  (`/\?\s+[a-z_$][\w.$[\]()'"-]*\s*:/g`): a real ternary's branch is a lowercase JS
+  identifier/property-access/call (`current.project`, `bar()`); a genuine clarifying clause after
+  a real question almost always starts capitalized (`Checklist:`, `Status:`, `Options:`).
+  Verified against both shapes (and the original ternary case, and a ternary-plus-later-real-
+  question case) before trusting it, not just re-running the two existing tests. Added 2 new
+  tests covering the exact regressed shape plus 2 more capitalized-clause variants. 883/883 in
+  the car's own file; cross-file sweep (`test/v6-*.test.js`): 2773/2773; Stage 1 green.
+  R-2 (WARNING, stale test evidence — accepted: predates this PR's files, targeted run is fresh)
+  and R-3 (NOTE, 0 backlog items affect changed paths — accepted) dispositioned, no code change.
 
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
 
