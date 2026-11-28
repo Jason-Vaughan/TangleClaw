@@ -321,12 +321,15 @@ describe('resolveAccess — the dashboard label on a stood-down gate (#1753)', (
   });
 });
 
+/** A `canChangeProject` 3rd-arg fake whose caller is never a verified Fleet Coordinator. */
+const NOT_A_COORDINATOR_DEPS = Object.freeze({ verifyCoordinatorAuthority: () => null });
+
 describe('canChangeProject', () => {
   it('lets the operator change any project and a bound project only its own', () => {
     assert.equal(access.canChangeProject({ kind: KINDS.OPERATOR, projectId: null }, 9), true);
     const bound = access.resolveAccess(req(BOUND_7), fakeDeps());
     assert.equal(access.canChangeProject(bound, 7), true);
-    assert.equal(access.canChangeProject(bound, 8), false);
+    assert.equal(access.canChangeProject(bound, 8, NOT_A_COORDINATOR_DEPS), false);
   });
 
   it('lets the Master, an unbound and an invalid caller change none', () => {
@@ -334,6 +337,71 @@ describe('canChangeProject', () => {
     assert.equal(access.canChangeProject(m, 7), false);
     assert.equal(access.canChangeProject({ kind: KINDS.UNBOUND, projectId: null }, 7), false);
     assert.equal(access.canChangeProject({ kind: KINDS.INVALID, projectId: 7 }, 7), false);
+  });
+});
+
+describe('canChangeProject — Fleet Coordinator sibling grant (#3335)', () => {
+  const COORDINATOR_ID = 100;
+  const SIBLING_ID = 101;
+  const AUTHORITY = { project: { id: COORDINATOR_ID, name: 'TiLT-PM' }, prefix: 'TiLT' };
+
+  /**
+   * A fake `canChangeProject` 3rd-arg deps object: a verified coordinator (id
+   * {@link COORDINATOR_ID}, prefix `TiLT`) and a sibling (id {@link SIBLING_ID}) outside its
+   * fleet namespace by default, so each test only has to override whichever one thing it means
+   * to test.
+   * @param {object} [overrides] - Fields to override on the default fake.
+   * @returns {object}
+   */
+  function fakeChangeDeps(overrides = {}) {
+    return {
+      verifyCoordinatorAuthority: (id) => (id === COORDINATOR_ID ? AUTHORITY : null),
+      getProject: (id) => (id === SIBLING_ID ? { id: SIBLING_ID, name: 'Other-Fleet-Member' } : null),
+      isInFleetNamespace: (name, prefix) => typeof name === 'string' && name.startsWith(`${prefix}-`),
+      ...overrides
+    };
+  }
+
+  it('lets a verified Fleet Coordinator change a sibling in its <Prefix>-* namespace', () => {
+    const callerAccess = { kind: KINDS.PROJECT, projectId: COORDINATOR_ID };
+    const deps = fakeChangeDeps({ getProject: () => ({ id: SIBLING_ID, name: 'TiLT-Arc' }) });
+    assert.equal(access.canChangeProject(callerAccess, SIBLING_ID, deps), true);
+  });
+
+  it('denies a cross-fleet project outside the namespace, even for a verified coordinator', () => {
+    const callerAccess = { kind: KINDS.PROJECT, projectId: COORDINATOR_ID };
+    const deps = fakeChangeDeps();
+    assert.equal(access.canChangeProject(callerAccess, SIBLING_ID, deps), false);
+  });
+
+  it('never grants the sibling change merely for sharing a project group — only the fleet namespace counts (#3335)', () => {
+    // Regression for the Critic's R1 BLOCKING finding: #3335 (and parent #3331's Recommended
+    // Fix #3) authorize only the <Prefix>-* namespace grant. A shared doc-sharing project group
+    // is NOT an access-control boundary and must never substitute for it, however the caller's
+    // own `access.groupIds` happens to be populated.
+    const callerAccess = { kind: KINDS.PROJECT, projectId: COORDINATOR_ID, groupIds: ['g-shared-with-sibling'] };
+    const deps = fakeChangeDeps();
+    assert.equal(access.canChangeProject(callerAccess, SIBLING_ID, deps), false);
+  });
+
+  it('denies a non-coordinator project member, preserving the existing own-project-only restriction', () => {
+    const callerAccess = { kind: KINDS.PROJECT, projectId: 999 };
+    const deps = fakeChangeDeps();
+    assert.equal(access.canChangeProject(callerAccess, SIBLING_ID, deps), false);
+  });
+
+  it('lets a verified Fleet Coordinator change its own project without reaching the sibling check at all', () => {
+    const callerAccess = { kind: KINDS.PROJECT, projectId: COORDINATOR_ID };
+    const deps = fakeChangeDeps({
+      verifyCoordinatorAuthority: () => { throw new Error('must not be called for an own-project change'); }
+    });
+    assert.equal(access.canChangeProject(callerAccess, COORDINATOR_ID, deps), true);
+  });
+
+  it('denies when the target project cannot be found', () => {
+    const callerAccess = { kind: KINDS.PROJECT, projectId: COORDINATOR_ID };
+    const deps = fakeChangeDeps({ getProject: () => null });
+    assert.equal(access.canChangeProject(callerAccess, 404, deps), false);
   });
 });
 
@@ -455,6 +523,17 @@ describe('resolveAccess against a real store', () => {
       'x-tangleclaw-launch-id': bound.launchId, 'x-tangleclaw-project-id': String(other.id)
     }));
     assert.equal(a.reason, INVALID_REASONS.PROJECT_MISMATCH);
+  });
+
+  it('wires canChangeProject\'s default deps to the live store and fleet-provisioner (#3335)', () => {
+    // No 3rd arg: exercises DEFAULT_CHANGE_DEPS itself. `project` is a real, non-fleet-coordinator
+    // project, so the real lib/fleet-provisioner.js#verifyCoordinatorAuthority throws
+    // NOT_FLEET_COORDINATOR and the sibling grant correctly denies, preserving the pre-#3335
+    // own-project-only restriction end to end.
+    const a = access.resolveAccess(req({
+      'x-tangleclaw-launch-id': bound.launchId, 'x-tangleclaw-project-id': String(project.id)
+    }));
+    assert.equal(access.canChangeProject(a, other.id), false);
   });
 
   it('by default asks lib/master for the live Master\'s id, after the store says the id is no project\'s', () => {
